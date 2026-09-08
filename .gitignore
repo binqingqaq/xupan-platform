@@ -31,6 +31,7 @@
 .env
 .env.*
 !.env.example
+docs/本地环境密钥.md
 **/.env
 **/.env.*
 !**/.env.example
@@ -57,4 +58,3 @@
 .DS_Store
 Thumbs.db
 Desktop.ini
-
