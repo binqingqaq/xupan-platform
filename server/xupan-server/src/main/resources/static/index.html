@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>8球番摊玩法演示</title>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-inner">
+        <div><p class="eyebrow">LOCAL DEMO</p><h1>8球番摊玩法</h1></div>
+        <div class="status-chip" id="status-chip">连接中</div>
+    </div>
+</header>
+<main class="page-shell">
+    <section class="issue-strip" aria-label="当前期信息">
+        <div><span class="section-label">当前期</span><strong id="issue-number">--</strong></div>
+        <div class="issue-state"><span class="section-label">状态</span><strong id="issue-status">--</strong></div>
+        <button class="button button-muted" id="refresh-button" type="button">刷新结果</button>
+    </section>
+    <section class="results-section">
+        <div class="section-heading"><div><span class="section-label">开奖面板</span><h2>八个球位</h2></div><span class="helper-text">01-20 · 番 / 大小 / 单双</span></div>
+        <div class="ball-grid" id="ball-grid" aria-live="polite"></div>
+    </section>
+    <div class="content-grid">
+        <section class="panel betting-panel">
+            <div class="section-heading"><div><span class="section-label">投注演示</span><h2>选择玩法</h2></div><span class="odds-readout" id="selected-odds">赔率 --</span></div>
+            <div class="field-group"><label for="ball-number">投注球位</label><select id="ball-number"></select></div>
+            <div class="field-group"><label for="play-type">玩法类型</label><select id="play-type"></select></div>
+            <div class="field-group"><div class="field-label-row"><label for="parameters">玩法参数</label><span class="field-hint" id="parameter-hint"></span></div><input id="parameters" type="text" inputmode="numeric" autocomplete="off" placeholder="例如：2"><div class="choice-row" id="parameter-choices" aria-label="快捷参数"></div></div>
+            <div class="field-group"><label for="stake">投注金额</label><div class="money-input"><span>¥</span><input id="stake" type="number" min="0.01" step="0.01" value="15.00"></div></div>
+            <button class="button button-primary button-wide" id="submit-bet" type="button">提交本次下注</button>
+            <p class="feedback" id="feedback" role="status"></p>
+        </section>
+        <section class="panel odds-panel">
+            <div class="section-heading"><div><span class="section-label">赔率配置</span><h2>当前赔率</h2></div><span class="helper-text">本地演示控制</span></div>
+            <div class="odds-list" id="odds-list"></div>
+            <div class="admin-form"><div class="field-group compact-field"><label for="admin-odds">修改选中玩法赔率</label><input id="admin-odds" type="number" min="1" step="0.001" value="1.950"></div><button class="button button-secondary" id="update-odds" type="button">保存赔率</button></div>
+        </section>
+    </div>
+    <section class="panel admin-panel">
+        <div class="section-heading"><div><span class="section-label">演示控制</span><h2>录入开奖结果</h2></div><span class="helper-text">仅用于本地演示</span></div>
+        <div class="draw-inputs" id="draw-inputs"></div><div class="admin-actions"><button class="button button-dark" id="draw-button" type="button">封盘并开奖</button><button class="button button-secondary" id="reset-button" type="button">开启下一期</button></div>
+    </section>
+    <section class="panel bets-panel">
+        <div class="section-heading"><div><span class="section-label">记录</span><h2>本期注单</h2></div><span class="helper-text" id="bet-count">0 条</span></div>
+        <div class="table-wrap"><table><thead><tr><th>球位</th><th>玩法</th><th>参数</th><th>金额</th><th>状态</th><th>净盈亏</th></tr></thead><tbody id="bets-body"></tbody></table></div>
+        <p class="empty-state" id="empty-bets">当前期还没有注单</p>
+    </section>
+</main>
+<script src="/app.js" defer></script>
+</body>
+</html>

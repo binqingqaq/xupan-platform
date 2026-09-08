@@ -9,9 +9,9 @@
 - 构建方式：Maven Wrapper
 - 生产数据库：MySQL `8.4 LTS` + Flyway
 - 测试数据库：测试 Profile 使用内存 H2
-- 当前已具备：Spring Boot 启动类、基础上下文测试、首期方案和实施计划、部分玩法领域模型与演示 API
-- 当前开发中：结算单元测试、静态演示页面、MySQL/Flyway 持久化
-- 当前尚未具备：完整前端验收、生产数据库配置、认证授权和生产部署配置
+- 当前已具备：玩法领域模型、结算服务、Flyway/MySQL 持久化、赔率控制/下注/开奖 API、原生静态演示页面
+- 当前开发中：首期四类玩法最终验收和验收文档收口
+- 当前尚未具备：认证授权、自动开奖、实时通信、生产部署和真实运营能力
 
 ## 环境要求
 
@@ -46,7 +46,7 @@ cd server\xupan-server
 .\mvnw.cmd test
 ```
 
-当前基线测试预期为 1 个测试通过。测试使用 `src/test/resources/application-test.yaml` 中的内存 H2，并关闭 Flyway，以避免依赖本机 MySQL。
+当前完整测试套件使用 `src/test/resources/application-test.yaml` 中的内存 H2 和 Flyway，已通过 11 个测试。它不替代真实 MySQL 验证。
 
 ## 启动服务
 
@@ -55,7 +55,7 @@ cd server\xupan-server
 .\mvnw.cmd spring-boot:run
 ```
 
-当前 `application.yaml` 只配置了应用名称，尚未配置生产数据库连接，也没有业务 Controller。因此，不能把当前工程视为已经完成可用的业务服务；启动前需要先补充数据库配置和首期业务实现。
+默认 `application.yaml` 使用 `XUPAN_DB_URL`、`XUPAN_DB_USERNAME`、`XUPAN_DB_PASSWORD` 注入 MySQL 连接；本机开发环境已配置完成。启动后访问 `http://127.0.0.1:8080/` 可打开首期演示页面。
 
 ## 项目文档
 

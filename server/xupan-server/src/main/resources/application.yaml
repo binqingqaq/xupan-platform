@@ -1,3 +1,10 @@
 spring:
   application:
     name: xupan-server
+  datasource:
+    url: ${XUPAN_DB_URL:jdbc:mysql://127.0.0.1:3307/xupan_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${XUPAN_DB_USERNAME:xupan_app}
+    password: ${XUPAN_DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  flyway:
+    enabled: true
