@@ -1,0 +1,60 @@
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.factorypath
+.springBeans
+.sts4-cache/
+.vscode/
+
+# Java / Maven / Gradle
+**/target/
+**/build/
+.gradle/
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Maven wrapper artifacts
+**/.mvn/wrapper/maven-wrapper.jar
+
+# Node.js frontends
+**/node_modules/
+**/dist/
+**/.vite/
+**/.cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/application-local.yml
+**/application-local.yaml
+**/application-local.properties
+**/application-*.local.yml
+**/application-*.local.yaml
+**/application-*.local.properties
+
+# Logs, runtime files and local uploads
+**/*.log
+**/logs/
+**/uploads/
+**/tmp/
+**/data/
+
+# Database and container volumes
+**/mysql-data/
+**/redis-data/
+**/docker-data/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
