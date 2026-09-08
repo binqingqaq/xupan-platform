@@ -27,6 +27,32 @@ D:\codes\liuhecai\_caipiaowan_extract\caipiaowan-main
 - 不复制其中的密码、Token、支付配置、真实数据、外部接口地址或未经确认的业务规则。
 - 详细静态观察记录见 `docs/参考资料/caipiaowan-legacy-参考.md`。
 
+## 若依参考框架
+
+当前固定的若依参考仓库：
+
+```text
+D:\codes\liuhecai\_ruoyi-reference\RuoYi-Vue
+```
+
+- 来源：官方 `RuoYi-Vue` 仓库 `https://gitee.com/y_project/RuoYi-Vue.git`。
+- 分支：`master`。
+- 当前参考提交：`13db1fc`。
+- 参考仓库使用 Spring Boot 4.x、Java 17+、Spring Security、MyBatis、Redis、JWT；当前项目仍以 Java 21、Spring Boot 4.0.8、MySQL 8.4 LTS 为准。
+- 不把若依整仓库复制进当前项目，也不直接覆盖当前项目的 `pom.xml`；后续按业务需要选择性参考或迁移。
+
+模块使用边界：
+
+- `ruoyi-common`：参考统一响应、异常、分页、通用工具、注解和基础领域对象。
+- `ruoyi-framework`：参考登录认证、JWT/Redis Token、权限校验、数据权限、过滤器和全局 Web 配置。
+- `ruoyi-system`：参考用户、角色、部门、岗位、菜单、字典、参数、通知和操作日志等后台基础模块。
+- `ruoyi-generator`：业务表结构稳定后，按需参考代码生成，不作为首期必选依赖。
+- `ruoyi-quartz`：只有在确认需要定时开奖、结算或其他调度任务后才引入设计。
+- `ruoyi-admin`：只参考应用启动和 Controller 组织方式，不作为当前项目业务模块直接复制。
+- `sql`：只参考表结构和初始化数据；当前项目必须改写为 Flyway 迁移脚本，并按 MySQL 8.4 LTS 验证。
+
+详细模块分析见 `docs/参考资料/RuoYi-Vue-参考.md`。若依前端项目未纳入当前参考仓库，当前项目是否使用 Vue 及其版本仍待方案确认。
+
 ## 事实和文档优先级
 
 按以下优先级判断项目事实：
