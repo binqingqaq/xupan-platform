@@ -10,7 +10,7 @@
     </parent>
     <groupId>com.xupan</groupId>
     <artifactId>xupan-server</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
+    <version>0.0.2</version>
     <name>xupan-server</name>
     <description>xupan-server</description>
     <url/>
