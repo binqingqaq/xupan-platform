@@ -91,10 +91,38 @@ D:\codes\liuhecai\_ruoyi-reference\RuoYi-Vue
 
 运行前确认当前终端的 `JAVA_HOME` 指向 JDK 21。测试使用 `test` Profile 和内存 H2；生产启动需要后续补充外部 MySQL 配置。
 
+## 服务器 SSH 连接
+
+当前已验证的腾讯云 Ubuntu 服务器连接信息：
+
+- 主机：`114.132.230.87`
+- SSH 端口：`22`
+- 登录用户：`ubuntu`
+- 用户权限：具备 `sudo` 管理权限；需要管理员操作时使用 `sudo`，不要默认使用 root SSH 登录。
+- 本机 SSH 别名：`xupan-tencent`
+- 本机 SSH 配置：`C:\Users\tbq\.ssh\config`
+- 本机专用私钥：`C:\Users\tbq\.ssh\xupan-tencent-ed25519`
+- 服务器系统：Ubuntu，主机名已验证为 `VM-0-7-ubuntu`，架构为 `x86_64`。
+
+连接命令：
+
+```powershell
+ssh xupan-tencent
+```
+
+连接服务器时默认先执行只读检查：
+
+```powershell
+ssh xupan-tencent "whoami && hostname && uname -a"
+```
+
+安装软件、修改配置、上传文件、重启服务或修改数据库前，必须明确说明影响并取得当前任务授权。密码、私钥内容和数据库凭据不得写入 `AGENTS.md`、Git 或聊天输出；服务器修改优先使用 `ubuntu` 用户并通过 `sudo` 执行。
+
 ## 变更和提交
 
 - 先检查 `git status` 和 `git diff`，确认只包含本次任务范围。
 - 代码变更应有对应测试；文档变更应与当前代码和验证结果一致。
+- Git 提交信息必须使用中文或中英文结合，禁止只使用英文；提交正文应说明当前状态和验证范围。
 - 提交信息使用简短、目的明确的格式，例如：
 
 ```text
