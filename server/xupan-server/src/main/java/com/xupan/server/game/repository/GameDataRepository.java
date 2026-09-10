@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -228,6 +229,10 @@ public class GameDataRepository {
                 .stream().findFirst();
     }
 
+    public Optional<BetRecord> findBetByAccountIdAndIdempotencyKey(long accountId, String idempotencyKey) {
+        return findBetByIdempotencyKey(accountId, idempotencyKey);
+    }
+
     public BetRecord requireBetRequestMatch(long accountId, String idempotencyKey,
                                             String issueNumber, int ballNumber, PlayType playType,
                                             List<Integer> parameters, BigDecimal stake) {
@@ -294,6 +299,13 @@ public class GameDataRepository {
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
                             BigDecimal netProfit, String explanation) {
+    }
+
+    private static BigDecimal normalizedStake(BigDecimal value) {
+        if (value == null || value.signum() <= 0 || value.scale() > 2) {
+            throw new IllegalArgumentException("WALLET_AMOUNT_INVALID: stake 必须为正数且最多两位小数");
+        }
+        return value.setScale(2, RoundingMode.HALF_UP);
     }
 
     private static List<Integer> numbers(java.sql.ResultSet resultSet) throws java.sql.SQLException {
