@@ -4,6 +4,7 @@ import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.system.service.UserAdminService;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,10 +29,19 @@ class UserAdminServiceTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @BeforeEach
+    void cleanBeforeEach() {
+        cleanData();
+    }
+
     @AfterEach
-    void clean() {
+    void cleanAfterEach() {
+        cleanData();
+    }
+
+    private void cleanData() {
         jdbcTemplate.update("DELETE FROM sys_operation_log WHERE resource_id IN "
-                + "(SELECT CAST(id AS VARCHAR) FROM sys_user WHERE username LIKE 'user-admin-test-%')");
+                + "(SELECT id FROM sys_user WHERE username LIKE 'user-admin-test-%')");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE user_code LIKE 'USER-%')");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "

@@ -1,6 +1,7 @@
 package com.xupan.server.game.repository;
 
 import com.xupan.server.game.domain.WalletOperationType;
+import com.xupan.server.game.service.VirtualWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -23,6 +28,9 @@ class VirtualWalletRepositoryTest {
 
     @Autowired
     private VirtualWalletRepository repository;
+
+    @Autowired
+    private VirtualWalletService walletService;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -44,6 +52,8 @@ class VirtualWalletRepositoryTest {
                 + "(SELECT id FROM demo_user_account WHERE user_code LIKE 'WALLET-REPO-%')");
         jdbcTemplate.update("DELETE FROM game_bet WHERE bet_code LIKE 'WALLET-REPO-%'");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code LIKE 'WALLET-REPO-%'");
+        jdbcTemplate.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'wallet-repo-test-%')");
         jdbcTemplate.update("DELETE FROM sys_user WHERE username LIKE 'wallet-repo-test-%'");
     }
 
@@ -168,6 +178,42 @@ class VirtualWalletRepositoryTest {
         assertThat(repository.findByUserId(userId)).get()
                 .extracting(wallet -> wallet.balance())
                 .isEqualTo(new BigDecimal("138.50"));
+    }
+
+    @Test
+    void concurrentAdjustmentsCannotOverdrawWallet() throws Exception {
+        long operatorId = insertUser("wallet-repo-test-concurrent-operator", "并发操作员");
+        long targetId = insertUser("wallet-repo-test-concurrent-target", "并发目标用户");
+        repository.createForUser(targetId, "WALLET-REPO-CONCURRENT", "并发目标用户");
+        walletService.grant(operatorId, targetId, new BigDecimal("100.00"),
+                "并发扣款测试初始化", "wallet-concurrent-grant");
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<String> first = executor.submit(() -> concurrentAdjustment(
+                    operatorId, targetId, "wallet-concurrent-adjust-1"));
+            Future<String> second = executor.submit(() -> concurrentAdjustment(
+                    operatorId, targetId, "wallet-concurrent-adjust-2"));
+
+            assertThat(java.util.List.of(first.get(10, TimeUnit.SECONDS),
+                    second.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder("SUCCESS", "WALLET_INSUFFICIENT_BALANCE");
+            assertThat(repository.findByUserId(targetId)).get()
+                    .extracting(wallet -> wallet.balance())
+                    .isEqualTo(new BigDecimal("20.00"));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private String concurrentAdjustment(long operatorId, long targetId, String idempotencyKey) {
+        try {
+            walletService.adjust(operatorId, targetId, new BigDecimal("-80.00"),
+                    "并发扣款测试", idempotencyKey);
+            return "SUCCESS";
+        } catch (com.xupan.server.web.BusinessException exception) {
+            return exception.code();
+        }
     }
 
     @Test
