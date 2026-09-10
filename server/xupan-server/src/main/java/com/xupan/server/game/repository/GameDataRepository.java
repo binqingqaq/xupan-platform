@@ -147,14 +147,13 @@ public class GameDataRepository {
                 rs -> rs.next() ? Optional.of(rs.getBigDecimal(1)) : Optional.empty(), playType.name());
     }
 
-    public long saveBetWithOddsSnapshot(String betCode, String issueNumber, int ballNumber,
-                                        PlayType playType, List<Integer> parameters,
-                                        BigDecimal stake, BigDecimal odds) {
-        return saveBetWithOddsSnapshot(1L, betCode, issueNumber, ballNumber, playType,
-                parameters, stake, odds);
-    }
-
-    public long saveBetWithOddsSnapshot(long userId, String betCode, String issueNumber, int ballNumber,
+    /**
+     * Persists a bet against the virtual wallet account selected by the caller.
+     * The account id is deliberately mandatory so a game request cannot fall
+     * back to the historical DEMO-USER account.
+     */
+    public long saveBetWithOddsSnapshot(long accountId, String betCode, String idempotencyKey,
+                                        String issueNumber, int ballNumber,
                                         PlayType playType, List<Integer> parameters,
                                         BigDecimal stake, BigDecimal odds) {
         String parameterText = parameters == null ? "" : parameters.stream()
@@ -162,18 +161,19 @@ public class GameDataRepository {
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO game_bet
-                        (user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                        (user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
                          stake, odds_snapshot)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """);
-            statement.setLong(1, userId);
+            statement.setLong(1, accountId);
             statement.setString(2, betCode);
-            statement.setString(3, issueNumber);
-            statement.setInt(4, ballNumber);
-            statement.setString(5, playType.name());
-            statement.setString(6, parameterText);
-            statement.setBigDecimal(7, stake);
-            statement.setBigDecimal(8, odds);
+            statement.setString(3, idempotencyKey);
+            statement.setString(4, issueNumber);
+            statement.setInt(5, ballNumber);
+            statement.setString(6, playType.name());
+            statement.setString(7, parameterText);
+            statement.setBigDecimal(8, stake);
+            statement.setBigDecimal(9, odds);
             return statement;
         });
         Long id = jdbcTemplate.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
@@ -194,13 +194,14 @@ public class GameDataRepository {
 
     public List<BetRecord> findBetsByIssue(String issueNumber) {
         return jdbcTemplate.query("""
-                SELECT id, user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
                        stake, odds_snapshot, settlement_status, net_profit, explanation
                   FROM game_bet
                  WHERE issue_number = ?
                  ORDER BY id
                 """, (rs, rowNum) -> new BetRecord(
-                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"), rs.getString("issue_number"),
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"),
+                rs.getString("request_idempotency_key"), rs.getString("issue_number"),
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
@@ -211,14 +212,46 @@ public class GameDataRepository {
         return findBetsByCode(betCode).stream().findFirst();
     }
 
+    public Optional<BetRecord> findBetByIdempotencyKey(long accountId, String idempotencyKey) {
+        return jdbcTemplate.query("""
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
+                       stake, odds_snapshot, settlement_status, net_profit, explanation
+                  FROM game_bet
+                 WHERE user_id = ? AND request_idempotency_key = ?
+                """, (rs, rowNum) -> new BetRecord(
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"),
+                rs.getString("request_idempotency_key"), rs.getString("issue_number"),
+                rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
+                parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
+                rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
+                rs.getBigDecimal("net_profit"), rs.getString("explanation")), accountId, idempotencyKey)
+                .stream().findFirst();
+    }
+
+    public BetRecord requireBetRequestMatch(long accountId, String idempotencyKey,
+                                            String issueNumber, int ballNumber, PlayType playType,
+                                            List<Integer> parameters, BigDecimal stake) {
+        BetRecord existing = findBetByIdempotencyKey(accountId, idempotencyKey)
+                .orElseThrow(() -> new IllegalStateException("WALLET_IDEMPOTENCY_NOT_FOUND: 注单不存在"));
+        BigDecimal normalizedStake = normalizedStake(stake);
+        List<Integer> normalizedParameters = parameters == null ? List.of() : List.copyOf(parameters);
+        if (!existing.issueNumber().equals(issueNumber) || existing.ballNumber() != ballNumber
+                || existing.playType() != playType || !existing.parameters().equals(normalizedParameters)
+                || existing.stake().compareTo(normalizedStake) != 0) {
+            throw new IllegalStateException("WALLET_IDEMPOTENCY_CONFLICT: 注单请求参数不一致");
+        }
+        return existing;
+    }
+
     private List<BetRecord> findBetsByCode(String betCode) {
         return jdbcTemplate.query("""
-                SELECT id, user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
                        stake, odds_snapshot, settlement_status, net_profit, explanation
                   FROM game_bet
                  WHERE bet_code = ?
                 """, (rs, rowNum) -> new BetRecord(
-                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"), rs.getString("issue_number"),
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"),
+                rs.getString("request_idempotency_key"), rs.getString("issue_number"),
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
@@ -255,7 +288,9 @@ public class GameDataRepository {
                               Instant startedAt, Instant bettingEndsAt, Instant drawEndsAt, Instant settledAt) {
     }
 
-    public record BetRecord(long id, long userId, String betCode, String issueNumber, int ballNumber,
+    /** game_bet.user_id is the demo_user_account primary key, not sys_user.id. */
+    public record BetRecord(long id, long accountId, String betCode, String requestIdempotencyKey,
+                            String issueNumber, int ballNumber,
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
                             BigDecimal netProfit, String explanation) {

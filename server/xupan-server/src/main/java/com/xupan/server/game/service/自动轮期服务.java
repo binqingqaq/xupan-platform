@@ -2,7 +2,6 @@ package com.xupan.server.game.service;
 
 import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.SettlementStatus;
-import com.xupan.server.game.repository.DemoAccountRepository;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -34,7 +33,7 @@ public class 自动轮期服务 {
     private final GameDataRepository gameRepository;
     private final GameIssueEventRepository eventRepository;
     private final SettlementService settlementService;
-    private final DemoAccountRepository accountRepository;
+    private final VirtualWalletService walletService;
     private final Clock clock;
     private final boolean automationEnabled;
 
@@ -42,30 +41,30 @@ public class 自动轮期服务 {
     public 自动轮期服务(GameDataRepository gameRepository,
                         GameIssueEventRepository eventRepository,
                         SettlementService settlementService,
-                        DemoAccountRepository accountRepository,
+                        VirtualWalletService walletService,
                         @Value("${xupan.automation.enabled:true}") boolean automationEnabled) {
-        this(gameRepository, eventRepository, settlementService, accountRepository,
+        this(gameRepository, eventRepository, settlementService, walletService,
                 Clock.systemUTC(), automationEnabled);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
                  GameIssueEventRepository eventRepository,
                  SettlementService settlementService,
-                 DemoAccountRepository accountRepository,
+                 VirtualWalletService walletService,
                  Clock clock) {
-        this(gameRepository, eventRepository, settlementService, accountRepository, clock, true);
+        this(gameRepository, eventRepository, settlementService, walletService, clock, true);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
                  GameIssueEventRepository eventRepository,
                  SettlementService settlementService,
-                 DemoAccountRepository accountRepository,
+                 VirtualWalletService walletService,
                  Clock clock,
                  boolean automationEnabled) {
         this.gameRepository = gameRepository;
         this.eventRepository = eventRepository;
         this.settlementService = settlementService;
-        this.accountRepository = accountRepository;
+        this.walletService = walletService;
         this.clock = clock;
         this.automationEnabled = automationEnabled;
     }
@@ -133,8 +132,12 @@ public class 自动轮期服务 {
                             bet.playType(), bet.parameters(), bet.stake(), bet.odds(),
                             results.get(bet.ballNumber() - 1));
                     if (gameRepository.settleBetOnce(bet.id(), settlement)) {
-                        accountRepository.credit(DemoAccountRepository.DEFAULT_USER_CODE,
-                                payout(settlement), "开奖结算：" + issue.issueNumber());
+                        BigDecimal payout = payout(settlement);
+                        if (payout.signum() > 0) {
+                            long settlementUserId = walletService.getByAccountId(bet.accountId()).userId();
+                            walletService.creditForSettlement(settlementUserId, bet.id(), issue.issueNumber(), payout,
+                                    "开奖结算：" + issue.issueNumber());
+                        }
                     }
                 });
 

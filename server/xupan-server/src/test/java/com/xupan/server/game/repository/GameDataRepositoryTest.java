@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -37,7 +38,7 @@ class GameDataRepositoryTest {
         repository.saveIssue("TEST-0001", "OPEN", null);
         repository.saveOdds(PlayType.FAN, new BigDecimal("3.850"));
 
-        long betId = repository.saveBetWithOddsSnapshot("BET-TEST-0001", "TEST-0001", 8,
+        long betId = repository.saveBetWithOddsSnapshot(1L, "BET-TEST-0001", "REPO-REQUEST-001", "TEST-0001", 8,
                 PlayType.FAN, List.of(2), new BigDecimal("15.00"), new BigDecimal("3.850"));
 
         assertThat(repository.findCurrentIssue()).get().satisfies(issue -> {
@@ -45,6 +46,12 @@ class GameDataRepositoryTest {
             assertThat(issue.numbers()).hasSize(8).containsOnlyNulls();
         });
         assertThat(repository.findOdds(PlayType.FAN).orElseThrow()).isEqualByComparingTo("3.850");
+        assertThat(repository.findBetByIdempotencyKey(1L, "REPO-REQUEST-001"))
+                .get().extracting(GameDataRepository.BetRecord::accountId).isEqualTo(1L);
+        assertThatThrownBy(() -> repository.requireBetRequestMatch(1L, "REPO-REQUEST-001", "TEST-0001", 8,
+                PlayType.FAN, List.of(3), new BigDecimal("15.00")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("WALLET_IDEMPOTENCY_CONFLICT");
 
         SettlementResult settlement = new SettlementResult(SettlementStatus.WIN,
                 new BigDecimal("15.00"), new BigDecimal("3.850"), new BigDecimal("42.75"), "test");
