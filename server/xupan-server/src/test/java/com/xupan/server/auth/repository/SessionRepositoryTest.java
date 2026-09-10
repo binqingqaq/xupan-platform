@@ -1,6 +1,7 @@
 package com.xupan.server.auth.repository;
 
 import com.xupan.server.auth.domain.SessionRecord;
+import com.xupan.server.auth.domain.WsTicket;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,6 +10,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,6 +35,7 @@ class SessionRepositoryTest {
 
     @AfterEach
     void clean() {
+        jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE session_id LIKE 'repo-session-%'");
         jdbcTemplate.update("DELETE FROM auth_session WHERE session_id LIKE 'repo-session-%'");
         jdbcTemplate.update("DELETE FROM sys_user WHERE username LIKE 'repo-session-user-%'");
     }
@@ -73,6 +80,84 @@ class SessionRepositoryTest {
         assertThat(repository.revokeAllByUserId(userId, now.plusSeconds(21))).isEqualTo(0);
         assertThat(repository.findByAccessTokenHash("access-three")).get()
                 .extracting(SessionRecord::lastSeenAt).isEqualTo(seenAt);
+    }
+
+    @Test
+    void createsFindsAndConsumesTicketOnlyForMatchingIdentityAndRoom() {
+        userId = userRepository.insert("repo-session-user-ticket", "Ticket User", "hash", "ACTIVE");
+        Instant now = Instant.parse("2026-09-10T10:00:00Z");
+        repository.insert(session("repo-session-ticket", userId, "access-ticket", "refresh-ticket", now));
+        WsTicket ticket = new WsTicket("ticket-hash", userId, "repo-session-ticket", "room-a",
+                now.plusSeconds(60), null, now);
+        repository.insertWsTicket(ticket);
+
+        assertThat(repository.findByTicketHash("ticket-hash")).get()
+                .extracting(WsTicket::userId, WsTicket::sessionId, WsTicket::roomCode)
+                .containsExactly(userId, "repo-session-ticket", "room-a");
+        assertThat(repository.findUsableWsTicket("ticket-hash", userId, "repo-session-ticket", "room-a", now))
+                .isPresent();
+        assertThat(repository.findUsableWsTicket("ticket-hash", userId + 1, "repo-session-ticket", "room-a", now))
+                .isEmpty();
+        assertThat(repository.findUsableWsTicket("ticket-hash", userId, "other-session", "room-a", now))
+                .isEmpty();
+        assertThat(repository.findUsableWsTicket("ticket-hash", userId, "repo-session-ticket", "room-b", now))
+                .isEmpty();
+
+        assertThat(repository.consumeWsTicket("ticket-hash", userId, "repo-session-ticket", "room-a", now))
+                .get().extracting(WsTicket::usedAt).isEqualTo(now);
+        assertThat(repository.consumeWsTicket("ticket-hash", userId, "repo-session-ticket", "room-a",
+                now.plusSeconds(1))).isEmpty();
+        assertThat(repository.findUsableWsTicket("ticket-hash", userId, "repo-session-ticket", "room-a",
+                now.plusSeconds(1))).isEmpty();
+    }
+
+    @Test
+    void rejectsExpiredTicketAndDoesNotMarkItUsed() {
+        userId = userRepository.insert("repo-session-user-expired-ticket", "Ticket User", "hash", "ACTIVE");
+        Instant expiresAt = Instant.parse("2026-09-10T10:00:00Z");
+        repository.insert(session("repo-session-expired-ticket", userId, "access-expired", "refresh-expired", expiresAt));
+        repository.saveWsTicket(new WsTicket("expired-ticket-hash", userId, "repo-session-expired-ticket", "room-a",
+                expiresAt, null, expiresAt.minusSeconds(60)));
+
+        assertThat(repository.consumeWsTicket("expired-ticket-hash", userId, "repo-session-expired-ticket", "room-a",
+                expiresAt)).isEmpty();
+        assertThat(repository.findByTicketHash("expired-ticket-hash")).get()
+                .extracting(WsTicket::usedAt).isNull();
+    }
+
+    @Test
+    void conditionalTicketConsumptionAllowsOnlyOneConcurrentWinner() throws Exception {
+        userId = userRepository.insert("repo-session-user-concurrent-ticket", "Ticket User", "hash", "ACTIVE");
+        Instant now = Instant.parse("2026-09-10T10:00:00Z");
+        repository.insert(session("repo-session-concurrent-ticket", userId, "access-concurrent", "refresh-concurrent", now));
+        repository.insertWsTicket(new WsTicket("concurrent-ticket-hash", userId, "repo-session-concurrent-ticket",
+                "room-a", now.plusSeconds(60), null, now));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<Boolean>> results = List.of(
+                    submitConsumer(executor, ready, start, now),
+                    submitConsumer(executor, ready, start, now));
+            ready.await();
+            start.countDown();
+
+            assertThat(List.of(results.get(0).get(), results.get(1).get()))
+                    .containsExactlyInAnyOrder(true, false);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private Future<Boolean> submitConsumer(ExecutorService executor, CountDownLatch ready,
+                                            CountDownLatch start, Instant now) {
+        return executor.submit(() -> {
+            ready.countDown();
+            start.await();
+            return repository.consumeWsTicket("concurrent-ticket-hash", userId,
+                    "repo-session-concurrent-ticket", "room-a", now).isPresent();
+        });
     }
 
     private static SessionRecord session(String id, long userId, String accessHash, String refreshHash,
