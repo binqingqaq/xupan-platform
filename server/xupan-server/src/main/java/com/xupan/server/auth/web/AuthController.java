@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,10 +31,13 @@ public class AuthController {
 
     private final AuthenticationService authenticationService;
     private final TokenService tokenService;
+    private final boolean refreshCookieSecure;
 
-    public AuthController(AuthenticationService authenticationService, TokenService tokenService) {
+    public AuthController(AuthenticationService authenticationService, TokenService tokenService,
+                          @Value("${xupan.auth.refresh-cookie-secure:true}") boolean refreshCookieSecure) {
         this.authenticationService = authenticationService;
         this.tokenService = tokenService;
+        this.refreshCookieSecure = refreshCookieSecure;
     }
 
     @PostMapping("/login")
@@ -111,15 +115,15 @@ public class AuthController {
         return null;
     }
 
-    private static void writeRefreshCookie(HttpServletResponse response, String value) {
+    private void writeRefreshCookie(HttpServletResponse response, String value) {
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(REFRESH_COOKIE, value)
-                .httpOnly(true).secure(true).sameSite("Strict").path(COOKIE_PATH)
+                .httpOnly(true).secure(refreshCookieSecure).sameSite("Strict").path(COOKIE_PATH)
                 .maxAge(TokenService.REFRESH_TOKEN_LIFETIME).build().toString());
     }
 
-    private static void clearRefreshCookie(HttpServletResponse response) {
+    private void clearRefreshCookie(HttpServletResponse response) {
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(REFRESH_COOKIE, "")
-                .httpOnly(true).secure(true).sameSite("Strict").path(COOKIE_PATH)
+                .httpOnly(true).secure(refreshCookieSecure).sameSite("Strict").path(COOKIE_PATH)
                 .maxAge(Duration.ZERO).build().toString());
     }
 

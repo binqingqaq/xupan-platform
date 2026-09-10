@@ -97,7 +97,6 @@ public class VirtualWalletService {
     public WalletOperationResult creditForSettlement(long targetUserId, long betId,
                                                      String issueNumber, BigDecimal amount,
                                                      String reason) {
-        requireActiveUser(targetUserId);
         BigDecimal normalizedAmount = positiveAmount(amount);
         WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendSettlementCredit(targetUserId, betId,
                 requiredText(issueNumber, "期号不能为空", 64), normalizedAmount,

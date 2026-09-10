@@ -10,5 +10,6 @@ xupan:
   automation:
     enabled: false
   auth:
+    refresh-cookie-secure: false
     bootstrap-admin:
       enabled: false

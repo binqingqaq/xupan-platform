@@ -10,6 +10,7 @@ spring:
     enabled: true
 xupan:
   auth:
+    refresh-cookie-secure: ${XUPAN_AUTH_REFRESH_COOKIE_SECURE:true}
     bootstrap-admin:
       enabled: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_ENABLED:false}
       username: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_USERNAME:}

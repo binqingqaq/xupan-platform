@@ -177,7 +177,7 @@ public class VirtualWalletRepository {
         String issue = requiredText(issueNumber, "issueNumber", 64);
         String safeReason = reason(reason);
         String key = "SETTLEMENT:" + betId;
-        VirtualWallet wallet = lockWallet(targetUserId);
+        VirtualWallet wallet = lockWalletForSettlement(targetUserId);
         requireBetForSettlement(betId, wallet.accountId(), issue);
         Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
         if (replay.isPresent()) {
@@ -236,6 +236,16 @@ public class VirtualWalletRepository {
             throw new IllegalStateException("WALLET_INACTIVE: 钱包未启用");
         }
         return wallet;
+    }
+
+    /**
+     * Settlement must finish for valid historical bets even when the user was
+     * disabled after placing the bet.
+     */
+    private VirtualWallet lockWalletForSettlement(long userId) {
+        requireTransaction("钱包结算");
+        return findByUserIdForUpdate(userId)
+                .orElseThrow(() -> new IllegalStateException("WALLET_NOT_FOUND: 正式用户没有钱包"));
     }
 
     private String operatorName(long operatorUserId) {

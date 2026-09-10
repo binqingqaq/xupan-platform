@@ -66,7 +66,7 @@ class AuthControllerTest {
 
         assertThat(result.getResponse().getCookie(AuthController.REFRESH_COOKIE)).satisfies(cookie -> {
             assertThat(cookie.isHttpOnly()).isTrue();
-            assertThat(cookie.getSecure()).isTrue();
+            assertThat(cookie.getSecure()).isFalse();
             assertThat(cookie.getPath()).isEqualTo("/api/auth");
             assertThat(cookie.getMaxAge()).isEqualTo(30 * 24 * 60 * 60);
         });

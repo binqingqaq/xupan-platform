@@ -150,6 +150,27 @@ class VirtualWalletRepositoryTest {
     }
 
     @Test
+    @Transactional
+    void settlesHistoricalBetAfterUserIsDisabled() {
+        long userId = insertUser("wallet-repo-test-disabled-settlement", "停用结算用户");
+        long accountId = repository.createForUser(userId, "WALLET-REPO-DISABLED", "停用结算用户");
+        repository.appendAdminGrant(userId, userId, new BigDecimal("100.00"),
+                "停用结算测试初始化", "wallet-disabled-grant");
+        insertBet(accountId, "WALLET-REPO-DISABLED-BET", "WALLET-DISABLED-ISSUE", null, "10.00");
+        long betId = jdbcTemplate.queryForObject(
+                "SELECT id FROM game_bet WHERE bet_code = ?", Long.class, "WALLET-REPO-DISABLED-BET");
+        jdbcTemplate.update("UPDATE sys_user SET status = 'DISABLED' WHERE id = ?", userId);
+
+        var credit = repository.appendSettlementCredit(userId, betId, "WALLET-DISABLED-ISSUE",
+                new BigDecimal("38.50"), "停用用户历史注单结算");
+
+        assertThat(credit.operationType()).isEqualTo(WalletOperationType.SETTLEMENT_CREDIT);
+        assertThat(repository.findByUserId(userId)).get()
+                .extracting(wallet -> wallet.balance())
+                .isEqualTo(new BigDecimal("138.50"));
+    }
+
+    @Test
     void lockingWriteRequiresAnOuterTransaction() {
         long userId = insertUser("wallet-repo-test-lock", "锁测试用户");
         repository.createForUser(userId, "WALLET-REPO-LOCK", "锁测试用户");
