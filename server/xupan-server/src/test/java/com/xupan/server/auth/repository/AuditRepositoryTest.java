@@ -8,6 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -56,5 +58,30 @@ class AuditRepositoryTest {
         assertThatThrownBy(() -> operationAuditRepository.record(null, null, "POST", "/repo-audit/sensitive",
                 null, "FAILURE", "BAD_REQUEST", "password=Password123", null, Instant.now()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void hashesRawSixtyFourHexMetadataInsteadOfTreatingItAsADigest() throws Exception {
+        String rawHexIp = "a".repeat(64);
+        String rawHexUserAgent = "b".repeat(64);
+        loginAuditRepository.record("repo-audit-hex", null, "FAILURE", "AUTH_INVALID_CREDENTIALS",
+                rawHexIp, rawHexUserAgent, Instant.parse("2026-09-10T10:00:00Z"));
+
+        var digests = jdbcTemplate.queryForMap(
+                "SELECT ip_digest, user_agent_digest FROM sys_login_log WHERE username_snapshot = ?",
+                "repo-audit-hex");
+        assertThat(digests.get("IP_DIGEST")).isEqualTo(sha256(rawHexIp));
+        assertThat(digests.get("USER_AGENT_DIGEST")).isEqualTo(sha256(rawHexUserAgent));
+        assertThat(digests.get("IP_DIGEST")).isNotEqualTo(rawHexIp);
+        assertThat(digests.get("USER_AGENT_DIGEST")).isNotEqualTo(rawHexUserAgent);
+    }
+
+    private static String sha256(String raw) throws Exception {
+        byte[] bytes = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8));
+        StringBuilder result = new StringBuilder(64);
+        for (byte value : bytes) {
+            result.append(String.format("%02x", value));
+        }
+        return result.toString();
     }
 }

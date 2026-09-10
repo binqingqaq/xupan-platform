@@ -9,8 +9,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -36,7 +38,14 @@ class UserRepositoryTest {
                         UserAccount::passwordHash, UserAccount::status)
                 .containsExactly(id, "repo-test-alice", "Alice", "{bcrypt}hash", "ACTIVE");
         assertThat(repository.findById(id)).isPresent();
-        assertThat(repository.findByIdForUpdate(id)).isPresent();
+        assertThatThrownBy(() -> repository.findByIdForUpdate(id))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("外层事务");
+        UserAccount lockedUser = repository.executeInLockedUserTransaction(id, user -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            return user;
+        });
+        assertThat(lockedUser.id()).isEqualTo(id);
         assertThat(repository.existsAnyUser()).isTrue();
     }
 
@@ -61,6 +70,26 @@ class UserRepositoryTest {
                 .extracting(UserAccount::failedLoginCount, UserAccount::status, UserAccount::lockedUntil,
                         UserAccount::lastLoginIp, UserAccount::lastLoginAt)
                 .containsExactly(0, "ACTIVE", null, "192.0.2.1", loginAt);
+    }
+
+    @Test
+    void loginUpdatesDoNotReactivateDisabledOrDeletedUsers() {
+        long disabledId = repository.insert("repo-test-disabled", "Disabled", "hash", "DISABLED");
+        long deletedId = repository.insert("repo-test-deleted", "Deleted", "hash", "DELETED");
+        Instant loginAt = Instant.parse("2026-09-10T10:01:00Z");
+        Instant lockedUntil = Instant.parse("2026-09-10T10:15:00Z");
+
+        assertThat(repository.recordLoginFailure(disabledId, lockedUntil)).isZero();
+        assertThat(repository.clearLoginFailures(disabledId, "192.0.2.1", loginAt)).isZero();
+        assertThat(repository.recordLoginFailure(deletedId, lockedUntil)).isZero();
+        assertThat(repository.clearLoginFailures(deletedId, "192.0.2.1", loginAt)).isZero();
+
+        assertThat(repository.findById(disabledId)).get()
+                .extracting(UserAccount::status, UserAccount::failedLoginCount, UserAccount::lastLoginAt)
+                .containsExactly("DISABLED", 0, null);
+        assertThat(repository.findById(deletedId)).get()
+                .extracting(UserAccount::status, UserAccount::failedLoginCount, UserAccount::lastLoginAt)
+                .containsExactly("DELETED", 0, null);
     }
 
     @Test

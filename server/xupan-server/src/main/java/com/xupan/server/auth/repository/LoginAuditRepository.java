@@ -74,12 +74,10 @@ public class LoginAuditRepository {
         return value == null || value.length() <= maxLength ? value : value.substring(0, maxLength);
     }
 
+    /** The API accepts raw metadata only; every non-null value is hashed exactly once here. */
     static String digest(String value) {
         if (value == null) {
             return null;
-        }
-        if (value.matches("(?i)[0-9a-f]{64}")) {
-            return value.toLowerCase(Locale.ROOT);
         }
         try {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));

@@ -8,6 +8,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.function.Function;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 public class UserRepository {
@@ -31,9 +33,24 @@ public class UserRepository {
         return queryOne("SELECT " + USER_COLUMNS + " FROM sys_user WHERE id = ?", userId);
     }
 
-    @Transactional
+    /**
+     * Loads a user row with a database lock. This method must only be called from an
+     * already active outer transaction; use {@link #executeInLockedUserTransaction(long, Function)}
+     * when the caller does not own the transaction boundary.
+     */
     public Optional<UserAccount> findByIdForUpdate(long userId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("findByIdForUpdate 必须在外层事务中调用");
+        }
         return queryOne("SELECT " + USER_COLUMNS + " FROM sys_user WHERE id = ? FOR UPDATE", userId);
+    }
+
+    /** Runs the user validation/update workflow while the row lock remains held. */
+    @Transactional
+    public <T> T executeInLockedUserTransaction(long userId, Function<UserAccount, T> workflow) {
+        UserAccount user = findByIdForUpdate(userId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在: " + userId));
+        return workflow.apply(user);
     }
 
     @Transactional
@@ -58,6 +75,7 @@ public class UserRepository {
                        status = CASE WHEN ? IS NULL THEN 'ACTIVE' ELSE 'LOCKED' END,
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
+                   AND status NOT IN ('DISABLED', 'DELETED')
                 """, lockTimestamp, lockTimestamp, userId);
     }
 
@@ -72,6 +90,7 @@ public class UserRepository {
                        last_login_ip = ?,
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
+                   AND status NOT IN ('DISABLED', 'DELETED')
                 """, timestamp(loginAt), loginIp, userId);
     }
 
