@@ -9,3 +9,6 @@ spring:
 xupan:
   automation:
     enabled: false
+  auth:
+    bootstrap-admin:
+      enabled: false

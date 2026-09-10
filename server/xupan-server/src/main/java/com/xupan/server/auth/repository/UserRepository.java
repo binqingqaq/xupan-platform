@@ -114,6 +114,19 @@ public class UserRepository {
                 status, userId);
     }
 
+    @Transactional
+    public int assignRole(long userId, String roleCode) {
+        return jdbcTemplate.update("""
+                INSERT INTO sys_user_role (user_id, role_id)
+                SELECT ?, r.id
+                  FROM sys_role r
+                 WHERE r.role_code = ?
+                   AND NOT EXISTS (
+                       SELECT 1 FROM sys_user_role existing
+                        WHERE existing.user_id = ? AND existing.role_id = r.id)
+                """, userId, roleCode, userId);
+    }
+
     private Optional<UserAccount> queryOne(String sql, Object... args) {
         return jdbcTemplate.query(sql, (rs, rowNum) -> new UserAccount(
                         rs.getLong("id"), rs.getString("username"), rs.getString("display_name"),

@@ -6,6 +6,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
 
 @Service
@@ -31,6 +32,19 @@ public class PermissionService {
                    AND p.status = 'ACTIVE'
                  ORDER BY p.permission_code
                 """, String.class, userId));
+    }
+
+    public List<String> findRoleCodes(long userId) {
+        return jdbcTemplate.queryForList("""
+                SELECT DISTINCT r.role_code
+                  FROM sys_user u
+                  JOIN sys_user_role ur ON ur.user_id = u.id
+                  JOIN sys_role r ON r.id = ur.role_id
+                 WHERE u.id = ?
+                   AND u.status = 'ACTIVE'
+                   AND r.status = 'ACTIVE'
+                 ORDER BY r.role_code
+                """, String.class, userId);
     }
 
     public Set<GrantedAuthority> toAuthorities(Set<String> permissionCodes) {

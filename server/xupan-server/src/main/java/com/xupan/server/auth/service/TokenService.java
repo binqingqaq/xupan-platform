@@ -121,6 +121,12 @@ public class TokenService {
         });
     }
 
+    /** Allows the harmless logout action to remain idempotent after its session was revoked. */
+    public Optional<SessionRecord> findSessionForLogout(String rawAccessToken) {
+        String accessHash = sha256Optional(rawAccessToken);
+        return accessHash == null ? Optional.empty() : sessionRepository.findByAccessTokenHash(accessHash);
+    }
+
     public IssuedWsTicket issueWsTicket(long userId, String sessionId, String roomCode) {
         Instant now = clock.instant();
         UserAccount user = activeUser(userId, now);

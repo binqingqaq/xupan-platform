@@ -8,3 +8,9 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
   flyway:
     enabled: true
+xupan:
+  auth:
+    bootstrap-admin:
+      enabled: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_ENABLED:false}
+      username: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_USERNAME:}
+      password: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_PASSWORD:}

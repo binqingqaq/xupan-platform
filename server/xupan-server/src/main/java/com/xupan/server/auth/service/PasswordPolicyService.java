@@ -4,6 +4,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.UUID;
 
 @Service
 public class PasswordPolicyService {
@@ -14,6 +15,7 @@ public class PasswordPolicyService {
     public static final long LOCK_MINUTES = 15;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    private final String dummyPasswordHash = passwordEncoder.encode(UUID.randomUUID().toString());
 
     public void validateForCreation(String rawPassword) {
         if (rawPassword == null || rawPassword.length() < MIN_LENGTH || rawPassword.length() > MAX_LENGTH) {
@@ -33,6 +35,11 @@ public class PasswordPolicyService {
     public boolean matches(String rawPassword, String encodedPassword) {
         return rawPassword != null && encodedPassword != null
                 && passwordEncoder.matches(rawPassword, encodedPassword);
+    }
+
+    /** Performs the same BCrypt work for an unknown username without retaining a credential. */
+    public boolean matchesUnknownUser(String rawPassword) {
+        return matches(rawPassword, dummyPasswordHash);
     }
 
     public boolean shouldLock(int failedCount) {

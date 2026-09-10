@@ -32,10 +32,19 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         if (SecurityContextHolder.getContext().getAuthentication() == null) {
-            bearerToken(request.getHeader(HttpHeaders.AUTHORIZATION))
-                    .flatMap(tokenService::validateAccessToken)
-                    .flatMap(this::loadEnabledUser)
-                    .ifPresent(user -> authenticate(request, user));
+            Optional<String> rawToken = bearerToken(request.getHeader(HttpHeaders.AUTHORIZATION));
+            Optional<SessionRecord> session = rawToken.flatMap(tokenService::validateAccessToken);
+            if (session.isEmpty() && "/api/auth/logout".equals(request.getRequestURI())) {
+                session = rawToken.flatMap(tokenService::findSessionForLogout);
+            }
+            Optional<AuthenticatedSession> authenticatedSession = session.flatMap(value -> {
+                Optional<AuthenticatedUser> user = loadEnabledUser(value);
+                if (user.isEmpty() && "/api/auth/logout".equals(request.getRequestURI())) {
+                    user = loadUser(value);
+                }
+                return user.map(current -> new AuthenticatedSession(value.sessionId(), current));
+            });
+            authenticatedSession.ifPresent(value -> authenticate(request, value));
         }
         filterChain.doFilter(request, response);
     }
@@ -49,11 +58,21 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
         }
     }
 
-    private static void authenticate(HttpServletRequest request, AuthenticatedUser user) {
+    private Optional<AuthenticatedUser> loadUser(SessionRecord session) {
+        try {
+            return Optional.of(userDetailsService.loadUserById(session.userId()));
+        } catch (RuntimeException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private static void authenticate(HttpServletRequest request, AuthenticatedSession session) {
         UsernamePasswordAuthenticationToken authentication =
-                new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+                new UsernamePasswordAuthenticationToken(session.user(), null, session.user().getAuthorities());
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
         SecurityContextHolder.getContext().setAuthentication(authentication);
+        request.setAttribute(com.xupan.server.auth.service.AuthenticationService.SESSION_ID_ATTRIBUTE,
+                session.sessionId());
     }
 
     private static Optional<String> bearerToken(String header) {
@@ -70,5 +89,8 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
             return Optional.empty();
         }
         return Optional.of(token);
+    }
+
+    private record AuthenticatedSession(String sessionId, AuthenticatedUser user) {
     }
 }
