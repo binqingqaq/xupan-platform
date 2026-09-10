@@ -47,6 +47,74 @@ export interface AccountView {
   status: string
 }
 
+export interface CurrentUserView {
+  id: number
+  username: string
+  displayName: string
+  avatarKey: string | null
+  roles: string[]
+  permissions: string[]
+}
+
+export interface AdminUserView {
+  id: number
+  username: string
+  displayName: string
+  status: string
+}
+
+export interface VirtualWallet {
+  accountId: number
+  userId: number
+  userCode: string
+  displayName: string
+  balance: number
+  status: string
+}
+
+export interface WalletSummaryResponse extends VirtualWallet {
+  ledger: WalletLedgerEntry[]
+}
+
+export interface WalletLedgerEntry {
+  id: number
+  accountId: number
+  userId: number
+  operationType: string
+  amount: number
+  balanceBefore: number
+  balanceAfter: number
+  operatorUserId: number | null
+  operatorName: string
+  idempotencyKey: string
+  relatedBetId: number | null
+  issueNumber: string | null
+  reason: string
+  createdAt: string
+}
+
+export interface WalletGrantRequest {
+  amount: number
+  reason: string
+  idempotencyKey: string
+}
+
+export interface WalletAdjustmentRequest {
+  amount: number
+  reason: string
+  idempotencyKey: string
+}
+
+export interface WalletOperationResponse extends VirtualWallet {
+  balanceBefore: number | null
+  amount: number | null
+  balanceAfter: number | null
+  operationType: string | null
+  ledgerId: number | null
+  operatedAt: string | null
+  ledger: WalletLedgerEntry[]
+}
+
 export interface GameView {
   issueNumber: string
   status: 'OPEN' | 'CLOSED'

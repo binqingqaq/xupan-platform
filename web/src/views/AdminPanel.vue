@@ -1,27 +1,46 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
-import { api } from '../api'
-import type { AccountView, GameView, LedgerView, PlayType } from '../types'
+import { api, apiErrorMessage } from '../api'
+import type {
+  AdminUserView,
+  CurrentUserView,
+  GameView,
+  PlayType,
+  VirtualWallet,
+  WalletLedgerEntry,
+  WalletOperationResponse,
+} from '../types'
 
 const labels: Record<PlayType, string> = {
   FAN: '番', ANGLE: '角', CAR: '车', STRICT: '严', ADD: '加', POSITIVE: '正',
   TONG: '通', NONE: '无', ODD_EVEN: '单双', BIG_SMALL: '大小', SPECIAL: '特',
 }
 const current = ref<GameView | null>(null)
-const accounts = ref<AccountView[]>([])
-const selectedUser = ref('DEMO-USER')
-const ledger = ref<LedgerView[]>([])
+const currentUser = ref<CurrentUserView | null>(null)
+const users = ref<AdminUserView[]>([])
+const selectedUserId = ref<number | null>(null)
+const selectedWallet = ref<VirtualWallet | null>(null)
+const ledger = ref<WalletLedgerEntry[]>([])
+const walletMode = ref<'grant' | 'adjust'>('grant')
 const balanceAmount = ref(100)
-const balanceReason = ref('演示账户调整')
+const balanceReason = ref('首期虚拟余额分配')
+const idempotencyKey = ref(createIdempotencyKey())
+const lastOperation = ref<WalletOperationResponse | null>(null)
 const drawNumbers = ref<(number | null)[]>(Array(8).fill(null))
 const oddsDraft = ref<Partial<Record<PlayType, number>>>({})
 const feedback = ref('')
 const feedbackKind = ref<'success' | 'error'>('success')
 const busy = ref(false)
 
-const selectedAccount = computed(() => accounts.value.find(account => account.userCode === selectedUser.value))
+const canManageWallet = computed(() => currentUser.value?.roles.includes('ADMIN') === true)
+const selectedUser = computed(() => users.value.find(user => user.id === selectedUserId.value))
 const statusText = computed(() => current.value?.status === 'OPEN' ? '开放下注' : '已开奖')
+
+function createIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `wallet-${crypto.randomUUID()}`
+  return `wallet-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
   feedback.value = message
@@ -33,21 +52,35 @@ function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
 
 async function load() {
   try {
-    const [game, userAccounts] = await Promise.all([api.current(), api.accounts()])
+    const [game, user] = await Promise.all([api.current(), api.me()])
     current.value = game
-    accounts.value = userAccounts
+    currentUser.value = user
     game.odds.forEach(item => { oddsDraft.value[item.playType] = item.odds })
     drawNumbers.value = game.balls.map(ball => ball.number)
-    if (!selectedUser.value && userAccounts[0]) selectedUser.value = userAccounts[0].userCode
-    await loadLedger()
+    if (user.roles.includes('ADMIN')) await loadWalletUsers()
   } catch (error) {
-    showFeedback(error instanceof Error ? error.message : '后台数据加载失败', 'error')
+    showFeedback(apiErrorMessage(error, '后台数据加载失败'), 'error')
   }
 }
 
-async function loadLedger() {
-  if (!selectedUser.value) return
-  ledger.value = await api.ledger(selectedUser.value)
+async function loadWalletUsers() {
+  users.value = await api.getAdminUsers()
+  if (!users.value.some(user => user.id === selectedUserId.value)) selectedUserId.value = users.value[0]?.id ?? null
+  await loadSelectedWallet()
+}
+
+async function loadSelectedWallet() {
+  if (selectedUserId.value === null) {
+    selectedWallet.value = null
+    ledger.value = []
+    return
+  }
+  const [wallet, entries] = await Promise.all([
+    api.getAdminWallet(selectedUserId.value),
+    api.getAdminWalletLedger(selectedUserId.value),
+  ])
+  selectedWallet.value = wallet
+  ledger.value = entries
 }
 
 async function saveOdds(playType: PlayType) {
@@ -62,24 +95,36 @@ async function saveOdds(playType: PlayType) {
     await load()
     showFeedback(`${labels[playType]}赔率已保存`)
   } catch (error) {
-    showFeedback(error instanceof Error ? error.message : '赔率保存失败', 'error')
+    showFeedback(apiErrorMessage(error, '赔率保存失败'), 'error')
   } finally {
     busy.value = false
   }
 }
 
-async function adjustBalance() {
-  if (!selectedUser.value || !balanceAmount.value || !balanceReason.value.trim()) {
-    showFeedback('请输入调整金额和原因', 'error')
+async function submitWalletOperation() {
+  if (selectedUserId.value === null || !Number.isFinite(balanceAmount.value) || balanceAmount.value === 0 || !balanceReason.value.trim() || !idempotencyKey.value.trim()) {
+    showFeedback('请选择成员并填写有效金额、原因和幂等键', 'error')
+    return
+  }
+  if (walletMode.value === 'grant' && balanceAmount.value < 0) {
+    showFeedback('分配金额必须大于 0', 'error')
     return
   }
   busy.value = true
   try {
-    await api.adjustBalance(selectedUser.value, balanceAmount.value, balanceReason.value.trim())
-    await load()
-    showFeedback('演示余额已调整并记录流水')
+    const payload = {
+      amount: balanceAmount.value,
+      reason: balanceReason.value.trim(),
+      idempotencyKey: idempotencyKey.value.trim(),
+    }
+    lastOperation.value = walletMode.value === 'grant'
+      ? await api.grantWallet(selectedUserId.value, payload)
+      : await api.adjustWallet(selectedUserId.value, payload)
+    await loadSelectedWallet()
+    idempotencyKey.value = createIdempotencyKey()
+    showFeedback(walletMode.value === 'grant' ? '虚拟余额已分配并记录流水' : '虚拟余额已调整并记录流水')
   } catch (error) {
-    showFeedback(error instanceof Error ? error.message : '余额调整失败', 'error')
+    showFeedback(apiErrorMessage(error, '钱包操作未完成'), 'error')
   } finally {
     busy.value = false
   }
@@ -100,7 +145,7 @@ async function draw() {
     await load()
     showFeedback('本期已封盘并完成结算')
   } catch (error) {
-    showFeedback(error instanceof Error ? error.message : '开奖失败', 'error')
+    showFeedback(apiErrorMessage(error, '开奖失败'), 'error')
   } finally {
     busy.value = false
   }
@@ -113,7 +158,7 @@ async function resetIssue() {
     await load()
     showFeedback('下一期已开启')
   } catch (error) {
-    showFeedback(error instanceof Error ? error.message : '开启下一期失败', 'error')
+    showFeedback(apiErrorMessage(error, '开启下一期失败'), 'error')
   } finally {
     busy.value = false
   }
@@ -125,6 +170,10 @@ function money(value: number | null | undefined) {
 
 function dateTime(value: string) {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
+}
+
+function signedAmount(value: number) {
+  return `${value > 0 ? '+' : ''}${value.toFixed(2)}`
 }
 
 onMounted(load)
@@ -144,7 +193,7 @@ onMounted(load)
       <section class="admin-summary" aria-label="运行概览">
         <div class="summary-item"><span>当前期</span><strong>{{ current?.issueNumber || '--' }}</strong></div>
         <div class="summary-item"><span>状态</span><strong>{{ statusText }}</strong></div>
-        <div class="summary-item"><span>演示余额</span><strong>{{ money(selectedAccount?.balance) }}</strong></div>
+        <div class="summary-item"><span>成员虚拟余额</span><strong>{{ money(selectedWallet?.balance) }}</strong></div>
         <div class="summary-item"><span>本期注单</span><strong>{{ current?.bets.length || 0 }} 条</strong></div>
       </section>
 
@@ -160,25 +209,35 @@ onMounted(load)
           </div>
         </section>
 
-        <section class="admin-section">
-          <div class="section-title"><div><span class="eyebrow">ACCOUNT</span><h2>演示余额</h2></div><span>虚拟账户</span></div>
-          <label class="field-label" for="account-select">账户</label>
-          <select id="account-select" v-model="selectedUser" @change="loadLedger">
-            <option v-for="account in accounts" :key="account.userCode" :value="account.userCode">{{ account.displayName }} · {{ account.userCode }}</option>
+        <section v-if="canManageWallet" class="admin-section">
+          <div class="section-title"><div><span class="eyebrow">WALLET</span><h2>成员虚拟余额</h2></div><span>正式用户</span></div>
+          <label class="field-label" for="user-select">目标成员</label>
+          <select id="user-select" v-model="selectedUserId" @change="loadSelectedWallet">
+            <option v-for="user in users" :key="user.id" :value="user.id">{{ user.displayName }} · {{ user.username }}</option>
           </select>
-          <div class="account-balance">{{ money(selectedAccount?.balance) }}</div>
+          <div class="account-balance">{{ money(selectedWallet?.balance) }}</div>
           <div class="balance-form">
-            <label class="field-label" for="balance-amount">调整金额</label>
-            <input id="balance-amount" v-model.number="balanceAmount" type="number" step="0.01" />
+            <div class="action-row">
+              <button type="button" class="secondary-button" :class="{ active: walletMode === 'grant' }" :disabled="busy" @click="walletMode = 'grant'">分配</button>
+              <button type="button" class="secondary-button" :class="{ active: walletMode === 'adjust' }" :disabled="busy" @click="walletMode = 'adjust'">调整</button>
+            </div>
+            <label class="field-label" for="balance-amount">{{ walletMode === 'grant' ? '分配金额' : '调整金额' }}</label>
+            <input id="balance-amount" v-model.number="balanceAmount" type="number" :min="walletMode === 'grant' ? '0.01' : undefined" step="0.01" />
             <label class="field-label" for="balance-reason">原因</label>
-            <input id="balance-reason" v-model="balanceReason" type="text" />
-            <button type="button" class="primary-button" :disabled="busy" @click="adjustBalance">提交余额调整</button>
+            <input id="balance-reason" v-model="balanceReason" type="text" maxlength="255" />
+            <label class="field-label" for="idempotency-key">幂等键</label>
+            <input id="idempotency-key" v-model="idempotencyKey" type="text" maxlength="128" />
+            <button type="button" class="primary-button" :disabled="busy || !selectedUserId" @click="submitWalletOperation">提交{{ walletMode === 'grant' ? '分配' : '调整' }}</button>
+          </div>
+          <div v-if="lastOperation" class="ledger-list">
+            <div class="ledger-row"><span>本次操作 · {{ lastOperation.operationType }}</span><strong class="positive">{{ signedAmount(lastOperation.amount ?? 0) }}</strong><time>流水 {{ lastOperation.ledgerId }}</time></div>
+            <div class="ledger-row"><span>余额 {{ money(lastOperation.balanceBefore) }} → {{ money(lastOperation.balanceAfter) }}</span><strong>{{ selectedUser?.displayName }}</strong><time></time></div>
           </div>
           <div class="ledger-list">
-            <div v-for="entry in ledger.slice(0, 4)" :key="entry.id" class="ledger-row">
-              <span>{{ entry.reason }}</span><strong :class="entry.amount > 0 ? 'positive' : 'negative'">{{ entry.amount > 0 ? '+' : '' }}{{ entry.amount.toFixed(2) }}</strong><time>{{ dateTime(entry.createdAt) }}</time>
+            <div v-for="entry in ledger.slice(0, 10)" :key="entry.id" class="ledger-row">
+              <span>{{ entry.operationType }} · {{ entry.reason }}<small>前 {{ money(entry.balanceBefore) }} / 后 {{ money(entry.balanceAfter) }} · {{ entry.operatorName }}<template v-if="entry.relatedBetId"> · 注单 {{ entry.relatedBetId }}</template><template v-if="entry.issueNumber"> · {{ entry.issueNumber }}期</template></small></span><strong :class="entry.amount > 0 ? 'positive' : 'negative'">{{ signedAmount(entry.amount) }}</strong><time>{{ dateTime(entry.createdAt) }}</time>
             </div>
-            <p v-if="!ledger.length" class="empty-state">暂无余额流水</p>
+            <p v-if="!ledger.length" class="empty-state">暂无虚拟余额流水</p>
           </div>
         </section>
 

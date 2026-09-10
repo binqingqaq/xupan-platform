@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { api } from '../api'
-import type { BallView, GameView, PlayType } from '../types'
+import { api, apiErrorMessage, ApiError } from '../api'
+import type { BallView, GameView, PlayType, VirtualWallet } from '../types'
 
 type MessageType = 'user' | 'robot' | 'system' | 'time' | 'result' | 'history'
 
@@ -31,6 +31,7 @@ interface OddsCard {
 }
 
 const current = ref<GameView | null>(null)
+const wallet = ref<VirtualWallet | null>(null)
 const selectedBall = ref(1)
 const messageInput = ref('')
 const keyboardOpen = ref(false)
@@ -45,6 +46,12 @@ const scratchRevealed = ref(false)
 const noticeOpen = ref(false)
 const feedback = ref('')
 const feedbackKind = ref<'success' | 'error' | ''>('')
+const authenticated = ref(api.hasAccessToken())
+const sessionChecked = ref(false)
+const loginUsername = ref('')
+const loginPassword = ref('')
+const loginBusy = ref(false)
+const loginError = ref('')
 const messageScroll = ref<HTMLElement | null>(null)
 const localMessages = ref<RoomMessage[]>([])
 const clockTick = ref(Date.now())
@@ -80,7 +87,7 @@ const displayIssueNumber = computed(() => {
   const numeric = Number(match[1])
   return Number.isFinite(numeric) ? match[1] : issueNumber.value
 })
-const balance = computed(() => current.value?.account.balance.toFixed(2) || '0.00')
+const balance = computed(() => Number(wallet.value?.balance ?? 0).toFixed(2))
 const countdown = computed(() => {
   clockTick.value
   const game = current.value
@@ -120,7 +127,7 @@ const messages = computed<RoomMessage[]>(() => {
   const rows: RoomMessage[] = []
   referenceNames.forEach((name, index) => {
     rows.push({ id: `reference-user-${index}`, type: 'user', name, body: referenceBets[index] })
-    rows.push({ id: `reference-robot-${index}`, type: 'robot', name: '机器人', body: `@${name}  攻击成功，使用粮草${referenceBets[index].match(/\d+$/)?.[0] || '100'}, 剩余粮草：${(30 + index * 143.17).toFixed(2)}` })
+    rows.push({ id: `reference-robot-${index}`, type: 'robot', name: '机器人', body: `@${name}  攻击成功，使用虚拟余额${referenceBets[index].match(/\d+$/)?.[0] || '100'}, 当前虚拟余额：${(30 + index * 143.17).toFixed(2)}` })
   })
   rows.push({ id: 'stop-notice', type: 'robot', name: '机器人', body: '离封盘还剩30秒！\n20秒以内攻击，容易攻击失败退单!' })
   rows.push({ id: 'check-list', type: 'robot', name: '机器人', body: `-----------\n${displayIssueNumber.value}\n核对列表:(演示)\n(小静) "14无2/37，14角10"\n(拼搏人生) "3通24/68，14无3/55"\n(再来一次) "单157，4正228"\n(追光者) "124/163，3无4/30"\n-----------\n不在核对列表无效!` })
@@ -136,7 +143,7 @@ const messages = computed<RoomMessage[]>(() => {
     ? `${displayIssueNumber.value}结果:\n${game.balls.map(ball => ball.number === null ? '--' : String(ball.number).padStart(2, '0')).join(',')}\n开奖和结算已完成`
     : game?.phase === 'DRAWING' ? `${displayIssueNumber.value}期正在开奖中，开奖号码滚动展示...` : '等待开奖消息' })
   rows.push({ id: 'tail-user', type: 'user', name: '关羽', body: '03特194' })
-  rows.push({ id: 'tail-robot', type: 'robot', name: '机器人', body: '@关羽  攻击成功，使用粮草194, 剩余粮草：445.93' })
+  rows.push({ id: 'tail-robot', type: 'robot', name: '机器人', body: '@关羽  攻击成功，使用虚拟余额194, 当前虚拟余额：445.93' })
   rows.push(...localMessages.value)
   return rows
 })
@@ -157,13 +164,44 @@ function scrollToBottom() {
 }
 
 async function load() {
+  if (sessionChecked.value && !authenticated.value) return
   try {
-    const next = await api.current()
+    const [next, nextWallet] = await Promise.all([api.current(), api.getMyWallet()])
     current.value = next
+    wallet.value = nextWallet
+    authenticated.value = true
     serverOffsetMs.value = Date.now() - Date.parse(next.serverNow)
     scrollToBottom()
   } catch (error) {
-    showFeedback(error instanceof Error ? error.message : '页面加载失败', 'error')
+    if (error instanceof ApiError && error.status === 401) {
+      authenticated.value = false
+      loginError.value = '登录状态已失效，请重新登录'
+    } else {
+      showFeedback(apiErrorMessage(error, '页面加载失败'), 'error')
+    }
+  } finally {
+    sessionChecked.value = true
+  }
+}
+
+async function login() {
+  if (!loginUsername.value.trim() || !loginPassword.value) {
+    loginError.value = '请输入用户名和密码'
+    return
+  }
+  loginBusy.value = true
+  loginError.value = ''
+  try {
+    await api.login(loginUsername.value.trim(), loginPassword.value)
+    authenticated.value = true
+    sessionChecked.value = false
+    loginPassword.value = ''
+    await load()
+  } catch (error) {
+    loginError.value = apiErrorMessage(error, '登录失败，请稍后重试')
+    authenticated.value = false
+  } finally {
+    loginBusy.value = false
   }
 }
 
@@ -257,13 +295,14 @@ async function submitMessage() {
     return
   }
   try {
-    await api.placeBet(payload)
+    await api.placeBet({ ...payload, idempotencyKey: createBetIdempotencyKey() })
     await load()
-    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: `@徒  攻击成功，使用粮草${payload.stake.toFixed(0)}, 剩余粮草：${balance.value}` })
+    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: `@徒  攻击成功，使用虚拟余额${payload.stake.toFixed(0)}, 当前虚拟余额：${balance.value}` })
     showFeedback('下注已发送')
   } catch (error) {
-    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: `@徒 下注失败：${error instanceof Error ? error.message : '请稍后重试'}` })
-    showFeedback(error instanceof Error ? error.message : '下注失败', 'error')
+    const message = apiErrorMessage(error, '下注失败，请稍后重试')
+    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: `@徒 下注失败：${message}` })
+    showFeedback(message, 'error')
   }
   scrollToBottom()
 }
@@ -296,10 +335,15 @@ function avatarText(name: string) {
   return name === '机器人' ? '机' : name.slice(0, 1)
 }
 
+function createBetIdempotencyKey() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `bet-${crypto.randomUUID()}`
+  return `bet-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 onMounted(() => {
   document.body.classList.add('reference-room-body')
   load()
-  refreshTimer = window.setInterval(load, 1000)
+  refreshTimer = window.setInterval(() => { if (authenticated.value) void load() }, 1000)
   countdownTimer = window.setInterval(() => {
     clockTick.value = Date.now()
   }, 1000)
@@ -316,7 +360,7 @@ onUnmounted(() => {
   <div class="reference-room">
     <header class="reference-header">
       <div class="reference-toolbar">
-        <strong class="balance-text">余额:{{ balance }}</strong>
+        <strong class="balance-text">虚拟余额:{{ balance }}</strong>
         <strong class="reference-user">徒</strong>
         <div class="header-actions">
           <button class="quick-button" type="button" @click="quickOpen = !quickOpen">快捷</button>
@@ -477,5 +521,17 @@ onUnmounted(() => {
     </div>
 
     <p v-if="feedback" class="reference-toast" :class="`toast-${feedbackKind}`" role="status">{{ feedback }}</p>
+
+    <div v-if="!authenticated" class="reference-overlay light-overlay">
+      <section class="notice-panel" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <h2 id="login-title">登录 XUPAN</h2>
+        <form class="settings-body" @submit.prevent="login">
+          <label>用户名<input v-model="loginUsername" autocomplete="username" required /></label>
+          <label>密码<input v-model="loginPassword" type="password" autocomplete="current-password" required /></label>
+          <button class="settings-save" type="submit" :disabled="loginBusy">{{ loginBusy ? '登录中...' : '登录' }}</button>
+          <p v-if="loginError" class="toast-error" role="alert">{{ loginError }}</p>
+        </form>
+      </section>
+    </div>
   </div>
 </template>
