@@ -49,6 +49,7 @@ class TokenServiceTest {
         SessionRecord persisted = captor.getAllValues().get(0);
         assertThat(persisted.accessTokenHash()).isEqualTo(TokenService.sha256(first.accessToken()));
         assertThat(persisted.refreshTokenHash()).isEqualTo(TokenService.sha256(first.refreshToken()));
+        assertThat(persisted.securityVersion()).isEqualTo(user.securityVersion());
         assertThat(persisted.accessTokenHash()).doesNotContain(first.accessToken());
         assertThat(persisted.refreshTokenHash()).doesNotContain(first.refreshToken());
         assertThat(persisted.ipDigest()).isEqualTo(TokenService.sha256("192.0.2.10"));
@@ -117,6 +118,21 @@ class TokenServiceTest {
         assertThat(java.util.Base64.getUrlDecoder().decode(rotated.refreshToken())).hasSize(TokenService.REFRESH_TOKEN_BYTES);
         assertThatThrownBy(() -> service.refresh("refresh-one", TokenService.RequestMetadata.empty()))
                 .isInstanceOf(TokenService.InvalidTokenException.class);
+    }
+
+    @Test
+    void refreshRejectsSessionIssuedBeforeSecurityVersionChange() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        UserRepository users = mock(UserRepository.class);
+        when(users.findById(7L)).thenReturn(Optional.of(activeUser(7L, 1L)));
+        TokenService service = service(sessions, users);
+        SessionRecord current = session("session", 7L, NOW.plusSeconds(60), null, 0L);
+        when(sessions.findByRefreshTokenHash(TokenService.sha256("refresh-one")))
+                .thenReturn(Optional.of(current));
+
+        assertThatThrownBy(() -> service.refresh("refresh-one", TokenService.RequestMetadata.empty()))
+                .isInstanceOf(TokenService.InvalidTokenException.class)
+                .hasMessage("刷新令牌版本无效");
     }
 
     @Test

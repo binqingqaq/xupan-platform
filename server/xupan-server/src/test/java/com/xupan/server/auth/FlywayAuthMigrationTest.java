@@ -55,14 +55,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV6InOrder() {
+    void appliesV1ThroughV7InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     @Test
@@ -78,7 +78,7 @@ class FlywayAuthMigrationTest {
         assertThat(columnNames("AUTH_SESSION")).containsExactlyInAnyOrder(
                 "ID", "SESSION_ID", "USER_ID", "ACCESS_TOKEN_HASH", "ACCESS_EXPIRES_AT",
                 "REFRESH_TOKEN_HASH", "REFRESH_EXPIRES_AT", "DEVICE_LABEL", "IP_DIGEST",
-                "USER_AGENT_DIGEST", "LAST_SEEN_AT", "REVOKED_AT", "CREATED_AT");
+                "USER_AGENT_DIGEST", "LAST_SEEN_AT", "REVOKED_AT", "CREATED_AT", "SECURITY_VERSION");
         assertThat(columnNames("SYS_OPERATION_LOG")).containsExactlyInAnyOrder(
                 "ID", "OPERATOR_USER_ID", "PERMISSION_CODE", "HTTP_METHOD", "REQUEST_PATH",
                 "RESOURCE_ID", "RESULT", "ERROR_CODE", "REQUEST_SUMMARY", "IP_DIGEST", "CREATED_AT");
@@ -93,7 +93,7 @@ class FlywayAuthMigrationTest {
                 "UK_SYS_PERMISSION_CODE", "CK_SYS_PERMISSION_TYPE", "CK_SYS_PERMISSION_STATUS");
         assertThat(constraintNames("AUTH_SESSION")).contains(
                 "UK_AUTH_SESSION_ID", "UK_AUTH_SESSION_ACCESS_HASH", "UK_AUTH_SESSION_REFRESH_HASH",
-                "FK_AUTH_SESSION_USER");
+                "FK_AUTH_SESSION_USER", "CK_AUTH_SESSION_SECURITY_VERSION");
         assertThat(constraintNames("AUTH_WS_TICKET")).contains(
                 "UK_AUTH_WS_TICKET_HASH", "FK_AUTH_WS_TICKET_USER", "FK_AUTH_WS_TICKET_SESSION");
         assertThat(constraintNames("SYS_LOGIN_LOG")).contains(
@@ -105,7 +105,8 @@ class FlywayAuthMigrationTest {
         assertThat(indexNames("SYS_USER_ROLE")).contains("IDX_SYS_USER_ROLE_ROLE");
         assertThat(indexNames("SYS_ROLE_PERMISSION")).contains("IDX_SYS_ROLE_PERMISSION_PERMISSION");
         assertThat(indexNames("AUTH_SESSION")).contains(
-                "IDX_AUTH_SESSION_USER", "IDX_AUTH_SESSION_ACCESS_EXPIRY");
+                "IDX_AUTH_SESSION_USER", "IDX_AUTH_SESSION_ACCESS_EXPIRY",
+                "IDX_AUTH_SESSION_SECURITY_VERSION");
         assertThat(indexNames("AUTH_WS_TICKET")).contains("IDX_AUTH_WS_TICKET_EXPIRY");
         assertThat(indexNames("SYS_LOGIN_LOG")).contains(
                 "IDX_SYS_LOGIN_LOG_USER", "IDX_SYS_LOGIN_LOG_CREATED");
@@ -128,6 +129,26 @@ class FlywayAuthMigrationTest {
 
         EXPECTED_ROLE_PERMISSIONS.forEach((roleCode, expectedPermissions) ->
                 assertThat(permissionCodesForRole(roleCode)).isEqualTo(expectedPermissions));
+    }
+
+    @Test
+    void appliesSessionSecurityVersionDefaultAndConstraint() {
+        long userId = insertUser("migration-session-security-version");
+        try {
+            insertSession(userId, "migration-session-security-version", hash('v'), hash('w'));
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT security_version FROM auth_session WHERE session_id = ?", Long.class,
+                    "migration-session-security-version")).isZero();
+
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE auth_session SET security_version = -1 WHERE session_id = ?",
+                    "migration-session-security-version"))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbcTemplate.update("DELETE FROM auth_session WHERE session_id = ?",
+                    "migration-session-security-version");
+            jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", userId);
+        }
     }
 
     @Test

@@ -57,7 +57,10 @@ class SessionRepositoryTest {
                 "refresh-two", now.plusSeconds(7200));
         assertThat(repository.findByAccessTokenHash("access-one")).isEmpty();
         assertThat(repository.findByRefreshTokenHash("refresh-two")).get()
-                .extracting(SessionRecord::accessTokenHash).isEqualTo("access-two");
+                .satisfies(value -> {
+                    assertThat(value.accessTokenHash()).isEqualTo("access-two");
+                    assertThat(value.securityVersion()).isEqualTo(0L);
+                });
         assertThat(repository.rotateTokensIfCurrent("repo-session-one", "refresh-one", "access-three",
                 now.plusSeconds(180), "refresh-three", now.plusSeconds(7300))).isFalse();
         assertThat(repository.rotateTokensIfCurrent("repo-session-one", "refresh-two", "access-three",
@@ -82,6 +85,77 @@ class SessionRepositoryTest {
         assertThat(repository.revokeAllByUserId(userId, now.plusSeconds(21))).isEqualTo(0);
         assertThat(repository.findByAccessTokenHash("access-three")).get()
                 .extracting(SessionRecord::lastSeenAt).isEqualTo(seenAt);
+    }
+
+    @Test
+    void persistsIssuanceSecurityVersionInsteadOfReadingCurrentUserVersion() {
+        userId = userRepository.insert("repo-session-user-version", "Version User", "hash", "ACTIVE");
+        Instant now = Instant.parse("2026-09-10T10:00:00Z");
+        repository.insert(new SessionRecord(0L, "repo-session-version", userId, "access-version",
+                now.plusSeconds(1800), "refresh-version", now.plusSeconds(3600), "test-device", null, null,
+                null, null, now, 0L));
+
+        assertThat(repository.findByAccessTokenHash("access-version")).get()
+                .extracting(SessionRecord::securityVersion).isEqualTo(0L);
+        userRepository.incrementSecurityVersion(userId);
+        assertThat(repository.findByAccessTokenHash("access-version")).get()
+                .extracting(SessionRecord::securityVersion).isEqualTo(0L);
+        assertThat(repository.findByAccessTokenHash("access-version")).get()
+                .satisfies(session -> assertThat(session.isAccessTokenValid(now, 1L)).isFalse());
+    }
+
+    @Test
+    void rejectsWsTicketWhenSessionIsRevokedExpiredOrUserVersionIsChanged() {
+        userId = userRepository.insert("repo-session-user-ticket-state", "Ticket State User", "hash", "ACTIVE");
+        Instant now = Instant.parse("2026-09-10T10:00:00Z");
+        repository.insert(new SessionRecord(0L, "repo-session-ticket-state", userId, "access-state",
+                now.plusSeconds(60), "refresh-state", now.plusSeconds(120), "test-device", null, null,
+                null, null, now, 0L));
+        repository.insertWsTicket(new WsTicket("ticket-state-hash", userId, "repo-session-ticket-state", "room-a",
+                now.plusSeconds(60), null, now));
+
+        userRepository.incrementSecurityVersion(userId);
+        assertThat(repository.findUsableWsTicket("ticket-state-hash", userId, "repo-session-ticket-state",
+                "room-a", now)).isEmpty();
+        assertThat(repository.consumeWsTicket("ticket-state-hash", userId, "repo-session-ticket-state",
+                "room-a", now)).isEmpty();
+
+        userRepository.updateStatus(userId, "ACTIVE");
+        repository.insert(new SessionRecord(0L, "repo-session-ticket-revoked", userId, "access-revoked",
+                now.plusSeconds(60), "refresh-revoked", now.plusSeconds(120), "test-device", null, null,
+                null, null, now, 1L));
+        repository.insertWsTicket(new WsTicket("ticket-revoked-hash", userId, "repo-session-ticket-revoked", "room-a",
+                now.plusSeconds(60), null, now));
+        repository.revoke("repo-session-ticket-revoked", now);
+        assertThat(repository.consumeWsTicket("ticket-revoked-hash", userId, "repo-session-ticket-revoked",
+                "room-a", now)).isEmpty();
+
+        repository.insert(new SessionRecord(0L, "repo-session-ticket-expired", userId, "access-expired-state",
+                now.minusSeconds(1), "refresh-expired-state", now.plusSeconds(120), "test-device", null, null,
+                null, null, now.minusSeconds(120), 1L));
+        repository.insertWsTicket(new WsTicket("ticket-expired-session-hash", userId, "repo-session-ticket-expired",
+                "room-a", now.plusSeconds(60), null, now));
+        assertThat(repository.consumeWsTicket("ticket-expired-session-hash", userId, "repo-session-ticket-expired",
+                "room-a", now)).isEmpty();
+
+        repository.insert(new SessionRecord(0L, "repo-session-ticket-refresh-expired", userId,
+                "access-refresh-expired", now.plusSeconds(60), "refresh-expired-session",
+                now.minusSeconds(1), "test-device", null, null, null, null, now, 1L));
+        repository.insertWsTicket(new WsTicket("ticket-refresh-expired-hash", userId,
+                "repo-session-ticket-refresh-expired", "room-a", now.plusSeconds(60), null, now));
+        assertThat(repository.consumeWsTicket("ticket-refresh-expired-hash", userId,
+                "repo-session-ticket-refresh-expired", "room-a", now)).isEmpty();
+
+        repository.insert(new SessionRecord(0L, "repo-session-ticket-disabled", userId, "access-disabled-state",
+                now.plusSeconds(60), "refresh-disabled-state", now.plusSeconds(120), "test-device", null, null,
+                null, null, now, 1L));
+        repository.insertWsTicket(new WsTicket("ticket-disabled-user-hash", userId, "repo-session-ticket-disabled",
+                "room-a", now.plusSeconds(60), null, now));
+        userRepository.updateStatus(userId, "DISABLED");
+        assertThat(repository.findUsableWsTicket("ticket-disabled-user-hash", userId,
+                "repo-session-ticket-disabled", "room-a", now)).isEmpty();
+        assertThat(repository.consumeWsTicket("ticket-disabled-user-hash", userId,
+                "repo-session-ticket-disabled", "room-a", now)).isEmpty();
     }
 
     @Test

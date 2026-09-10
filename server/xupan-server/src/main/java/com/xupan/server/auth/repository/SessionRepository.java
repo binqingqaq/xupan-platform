@@ -17,7 +17,7 @@ public class SessionRepository {
             s.id, s.session_id, s.user_id, s.access_token_hash, s.access_expires_at,
             s.refresh_token_hash, s.refresh_expires_at, s.device_label, s.ip_digest,
             s.user_agent_digest, s.last_seen_at, s.revoked_at, s.created_at,
-            u.security_version AS user_security_version
+            s.security_version
             """;
     private static final String WS_TICKET_COLUMNS = """
             t.id, t.ticket_hash, t.user_id, t.session_id, t.room_code,
@@ -36,12 +36,12 @@ public class SessionRepository {
                 INSERT INTO auth_session
                     (session_id, user_id, access_token_hash, access_expires_at,
                      refresh_token_hash, refresh_expires_at, device_label, ip_digest,
-                     user_agent_digest, last_seen_at, revoked_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     user_agent_digest, last_seen_at, revoked_at, created_at, security_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, session.sessionId(), session.userId(), session.accessTokenHash(),
                 timestamp(session.accessExpiresAt()), session.refreshTokenHash(), timestamp(session.refreshExpiresAt()),
                 session.deviceLabel(), session.ipDigest(), session.userAgentDigest(), timestamp(session.lastSeenAt()),
-                timestamp(session.revokedAt()), timestamp(session.createdAt()));
+                timestamp(session.revokedAt()), timestamp(session.createdAt()), session.securityVersion());
     }
 
     public Optional<SessionRecord> findByAccessTokenHash(String tokenHash) {
@@ -99,12 +99,19 @@ public class SessionRepository {
                    AND EXISTS (
                        SELECT 1
                          FROM auth_session s
+                         JOIN sys_user u ON u.id = s.user_id
                         WHERE s.session_id = t.session_id
                           AND s.user_id = t.user_id
+                          AND s.revoked_at IS NULL
+                          AND s.access_expires_at > ?
+                          AND s.refresh_expires_at > ?
+                          AND s.security_version = u.security_version
+                          AND u.status = 'ACTIVE'
                    )
                 """.formatted(WS_TICKET_COLUMNS),
                 (rs, rowNum) -> mapWsTicket(rs), ticketHash, userId, sessionId,
-                normalizedRoomCode, normalizedRoomCode, timestamp(now)).stream().findFirst();
+                normalizedRoomCode, normalizedRoomCode, timestamp(now), timestamp(now), timestamp(now))
+                .stream().findFirst();
     }
 
     /** Atomically marks one matching, unexpired ticket as consumed. */
@@ -124,11 +131,17 @@ public class SessionRepository {
                    AND EXISTS (
                        SELECT 1
                          FROM auth_session s
+                         JOIN sys_user u ON u.id = s.user_id
                         WHERE s.session_id = auth_ws_ticket.session_id
                           AND s.user_id = auth_ws_ticket.user_id
+                          AND s.revoked_at IS NULL
+                          AND s.access_expires_at > ?
+                          AND s.refresh_expires_at > ?
+                          AND s.security_version = u.security_version
+                          AND u.status = 'ACTIVE'
                    )
                 """, timestamp(now), ticketHash, userId, sessionId, normalizedRoomCode, normalizedRoomCode,
-                timestamp(now)) == 1;
+                timestamp(now), timestamp(now), timestamp(now)) == 1;
     }
 
     public boolean markWsTicketUsed(String ticketHash, long userId, String sessionId, String roomCode) {
@@ -220,7 +233,7 @@ public class SessionRepository {
                         rs.getString("device_label"), rs.getString("ip_digest"),
                         rs.getString("user_agent_digest"), instant(rs.getTimestamp("last_seen_at")),
                         instant(rs.getTimestamp("revoked_at")), instant(rs.getTimestamp("created_at")),
-                        rs.getLong("user_security_version")), args).stream().findFirst();
+                        rs.getLong("security_version")), args).stream().findFirst();
     }
 
     private static WsTicket mapWsTicket(java.sql.ResultSet resultSet)

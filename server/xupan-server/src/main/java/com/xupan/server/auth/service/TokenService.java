@@ -83,7 +83,7 @@ public class TokenService {
                 .filter(session -> session.isRefreshTokenValid(now))
                 .orElseThrow(() -> new InvalidTokenException("刷新令牌无效"));
         UserAccount user = activeUser(current.userId(), now);
-        if (current.securityVersion() >= 0 && current.securityVersion() != user.securityVersion()) {
+        if (current.securityVersion() != user.securityVersion()) {
             throw new InvalidTokenException("刷新令牌版本无效");
         }
 
@@ -117,9 +117,7 @@ public class TokenService {
             Optional<UserAccount> user = userRepository.findById(session.userId());
             return user.isPresent()
                     && isActive(user.get(), now)
-                    && session.isAccessTokenValid(now, user.get().securityVersion())
-                    && (session.securityVersion() < 0
-                    || session.securityVersion() == user.get().securityVersion());
+                    && session.isAccessTokenValid(now, user.get().securityVersion());
         });
     }
 
