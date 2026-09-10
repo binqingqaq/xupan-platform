@@ -104,13 +104,12 @@ public class SessionRepository {
                           AND s.user_id = t.user_id
                           AND s.revoked_at IS NULL
                           AND s.access_expires_at > ?
-                          AND s.refresh_expires_at > ?
                           AND s.security_version = u.security_version
                           AND u.status = 'ACTIVE'
                    )
                 """.formatted(WS_TICKET_COLUMNS),
                 (rs, rowNum) -> mapWsTicket(rs), ticketHash, userId, sessionId,
-                normalizedRoomCode, normalizedRoomCode, timestamp(now), timestamp(now), timestamp(now))
+                normalizedRoomCode, normalizedRoomCode, timestamp(now), timestamp(now))
                 .stream().findFirst();
     }
 
@@ -136,12 +135,11 @@ public class SessionRepository {
                           AND s.user_id = auth_ws_ticket.user_id
                           AND s.revoked_at IS NULL
                           AND s.access_expires_at > ?
-                          AND s.refresh_expires_at > ?
                           AND s.security_version = u.security_version
                           AND u.status = 'ACTIVE'
                    )
                 """, timestamp(now), ticketHash, userId, sessionId, normalizedRoomCode, normalizedRoomCode,
-                timestamp(now), timestamp(now), timestamp(now)) == 1;
+                timestamp(now), timestamp(now)) == 1;
     }
 
     public boolean markWsTicketUsed(String ticketHash, long userId, String sessionId, String roomCode) {

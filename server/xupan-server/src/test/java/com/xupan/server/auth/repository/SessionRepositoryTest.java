@@ -143,8 +143,10 @@ class SessionRepositoryTest {
                 now.minusSeconds(1), "test-device", null, null, null, null, now, 1L));
         repository.insertWsTicket(new WsTicket("ticket-refresh-expired-hash", userId,
                 "repo-session-ticket-refresh-expired", "room-a", now.plusSeconds(60), null, now));
+        assertThat(repository.findUsableWsTicket("ticket-refresh-expired-hash", userId,
+                "repo-session-ticket-refresh-expired", "room-a", now)).isPresent();
         assertThat(repository.consumeWsTicket("ticket-refresh-expired-hash", userId,
-                "repo-session-ticket-refresh-expired", "room-a", now)).isEmpty();
+                "repo-session-ticket-refresh-expired", "room-a", now)).isPresent();
 
         repository.insert(new SessionRecord(0L, "repo-session-ticket-disabled", userId, "access-disabled-state",
                 now.plusSeconds(60), "refresh-disabled-state", now.plusSeconds(120), "test-device", null, null,
