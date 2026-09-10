@@ -22,7 +22,7 @@ public record WsTicket(
     public boolean belongsTo(long expectedUserId, String expectedSessionId, String expectedRoomCode) {
         return userId == expectedUserId
                 && Objects.equals(sessionId, expectedSessionId)
-                && Objects.equals(roomCode, expectedRoomCode);
+                && Objects.equals(normalizeRoomCode(roomCode), normalizeRoomCode(expectedRoomCode));
     }
 
     public boolean isUsableAt(Instant now) {
@@ -31,5 +31,9 @@ public record WsTicket(
 
     public WsTicket withUsedAt(Instant value) {
         return new WsTicket(id, ticketHash, userId, sessionId, roomCode, expiresAt, value, createdAt);
+    }
+
+    private static String normalizeRoomCode(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

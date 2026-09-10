@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
@@ -17,6 +18,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -91,7 +93,7 @@ class SessionRepositoryTest {
                 now.plusSeconds(60), null, now);
         repository.insertWsTicket(ticket);
 
-        assertThat(repository.findByTicketHash("ticket-hash")).get()
+        assertThat(repository.findWsTicketByHash("ticket-hash", userId, "repo-session-ticket", "room-a", now)).get()
                 .extracting(WsTicket::userId, WsTicket::sessionId, WsTicket::roomCode)
                 .containsExactly(userId, "repo-session-ticket", "room-a");
         assertThat(repository.findUsableWsTicket("ticket-hash", userId, "repo-session-ticket", "room-a", now))
@@ -121,8 +123,9 @@ class SessionRepositoryTest {
 
         assertThat(repository.consumeWsTicket("expired-ticket-hash", userId, "repo-session-expired-ticket", "room-a",
                 expiresAt)).isEmpty();
-        assertThat(repository.findByTicketHash("expired-ticket-hash")).get()
-                .extracting(WsTicket::usedAt).isNull();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT used_at FROM auth_ws_ticket WHERE ticket_hash = ?", java.sql.Timestamp.class,
+                "expired-ticket-hash")).isNull();
     }
 
     @Test
@@ -148,6 +151,47 @@ class SessionRepositoryTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void treatsNullAndBlankRoomAsTheSameUnboundTicket() {
+        userId = userRepository.insert("repo-session-user-empty-room", "Ticket User", "hash", "ACTIVE");
+        Instant now = Instant.now();
+        repository.insert(session("repo-session-empty-room", userId, "access-empty-room", "refresh-empty-room", now));
+        repository.insertWsTicket(new WsTicket("empty-room-ticket-hash", userId, "repo-session-empty-room",
+                null, now.plusSeconds(60), null, now));
+
+        assertThat(repository.findWsTicketByHash("empty-room-ticket-hash", userId, "repo-session-empty-room", "", now))
+                .isPresent();
+        assertThat(repository.consumeWsTicket("empty-room-ticket-hash", userId, "repo-session-empty-room", "   ", now))
+                .isPresent();
+    }
+
+    @Test
+    void rejectsSessionUserMismatchDuplicateHashAndMissingSession() {
+        userId = userRepository.insert("repo-session-user-binding", "Ticket User", "hash", "ACTIVE");
+        long otherUserId = userRepository.insert("repo-session-user-other", "Other User", "hash", "ACTIVE");
+        Instant now = Instant.now();
+        repository.insert(session("repo-session-binding", userId, "access-binding", "refresh-binding", now));
+        repository.insert(session("repo-session-other", otherUserId, "access-other", "refresh-other", now));
+
+        jdbcTemplate.update("""
+                INSERT INTO auth_ws_ticket
+                    (ticket_hash, user_id, session_id, room_code, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, "binding-mismatch-hash", otherUserId, "repo-session-binding", "room-binding",
+                java.sql.Timestamp.from(now.plusSeconds(60)), java.sql.Timestamp.from(now));
+        assertThat(repository.findWsTicketByHash("binding-mismatch-hash", otherUserId, "repo-session-binding",
+                "room-binding", now)).isEmpty();
+        assertThat(repository.consumeWsTicket("binding-mismatch-hash", otherUserId, "repo-session-binding",
+                "room-binding", now)).isEmpty();
+
+        assertThatThrownBy(() -> repository.insertWsTicket(new WsTicket("binding-mismatch-hash", userId,
+                "repo-session-binding", "room-binding", now.plusSeconds(60), null, now)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> repository.insertWsTicket(new WsTicket("missing-session-hash", userId,
+                "repo-session-missing", "room-binding", now.plusSeconds(60), null, now)))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private Future<Boolean> submitConsumer(ExecutorService executor, CountDownLatch ready,

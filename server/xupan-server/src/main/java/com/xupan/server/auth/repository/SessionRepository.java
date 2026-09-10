@@ -20,7 +20,8 @@ public class SessionRepository {
             u.security_version AS user_security_version
             """;
     private static final String WS_TICKET_COLUMNS = """
-            id, ticket_hash, user_id, session_id, room_code, expires_at, used_at, created_at
+            t.id, t.ticket_hash, t.user_id, t.session_id, t.room_code,
+            t.expires_at, t.used_at, t.created_at
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -57,11 +58,14 @@ public class SessionRepository {
 
     @Transactional
     public void insertWsTicket(WsTicket ticket) {
+        if (sessionExists(ticket.sessionId()) && !sessionBelongsToUser(ticket.sessionId(), ticket.userId())) {
+            throw new IllegalArgumentException("会话不属于票据用户");
+        }
         jdbcTemplate.update("""
                 INSERT INTO auth_ws_ticket
                     (ticket_hash, user_id, session_id, room_code, expires_at, used_at, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, ticket.ticketHash(), ticket.userId(), ticket.sessionId(), ticket.roomCode(),
+                """, ticket.ticketHash(), ticket.userId(), ticket.sessionId(), normalizeRoomCode(ticket.roomCode()),
                 timestamp(ticket.expiresAt()), timestamp(ticket.usedAt()), timestamp(ticket.createdAt()));
     }
 
@@ -69,40 +73,45 @@ public class SessionRepository {
         insertWsTicket(ticket);
     }
 
-    public Optional<WsTicket> findByTicketHash(String ticketHash) {
-        return findWsTicketByHash(ticketHash);
-    }
-
-    public Optional<WsTicket> findWsTicketByHash(String ticketHash) {
-        return jdbcTemplate.query("SELECT " + WS_TICKET_COLUMNS + " FROM auth_ws_ticket WHERE ticket_hash = ?",
-                (rs, rowNum) -> mapWsTicket(rs), ticketHash).stream().findFirst();
-    }
-
     public Optional<WsTicket> findWsTicketByHash(String ticketHash, long userId,
                                                  String sessionId, String roomCode, Instant now) {
         return findUsableWsTicket(ticketHash, userId, sessionId, roomCode, now);
     }
 
+    public Optional<WsTicket> findWsTicketByHash(String ticketHash, long userId,
+                                                 String sessionId, String roomCode) {
+        return findUsableWsTicket(ticketHash, userId, sessionId, roomCode, Instant.now());
+    }
+
     /** Returns a ticket only when all caller-bound identity and validity fields still match. */
     public Optional<WsTicket> findUsableWsTicket(
             String ticketHash, long userId, String sessionId, String roomCode, Instant now) {
+        String normalizedRoomCode = normalizeRoomCode(roomCode);
         return jdbcTemplate.query("""
-                SELECT id, ticket_hash, user_id, session_id, room_code, expires_at, used_at, created_at
-                  FROM auth_ws_ticket
-                 WHERE ticket_hash = ?
-                   AND user_id = ?
-                   AND session_id = ?
-                   AND (room_code = ? OR (room_code IS NULL AND ? IS NULL))
-                   AND used_at IS NULL
-                   AND expires_at > ?
-                """, (rs, rowNum) -> mapWsTicket(rs), ticketHash, userId, sessionId,
-                roomCode, roomCode, timestamp(now)).stream().findFirst();
+                SELECT %s
+                  FROM auth_ws_ticket t
+                 WHERE t.ticket_hash = ?
+                   AND t.user_id = ?
+                   AND t.session_id = ?
+                   AND (t.room_code = ? OR (t.room_code IS NULL AND ? IS NULL))
+                   AND t.used_at IS NULL
+                   AND t.expires_at > ?
+                   AND EXISTS (
+                       SELECT 1
+                         FROM auth_session s
+                        WHERE s.session_id = t.session_id
+                          AND s.user_id = t.user_id
+                   )
+                """.formatted(WS_TICKET_COLUMNS),
+                (rs, rowNum) -> mapWsTicket(rs), ticketHash, userId, sessionId,
+                normalizedRoomCode, normalizedRoomCode, timestamp(now)).stream().findFirst();
     }
 
     /** Atomically marks one matching, unexpired ticket as consumed. */
     @Transactional
     public boolean markWsTicketUsed(String ticketHash, long userId, String sessionId,
                                     String roomCode, Instant now) {
+        String normalizedRoomCode = normalizeRoomCode(roomCode);
         return jdbcTemplate.update("""
                 UPDATE auth_ws_ticket
                    SET used_at = ?
@@ -112,8 +121,18 @@ public class SessionRepository {
                    AND (room_code = ? OR (room_code IS NULL AND ? IS NULL))
                    AND used_at IS NULL
                    AND expires_at > ?
-                """, timestamp(now), ticketHash, userId, sessionId, roomCode, roomCode,
+                   AND EXISTS (
+                       SELECT 1
+                         FROM auth_session s
+                        WHERE s.session_id = auth_ws_ticket.session_id
+                          AND s.user_id = auth_ws_ticket.user_id
+                   )
+                """, timestamp(now), ticketHash, userId, sessionId, normalizedRoomCode, normalizedRoomCode,
                 timestamp(now)) == 1;
+    }
+
+    public boolean markWsTicketUsed(String ticketHash, long userId, String sessionId, String roomCode) {
+        return markWsTicketUsed(ticketHash, userId, sessionId, roomCode, Instant.now());
     }
 
     /** Consumes a ticket and returns its persisted record only to the winning caller. */
@@ -123,7 +142,12 @@ public class SessionRepository {
         if (!markWsTicketUsed(ticketHash, userId, sessionId, roomCode, now)) {
             return Optional.empty();
         }
-        return findWsTicketByHash(ticketHash);
+        return findStoredWsTicketByHash(ticketHash);
+    }
+
+    public Optional<WsTicket> consumeWsTicket(
+            String ticketHash, long userId, String sessionId, String roomCode) {
+        return consumeWsTicket(ticketHash, userId, sessionId, roomCode, Instant.now());
     }
 
     @Transactional
@@ -206,6 +230,26 @@ public class SessionRepository {
                 resultSet.getString("session_id"), resultSet.getString("room_code"),
                 instant(resultSet.getTimestamp("expires_at")), instant(resultSet.getTimestamp("used_at")),
                 instant(resultSet.getTimestamp("created_at")));
+    }
+
+    private Optional<WsTicket> findStoredWsTicketByHash(String ticketHash) {
+        return jdbcTemplate.query("SELECT " + WS_TICKET_COLUMNS + " FROM auth_ws_ticket t WHERE t.ticket_hash = ?",
+                (rs, rowNum) -> mapWsTicket(rs), ticketHash).stream().findFirst();
+    }
+
+    private boolean sessionExists(String sessionId) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM auth_session WHERE session_id = ?)", Boolean.class, sessionId));
+    }
+
+    private boolean sessionBelongsToUser(String sessionId, long userId) {
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM auth_session WHERE session_id = ? AND user_id = ?)",
+                Boolean.class, sessionId, userId));
+    }
+
+    private static String normalizeRoomCode(String roomCode) {
+        return roomCode == null || roomCode.isBlank() ? null : roomCode;
     }
 
     private static Timestamp timestamp(Instant value) {
