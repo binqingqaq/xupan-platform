@@ -28,7 +28,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .header-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; height: 30px; }
 .quick-button, .interface-button { height: 25px; border: 0; border-radius: 2px; padding: 0 9px; color: #fff; background: #1577c7; font-size: 12px; line-height: 25px; }
 .interface-button { padding: 0 7px; }
-.history-button { width: 25px; height: 25px; border: 0; border-radius: 2px; background: #1577c7; color: #fff; font-size: 12px; line-height: 25px; padding: 0; }
 .menu-button { display: grid; align-content: center; gap: 3px; width: 30px; height: 30px; margin-right: 4px; border: 0; background: transparent; padding: 5px; }
 .menu-button span { display: block; width: 19px; height: 2px; margin: 0 auto; background: #6f7073; }
 .header-menu { position: absolute; top: 29px; z-index: 30; display: grid; min-width: 92px; border: 1px solid #e2e2e2; background: #fff; box-shadow: 0 3px 10px rgba(0,0,0,.12); }
@@ -39,24 +38,33 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .interface-menu { right: 60px; }
 .menu-panel { right: 2px; }
 
-.reference-issuebar { display: flex; align-items: center; height: 35px; border-bottom: 1px solid #dedede; white-space: nowrap; }
-.reference-issue-number { width: 96px; padding-left: 10px; color: #363636; font-size: 14px; line-height: 35px; }
-.reference-ball { flex: 0 0 25px; width: 25px; height: 25px; margin-left: 2px; border: 0; border-radius: 50%; background: var(--reference-blue); color: #fff; font-size: 14px; font-weight: 700; line-height: 25px; padding: 0; }
+.reference-issuebar { display: flex; align-items: center; height: 35px; overflow: hidden; border-bottom: 1px solid #dedede; white-space: nowrap; }
+.reference-issue-number { flex: 0 0 clamp(138px, 10.2vw, 192px); width: clamp(138px, 10.2vw, 192px); transform: translateX(clamp(14px, 1.1vw, 22px)); padding-left: 0; color: #363636; font-size: 14px; line-height: 35px; text-align: center; }
+.reference-ball-row { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; column-gap: clamp(18px, 3.4vw, 58px); min-width: 0; height: 35px; overflow: hidden; }
+.reference-ball { flex: 0 0 25px; width: 25px; height: 25px; border: 0; border-radius: 50%; background: var(--reference-blue); color: #fff; font-size: 14px; font-weight: 700; line-height: 25px; padding: 0; }
 .reference-ball.is-red { background: var(--reference-red); }
 .reference-ball.is-selected { box-shadow: 0 0 0 2px rgba(0, 126, 229, .38); }
-.reference-countdown { margin-left: auto; padding: 0 10px; color: var(--reference-red); font-size: 14px; font-weight: 700; line-height: 35px; }
-.collapse-button { width: 28px; height: 35px; border: 0; background: transparent; color: #707070; font-size: 24px; line-height: 25px; padding: 0; }
+.reference-countdown { flex: 0 0 clamp(74px, 5.2vw, 104px); width: clamp(74px, 5.2vw, 104px); margin-right: clamp(24px, 2.5vw, 48px); padding: 0 5px; color: var(--reference-red); font-size: 14px; font-weight: 700; line-height: 35px; text-align: center; }
+.reference-countdown.is-drawing { color: var(--reference-red); }
+.collapse-button { display: grid; flex: 0 0 clamp(46px, 3.8vw, 66px); place-items: center; width: clamp(46px, 3.8vw, 66px); height: 35px; margin-right: clamp(8px, 1.2vw, 20px); border: 0; background: transparent; color: #707070; padding: 0; }
+.collapse-chevron { position: relative; display: block; width: 16px; height: 7px; transform: rotate(180deg); }
+.collapse-chevron::before, .collapse-chevron::after { position: absolute; top: 2px; width: 9px; height: 2px; border-radius: 1px; background: #707070; content: ""; }
+.collapse-chevron::before { left: 0; transform: rotate(24deg); transform-origin: right center; }
+.collapse-chevron::after { right: 0; transform: rotate(-24deg); transform-origin: left center; }
+.collapse-button.expanded .collapse-chevron { transform: rotate(0deg); }
 
 .reference-message-scroll { position: absolute; inset: 65px 0 58px; overflow-x: hidden; overflow-y: auto; background: var(--reference-bg); scrollbar-width: thin; scrollbar-color: #b9b9b9 transparent; }
 .reference-message-feed { min-height: 100%; padding: 4px 0 12px; }
-.reference-history-panel { position: fixed; top: 65px; right: 0; left: 0; z-index: 45; max-height: 310px; overflow: auto; border-bottom: 1px solid #cfcfcf; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.18); }
-.history-panel-header { display: flex; align-items: center; justify-content: space-between; height: 42px; padding: 0 12px; border-bottom: 1px solid #ededed; color: #333; }
-.history-panel-header button { width: 30px; height: 30px; border: 0; background: transparent; color: #777; font-size: 24px; line-height: 30px; padding: 0; }
-.history-panel-table { min-width: 360px; padding: 0 10px 8px; color: #333; font-size: 12px; }
-.history-panel-heading, .history-panel-row { display: grid; grid-template-columns: 55px minmax(210px, 1fr) 80px; align-items: center; gap: 8px; min-height: 31px; border-bottom: 1px solid #ededed; }
-.history-panel-heading { color: #777; font-weight: 700; }
-.history-panel-row span { white-space: nowrap; }
-.history-panel-row b { color: #c55a52; font-weight: 500; white-space: nowrap; }
+.reference-history-scrim { position: fixed; inset: 65px 0 0; z-index: 40; background: rgba(0,0,0,.38); }
+.reference-history-panel { position: fixed; top: 65px; right: 0; left: 0; z-index: 45; max-height: 310px; overflow: auto; border-bottom: 1px solid #cfcfcf; background: var(--reference-bg); box-shadow: 0 4px 12px rgba(0,0,0,.18); }
+.history-panel-table { min-width: 320px; padding: 0; color: #333; font-size: 12px; }
+.history-panel-heading, .history-panel-row { display: grid; grid-template-columns: minmax(95px, 1.2fr) repeat(8, minmax(25px, 1fr)) minmax(42px, .55fr) minmax(42px, .55fr) minmax(42px, .55fr); align-items: center; gap: 0; min-height: 31px; border-bottom: 1px solid #d3d3d3; }
+.history-panel-heading { color: #777; font-weight: 700; text-align: center; }
+.history-panel-row { text-align: center; }
+.history-panel-row strong { font-weight: 400; white-space: nowrap; }
+.history-panel-row b { color: #555; font-weight: 400; white-space: nowrap; }
+.history-ball { display: grid; place-items: center; width: 22px; height: 22px; justify-self: center; border-radius: 50%; background: var(--reference-blue); color: #fff; font-size: 12px; font-weight: 700; line-height: 22px; }
+.history-ball.is-red { background: var(--reference-red); }
 .reference-message { position: relative; min-height: 82px; zoom: 1; }
 .reference-message::after { display: block; height: 0; clear: both; content: "."; visibility: hidden; }
 .reference-bubble { position: relative; float: left; display: inline-block; min-width: 30px; max-width: 80%; min-height: 30px; margin: 30px 0 0 68px; border: 1px solid var(--reference-border); border-radius: 10px; background: #fff; }
@@ -162,8 +170,9 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 }
 
 @media (max-width: 620px) {
-  .reference-issue-number { width: 96px; }
-  .reference-ball { flex-basis: 25px; }
+  .reference-issue-number { flex-basis: 92px; width: 92px; transform: translateX(8px); font-size: 12px; }
+  .reference-countdown { flex-basis: 54px; width: 54px; margin-right: 10px; font-size: 12px; }
+  .collapse-button { flex-basis: 42px; width: 42px; margin-right: 6px; }
   .reference-bubble { max-width: 270px; margin-top: 30px; }
   .message-result .reference-bubble { width: 84%; max-width: 84%; }
   .reference-avatar { top: -10px; left: -55px; width: 45px; height: 45px; }
@@ -179,9 +188,15 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 }
 
 @media (max-width: 520px) {
-  .reference-issue-number { width: 96px; padding-left: 10px; }
-  .reference-ball { flex-basis: 25px; margin-left: 2px; }
+  .reference-issue-number { flex-basis: 82px; width: 82px; transform: translateX(5px); }
+  .reference-ball-row { column-gap: clamp(5px, 1.6vw, 14px); }
+  .reference-ball { flex: 0 0 clamp(17px, 5vw, 22px); width: clamp(17px, 5vw, 22px); height: clamp(17px, 5vw, 22px); font-size: clamp(10px, 3.5vw, 12px); line-height: clamp(17px, 5vw, 22px); }
+  .reference-countdown { flex-basis: 48px; width: 48px; margin-right: 4px; }
+  .collapse-button { flex-basis: 38px; width: 38px; margin-right: 4px; }
   .reference-countdown { padding: 0 5px; }
+  .history-panel-table { font-size: 10px; }
+  .history-panel-heading, .history-panel-row { grid-template-columns: minmax(76px, 1.2fr) repeat(8, minmax(22px, 1fr)) minmax(30px, .55fr) minmax(30px, .55fr) minmax(30px, .55fr); }
+  .history-ball { width: 20px; height: 20px; font-size: 10px; line-height: 20px; }
   .header-menu { font-size: 12px; }
   .quick-menu { right: 66px; }
   .reference-send { margin-left: 5px; margin-right: 5px; }

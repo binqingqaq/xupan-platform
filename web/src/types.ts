@@ -50,10 +50,23 @@ export interface AccountView {
 export interface GameView {
   issueNumber: string
   status: 'OPEN' | 'CLOSED'
+  phase: 'BETTING' | 'DRAWING' | 'SETTLED'
   balls: BallView[]
   odds: OddsView[]
   bets: BetView[]
   account: AccountView
+  serverNow: string
+  bettingEndsAt: string | null
+  drawEndsAt: string | null
+  preview: boolean
+  events: GameEventView[]
+}
+
+export interface GameEventView {
+  id: number
+  eventType: string
+  message: string
+  createdAt: string
 }
 
 export interface LedgerView {

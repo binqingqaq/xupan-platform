@@ -5,12 +5,14 @@ import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.DemoAccountRepository;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.repository.GameIssueEventRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -19,22 +21,33 @@ import java.util.UUID;
 @Service
 public class DemoGameService {
 
-    private static final String INITIAL_ISSUE = "DEMO-0001";
+    private static final String INITIAL_ISSUE = "3000000";
     private final SettlementService settlementService;
     private final GameDataRepository repository;
     private final DemoAccountRepository accountRepository;
+    private final GameIssueEventRepository eventRepository;
+    private final 自动轮期服务 automationService;
 
     public DemoGameService(SettlementService settlementService, GameDataRepository repository,
-                           DemoAccountRepository accountRepository) {
+                           DemoAccountRepository accountRepository,
+                           GameIssueEventRepository eventRepository,
+                           自动轮期服务 automationService) {
         this.settlementService = settlementService;
         this.repository = repository;
         this.accountRepository = accountRepository;
-        ensureInitialized();
+        this.eventRepository = eventRepository;
+        this.automationService = automationService;
     }
 
     public synchronized GameView current() {
+        Instant now = Instant.now();
+        automationService.advance(now);
         GameDataRepository.IssueRecord issue = ensureInitialized();
-        List<BallResult> results = toResults(issue.numbers());
+        return toGameView(issue, now);
+    }
+
+    private GameView toGameView(GameDataRepository.IssueRecord issue, Instant now) {
+        List<BallResult> results = toResults(automationService.previewNumbers(issue, now));
         List<BallView> ballViews = new ArrayList<>();
         for (int index = 0; index < 8; index++) {
             BallResult result = results.size() == 8 ? results.get(index) : null;
@@ -50,14 +63,19 @@ public class DemoGameService {
                 .map(DemoGameService::toBetView)
                 .toList();
         DemoAccountRepository.AccountRecord account = accountRepository.findByCode(DemoAccountRepository.DEFAULT_USER_CODE);
-        return new GameView(issue.issueNumber(), issue.status(), ballViews, oddsViews, betViews,
-                new AccountView(account.userCode(), account.displayName(), account.balance(), account.status()));
+        return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, oddsViews, betViews,
+                new AccountView(account.userCode(), account.displayName(), account.balance(), account.status()),
+                now, issue.bettingEndsAt(), issue.drawEndsAt(),
+                自动轮期服务.DRAWING.equals(issue.phase()),
+                eventRepository.findByIssue(issue.issueNumber()).stream()
+                        .map(event -> new EventView(event.id(), event.eventType(), event.message(), event.createdAt()))
+                        .toList());
     }
 
     @Transactional
     public synchronized BetView placeBet(PlaceBetRequest request) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
-        if (!"OPEN".equals(issue.status())) {
+        if (!自动轮期服务.BETTING.equals(issue.phase())) {
             throw new IllegalStateException("当前期已封盘，不能下注");
         }
         BigDecimal snapshotOdds = repository.findOdds(request.playType())
@@ -97,7 +115,7 @@ public class DemoGameService {
             accountRepository.credit(DemoAccountRepository.DEFAULT_USER_CODE, payout(pending.settlement()),
                     "开奖结算：" + issue.issueNumber());
         }
-        return current();
+        return toGameView(repository.findLatestIssue().orElseThrow(), Instant.now());
     }
 
     public synchronized OddsView updateOdds(PlayType playType, BigDecimal newOdds) {
@@ -111,19 +129,32 @@ public class DemoGameService {
 
     public synchronized GameView resetIssue() {
         GameDataRepository.IssueRecord issue = ensureInitialized();
-        if ("OPEN".equals(issue.status())) {
+        if (自动轮期服务.BETTING.equals(issue.phase())) {
             throw new IllegalStateException("当前期尚未开奖，不能开启下一期");
         }
-        int nextSequence = Integer.parseInt(issue.issueNumber().replace("DEMO-", "")) + 1;
-        repository.saveIssue("DEMO-" + String.format("%04d", nextSequence), "OPEN", null);
+        long nextSequence;
+        try {
+            nextSequence = Long.parseLong(issue.issueNumber()) + 1;
+        } catch (NumberFormatException ignored) {
+            nextSequence = 3_000_000L;
+        }
+        repository.saveBettingIssue(String.valueOf(nextSequence), Instant.now());
         return current();
     }
 
     private GameDataRepository.IssueRecord ensureInitialized() {
-        GameDataRepository.IssueRecord issue = repository.findLatestIssue().orElse(null);
+        GameDataRepository.IssueRecord issue = repository.findCurrentIssue().orElse(null);
         if (issue == null) {
-            repository.saveIssue(INITIAL_ISSUE, "OPEN", null);
-            issue = repository.findLatestIssue().orElseThrow();
+            issue = repository.findLatestIssue().orElse(null);
+        }
+        if (issue == null) {
+            repository.saveBettingIssue(INITIAL_ISSUE, Instant.now());
+            issue = repository.findCurrentIssue().orElseThrow();
+        }
+        if (issue.startedAt() == null || issue.bettingEndsAt() == null || issue.drawEndsAt() == null) {
+            Instant startedAt = issue.startedAt() == null ? Instant.now() : issue.startedAt();
+            repository.initializeSchedule(issue.issueNumber(), startedAt);
+            issue = repository.findCurrentIssue().orElse(issue);
         }
         for (var entry : defaultOdds().entrySet()) {
             if (repository.findOdds(entry.getKey()).isEmpty()) {
@@ -169,8 +200,10 @@ public class DemoGameService {
         return value.setScale(3, RoundingMode.HALF_UP);
     }
 
-    public record GameView(String issueNumber, String status, List<BallView> balls,
-                           List<OddsView> odds, List<BetView> bets, AccountView account) {
+    public record GameView(String issueNumber, String status, String phase, List<BallView> balls,
+                           List<OddsView> odds, List<BetView> bets, AccountView account,
+                           Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,
+                           boolean preview, List<EventView> events) {
     }
 
     public record BallView(int ballNumber, Integer number, Integer fan, String parity, String size) {
@@ -185,6 +218,9 @@ public class DemoGameService {
     }
 
     public record AccountView(String userCode, String displayName, BigDecimal balance, String status) {
+    }
+
+    public record EventView(long id, String eventType, String message, Instant createdAt) {
     }
 
     private record PendingSettlement(long betId, SettlementResult settlement) {

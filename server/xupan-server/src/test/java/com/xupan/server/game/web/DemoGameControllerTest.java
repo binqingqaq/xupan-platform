@@ -39,7 +39,7 @@ class DemoGameControllerTest {
     void completesBetDrawAndRejectsClosedOperations() throws Exception {
         mockMvc.perform(get("/api/demo/game/current"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.issueNumber").value("DEMO-0001"))
+                .andExpect(jsonPath("$.issueNumber").value("3000000"))
                 .andExpect(jsonPath("$.status").value("OPEN"));
 
         mockMvc.perform(put("/api/demo/game/admin/odds/FAN")

@@ -47,7 +47,8 @@ const feedback = ref('')
 const feedbackKind = ref<'success' | 'error' | ''>('')
 const messageScroll = ref<HTMLElement | null>(null)
 const localMessages = ref<RoomMessage[]>([])
-const countdownSeconds = ref(189)
+const clockTick = ref(Date.now())
+const serverOffsetMs = ref(0)
 const selectedQuickNumber = ref('1')
 const selectedQuickAmount = ref(100)
 const settingAmounts = ref(['50', '100', '200', '500', '1000'])
@@ -77,14 +78,22 @@ const displayIssueNumber = computed(() => {
   const match = issueNumber.value.match(/(\d+)$/)
   if (!match) return issueNumber.value
   const numeric = Number(match[1])
-  return match[1].length >= 8 ? match[1].slice(-8) : String(31391150 + numeric).padStart(8, '0')
+  return Number.isFinite(numeric) ? match[1] : issueNumber.value
 })
 const balance = computed(() => current.value?.account.balance.toFixed(2) || '0.00')
 const countdown = computed(() => {
-  const minutes = Math.floor(countdownSeconds.value / 60).toString().padStart(2, '0')
-  const seconds = (countdownSeconds.value % 60).toString().padStart(2, '0')
+  clockTick.value
+  const game = current.value
+  if (!game) return '--:--'
+  const deadline = game.phase === 'BETTING' ? game.bettingEndsAt : game.drawEndsAt
+  if (!deadline) return '--:--'
+  const now = Date.now() - serverOffsetMs.value
+  const secondsLeft = Math.max(0, Math.ceil((Date.parse(deadline) - now) / 1000))
+  const minutes = Math.floor(secondsLeft / 60).toString().padStart(2, '0')
+  const seconds = (secondsLeft % 60).toString().padStart(2, '0')
   return `${minutes}:${seconds}`
 })
+const phaseLabel = computed(() => current.value?.phase === 'DRAWING' ? '开奖中' : current.value?.phase === 'BETTING' ? countdown.value : '已结')
 
 const oddsByType = computed(() => new Map((current.value?.odds ?? []).map((item) => [item.playType, item.odds])))
 
@@ -97,7 +106,7 @@ const referenceBets = ['3番45', '3通41/60', '123/165', '124/297', '14无2/37',
 
 const historyRows = computed<HistoryRow[]>(() => {
   const balls = ballNumbers.value.map((ball, index) => ball.number === null ? String(((index + 3) % 20) + 1).padStart(2, '0') : String(ball.number).padStart(2, '0'))
-  return Array.from({ length: 8 }, (_, index) => {
+  return Array.from({ length: 10 }, (_, index) => {
     const issue = Math.max(1, Number(displayIssueNumber.value) - index).toString().padStart(8, '0')
     const shifted = balls.map((_, ballIndex) => balls[(ballIndex + index) % (balls.length || 1)] || '00')
     const first = Number(shifted[0])
@@ -117,7 +126,15 @@ const messages = computed<RoomMessage[]>(() => {
   rows.push({ id: 'check-list', type: 'robot', name: '机器人', body: `-----------\n${displayIssueNumber.value}\n核对列表:(演示)\n(小静) "14无2/37，14角10"\n(拼搏人生) "3通24/68，14无3/55"\n(再来一次) "单157，4正228"\n(追光者) "124/163，3无4/30"\n-----------\n不在核对列表无效!` })
   rows.push({ id: 'history-label', type: 'user', name: '游泳池', body: '历史' })
   rows.push({ id: 'history-result', type: 'robot', name: '机器人', body: `@游泳池\n${historyRows.value[1]?.issue || '00000000'}期结果\n(${historyRows.value[1]?.numbers.join(',') || '13,02,11,04,10,03,05,09'})开1番->\n3-2-1-2-2-1-4-2` })
-  rows.push({ id: 'open-result', type: 'result', name: '机器人', body: game ? `${displayIssueNumber.value}结果:\n${game.balls.map(ball => ball.number === null ? '--' : String(ball.number).padStart(2, '0')).join(',')} => 4,双,大\n----------\n获胜名单：\n(演示用户)  "${game.bets[0] ? `${game.bets[0].ballNumber}番${game.bets[0].stake.toFixed(0)}` : '3番45'}" 盈:演示` : '等待开奖消息' })
+  rows.push(...(game?.events ?? []).map(event => ({
+    id: `event-${event.id}`,
+    type: event.eventType === 'DRAW_RESULT' ? 'result' as const : 'robot' as const,
+    name: '机器人',
+    body: event.message,
+  })))
+  rows.push({ id: 'open-result', type: 'result', name: '机器人', body: game?.phase === 'SETTLED'
+    ? `${displayIssueNumber.value}结果:\n${game.balls.map(ball => ball.number === null ? '--' : String(ball.number).padStart(2, '0')).join(',')}\n开奖和结算已完成`
+    : game?.phase === 'DRAWING' ? `${displayIssueNumber.value}期正在开奖中，开奖号码滚动展示...` : '等待开奖消息' })
   rows.push({ id: 'tail-user', type: 'user', name: '关羽', body: '03特194' })
   rows.push({ id: 'tail-robot', type: 'robot', name: '机器人', body: '@关羽  攻击成功，使用粮草194, 剩余粮草：445.93' })
   rows.push(...localMessages.value)
@@ -141,7 +158,9 @@ function scrollToBottom() {
 
 async function load() {
   try {
-    current.value = await api.current()
+    const next = await api.current()
+    current.value = next
+    serverOffsetMs.value = Date.now() - Date.parse(next.serverNow)
     scrollToBottom()
   } catch (error) {
     showFeedback(error instanceof Error ? error.message : '页面加载失败', 'error')
@@ -232,8 +251,8 @@ async function submitMessage() {
   keyboardOpen.value = false
   scrollToBottom()
   const payload = parseBetMessage(text)
-  if (!payload || current.value?.status !== 'OPEN') {
-    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: current.value?.status === 'OPEN' ? '@徒 已收到消息，请按核对列表确认' : '@徒 本期已停止下注' })
+  if (!payload || current.value?.phase !== 'BETTING') {
+    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: current.value?.phase === 'BETTING' ? '@徒 已收到消息，请按核对列表确认' : '@徒 本期已停止下注' })
     scrollToBottom()
     return
   }
@@ -280,9 +299,9 @@ function avatarText(name: string) {
 onMounted(() => {
   document.body.classList.add('reference-room-body')
   load()
-  refreshTimer = window.setInterval(load, 5000)
+  refreshTimer = window.setInterval(load, 1000)
   countdownTimer = window.setInterval(() => {
-    countdownSeconds.value = countdownSeconds.value <= 0 ? 189 : countdownSeconds.value - 1
+    clockTick.value = Date.now()
   }, 1000)
 })
 
@@ -302,7 +321,6 @@ onUnmounted(() => {
         <div class="header-actions">
           <button class="quick-button" type="button" @click="quickOpen = !quickOpen">快捷</button>
           <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
-          <button class="history-button" type="button" aria-label="查看历史" title="查看历史" @click="toggleHistory">历</button>
           <button class="menu-button" type="button" aria-label="打开菜单" title="打开菜单" @click="menuOpen = !menuOpen">
             <span></span><span></span><span></span>
           </button>
@@ -323,22 +341,23 @@ onUnmounted(() => {
       </div>
       <div class="reference-issuebar">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
-        <button v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8, 'is-selected': selectedBall === ball.ballNumber }" type="button" :aria-label="`选择第${ball.ballNumber}球`" @click="selectBall(ball)">
-          {{ ball.number === null ? '0' : String(ball.number).padStart(2, '0') }}
-        </button>
-        <span class="reference-countdown">{{ countdown }}</span>
-        <button class="collapse-button" type="button" aria-label="折叠顶部区域" title="折叠顶部区域">⌃</button>
+        <div class="reference-ball-row" aria-label="开奖号码">
+          <button v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8, 'is-selected': selectedBall === ball.ballNumber }" type="button" :aria-label="`选择第${ball.ballNumber}球`" @click="selectBall(ball)">
+            {{ ball.number === null ? '0' : String(ball.number).padStart(2, '0') }}
+          </button>
+        </div>
+        <span class="reference-countdown" :class="{ 'is-drawing': current?.phase === 'DRAWING' }">{{ phaseLabel }}</span>
+        <button class="collapse-button" :class="{ expanded: historyOpen }" type="button" :aria-expanded="historyOpen" aria-label="展开历史开奖记录" title="展开历史开奖记录" @click="toggleHistory"><span class="collapse-chevron" aria-hidden="true"></span></button>
       </div>
     </header>
 
+    <div v-if="historyOpen" class="reference-history-scrim" aria-hidden="true" @click="historyOpen = false"></div>
     <div v-if="historyOpen" class="reference-history-panel" role="dialog" aria-label="历史记录">
-      <div class="history-panel-header"><strong>历史记录</strong><button type="button" aria-label="关闭历史记录" @click="historyOpen = false">×</button></div>
       <div class="history-panel-table">
-        <div class="history-panel-heading"><span>期号</span><span>开奖</span><span>结果</span></div>
         <div v-for="row in historyRows" :key="`panel-${row.issue}`" class="history-panel-row">
-          <strong>{{ row.issue.slice(-4) }}</strong>
-          <span>{{ row.numbers.join(' ') }}</span>
-          <b>{{ row.fan }}番 {{ row.size }}{{ row.parity }}</b>
+          <strong>{{ row.issue }}期</strong>
+          <span v-for="(number, index) in row.numbers" :key="`${row.issue}-${index}`" class="history-ball" :class="{ 'is-red': index === 7 }">{{ number }}</span>
+          <b>{{ row.fan }}番</b><b>{{ row.size }}</b><b>{{ row.parity }}</b>
         </div>
       </div>
     </div>
@@ -403,7 +422,7 @@ onUnmounted(() => {
         <button class="reference-send" type="button" @click="submitMessage">发送</button>
       </div>
       <div v-else class="odds-quickbar">
-        <div class="odds-quickbar-top"><strong>{{ displayIssueNumber }}期</strong><span>{{ current?.status === 'OPEN' ? '待结' : '已结' }}</span></div>
+        <div class="odds-quickbar-top"><strong>{{ displayIssueNumber }}期</strong><span>{{ current?.phase === 'BETTING' ? '待结' : current?.phase === 'DRAWING' ? '开奖中' : '已结' }}</span></div>
         <div class="odds-quickbar-actions">
           <button type="button" @click="openSettings">设置</button>
           <button type="button" class="active" @click="setViewMode('odds')">快速下注</button>

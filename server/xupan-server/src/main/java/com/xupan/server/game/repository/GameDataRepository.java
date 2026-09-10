@@ -34,29 +34,87 @@ public class GameDataRepository {
                 UPDATE game_issue
                    SET status = ?, number_1 = ?, number_2 = ?, number_3 = ?, number_4 = ?,
                        number_5 = ?, number_6 = ?, number_7 = ?, number_8 = ?,
+                       phase = CASE WHEN ? = 'OPEN' THEN 'BETTING' ELSE 'SETTLED' END,
                        updated_at = CURRENT_TIMESTAMP,
-                       closed_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE closed_at END
+                       closed_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE closed_at END,
+                       settled_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE settled_at END
                  WHERE issue_number = ?
                 """, status, values.get(0), values.get(1), values.get(2), values.get(3),
-                values.get(4), values.get(5), values.get(6), values.get(7), status, issueNumber);
+                values.get(4), values.get(5), values.get(6), values.get(7), status, status, status, issueNumber);
         if (updated == 0) {
             jdbcTemplate.update("""
                     INSERT INTO game_issue
                         (issue_number, status, number_1, number_2, number_3, number_4,
-                         number_5, number_6, number_7, number_8, opened_at, closed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP,
+                         number_5, number_6, number_7, number_8, phase, opened_at, issue_started_at,
+                         closed_at, settled_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                            CASE WHEN ? = 'OPEN' THEN 'BETTING' ELSE 'SETTLED' END,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                            CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END,
                             CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END)
                     """, issueNumber, status, values.get(0), values.get(1), values.get(2), values.get(3),
-                    values.get(4), values.get(5), values.get(6), values.get(7), status);
+                    values.get(4), values.get(5), values.get(6), values.get(7), status, status, status);
         }
+    }
+
+    public void saveBettingIssue(String issueNumber, Instant startedAt) {
+        Instant bettingEndsAt = startedAt.plusSeconds(180);
+        Instant drawEndsAt = startedAt.plusSeconds(300);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (issue_number, status, phase, opened_at, issue_started_at,
+                     betting_ends_at, draw_ends_at)
+                VALUES (?, 'OPEN', 'BETTING', ?, ?, ?, ?)
+                """, issueNumber, timestamp(startedAt), timestamp(startedAt),
+                timestamp(bettingEndsAt), timestamp(drawEndsAt));
+    }
+
+    public void initializeSchedule(String issueNumber, Instant startedAt) {
+        jdbcTemplate.update("""
+                UPDATE game_issue
+                   SET phase = COALESCE(phase, 'BETTING'),
+                       issue_started_at = COALESCE(issue_started_at, ?),
+                       betting_ends_at = COALESCE(betting_ends_at, ?),
+                       draw_ends_at = COALESCE(draw_ends_at, ?),
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE issue_number = ?
+                """, timestamp(startedAt), timestamp(startedAt.plusSeconds(180)),
+                timestamp(startedAt.plusSeconds(300)), issueNumber);
+    }
+
+    public boolean transitionPhase(String issueNumber, String expectedPhase, String nextPhase) {
+        return jdbcTemplate.update("""
+                UPDATE game_issue
+                   SET phase = ?, status = CASE WHEN ? = 'BETTING' THEN 'OPEN' ELSE 'CLOSED' END,
+                       closed_at = CASE WHEN ? IN ('DRAWING', 'SETTLED') THEN COALESCE(closed_at, CURRENT_TIMESTAMP) ELSE closed_at END,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE issue_number = ? AND phase = ?
+                """, nextPhase, nextPhase, nextPhase, issueNumber, expectedPhase) == 1;
+    }
+
+    public boolean saveFinalResult(String issueNumber, List<Integer> numbers, Instant settledAt) {
+        if (numbers == null || numbers.size() != 8) {
+            throw new IllegalArgumentException("期号结果必须包含 8 个号码");
+        }
+        return jdbcTemplate.update("""
+                UPDATE game_issue
+                   SET phase = 'SETTLED', status = 'CLOSED',
+                       number_1 = ?, number_2 = ?, number_3 = ?, number_4 = ?,
+                       number_5 = ?, number_6 = ?, number_7 = ?, number_8 = ?,
+                       closed_at = COALESCE(closed_at, ?), settled_at = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE issue_number = ? AND phase = 'DRAWING'
+                """, numbers.get(0), numbers.get(1), numbers.get(2), numbers.get(3),
+                numbers.get(4), numbers.get(5), numbers.get(6), numbers.get(7),
+                timestamp(settledAt), timestamp(settledAt), issueNumber) == 1;
     }
 
     public Optional<IssueRecord> findCurrentIssue() {
         return findIssue("""
-                SELECT issue_number, status, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8
+                SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
-                 WHERE status = 'OPEN'
+                 WHERE phase IN ('BETTING', 'DRAWING')
                  ORDER BY id DESC
                  LIMIT 1
                 """);
@@ -64,8 +122,9 @@ public class GameDataRepository {
 
     public Optional<IssueRecord> findLatestIssue() {
         return findIssue("""
-                SELECT issue_number, status, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8
+                SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
                  ORDER BY id DESC
                  LIMIT 1
@@ -168,7 +227,9 @@ public class GameDataRepository {
 
     private Optional<IssueRecord> findIssue(String sql) {
         return jdbcTemplate.query(sql, rs -> rs.next()
-                ? Optional.of(new IssueRecord(rs.getString("issue_number"), rs.getString("status"), numbers(rs)))
+                ? Optional.of(new IssueRecord(rs.getString("issue_number"), rs.getString("status"),
+                rs.getString("phase"), numbers(rs), instant(rs, "issue_started_at"),
+                instant(rs, "betting_ends_at"), instant(rs, "draw_ends_at"), instant(rs, "settled_at")))
                 : Optional.empty());
     }
 
@@ -181,7 +242,17 @@ public class GameDataRepository {
                 .toList();
     }
 
-    public record IssueRecord(String issueNumber, String status, List<Integer> numbers) {
+    private static Timestamp timestamp(Instant value) {
+        return value == null ? null : Timestamp.from(value);
+    }
+
+    private static Instant instant(java.sql.ResultSet resultSet, String column) throws java.sql.SQLException {
+        Timestamp value = resultSet.getTimestamp(column);
+        return value == null ? null : value.toInstant();
+    }
+
+    public record IssueRecord(String issueNumber, String status, String phase, List<Integer> numbers,
+                              Instant startedAt, Instant bettingEndsAt, Instant drawEndsAt, Instant settledAt) {
     }
 
     public record BetRecord(long id, long userId, String betCode, String issueNumber, int ballNumber,
