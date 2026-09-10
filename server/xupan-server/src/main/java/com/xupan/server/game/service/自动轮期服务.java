@@ -71,8 +71,12 @@ public class 自动轮期服务 {
 
     @Scheduled(fixedDelay = 1000)
     public void scheduledAdvance() {
+        advanceIfEnabled(clock.instant());
+    }
+
+    public void advanceIfEnabled(Instant now) {
         if (automationEnabled) {
-            advance(clock.instant());
+            advance(now);
         }
     }
 
