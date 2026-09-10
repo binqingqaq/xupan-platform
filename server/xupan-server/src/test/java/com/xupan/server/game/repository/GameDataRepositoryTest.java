@@ -31,14 +31,16 @@ class GameDataRepositoryTest {
         jdbcTemplate.update("DELETE FROM game_bet");
         jdbcTemplate.update("DELETE FROM game_odds");
         jdbcTemplate.update("DELETE FROM game_issue");
+        ensureLegacyDemoAccount();
     }
 
     @Test
     void persistsIssueOddsBetAndSettlementOnce() {
         repository.saveIssue("TEST-0001", "OPEN", null);
         repository.saveOdds(PlayType.FAN, new BigDecimal("3.850"));
+        long accountId = legacyDemoAccountId();
 
-        long betId = repository.saveBetWithOddsSnapshot(1L, "BET-TEST-0001", "REPO-REQUEST-001", "TEST-0001", 8,
+        long betId = repository.saveBetWithOddsSnapshot(accountId, "BET-TEST-0001", "REPO-REQUEST-001", "TEST-0001", 8,
                 PlayType.FAN, List.of(2), new BigDecimal("15.00"), new BigDecimal("3.850"));
 
         assertThat(repository.findCurrentIssue()).get().satisfies(issue -> {
@@ -46,9 +48,9 @@ class GameDataRepositoryTest {
             assertThat(issue.numbers()).hasSize(8).containsOnlyNulls();
         });
         assertThat(repository.findOdds(PlayType.FAN).orElseThrow()).isEqualByComparingTo("3.850");
-        assertThat(repository.findBetByIdempotencyKey(1L, "REPO-REQUEST-001"))
-                .get().extracting(GameDataRepository.BetRecord::accountId).isEqualTo(1L);
-        assertThatThrownBy(() -> repository.requireBetRequestMatch(1L, "REPO-REQUEST-001", "TEST-0001", 8,
+        assertThat(repository.findBetByIdempotencyKey(accountId, "REPO-REQUEST-001"))
+                .get().extracting(GameDataRepository.BetRecord::accountId).isEqualTo(accountId);
+        assertThatThrownBy(() -> repository.requireBetRequestMatch(accountId, "REPO-REQUEST-001", "TEST-0001", 8,
                 PlayType.FAN, List.of(3), new BigDecimal("15.00")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("WALLET_IDEMPOTENCY_CONFLICT");
@@ -68,5 +70,20 @@ class GameDataRepositoryTest {
         Integer firstNumber = jdbcTemplate.queryForObject(
                 "SELECT number_1 FROM game_issue WHERE issue_number = 'TEST-0002'", Integer.class);
         assertThat(firstNumber).isEqualTo(1);
+    }
+
+    private void ensureLegacyDemoAccount() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM demo_user_account WHERE user_code = 'DEMO-USER'", Integer.class);
+        if (count != null && count == 0) {
+            jdbcTemplate.update(
+                    "INSERT INTO demo_user_account (user_code, display_name, balance) VALUES (?, ?, ?)",
+                    "DEMO-USER", "演示用户", new BigDecimal("1000.00"));
+        }
+    }
+
+    private long legacyDemoAccountId() {
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE user_code = 'DEMO-USER'", Long.class);
     }
 }

@@ -2,6 +2,7 @@ package com.xupan.server.game.repository;
 
 import com.xupan.server.game.domain.WalletOperationType;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -25,6 +26,17 @@ class VirtualWalletRepositoryTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @BeforeEach
+    void ensureLegacyDemoAccount() {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM demo_user_account WHERE user_code = 'DEMO-USER'", Integer.class);
+        if (count != null && count == 0) {
+            jdbcTemplate.update(
+                    "INSERT INTO demo_user_account (user_code, display_name, balance) VALUES (?, ?, ?)",
+                    "DEMO-USER", "演示用户", new BigDecimal("1000.00"));
+        }
+    }
 
     @AfterEach
     void clean() {
