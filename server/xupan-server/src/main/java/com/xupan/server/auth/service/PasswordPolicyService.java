@@ -1,0 +1,48 @@
+package com.xupan.server.auth.service;
+
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+
+@Service
+public class PasswordPolicyService {
+
+    public static final int MIN_LENGTH = 8;
+    public static final int MAX_LENGTH = 72;
+    public static final int MAX_FAILED_ATTEMPTS = 5;
+    public static final long LOCK_MINUTES = 15;
+
+    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+
+    public void validateForCreation(String rawPassword) {
+        if (rawPassword == null || rawPassword.length() < MIN_LENGTH || rawPassword.length() > MAX_LENGTH) {
+            throw new IllegalArgumentException("密码长度必须为 8 至 72 个字符");
+        }
+        if (rawPassword.chars().noneMatch(Character::isLetter)
+                || rawPassword.chars().noneMatch(Character::isDigit)) {
+            throw new IllegalArgumentException("密码至少包含一个字母和一个数字");
+        }
+    }
+
+    public String encode(String rawPassword) {
+        validateForCreation(rawPassword);
+        return passwordEncoder.encode(rawPassword);
+    }
+
+    public boolean matches(String rawPassword, String encodedPassword) {
+        return rawPassword != null && encodedPassword != null
+                && passwordEncoder.matches(rawPassword, encodedPassword);
+    }
+
+    public boolean shouldLock(int failedCount) {
+        return failedCount >= MAX_FAILED_ATTEMPTS;
+    }
+
+    public Instant lockUntil(Instant now) {
+        if (now == null) {
+            throw new IllegalArgumentException("锁定起始时间不能为空");
+        }
+        return now.plusSeconds(LOCK_MINUTES * 60);
+    }
+}
