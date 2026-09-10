@@ -3,10 +3,11 @@ package com.xupan.server.game.service;
 import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
-import com.xupan.server.game.repository.DemoAccountRepository;
+import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -24,29 +26,29 @@ public class DemoGameService {
     private static final String INITIAL_ISSUE = "3000000";
     private final SettlementService settlementService;
     private final GameDataRepository repository;
-    private final DemoAccountRepository accountRepository;
+    private final VirtualWalletService walletService;
     private final GameIssueEventRepository eventRepository;
     private final 自动轮期服务 automationService;
 
     public DemoGameService(SettlementService settlementService, GameDataRepository repository,
-                           DemoAccountRepository accountRepository,
+                           VirtualWalletService walletService,
                            GameIssueEventRepository eventRepository,
                            自动轮期服务 automationService) {
         this.settlementService = settlementService;
         this.repository = repository;
-        this.accountRepository = accountRepository;
+        this.walletService = walletService;
         this.eventRepository = eventRepository;
         this.automationService = automationService;
     }
 
-    public synchronized GameView current() {
+    public synchronized GameView current(long authenticatedUserId) {
         Instant now = Instant.now();
         automationService.advance(now);
         GameDataRepository.IssueRecord issue = ensureInitialized();
-        return toGameView(issue, now);
+        return toGameView(issue, now, authenticatedUserId);
     }
 
-    private GameView toGameView(GameDataRepository.IssueRecord issue, Instant now) {
+    private GameView toGameView(GameDataRepository.IssueRecord issue, Instant now, long authenticatedUserId) {
         List<BallResult> results = toResults(automationService.previewNumbers(issue, now));
         List<BallView> ballViews = new ArrayList<>();
         for (int index = 0; index < 8; index++) {
@@ -62,9 +64,9 @@ public class DemoGameService {
         List<BetView> betViews = repository.findBetsByIssue(issue.issueNumber()).stream()
                 .map(DemoGameService::toBetView)
                 .toList();
-        DemoAccountRepository.AccountRecord account = accountRepository.findByCode(DemoAccountRepository.DEFAULT_USER_CODE);
+        VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
         return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, oddsViews, betViews,
-                new AccountView(account.userCode(), account.displayName(), account.balance(), account.status()),
+                new AccountView(wallet.userCode(), wallet.displayName(), wallet.balance(), wallet.status()),
                 now, issue.bettingEndsAt(), issue.drawEndsAt(),
                 自动轮期服务.DRAWING.equals(issue.phase()),
                 eventRepository.findByIssue(issue.issueNumber()).stream()
@@ -73,26 +75,47 @@ public class DemoGameService {
     }
 
     @Transactional
-    public synchronized BetView placeBet(PlaceBetRequest request) {
+    public synchronized BetView placeBet(long authenticatedUserId, PlaceBetRequest request) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
+        if (request.idempotencyKey() == null || request.idempotencyKey().isBlank()) {
+            throw new IllegalArgumentException("GAME_BET_IDEMPOTENCY_KEY_REQUIRED");
+        }
+        VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
+        var replay = repository.findBetByIdempotencyKey(wallet.accountId(), request.idempotencyKey());
+        if (replay.isPresent()) {
+            if (!sameBetRequest(replay.get(), issue, request)) {
+                throw new IllegalStateException("WALLET_IDEMPOTENCY_CONFLICT");
+            }
+            return toBetView(replay.get());
+        }
         if (!自动轮期服务.BETTING.equals(issue.phase())) {
             throw new IllegalStateException("当前期已封盘，不能下注");
         }
         BigDecimal snapshotOdds = repository.findOdds(request.playType())
                 .orElseThrow(() -> new IllegalArgumentException("玩法赔率不存在"));
         settlementService.validateBet(request.playType(), request.parameters(), request.stake(), snapshotOdds);
-        accountRepository.debit(DemoAccountRepository.DEFAULT_USER_CODE, request.stake(),
-                "下注扣款：" + issue.issueNumber());
         String betCode = "BET-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
-        repository.saveBetWithOddsSnapshot(1L, betCode, issue.issueNumber(), request.ballNumber(),
-                request.playType(), request.parameters(), money(request.stake()), odds(snapshotOdds));
+        long betId;
+        try {
+            betId = repository.saveBetWithOddsSnapshot(wallet.accountId(), betCode, request.idempotencyKey(),
+                    issue.issueNumber(), request.ballNumber(), request.playType(), request.parameters(),
+                    money(request.stake()), odds(snapshotOdds));
+        } catch (DuplicateKeyException duplicate) {
+            var concurrentReplay = repository.findBetByIdempotencyKey(wallet.accountId(), request.idempotencyKey())
+                    .orElseThrow(() -> duplicate);
+            if (!sameBetRequest(concurrentReplay, issue, request)) {
+                throw new IllegalStateException("WALLET_IDEMPOTENCY_CONFLICT");
+            }
+            return toBetView(concurrentReplay);
+        }
+        walletService.debitForBet(authenticatedUserId, betId, betCode, issue.issueNumber(), money(request.stake()));
         return repository.findBetByCode(betCode)
                 .map(DemoGameService::toBetView)
                 .orElseThrow(() -> new IllegalStateException("下注保存后未找到注单"));
     }
 
     @Transactional
-    public synchronized GameView draw(List<Integer> numbers) {
+    public synchronized GameView draw(long authenticatedUserId, List<Integer> numbers) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
         if (!"OPEN".equals(issue.status())) {
             throw new IllegalStateException("当前期已经开奖，不能重复开奖");
@@ -103,8 +126,9 @@ public class DemoGameService {
         List<BallResult> results = numbers.stream().map(BallResult::fromNumber).toList();
         List<PendingSettlement> settlements = repository.findBetsByIssue(issue.issueNumber()).stream()
                 .filter(bet -> bet.settlementStatus() == SettlementStatus.PENDING)
-                .map(bet -> new PendingSettlement(bet.id(), settlementService.settle(
-                        bet.playType(), bet.parameters(), bet.stake(), bet.odds(), results.get(bet.ballNumber() - 1))))
+                .map(bet -> new PendingSettlement(bet.id(), bet.accountId(), settlementService.settle(
+                        bet.playType(), bet.parameters(), bet.stake(), bet.odds(),
+                        results.get(bet.ballNumber() - 1))))
                 .toList();
 
         repository.saveIssue(issue.issueNumber(), "CLOSED", numbers);
@@ -112,10 +136,14 @@ public class DemoGameService {
             if (!repository.settleBetOnce(pending.betId(), pending.settlement())) {
                 throw new IllegalStateException("注单已经结算或不存在");
             }
-            accountRepository.credit(DemoAccountRepository.DEFAULT_USER_CODE, payout(pending.settlement()),
-                    "开奖结算：" + issue.issueNumber());
+            BigDecimal payout = payout(pending.settlement());
+            if (payout.signum() > 0) {
+                long settlementUserId = walletService.getByAccountId(pending.accountId()).userId();
+                walletService.creditForSettlement(settlementUserId, pending.betId(), issue.issueNumber(), payout,
+                        "开奖结算：" + issue.issueNumber());
+            }
         }
-        return toGameView(repository.findLatestIssue().orElseThrow(), Instant.now());
+        return toGameView(repository.findLatestIssue().orElseThrow(), Instant.now(), authenticatedUserId);
     }
 
     public synchronized OddsView updateOdds(PlayType playType, BigDecimal newOdds) {
@@ -127,7 +155,7 @@ public class DemoGameService {
         return new OddsView(playType, repository.findOdds(playType).orElseThrow());
     }
 
-    public synchronized GameView resetIssue() {
+    public synchronized GameView resetIssue(long authenticatedUserId) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
         if (自动轮期服务.BETTING.equals(issue.phase())) {
             throw new IllegalStateException("当前期尚未开奖，不能开启下一期");
@@ -139,7 +167,7 @@ public class DemoGameService {
             nextSequence = 3_000_000L;
         }
         repository.saveBettingIssue(String.valueOf(nextSequence), Instant.now());
-        return current();
+        return current(authenticatedUserId);
     }
 
     private GameDataRepository.IssueRecord ensureInitialized() {
@@ -200,6 +228,20 @@ public class DemoGameService {
         return value.setScale(3, RoundingMode.HALF_UP);
     }
 
+    private static boolean sameBetRequest(GameDataRepository.BetRecord existing,
+                                          GameDataRepository.IssueRecord issue,
+                                          PlaceBetRequest request) {
+        return Objects.equals(existing.issueNumber(), issue.issueNumber())
+                && existing.ballNumber() == request.ballNumber()
+                && existing.playType() == request.playType()
+                && Objects.equals(existing.parameters(), normalizedParameters(request.parameters()))
+                && existing.stake().compareTo(money(request.stake())) == 0;
+    }
+
+    private static List<Integer> normalizedParameters(List<Integer> parameters) {
+        return parameters == null ? List.of() : List.copyOf(parameters);
+    }
+
     public record GameView(String issueNumber, String status, String phase, List<BallView> balls,
                            List<OddsView> odds, List<BetView> bets, AccountView account,
                            Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,
@@ -223,7 +265,7 @@ public class DemoGameService {
     public record EventView(long id, String eventType, String message, Instant createdAt) {
     }
 
-    private record PendingSettlement(long betId, SettlementResult settlement) {
+    private record PendingSettlement(long betId, long accountId, SettlementResult settlement) {
     }
 
     private static BigDecimal payout(SettlementResult settlement) {

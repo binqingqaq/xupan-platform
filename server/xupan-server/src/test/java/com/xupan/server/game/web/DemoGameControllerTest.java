@@ -11,12 +11,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.auth.repository.UserRepository;
+import com.xupan.server.game.service.VirtualWalletService;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -38,22 +40,31 @@ class DemoGameControllerTest {
     @Autowired
     private UserRepository userRepository;
 
+    @Autowired
+    private VirtualWalletService walletService;
+
     private String accessToken;
+    private long testUserId;
 
     @BeforeEach
     void cleanDatabase() throws Exception {
         jdbcTemplate.update("DELETE FROM auth_ws_ticket");
         jdbcTemplate.update("DELETE FROM auth_session");
         jdbcTemplate.update("DELETE FROM sys_login_log");
+        jdbcTemplate.update("DELETE FROM demo_balance_ledger");
+        jdbcTemplate.update("DELETE FROM game_bet");
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username = ?)", TEST_USERNAME);
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN (SELECT id FROM sys_user WHERE username = ?)",
                 TEST_USERNAME);
         jdbcTemplate.update("DELETE FROM sys_user WHERE username = ?", TEST_USERNAME);
-        long userId = userRepository.insert(TEST_USERNAME, "游戏回归管理员",
+        testUserId = userRepository.insert(TEST_USERNAME, "游戏回归管理员",
                 passwordPolicyService.encode(TEST_PASSWORD), "ACTIVE");
-        userRepository.assignRole(userId, "ADMIN");
+        userRepository.assignRole(testUserId, "ADMIN");
+        walletService.ensureWalletForUser(testUserId, "游戏回归管理员");
+        walletService.grant(testUserId, testUserId, new java.math.BigDecimal("1000.00"),
+                "游戏回归测试初始化", "GAME-TEST-SETUP");
         accessToken = login();
-        jdbcTemplate.update("DELETE FROM game_bet");
-        jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("UPDATE demo_user_account SET balance = 1000.00 WHERE user_code = 'DEMO-USER'");
         jdbcTemplate.update("DELETE FROM game_odds");
         jdbcTemplate.update("DELETE FROM game_issue");
@@ -90,14 +101,29 @@ class DemoGameControllerTest {
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00}"))
+                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.settlementStatus").value("PENDING"))
                 .andExpect(jsonPath("$.odds").value(3.85));
 
-        mockMvc.perform(get("/api/demo/account").with(bearer(accessToken)))
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.settlementStatus").value("PENDING"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE request_idempotency_key = 'BET-REQUEST-001'", Integer.class))
+                .isEqualTo(1);
+
+        Long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, testUserId);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT user_id FROM game_bet WHERE issue_number = '3000000'", Long.class))
+                .isEqualTo(accountId);
+
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balance").value(985.00));
+                .andExpect(jsonPath("$.account.balance").value(985.00));
 
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
@@ -108,14 +134,20 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.bets[0].settlementStatus").value("WIN"))
                 .andExpect(jsonPath("$.bets[0].netProfit").value(42.75));
 
-        mockMvc.perform(get("/api/demo/account").with(bearer(accessToken)))
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balance").value(1042.75));
+                .andExpect(jsonPath("$.account.balance").value(1042.75));
 
-        mockMvc.perform(get("/api/demo/admin/accounts/DEMO-USER/ledger").with(bearer(accessToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].operationType").value("SETTLEMENT_CREDIT"))
-                .andExpect(jsonPath("$[1].operationType").value("BET_DEBIT"));
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger l
+                 JOIN demo_user_account a ON a.id = l.user_id
+                WHERE a.sys_user_id = ? AND l.operation_type = 'SETTLEMENT_CREDIT'
+                """, Integer.class, testUserId)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger l
+                 JOIN demo_user_account a ON a.id = l.user_id
+                WHERE a.sys_user_id = ? AND l.operation_type = 'BET_DEBIT'
+                """, Integer.class, testUserId)).isEqualTo(1);
 
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
@@ -124,7 +156,7 @@ class DemoGameControllerTest {
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-CLOSED-001\"}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -132,12 +164,12 @@ class DemoGameControllerTest {
     void rejectsInvalidBetAndDrawPayloads() throws Exception {
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":9,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00}"))
+                        .content("{\"ballNumber\":9,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-INVALID-BALL\"}"))
                 .andExpect(status().isBadRequest());
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.001}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.001,\"idempotencyKey\":\"BET-INVALID-SCALE\"}"))
                 .andExpect(status().isBadRequest());
 
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
@@ -147,17 +179,49 @@ class DemoGameControllerTest {
     }
 
     @Test
-    void adjustsDemoBalanceWithAnAuditableLedgerEntry() throws Exception {
+    void rejectsReplayWithDifferentBetParametersUsingStableConflictCode() throws Exception {
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-CONFLICT-001\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":16.00,\"idempotencyKey\":\"BET-CONFLICT-001\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("WALLET_IDEMPOTENCY_CONFLICT"));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE request_idempotency_key = 'BET-CONFLICT-001'", Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void rollsBackBetWhenAuthenticatedUsersWalletCannotCoverStake() throws Exception {
+        walletService.adjust(testUserId, testUserId, new java.math.BigDecimal("-1000.00"),
+                "游戏回归测试清空余额", "GAME-TEST-EMPTY");
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-INSUFFICIENT-001\"}"))
+                .andExpect(status().is4xxClientError());
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE user_id = "
+                        + "(SELECT id FROM demo_user_account WHERE sys_user_id = ?)",
+                Integer.class, testUserId)).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger l
+                 JOIN demo_user_account a ON a.id = l.user_id
+                WHERE a.sys_user_id = ? AND l.operation_type = 'BET_DEBIT'
+                """, Integer.class, testUserId)).isZero();
+    }
+
+    @Test
+    void legacyBalanceAdjustmentRouteIsRemoved() throws Exception {
         mockMvc.perform(post("/api/demo/admin/accounts/DEMO-USER/balance").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"amount\":125.50,\"reason\":\"验收初始化\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balance").value(1125.50));
-
-        mockMvc.perform(get("/api/demo/admin/accounts/DEMO-USER/ledger").with(bearer(accessToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].operationType").value("ADMIN_ADJUST"))
-                .andExpect(jsonPath("$[0].amount").value(125.50))
-                .andExpect(jsonPath("$[0].reason").value("验收初始化"));
+                .andExpect(status().isNotFound());
     }
 }
