@@ -3,6 +3,7 @@ package com.xupan.server.game.service;
 import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
+import com.xupan.server.game.repository.DemoAccountRepository;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
 import org.springframework.stereotype.Service;
@@ -21,10 +22,13 @@ public class DemoGameService {
     private static final String INITIAL_ISSUE = "DEMO-0001";
     private final SettlementService settlementService;
     private final GameDataRepository repository;
+    private final DemoAccountRepository accountRepository;
 
-    public DemoGameService(SettlementService settlementService, GameDataRepository repository) {
+    public DemoGameService(SettlementService settlementService, GameDataRepository repository,
+                           DemoAccountRepository accountRepository) {
         this.settlementService = settlementService;
         this.repository = repository;
+        this.accountRepository = accountRepository;
         ensureInitialized();
     }
 
@@ -45,9 +49,12 @@ public class DemoGameService {
         List<BetView> betViews = repository.findBetsByIssue(issue.issueNumber()).stream()
                 .map(DemoGameService::toBetView)
                 .toList();
-        return new GameView(issue.issueNumber(), issue.status(), ballViews, oddsViews, betViews);
+        DemoAccountRepository.AccountRecord account = accountRepository.findByCode(DemoAccountRepository.DEFAULT_USER_CODE);
+        return new GameView(issue.issueNumber(), issue.status(), ballViews, oddsViews, betViews,
+                new AccountView(account.userCode(), account.displayName(), account.balance(), account.status()));
     }
 
+    @Transactional
     public synchronized BetView placeBet(PlaceBetRequest request) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
         if (!"OPEN".equals(issue.status())) {
@@ -56,8 +63,10 @@ public class DemoGameService {
         BigDecimal snapshotOdds = repository.findOdds(request.playType())
                 .orElseThrow(() -> new IllegalArgumentException("玩法赔率不存在"));
         settlementService.validateBet(request.playType(), request.parameters(), request.stake(), snapshotOdds);
+        accountRepository.debit(DemoAccountRepository.DEFAULT_USER_CODE, request.stake(),
+                "下注扣款：" + issue.issueNumber());
         String betCode = "BET-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
-        repository.saveBetWithOddsSnapshot(betCode, issue.issueNumber(), request.ballNumber(),
+        repository.saveBetWithOddsSnapshot(1L, betCode, issue.issueNumber(), request.ballNumber(),
                 request.playType(), request.parameters(), money(request.stake()), odds(snapshotOdds));
         return repository.findBetByCode(betCode)
                 .map(DemoGameService::toBetView)
@@ -85,6 +94,8 @@ public class DemoGameService {
             if (!repository.settleBetOnce(pending.betId(), pending.settlement())) {
                 throw new IllegalStateException("注单已经结算或不存在");
             }
+            accountRepository.credit(DemoAccountRepository.DEFAULT_USER_CODE, payout(pending.settlement()),
+                    "开奖结算：" + issue.issueNumber());
         }
         return current();
     }
@@ -159,7 +170,7 @@ public class DemoGameService {
     }
 
     public record GameView(String issueNumber, String status, List<BallView> balls,
-                           List<OddsView> odds, List<BetView> bets) {
+                           List<OddsView> odds, List<BetView> bets, AccountView account) {
     }
 
     public record BallView(int ballNumber, Integer number, Integer fan, String parity, String size) {
@@ -173,6 +184,17 @@ public class DemoGameService {
                           SettlementStatus settlementStatus, BigDecimal netProfit, String explanation) {
     }
 
+    public record AccountView(String userCode, String displayName, BigDecimal balance, String status) {
+    }
+
     private record PendingSettlement(long betId, SettlementResult settlement) {
+    }
+
+    private static BigDecimal payout(SettlementResult settlement) {
+        return switch (settlement.status()) {
+            case WIN -> settlement.stake().add(settlement.netProfit());
+            case DRAW -> settlement.stake();
+            case LOSE, PENDING -> BigDecimal.ZERO;
+        };
     }
 }

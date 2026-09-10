@@ -29,6 +29,8 @@ class DemoGameControllerTest {
     @BeforeEach
     void cleanDatabase() {
         jdbcTemplate.update("DELETE FROM game_bet");
+        jdbcTemplate.update("DELETE FROM demo_balance_ledger");
+        jdbcTemplate.update("UPDATE demo_user_account SET balance = 1000.00 WHERE user_code = 'DEMO-USER'");
         jdbcTemplate.update("DELETE FROM game_odds");
         jdbcTemplate.update("DELETE FROM game_issue");
     }
@@ -53,6 +55,10 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.settlementStatus").value("PENDING"))
                 .andExpect(jsonPath("$.odds").value(3.85));
 
+        mockMvc.perform(get("/api/demo/account"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(985.00));
+
         mockMvc.perform(post("/api/demo/game/admin/draw")
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
@@ -61,6 +67,15 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.balls[7].number").value(18))
                 .andExpect(jsonPath("$.bets[0].settlementStatus").value("WIN"))
                 .andExpect(jsonPath("$.bets[0].netProfit").value(42.75));
+
+        mockMvc.perform(get("/api/demo/account"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(1042.75));
+
+        mockMvc.perform(get("/api/demo/admin/accounts/DEMO-USER/ledger"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].operationType").value("SETTLEMENT_CREDIT"))
+                .andExpect(jsonPath("$[1].operationType").value("BET_DEBIT"));
 
         mockMvc.perform(post("/api/demo/game/admin/draw")
                         .contentType("application/json")
@@ -89,5 +104,20 @@ class DemoGameControllerTest {
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,21]}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void adjustsDemoBalanceWithAnAuditableLedgerEntry() throws Exception {
+        mockMvc.perform(post("/api/demo/admin/accounts/DEMO-USER/balance")
+                        .contentType("application/json")
+                        .content("{\"amount\":125.50,\"reason\":\"验收初始化\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.balance").value(1125.50));
+
+        mockMvc.perform(get("/api/demo/admin/accounts/DEMO-USER/ledger"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].operationType").value("ADMIN_ADJUST"))
+                .andExpect(jsonPath("$[0].amount").value(125.50))
+                .andExpect(jsonPath("$[0].reason").value("验收初始化"));
     }
 }

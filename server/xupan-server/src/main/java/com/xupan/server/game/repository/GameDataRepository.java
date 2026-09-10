@@ -91,22 +91,30 @@ public class GameDataRepository {
     public long saveBetWithOddsSnapshot(String betCode, String issueNumber, int ballNumber,
                                         PlayType playType, List<Integer> parameters,
                                         BigDecimal stake, BigDecimal odds) {
+        return saveBetWithOddsSnapshot(1L, betCode, issueNumber, ballNumber, playType,
+                parameters, stake, odds);
+    }
+
+    public long saveBetWithOddsSnapshot(long userId, String betCode, String issueNumber, int ballNumber,
+                                        PlayType playType, List<Integer> parameters,
+                                        BigDecimal stake, BigDecimal odds) {
         String parameterText = parameters == null ? "" : parameters.stream()
                 .map(String::valueOf).collect(Collectors.joining(","));
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO game_bet
-                        (bet_code, issue_number, ball_number, play_type, parameters_text,
+                        (user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
                          stake, odds_snapshot)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """);
-            statement.setString(1, betCode);
-            statement.setString(2, issueNumber);
-            statement.setInt(3, ballNumber);
-            statement.setString(4, playType.name());
-            statement.setString(5, parameterText);
-            statement.setBigDecimal(6, stake);
-            statement.setBigDecimal(7, odds);
+            statement.setLong(1, userId);
+            statement.setString(2, betCode);
+            statement.setString(3, issueNumber);
+            statement.setInt(4, ballNumber);
+            statement.setString(5, playType.name());
+            statement.setString(6, parameterText);
+            statement.setBigDecimal(7, stake);
+            statement.setBigDecimal(8, odds);
             return statement;
         });
         Long id = jdbcTemplate.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
@@ -127,13 +135,13 @@ public class GameDataRepository {
 
     public List<BetRecord> findBetsByIssue(String issueNumber) {
         return jdbcTemplate.query("""
-                SELECT id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                SELECT id, user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
                        stake, odds_snapshot, settlement_status, net_profit, explanation
                   FROM game_bet
                  WHERE issue_number = ?
                  ORDER BY id
                 """, (rs, rowNum) -> new BetRecord(
-                rs.getLong("id"), rs.getString("bet_code"), rs.getString("issue_number"),
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"), rs.getString("issue_number"),
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
@@ -146,12 +154,12 @@ public class GameDataRepository {
 
     private List<BetRecord> findBetsByCode(String betCode) {
         return jdbcTemplate.query("""
-                SELECT id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                SELECT id, user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
                        stake, odds_snapshot, settlement_status, net_profit, explanation
                   FROM game_bet
                  WHERE bet_code = ?
                 """, (rs, rowNum) -> new BetRecord(
-                rs.getLong("id"), rs.getString("bet_code"), rs.getString("issue_number"),
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"), rs.getString("issue_number"),
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
@@ -176,7 +184,7 @@ public class GameDataRepository {
     public record IssueRecord(String issueNumber, String status, List<Integer> numbers) {
     }
 
-    public record BetRecord(long id, String betCode, String issueNumber, int ballNumber,
+    public record BetRecord(long id, long userId, String betCode, String issueNumber, int ballNumber,
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
                             BigDecimal netProfit, String explanation) {
