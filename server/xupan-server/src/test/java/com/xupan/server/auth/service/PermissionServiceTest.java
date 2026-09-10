@@ -40,10 +40,10 @@ class PermissionServiceTest {
 
         Set<String> codes = service.findPermissionCodes(userId);
         assertThat(codes).containsExactlyInAnyOrder("CHAT_ROOM_READ", "CHAT_MESSAGE_SEND",
-                "GAME_CURRENT_READ", "GAME_BET_PLACE");
+                "GAME_CURRENT_READ", "GAME_BET_PLACE", "WALLET_READ");
         assertThat(service.toAuthorities(codes)).extracting(GrantedAuthority::getAuthority)
                 .containsExactlyInAnyOrder("PERM_CHAT_ROOM_READ", "PERM_CHAT_MESSAGE_SEND",
-                        "PERM_GAME_CURRENT_READ", "PERM_GAME_BET_PLACE");
+                        "PERM_GAME_CURRENT_READ", "PERM_GAME_BET_PLACE", "PERM_WALLET_READ");
         assertThat(service.hasPermission(userId, "USER_MANAGE")).isFalse();
     }
 

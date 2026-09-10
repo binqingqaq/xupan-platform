@@ -147,17 +147,11 @@ class DemoGameControllerTest {
     }
 
     @Test
-    void adjustsDemoBalanceWithAnAuditableLedgerEntry() throws Exception {
+    void rejectsLegacyDemoBalanceAdjustmentInsteadOfBypassingWalletService() throws Exception {
         mockMvc.perform(post("/api/demo/admin/accounts/DEMO-USER/balance").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"amount\":125.50,\"reason\":\"验收初始化\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.balance").value(1125.50));
-
-        mockMvc.perform(get("/api/demo/admin/accounts/DEMO-USER/ledger").with(bearer(accessToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].operationType").value("ADMIN_ADJUST"))
-                .andExpect(jsonPath("$[0].amount").value(125.50))
-                .andExpect(jsonPath("$[0].reason").value("验收初始化"));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("WALLET_LEGACY_ENDPOINT_DISABLED"));
     }
 }

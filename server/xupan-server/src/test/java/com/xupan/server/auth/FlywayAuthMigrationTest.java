@@ -38,14 +38,20 @@ class FlywayAuthMigrationTest {
             "USER_MANAGE",
             "ROLE_MANAGE",
             "PERMISSION_MANAGE",
-            "AUDIT_READ");
+            "AUDIT_READ",
+            "WALLET_READ",
+            "WALLET_GRANT",
+            "WALLET_ADJUST",
+            "WALLET_LEDGER_READ");
 
     private static final Map<String, Set<String>> EXPECTED_ROLE_PERMISSIONS = Map.of(
             "USER", Set.of(
-                    "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE"),
+                    "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE",
+                    "WALLET_READ"),
             "MODERATOR", Set.of(
                     "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE",
-                    "CHAT_MESSAGE_REVIEW", "CHAT_MESSAGE_RECALL", "CHAT_USER_MUTE", "CHAT_USER_KICK"),
+                    "CHAT_MESSAGE_REVIEW", "CHAT_MESSAGE_RECALL", "CHAT_USER_MUTE", "CHAT_USER_KICK",
+                    "WALLET_READ"),
             "OPERATOR", Set.of(
                     "GAME_CURRENT_READ", "GAME_ODDS_READ", "GAME_ODDS_WRITE",
                     "ROBOT_READ", "ROBOT_WRITE", "ROBOT_TEMPLATE_WRITE"),
@@ -62,7 +68,7 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
     }
 
     @Test

@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -31,6 +32,15 @@ public class UserRepository {
 
     public Optional<UserAccount> findById(long userId) {
         return queryOne("SELECT " + USER_COLUMNS + " FROM sys_user WHERE id = ?", userId);
+    }
+
+    public List<UserAccount> findByStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return jdbcTemplate.query("SELECT " + USER_COLUMNS + " FROM sys_user ORDER BY id",
+                    this::mapUser);
+        }
+        return jdbcTemplate.query("SELECT " + USER_COLUMNS + " FROM sys_user WHERE status = ? ORDER BY id",
+                this::mapUser, status);
     }
 
     /**
@@ -128,12 +138,16 @@ public class UserRepository {
     }
 
     private Optional<UserAccount> queryOne(String sql, Object... args) {
-        return jdbcTemplate.query(sql, (rs, rowNum) -> new UserAccount(
-                        rs.getLong("id"), rs.getString("username"), rs.getString("display_name"),
-                        rs.getString("avatar_key"), rs.getString("password_hash"), rs.getString("status"),
-                        rs.getInt("failed_login_count"), instant(rs.getTimestamp("locked_until")),
-                        rs.getLong("security_version"), instant(rs.getTimestamp("last_login_at")),
-                        rs.getString("last_login_ip")), args).stream().findFirst();
+        return jdbcTemplate.query(sql, this::mapUser, args).stream().findFirst();
+    }
+
+    private UserAccount mapUser(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        return new UserAccount(
+                rs.getLong("id"), rs.getString("username"), rs.getString("display_name"),
+                rs.getString("avatar_key"), rs.getString("password_hash"), rs.getString("status"),
+                rs.getInt("failed_login_count"), instant(rs.getTimestamp("locked_until")),
+                rs.getLong("security_version"), instant(rs.getTimestamp("last_login_at")),
+                rs.getString("last_login_ip"));
     }
 
     private static Timestamp timestamp(Instant value) {

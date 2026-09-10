@@ -2,6 +2,7 @@ package com.xupan.server.auth.web;
 
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.auth.service.TokenService;
+import com.xupan.server.web.BusinessException;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -52,6 +53,11 @@ public class AuthenticationExceptionHandler implements AuthenticationEntryPoint,
     public void invalidRequest(MethodArgumentNotValidException exception,
                                HttpServletResponse response) throws IOException {
         write(response, HttpStatus.BAD_REQUEST, "REQUEST_INVALID", "请求参数无效");
+    }
+
+    @ExceptionHandler(BusinessException.class)
+    public void businessFailure(BusinessException exception, HttpServletResponse response) throws IOException {
+        write(response, exception.status(), exception.code(), exception.publicMessage());
     }
 
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})

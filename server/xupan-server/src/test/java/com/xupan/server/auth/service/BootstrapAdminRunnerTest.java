@@ -1,6 +1,7 @@
 package com.xupan.server.auth.service;
 
 import com.xupan.server.auth.repository.UserRepository;
+import com.xupan.server.system.service.UserAdminService;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.DefaultApplicationArguments;
 
@@ -72,5 +73,20 @@ class BootstrapAdminRunnerTest {
         verify(users).insert(eq("external-admin"), eq("external-admin"), captor.capture(), eq("ACTIVE"));
         assertThat(captor.getValue()).doesNotContain(rawPassword).startsWith("$2");
         verify(users).assignRole(42L, "ADMIN");
+    }
+
+    @Test
+    void enabledBootstrapUsesUserAdminServiceSoAdminGetsWalletInitialization() {
+        UserRepository users = mock(UserRepository.class);
+        UserAdminService userAdminService = mock(UserAdminService.class);
+        when(users.existsAnyUser()).thenReturn(false);
+        BootstrapAdminRunner runner = new BootstrapAdminRunner(userAdminService, users,
+                true, "external-admin", "BootstrapPassword123");
+
+        runner.run(new DefaultApplicationArguments(new String[0]));
+
+        verify(userAdminService).createUser("external-admin", "external-admin",
+                "BootstrapPassword123", "ADMIN", 0L);
+        verify(users, never()).insert(anyString(), anyString(), anyString(), anyString());
     }
 }
