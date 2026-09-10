@@ -8,6 +8,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.auth.repository.UserRepository;
@@ -23,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@TestPropertySource(properties = "xupan.automation.enabled=false")
 class DemoGameControllerTest {
 
     private static final String TEST_USERNAME = "game-test-admin";
@@ -51,6 +53,7 @@ class DemoGameControllerTest {
         jdbcTemplate.update("DELETE FROM auth_ws_ticket");
         jdbcTemplate.update("DELETE FROM auth_session");
         jdbcTemplate.update("DELETE FROM sys_login_log");
+        jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM game_bet");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
@@ -131,10 +134,7 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.status").value("CLOSED"))
                 .andExpect(jsonPath("$.balls[7].number").value(18))
                 .andExpect(jsonPath("$.bets[0].settlementStatus").value("WIN"))
-                .andExpect(jsonPath("$.bets[0].netProfit").value(42.75));
-
-        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
-                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bets[0].netProfit").value(42.75))
                 .andExpect(jsonPath("$.account.balance").value(1042.75));
 
         assertThat(jdbcTemplate.queryForObject("""

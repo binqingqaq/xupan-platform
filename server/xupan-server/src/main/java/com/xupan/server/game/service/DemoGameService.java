@@ -7,6 +7,7 @@ import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
+import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,7 +44,7 @@ public class DemoGameService {
 
     public synchronized GameView current(long authenticatedUserId) {
         Instant now = Instant.now();
-        automationService.advance(now);
+        automationService.advanceIfEnabled(now);
         GameDataRepository.IssueRecord issue = ensureInitialized();
         return toGameView(issue, now, authenticatedUserId);
     }
@@ -81,10 +82,10 @@ public class DemoGameService {
             throw new IllegalArgumentException("GAME_BET_IDEMPOTENCY_KEY_REQUIRED");
         }
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
-        var replay = repository.findBetByIdempotencyKey(wallet.accountId(), request.idempotencyKey());
+        var replay = repository.findBetByAccountIdAndIdempotencyKey(wallet.accountId(), request.idempotencyKey());
         if (replay.isPresent()) {
             if (!sameBetRequest(replay.get(), issue, request)) {
-                throw new IllegalStateException("WALLET_IDEMPOTENCY_CONFLICT");
+                throw BusinessException.conflict("WALLET_IDEMPOTENCY_CONFLICT", "重复下注请求参数不一致");
             }
             return toBetView(replay.get());
         }
@@ -101,10 +102,10 @@ public class DemoGameService {
                     issue.issueNumber(), request.ballNumber(), request.playType(), request.parameters(),
                     money(request.stake()), odds(snapshotOdds));
         } catch (DuplicateKeyException duplicate) {
-            var concurrentReplay = repository.findBetByIdempotencyKey(wallet.accountId(), request.idempotencyKey())
+            var concurrentReplay = repository.findBetByAccountIdAndIdempotencyKey(wallet.accountId(), request.idempotencyKey())
                     .orElseThrow(() -> duplicate);
             if (!sameBetRequest(concurrentReplay, issue, request)) {
-                throw new IllegalStateException("WALLET_IDEMPOTENCY_CONFLICT");
+                throw BusinessException.conflict("WALLET_IDEMPOTENCY_CONFLICT", "重复下注请求参数不一致");
             }
             return toBetView(concurrentReplay);
         }

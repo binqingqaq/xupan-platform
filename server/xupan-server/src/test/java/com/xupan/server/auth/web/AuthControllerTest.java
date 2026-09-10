@@ -3,6 +3,7 @@ package com.xupan.server.auth.web;
 import com.jayway.jsonpath.JsonPath;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
+import com.xupan.server.game.service.VirtualWalletService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +44,9 @@ class AuthControllerTest {
 
     @Autowired
     private PasswordPolicyService passwordPolicy;
+
+    @Autowired
+    private VirtualWalletService walletService;
 
     @BeforeEach
     void setUp() {
@@ -217,12 +221,16 @@ class AuthControllerTest {
     private void insertUser(String username, String password, String roleCode) {
         long userId = userRepository.insert(username, username, passwordPolicy.encode(password), "ACTIVE");
         assertThat(userRepository.assignRole(userId, roleCode)).isEqualTo(1);
+        walletService.ensureWalletForUser(userId, username);
     }
 
     private void cleanUsers() {
         jdbcTemplate.update("DELETE FROM auth_ws_ticket");
         jdbcTemplate.update("DELETE FROM auth_session");
         jdbcTemplate.update("DELETE FROM sys_login_log");
+        jdbcTemplate.update("DELETE FROM sys_operation_log");
+        jdbcTemplate.update("DELETE FROM demo_balance_ledger");
+        jdbcTemplate.update("DELETE FROM demo_user_account");
         jdbcTemplate.update("DELETE FROM sys_user_role");
         jdbcTemplate.update("DELETE FROM sys_user");
     }
