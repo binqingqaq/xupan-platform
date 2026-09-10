@@ -3,15 +3,19 @@ package com.xupan.server.auth;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -35,6 +39,17 @@ class FlywayAuthMigrationTest {
             "ROLE_MANAGE",
             "PERMISSION_MANAGE",
             "AUDIT_READ");
+
+    private static final Map<String, Set<String>> EXPECTED_ROLE_PERMISSIONS = Map.of(
+            "USER", Set.of(
+                    "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE"),
+            "MODERATOR", Set.of(
+                    "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE",
+                    "CHAT_MESSAGE_REVIEW", "CHAT_MESSAGE_RECALL", "CHAT_USER_MUTE", "CHAT_USER_KICK"),
+            "OPERATOR", Set.of(
+                    "GAME_CURRENT_READ", "GAME_ODDS_READ", "GAME_ODDS_WRITE",
+                    "ROBOT_READ", "ROBOT_WRITE", "ROBOT_TEMPLATE_WRITE"),
+            "ADMIN", PERMISSION_CODES);
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -111,17 +126,164 @@ class FlywayAuthMigrationTest {
                 "SELECT permission_code FROM sys_permission ORDER BY permission_code", String.class));
         assertThat(actualPermissionCodes).isEqualTo(PERMISSION_CODES);
 
-        List<Map<String, Object>> mappingRows = jdbcTemplate.queryForList(
-                "SELECT r.role_code, COUNT(rp.permission_id) AS permission_count "
-                        + "FROM sys_role r LEFT JOIN sys_role_permission rp ON rp.role_id = r.id "
-                        + "GROUP BY r.role_code");
-        Map<String, Integer> mappingCounts = mappingRows.stream().collect(Collectors.toMap(
-                row -> String.valueOf(row.get("ROLE_CODE")),
-                row -> ((Number) row.get("PERMISSION_COUNT")).intValue()));
-        assertThat(mappingCounts).containsEntry("USER", 4)
-                .containsEntry("MODERATOR", 8)
-                .containsEntry("OPERATOR", 6)
-                .containsEntry("ADMIN", 17);
+        EXPECTED_ROLE_PERMISSIONS.forEach((roleCode, expectedPermissions) ->
+                assertThat(permissionCodesForRole(roleCode)).isEqualTo(expectedPermissions));
+    }
+
+    @Test
+    void rejectsDuplicateIdentityAndTokenHashes() {
+        String username = "migration-duplicate-username";
+        long userId = insertUser(username);
+        try {
+            assertThatThrownBy(() -> insertUser(username))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "INSERT INTO sys_role (role_code, display_name) VALUES (?, ?)",
+                    "USER", "重复角色"))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "INSERT INTO sys_permission (permission_code, display_name) VALUES (?, ?)",
+                    "CHAT_ROOM_READ", "重复权限"))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            insertSession(userId, "migration-duplicate-session", hash('a'), hash('b'));
+            assertThatThrownBy(() -> insertSession(
+                    userId, "migration-duplicate-access", hash('a'), hash('c')))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> insertSession(
+                    userId, "migration-duplicate-refresh", hash('d'), hash('b')))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            insertTicket(userId, "migration-duplicate-session", hash('e'));
+            assertThatThrownBy(() -> insertTicket(
+                    userId, "migration-duplicate-session", hash('e')))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE session_id LIKE 'migration-duplicate-%'");
+            jdbcTemplate.update("DELETE FROM auth_session WHERE session_id LIKE 'migration-duplicate-%'");
+            jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", userId);
+        }
+    }
+
+    @Test
+    void rejectsReferencesToMissingUsers() {
+        long invalidUserId = Long.MAX_VALUE;
+        long userId = insertUser("migration-fk-user");
+        insertSession(userId, "migration-fk-session", hash('f'), hash('g'));
+        try {
+            long roleId = idForRole("USER");
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "INSERT INTO sys_user_role (user_id, role_id) VALUES (?, ?)",
+                    invalidUserId, roleId))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            assertThatThrownBy(() -> insertSession(
+                    invalidUserId, "migration-fk-invalid-session", hash('h'), hash('i')))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            assertThatThrownBy(() -> insertTicket(
+                    invalidUserId, "migration-fk-session", hash('j')))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "INSERT INTO sys_login_log "
+                            + "(username_snapshot, user_id, result) VALUES (?, ?, ?)",
+                    "migration-fk-user", invalidUserId, "SUCCESS"))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "INSERT INTO sys_operation_log "
+                            + "(operator_user_id, http_method, request_path, result) VALUES (?, ?, ?, ?)",
+                    invalidUserId, "POST", "/api/test", "SUCCESS"))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE session_id = 'migration-fk-session'");
+            jdbcTemplate.update("DELETE FROM auth_session WHERE session_id = 'migration-fk-session'");
+            jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", userId);
+        }
+    }
+
+    @Test
+    void replayingEquivalentSeedInsertsDoesNotIncreaseCounts() {
+        Map<String, Integer> before = seedCounts();
+
+        EXPECTED_ROLE_PERMISSIONS.forEach((roleCode, permissionCodes) -> {
+            jdbcTemplate.update(
+                    "INSERT INTO sys_role (role_code, display_name) "
+                            + "SELECT ?, ? WHERE NOT EXISTS "
+                            + "(SELECT 1 FROM sys_role WHERE role_code = ?)",
+                    roleCode, roleCode + "重复执行", roleCode);
+            permissionCodes.forEach(permissionCode -> jdbcTemplate.update(
+                    "INSERT INTO sys_permission (permission_code, display_name) "
+                            + "SELECT ?, ? WHERE NOT EXISTS "
+                            + "(SELECT 1 FROM sys_permission WHERE permission_code = ?)",
+                    permissionCode, permissionCode + "重复执行", permissionCode));
+        });
+        EXPECTED_ROLE_PERMISSIONS.forEach((roleCode, permissionCodes) -> permissionCodes.forEach(permissionCode ->
+                jdbcTemplate.update(
+                        "INSERT INTO sys_role_permission (role_id, permission_id) "
+                                + "SELECT r.id, p.id FROM sys_role r CROSS JOIN sys_permission p "
+                                + "WHERE r.role_code = ? AND p.permission_code = ? "
+                                + "AND NOT EXISTS (SELECT 1 FROM sys_role_permission existing "
+                                + "WHERE existing.role_id = r.id AND existing.permission_id = p.id)",
+                        roleCode, permissionCode)));
+
+        assertThat(seedCounts()).isEqualTo(before);
+    }
+
+    private Set<String> permissionCodesForRole(String roleCode) {
+        return Set.copyOf(jdbcTemplate.queryForList(
+                "SELECT p.permission_code FROM sys_role r "
+                        + "JOIN sys_role_permission rp ON rp.role_id = r.id "
+                        + "JOIN sys_permission p ON p.id = rp.permission_id "
+                        + "WHERE r.role_code = ? ORDER BY p.permission_code",
+                String.class, roleCode));
+    }
+
+    private Map<String, Integer> seedCounts() {
+        return Map.of(
+                "roles", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_role", Integer.class),
+                "permissions", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_permission", Integer.class),
+                "userRoles", jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_user_role", Integer.class),
+                "rolePermissions", jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM sys_role_permission", Integer.class));
+    }
+
+    private long insertUser(String username) {
+        jdbcTemplate.update(
+                "INSERT INTO sys_user (username, display_name, password_hash) VALUES (?, ?, ?)",
+                username, "迁移测试用户", "test-password-hash");
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
+    }
+
+    private long idForRole(String roleCode) {
+        return jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_role WHERE role_code = ?", Long.class, roleCode);
+    }
+
+    private void insertSession(long userId, String sessionId, String accessHash, String refreshHash) {
+        jdbcTemplate.update(
+                "INSERT INTO auth_session "
+                        + "(session_id, user_id, access_token_hash, access_expires_at, "
+                        + "refresh_token_hash, refresh_expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+                sessionId, userId, accessHash, futureTimestamp(30), refreshHash, futureTimestamp(60));
+    }
+
+    private void insertTicket(long userId, String sessionId, String ticketHash) {
+        jdbcTemplate.update(
+                "INSERT INTO auth_ws_ticket "
+                        + "(ticket_hash, user_id, session_id, expires_at) VALUES (?, ?, ?, ?)",
+                ticketHash, userId, sessionId, futureTimestamp(1));
+    }
+
+    private Timestamp futureTimestamp(long minutes) {
+        return Timestamp.from(Instant.now().plusSeconds(minutes * 60));
+    }
+
+    private String hash(char value) {
+        return String.valueOf(value).repeat(64);
     }
 
     private Set<String> tableNames() {
