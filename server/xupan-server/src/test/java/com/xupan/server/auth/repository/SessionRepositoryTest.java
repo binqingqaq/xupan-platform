@@ -127,6 +127,8 @@ class SessionRepositoryTest {
         repository.insertWsTicket(new WsTicket("ticket-revoked-hash", userId, "repo-session-ticket-revoked", "room-a",
                 now.plusSeconds(60), null, now));
         repository.revoke("repo-session-ticket-revoked", now);
+        assertThat(repository.findUsableWsTicket("ticket-revoked-hash", userId,
+                "repo-session-ticket-revoked", "room-a", now)).isEmpty();
         assertThat(repository.consumeWsTicket("ticket-revoked-hash", userId, "repo-session-ticket-revoked",
                 "room-a", now)).isEmpty();
 
@@ -135,6 +137,8 @@ class SessionRepositoryTest {
                 null, null, now.minusSeconds(120), 1L));
         repository.insertWsTicket(new WsTicket("ticket-expired-session-hash", userId, "repo-session-ticket-expired",
                 "room-a", now.plusSeconds(60), null, now));
+        assertThat(repository.findUsableWsTicket("ticket-expired-session-hash", userId,
+                "repo-session-ticket-expired", "room-a", now)).isEmpty();
         assertThat(repository.consumeWsTicket("ticket-expired-session-hash", userId, "repo-session-ticket-expired",
                 "room-a", now)).isEmpty();
 
