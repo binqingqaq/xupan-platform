@@ -39,4 +39,8 @@ public final class BusinessException extends RuntimeException {
     public static BusinessException conflict(String code, String message) {
         return new BusinessException(HttpStatus.CONFLICT, code, message);
     }
+
+    public static BusinessException forbidden(String code, String message) {
+        return new BusinessException(HttpStatus.FORBIDDEN, code, message);
+    }
 }

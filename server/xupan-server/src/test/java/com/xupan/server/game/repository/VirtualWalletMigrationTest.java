@@ -24,7 +24,10 @@ class VirtualWalletMigrationTest {
 
     @Test
     void v8AddsFormalWalletColumnsConstraintsAndSeedsWithoutRemovingLegacyData() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("8");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM \"flyway_schema_history\" "
+                        + "WHERE \"version\" = '8' AND \"success\" = TRUE", Integer.class))
+                .isEqualTo(1);
 
         assertThat(columnCount("demo_user_account", "sys_user_id")).isEqualTo(1);
         assertThat(columnCount("game_bet", "request_idempotency_key")).isEqualTo(1);

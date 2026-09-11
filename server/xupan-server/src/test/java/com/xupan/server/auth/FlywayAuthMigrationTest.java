@@ -61,14 +61,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV7InOrder() {
+    void appliesV1ThroughV10InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10");
     }
 
     @Test
@@ -318,7 +318,8 @@ class FlywayAuthMigrationTest {
                 "SELECT UPPER(TABLE_NAME) FROM INFORMATION_SCHEMA.TABLES "
                         + "WHERE UPPER(TABLE_SCHEMA) = 'PUBLIC' AND TABLE_TYPE = 'BASE TABLE' "
                         + "AND UPPER(TABLE_NAME) NOT LIKE 'FLYWAY%' AND UPPER(TABLE_NAME) NOT LIKE 'GAME_%' "
-                        + "AND UPPER(TABLE_NAME) NOT LIKE 'DEMO_%'",
+                        + "AND UPPER(TABLE_NAME) NOT LIKE 'DEMO_%' "
+                        + "AND UPPER(TABLE_NAME) NOT LIKE 'CHAT_%'",
                 String.class));
     }
 

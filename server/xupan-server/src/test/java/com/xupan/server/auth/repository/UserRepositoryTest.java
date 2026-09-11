@@ -101,4 +101,21 @@ class UserRepositoryTest {
 
         assertThat(repository.findById(id)).get().extracting(UserAccount::securityVersion).isEqualTo(2L);
     }
+
+    @Test
+    void managementPageFiltersByStatusAndKeywordWithStablePaging() {
+        long first = repository.insert("repo-test-page-a", "Alpha Member", "hash", "ACTIVE");
+        long second = repository.insert("repo-test-page-b", "Beta Member", "hash", "DISABLED");
+
+        assertThat(repository.findManagementPage("ACTIVE", "Alpha", 1, 20))
+                .extracting(UserRepository.UserManagementRow::id)
+                .containsExactly(first);
+        assertThat(repository.findManagementPage(null, "Member", 1, 1))
+                .extracting(UserRepository.UserManagementRow::id)
+                .containsExactly(first);
+        assertThat(repository.countManagementUsers(null, "Member")).isEqualTo(2L);
+        assertThat(repository.findManagementUser(second)).get()
+                .extracting(UserRepository.UserManagementRow::status)
+                .isEqualTo("DISABLED");
+    }
 }

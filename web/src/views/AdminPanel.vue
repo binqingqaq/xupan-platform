@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
 import type {
   AdminUserView,
@@ -32,6 +33,7 @@ const oddsDraft = ref<Partial<Record<PlayType, number>>>({})
 const feedback = ref('')
 const feedbackKind = ref<'success' | 'error'>('success')
 const busy = ref(false)
+const router = useRouter()
 
 const canManageWallet = computed(() => currentUser.value?.roles.includes('ADMIN') === true)
 const selectedUser = computed(() => users.value.find(user => user.id === selectedUserId.value))
@@ -48,6 +50,14 @@ function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
   window.setTimeout(() => {
     if (feedback.value === message) feedback.value = ''
   }, 3500)
+}
+
+async function logout() {
+  try {
+    await api.logout()
+  } finally {
+    await router.replace({ path: '/login', query: { reason: 'logged-out' } })
+  }
 }
 
 async function load() {
@@ -186,7 +196,11 @@ onMounted(load)
         <p class="eyebrow">XUPAN / CONTROL DESK</p>
         <h1>演示管理后台</h1>
       </div>
-      <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
+      <nav class="admin-header-actions" aria-label="后台导航">
+        <RouterLink class="header-link" to="/admin/users">用户管理</RouterLink>
+        <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
+        <button class="header-link" type="button" @click="logout">退出登录</button>
+      </nav>
     </header>
 
     <main class="admin-main">

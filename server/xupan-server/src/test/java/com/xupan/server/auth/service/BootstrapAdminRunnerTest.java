@@ -85,8 +85,7 @@ class BootstrapAdminRunnerTest {
 
         runner.run(new DefaultApplicationArguments(new String[0]));
 
-        verify(userAdminService).createUser("external-admin", "external-admin",
-                "BootstrapPassword123", "ADMIN", 0L);
+        verify(userAdminService).bootstrapAdmin("external-admin", "BootstrapPassword123");
         verify(users, never()).insert(anyString(), anyString(), anyString(), anyString());
     }
 }

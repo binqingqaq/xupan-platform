@@ -9,6 +9,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.http.HttpMethod;
 
 @Configuration
 public class SecurityConfig {
@@ -31,7 +32,8 @@ public class SecurityConfig {
                         .authenticationEntryPoint(exceptionHandler)
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/index.html", "/assets/**", "/favicon.ico").permitAll()
+                        .requestMatchers("/", "/index.html", "/login", "/forbidden", "/room", "/admin", "/admin/users",
+                                "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/actuator/health").permitAll()
                         .requestMatchers("/api/auth/logout", "/api/auth/me", "/api/auth/ws-ticket").authenticated()
                         .requestMatchers("/api/me/wallet").hasAuthority("PERM_WALLET_READ")
@@ -40,6 +42,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/users/*/wallet", "/api/admin/users/*/wallet/ledger")
                         .hasAuthority("PERM_WALLET_LEDGER_READ")
                         .requestMatchers("/api/admin/users", "/api/admin/users/**").hasAuthority("PERM_USER_MANAGE")
+                        .requestMatchers("/api/admin/roles").hasAuthority("PERM_USER_MANAGE")
+                        .requestMatchers(HttpMethod.GET, "/api/chat/rooms/*", "/api/chat/rooms/*/messages")
+                        .hasAuthority("PERM_CHAT_ROOM_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/chat/rooms/*/messages")
+                        .hasAuthority("PERM_CHAT_MESSAGE_SEND")
+                        .requestMatchers(HttpMethod.POST, "/api/chat/rooms/*/read-cursor").authenticated()
                         .requestMatchers("/api/demo/game/current").hasAuthority("PERM_GAME_CURRENT_READ")
                         .requestMatchers("/api/demo/game/bets").hasAuthority("PERM_GAME_BET_PLACE")
                         .requestMatchers("/api/demo/account").hasAuthority("PERM_GAME_CURRENT_READ")

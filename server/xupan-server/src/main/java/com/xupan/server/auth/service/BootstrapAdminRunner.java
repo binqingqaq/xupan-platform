@@ -54,7 +54,7 @@ public class BootstrapAdminRunner implements ApplicationRunner {
             throw new IllegalStateException("管理员初始化已启用，但外部用户名或密码配置缺失");
         }
         if (userAdminService != null) {
-            userAdminService.createUser(username, username, password, "ADMIN", 0L);
+            userAdminService.bootstrapAdmin(username, password);
             return;
         }
         String passwordHash = passwordPolicy.encode(password);

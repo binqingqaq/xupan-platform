@@ -206,6 +206,11 @@ public class SessionRepository {
 
     @Transactional
     public int revokeAllByUserId(long userId, Instant revokedAt) {
+        return revokeAllActiveByUserId(userId, revokedAt);
+    }
+
+    @Transactional
+    public int revokeAllActiveByUserId(long userId, Instant revokedAt) {
         return jdbcTemplate.update("""
                 UPDATE auth_session
                    SET revoked_at = ?, last_seen_at = COALESCE(last_seen_at, ?)

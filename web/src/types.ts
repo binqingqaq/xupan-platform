@@ -56,11 +56,93 @@ export interface CurrentUserView {
   permissions: string[]
 }
 
+export type ChatMessageType = 'USER_CHAT' | 'USER_BET' | 'ROBOT' | 'SYSTEM' | 'RESULT' | 'ADMIN'
+export type ChatSenderType = 'USER' | 'ROBOT' | 'SYSTEM' | 'ADMIN'
+export type ChatMessageStatus = 'ACTIVE' | 'RECALLED' | 'DELETED'
+
+export interface ChatRoomView {
+  roomCode: string
+  displayName: string
+  status: 'OPEN' | 'CLOSED'
+  messageRetentionDays: number
+  nextSequenceNo: number
+  currentIssueNumber: string | null
+  serverNow: string
+}
+
+export interface ChatMessage {
+  id: number
+  sequenceNo: number
+  messageType: ChatMessageType
+  senderType: ChatSenderType
+  senderId: number | null
+  senderName: string
+  content: string
+  payloadJson: string | null
+  status: ChatMessageStatus
+  createdAt: string
+}
+
+export interface ChatMessagePage {
+  roomCode: string
+  items: ChatMessage[]
+  nextBeforeSequence: number | null
+  nextAfterSequence: number | null
+  hasMore: boolean
+}
+
 export interface AdminUserView {
   id: number
   username: string
   displayName: string
   status: string
+  roles?: string[]
+  createdAt?: string
+  lastLoginAt?: string | null
+}
+
+export interface AdminUserPage {
+  items: AdminUserView[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface AdminUserDetail extends AdminUserView {
+  roles: string[]
+  createdAt: string
+  lastLoginAt: string | null
+  wallet: AdminWalletSummary | null
+}
+
+export interface AdminRoleOption {
+  code: string
+  name: string
+  status: string
+}
+
+export interface AdminWalletSummary {
+  accountId: number
+  balance: number
+  status: string
+}
+
+export interface CreateAdminUserRequest {
+  username: string
+  displayName: string
+  rawPassword: string
+}
+
+export interface ChangeAdminUserStatusRequest {
+  status: 'ACTIVE' | 'DISABLED' | 'LOCKED'
+}
+
+export interface ResetAdminUserPasswordRequest {
+  rawPassword: string
+}
+
+export interface UpdateAdminUserRolesRequest {
+  roleCodes: string[]
 }
 
 export interface VirtualWallet {

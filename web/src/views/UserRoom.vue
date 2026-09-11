@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
-import type { BallView, GameView, PlayType, VirtualWallet } from '../types'
+import type {
+  BallView,
+  ChatMessage,
+  ChatRoomView,
+  CurrentUserView,
+  GameView,
+  PlayType,
+  VirtualWallet,
+} from '../types'
 
-type MessageType = 'user' | 'robot' | 'system' | 'time' | 'result' | 'history'
+const ROOM_CODE = 'main'
+type MessageType = 'user' | 'robot' | 'system' | 'result'
 
 interface HistoryRow {
   issue: string
@@ -16,11 +25,18 @@ interface HistoryRow {
 
 interface RoomMessage {
   id: string
+  sequenceNo: number
   type: MessageType
-  name?: string
-  body?: string
-  time?: string
-  mine?: boolean
+  name: string
+  body: string
+  time: string
+  mine: boolean
+}
+
+interface PendingChatMessage {
+  clientMessageId: string
+  body: string
+  status: 'sending' | 'failed'
 }
 
 interface OddsCard {
@@ -32,6 +48,15 @@ interface OddsCard {
 
 const current = ref<GameView | null>(null)
 const wallet = ref<VirtualWallet | null>(null)
+const currentUser = ref<CurrentUserView | null>(null)
+const room = ref<ChatRoomView | null>(null)
+const chatMessages = ref<ChatMessage[]>([])
+const pendingChatMessage = ref<PendingChatMessage | null>(null)
+const chatUnread = ref(0)
+const chatLoading = ref(false)
+const chatPolling = ref(false)
+const chatLastSequence = ref(0)
+const chatReadCursorSaved = ref(0)
 const selectedBall = ref(1)
 const messageInput = ref('')
 const keyboardOpen = ref(false)
@@ -53,13 +78,13 @@ const loginPassword = ref('')
 const loginBusy = ref(false)
 const loginError = ref('')
 const messageScroll = ref<HTMLElement | null>(null)
-const localMessages = ref<RoomMessage[]>([])
 const clockTick = ref(Date.now())
 const serverOffsetMs = ref(0)
 const selectedQuickNumber = ref('1')
 const selectedQuickAmount = ref(100)
 const settingAmounts = ref(['50', '100', '200', '500', '1000'])
-let refreshTimer: number | undefined
+let gameRefreshTimer: number | undefined
+let chatRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 
 const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单双', '大小', '特', '查', '上下', '流水', '历史', '♫', '取消', '说明', '⇅']
@@ -108,9 +133,6 @@ function oddsFor(playType: PlayType) {
   return (oddsByType.value.get(playType) ?? 0).toFixed(2)
 }
 
-const referenceNames = ['真心换真心', '关羽', '铁頭七', '追光者', '小静', '拼搏人生', '大展宏图Q', '葱花饼']
-const referenceBets = ['3番45', '3通41/60', '123/165', '124/297', '14无2/37', '3通24/68', '134/143', '2加41/169']
-
 const historyRows = computed<HistoryRow[]>(() => {
   const balls = ballNumbers.value.map((ball, index) => ball.number === null ? String(((index + 3) % 20) + 1).padStart(2, '0') : String(ball.number).padStart(2, '0'))
   return Array.from({ length: 10 }, (_, index) => {
@@ -122,31 +144,64 @@ const historyRows = computed<HistoryRow[]>(() => {
   })
 })
 
-const messages = computed<RoomMessage[]>(() => {
-  const game = current.value
-  const rows: RoomMessage[] = []
-  referenceNames.forEach((name, index) => {
-    rows.push({ id: `reference-user-${index}`, type: 'user', name, body: referenceBets[index] })
-    rows.push({ id: `reference-robot-${index}`, type: 'robot', name: '机器人', body: `@${name}  攻击成功，使用虚拟余额${referenceBets[index].match(/\d+$/)?.[0] || '100'}, 当前虚拟余额：${(30 + index * 143.17).toFixed(2)}` })
-  })
-  rows.push({ id: 'stop-notice', type: 'robot', name: '机器人', body: '离封盘还剩30秒！\n20秒以内攻击，容易攻击失败退单!' })
-  rows.push({ id: 'check-list', type: 'robot', name: '机器人', body: `-----------\n${displayIssueNumber.value}\n核对列表:(演示)\n(小静) "14无2/37，14角10"\n(拼搏人生) "3通24/68，14无3/55"\n(再来一次) "单157，4正228"\n(追光者) "124/163，3无4/30"\n-----------\n不在核对列表无效!` })
-  rows.push({ id: 'history-label', type: 'user', name: '游泳池', body: '历史' })
-  rows.push({ id: 'history-result', type: 'robot', name: '机器人', body: `@游泳池\n${historyRows.value[1]?.issue || '00000000'}期结果\n(${historyRows.value[1]?.numbers.join(',') || '13,02,11,04,10,03,05,09'})开1番->\n3-2-1-2-2-1-4-2` })
-  rows.push(...(game?.events ?? []).map(event => ({
-    id: `event-${event.id}`,
-    type: event.eventType === 'DRAW_RESULT' ? 'result' as const : 'robot' as const,
-    name: '机器人',
-    body: event.message,
-  })))
-  rows.push({ id: 'open-result', type: 'result', name: '机器人', body: game?.phase === 'SETTLED'
-    ? `${displayIssueNumber.value}结果:\n${game.balls.map(ball => ball.number === null ? '--' : String(ball.number).padStart(2, '0')).join(',')}\n开奖和结算已完成`
-    : game?.phase === 'DRAWING' ? `${displayIssueNumber.value}期正在开奖中，开奖号码滚动展示...` : '等待开奖消息' })
-  rows.push({ id: 'tail-user', type: 'user', name: '关羽', body: '03特194' })
-  rows.push({ id: 'tail-robot', type: 'robot', name: '机器人', body: '@关羽  攻击成功，使用虚拟余额194, 当前虚拟余额：445.93' })
-  rows.push(...localMessages.value)
-  return rows
+const messages = computed<RoomMessage[]>(() => chatMessages.value.map(toRoomMessage))
+const displayMessages = computed<RoomMessage[]>(() => {
+  const pending = pendingChatMessage.value
+  if (!pending) return messages.value
+  return [...messages.value, {
+    id: pending.clientMessageId,
+    sequenceNo: 0,
+    type: 'user',
+    name: currentUser.value?.displayName || '我',
+    body: pending.body,
+    time: pending.status === 'sending' ? '发送中...' : '发送失败',
+    mine: true,
+  }]
 })
+
+function formatMessageTime(createdAt: string) {
+  const date = new Date(createdAt)
+  if (Number.isNaN(date.getTime())) return createdAt
+  return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
+function toRoomMessage(message: ChatMessage): RoomMessage {
+  const type: MessageType = message.messageType === 'RESULT'
+    ? 'result'
+    : message.senderType === 'ROBOT'
+      ? 'robot'
+      : message.senderType === 'SYSTEM' || message.senderType === 'ADMIN'
+        ? 'system'
+        : 'user'
+  return {
+    id: String(message.id),
+    sequenceNo: message.sequenceNo,
+    type,
+    name: message.senderName,
+    body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
+    time: formatMessageTime(message.createdAt),
+    mine: message.senderId !== null && message.senderId === currentUser.value?.id,
+  }
+}
+
+function mergeChatMessages(incoming: ChatMessage[]) {
+  let added = 0
+  const merged = [...chatMessages.value]
+  incoming.forEach(message => {
+    const index = merged.findIndex(item => item.id === message.id || item.sequenceNo === message.sequenceNo)
+    if (index === -1) {
+      merged.push(message)
+      added += 1
+    } else {
+      merged[index] = message
+    }
+  })
+  merged.sort((left, right) => left.sequenceNo - right.sequenceNo)
+  chatMessages.value = merged
+  const latestSequence = merged.length ? merged[merged.length - 1].sequenceNo : 0
+  chatLastSequence.value = Math.max(chatLastSequence.value, latestSequence)
+  return added
+}
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
   feedback.value = message
@@ -159,18 +214,98 @@ function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
 function scrollToBottom() {
   nextTick(() => {
     const element = messageScroll.value
-    if (element) element.scrollTop = element.scrollHeight
+    if (element) {
+      element.scrollTop = element.scrollHeight
+      chatUnread.value = 0
+    }
   })
+}
+
+function isNearChatBottom() {
+  const element = messageScroll.value
+  return !element || element.scrollHeight - element.scrollTop - element.clientHeight < 48
+}
+
+function handleChatScroll() {
+  if (isNearChatBottom()) {
+    chatUnread.value = 0
+    if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
+  }
+}
+
+async function saveChatReadCursor(sequence: number) {
+  if (sequence <= chatReadCursorSaved.value) return
+  try {
+    await api.saveChatReadCursor(ROOM_CODE, sequence)
+    chatReadCursorSaved.value = sequence
+  } catch {
+    // The read cursor is an optional UX hint and must not interrupt message delivery.
+  }
+}
+
+async function loadChatHistory() {
+  chatLoading.value = true
+  try {
+    const [nextRoom, page] = await Promise.all([
+      api.getChatRoom(ROOM_CODE),
+      api.getChatMessages(ROOM_CODE, { limit: 50 }),
+    ])
+    room.value = nextRoom
+    chatMessages.value = []
+    chatLastSequence.value = 0
+    chatReadCursorSaved.value = 0
+    mergeChatMessages(page.items)
+    chatUnread.value = 0
+    await nextTick()
+    scrollToBottom()
+    if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
+  } finally {
+    chatLoading.value = false
+  }
+}
+
+async function pollChatMessages() {
+  if (!authenticated.value || !room.value || chatPolling.value) return
+  chatPolling.value = true
+  try {
+    const shouldStickToBottom = isNearChatBottom()
+    const page = await api.getChatMessages(ROOM_CODE, {
+      afterSequence: chatLastSequence.value,
+      limit: 100,
+    })
+    const added = mergeChatMessages(page.items)
+    if (added === 0) return
+    if (shouldStickToBottom) {
+      scrollToBottom()
+      void saveChatReadCursor(chatLastSequence.value)
+    } else {
+      chatUnread.value += added
+    }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      authenticated.value = false
+      loginError.value = '登录状态已失效，请重新登录'
+    }
+  } finally {
+    chatPolling.value = false
+  }
+}
+
+async function loadGame() {
+  const [next, nextWallet] = await Promise.all([api.current(), api.getMyWallet()])
+  current.value = next
+  wallet.value = nextWallet
+  serverOffsetMs.value = Date.now() - Date.parse(next.serverNow)
 }
 
 async function load() {
   if (sessionChecked.value && !authenticated.value) return
   try {
-    const [next, nextWallet] = await Promise.all([api.current(), api.getMyWallet()])
-    current.value = next
-    wallet.value = nextWallet
+    const user = await api.me()
+    await loadGame()
+    currentUser.value = user
     authenticated.value = true
-    serverOffsetMs.value = Date.now() - Date.parse(next.serverNow)
+    await loadChatHistory()
     scrollToBottom()
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -283,28 +418,54 @@ function parseBetMessage(text: string): { ballNumber: number; playType: PlayType
 async function submitMessage() {
   const text = messageInput.value.trim()
   if (!text) return
-  const id = `local-${Date.now()}`
-  localMessages.value.push({ id, type: 'user', name: '徒', body: text, mine: true })
   messageInput.value = ''
   keyboardOpen.value = false
-  scrollToBottom()
   const payload = parseBetMessage(text)
-  if (!payload || current.value?.phase !== 'BETTING') {
-    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: current.value?.phase === 'BETTING' ? '@徒 已收到消息，请按核对列表确认' : '@徒 本期已停止下注' })
-    scrollToBottom()
+  if (payload) {
+    if (current.value?.phase !== 'BETTING') {
+      showFeedback('本期已停止下注', 'error')
+      return
+    }
+    try {
+      await api.placeBet({ ...payload, idempotencyKey: createBetIdempotencyKey() })
+      await loadGame()
+      showFeedback('下注已发送')
+    } catch (error) {
+      showFeedback(apiErrorMessage(error, '下注失败，请稍后重试'), 'error')
+    }
     return
   }
-  try {
-    await api.placeBet({ ...payload, idempotencyKey: createBetIdempotencyKey() })
-    await load()
-    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: `@徒  攻击成功，使用虚拟余额${payload.stake.toFixed(0)}, 当前虚拟余额：${balance.value}` })
-    showFeedback('下注已发送')
-  } catch (error) {
-    const message = apiErrorMessage(error, '下注失败，请稍后重试')
-    localMessages.value.push({ id: `${id}-reply`, type: 'robot', name: '机器人', body: `@徒 下注失败：${message}` })
-    showFeedback(message, 'error')
-  }
+
+  await sendPlainTextMessage(text)
+}
+
+async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()) {
+  if (pendingChatMessage.value?.status === 'sending') return
+  pendingChatMessage.value = { clientMessageId, body, status: 'sending' }
   scrollToBottom()
+  try {
+    const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body })
+    mergeChatMessages([sent])
+    pendingChatMessage.value = null
+    if (isNearChatBottom()) {
+      scrollToBottom()
+      void saveChatReadCursor(chatLastSequence.value)
+    }
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      pendingChatMessage.value = { clientMessageId, body, status: 'failed' }
+      authenticated.value = false
+      loginError.value = '登录状态已失效，请重新登录'
+    } else {
+      pendingChatMessage.value = { clientMessageId, body, status: 'failed' }
+      showFeedback(apiErrorMessage(error, '消息发送失败，可点击重试'), 'error')
+    }
+  }
+}
+
+function retryPendingChatMessage() {
+  const pending = pendingChatMessage.value
+  if (pending?.status === 'failed') void sendPlainTextMessage(pending.body, pending.clientMessageId)
 }
 
 function toggleKeyboard() {
@@ -340,10 +501,16 @@ function createBetIdempotencyKey() {
   return `bet-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+function createChatClientMessageId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `web-${crypto.randomUUID()}`
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 onMounted(() => {
   document.body.classList.add('reference-room-body')
-  load()
-  refreshTimer = window.setInterval(() => { if (authenticated.value) void load() }, 1000)
+  void load()
+  gameRefreshTimer = window.setInterval(() => { if (authenticated.value) void loadGame() }, 1000)
+  chatRefreshTimer = window.setInterval(() => { void pollChatMessages() }, 3000)
   countdownTimer = window.setInterval(() => {
     clockTick.value = Date.now()
   }, 1000)
@@ -351,7 +518,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.body.classList.remove('reference-room-body')
-  if (refreshTimer) window.clearInterval(refreshTimer)
+  if (gameRefreshTimer) window.clearInterval(gameRefreshTimer)
+  if (chatRefreshTimer) window.clearInterval(chatRefreshTimer)
   if (countdownTimer) window.clearInterval(countdownTimer)
 })
 </script>
@@ -361,7 +529,7 @@ onUnmounted(() => {
     <header class="reference-header">
       <div class="reference-toolbar">
         <strong class="balance-text">虚拟余额:{{ balance }}</strong>
-        <strong class="reference-user">徒</strong>
+        <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
         <div class="header-actions">
           <button class="quick-button" type="button" @click="quickOpen = !quickOpen">快捷</button>
           <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
@@ -406,31 +574,22 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <main v-if="viewMode === 'chat'" ref="messageScroll" class="reference-message-scroll" aria-label="聊天室消息">
+    <main v-if="viewMode === 'chat'" ref="messageScroll" class="reference-message-scroll" aria-label="聊天室消息" @scroll="handleChatScroll">
       <section class="reference-message-feed">
-        <article class="reference-message message-history-table">
-          <div class="reference-bubble">
-            <div class="reference-avatar is-robot">机</div>
-            <h5 class="reference-name">机器人</h5>
-            <pre class="reference-pre">历史参考:</pre>
-            <div class="reference-history-table">
-              <div class="history-heading"><span>期数</span><span>时间</span><span>结果</span><span>番</span></div>
-              <div v-for="row in historyRows" :key="row.issue" class="history-row">
-                <strong>{{ row.issue.slice(-3) }}</strong><span>{{ row.time }}</span><span>{{ row.numbers.join(' ') }}</span><b>{{ row.fan }} {{ row.size }} {{ row.parity }}</b>
-              </div>
-            </div>
-          </div>
-        </article>
-        <template v-for="message in messages" :key="message.id">
-          <div v-if="message.type === 'time'" class="reference-time"><span>{{ message.time }}</span></div>
-          <article v-else class="reference-message" :class="messageClass(message)">
+        <div v-if="chatLoading && !displayMessages.length" class="chat-state">正在加载消息...</div>
+        <div v-else-if="!displayMessages.length" class="chat-state">还没有消息，发出第一条消息吧。</div>
+        <template v-else v-for="message in displayMessages" :key="message.id">
+          <article class="reference-message" :class="messageClass(message)">
             <div class="reference-bubble">
-              <div class="reference-avatar" :class="{ 'is-robot': message.name === '机器人' }">{{ avatarText(message.name || '系') }}</div>
+              <div class="reference-avatar" :class="{ 'is-robot': message.type === 'robot' }">{{ avatarText(message.name) }}</div>
               <h5 class="reference-name">{{ message.name }}</h5>
-              <pre v-if="message.body" class="reference-pre">{{ message.body }}</pre>
+              <pre class="reference-pre">{{ message.body }}</pre>
+              <time class="reference-message-time">{{ message.time }}</time>
+              <button v-if="message.sequenceNo === 0 && pendingChatMessage?.status === 'failed'" class="chat-retry" type="button" @click="retryPendingChatMessage">重试</button>
             </div>
           </article>
         </template>
+        <button v-if="chatUnread > 0" class="chat-unread" type="button" @click="scrollToBottom">{{ chatUnread }} 条新消息</button>
       </section>
     </main>
 
@@ -463,7 +622,7 @@ onUnmounted(() => {
           <span v-for="row in 2" :key="row"><i v-for="dot in 4" :key="dot"></i></span>
         </button>
         <textarea v-model="messageInput" class="reference-input" rows="1" aria-label="下注或聊天内容" @keydown.enter.exact.prevent="submitMessage"></textarea>
-        <button class="reference-send" type="button" @click="submitMessage">发送</button>
+        <button class="reference-send" type="button" :disabled="pendingChatMessage?.status === 'sending'" @click="submitMessage">发送</button>
       </div>
       <div v-else class="odds-quickbar">
         <div class="odds-quickbar-top"><strong>{{ displayIssueNumber }}期</strong><span>{{ current?.phase === 'BETTING' ? '待结' : current?.phase === 'DRAWING' ? '开奖中' : '已结' }}</span></div>
