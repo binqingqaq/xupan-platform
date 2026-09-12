@@ -150,6 +150,14 @@ public class TokenService {
                 .orElseThrow(() -> new InvalidTokenException("WebSocket 票据无效"));
     }
 
+    /** Consumes a ticket after the handshake has bound it to its room, user and session. */
+    public WsTicket consumeWsTicket(String rawTicket, String roomCode) {
+        String ticketHash = sha256Required(rawTicket);
+        return sessionRepository.consumeWsTicket(ticketHash, normalizeRoomCode(roomCode), clock.instant())
+                .filter(ticket -> Objects.equals(normalizeRoomCode(ticket.roomCode()), normalizeRoomCode(roomCode)))
+                .orElseThrow(() -> new InvalidTokenException("WebSocket 票据无效"));
+    }
+
     public static String sha256(String value) {
         Objects.requireNonNull(value, "value");
         try {

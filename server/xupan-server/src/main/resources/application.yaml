@@ -9,6 +9,17 @@ spring:
   flyway:
     enabled: true
 xupan:
+  chat:
+    websocket:
+      allowed-origins: ${XUPAN_CHAT_WS_ALLOWED_ORIGINS:http://127.0.0.1:5173,http://localhost:5173}
+      max-connections-per-user: ${XUPAN_CHAT_WS_MAX_CONNECTIONS_PER_USER:3}
+      max-connections: ${XUPAN_CHAT_WS_MAX_CONNECTIONS:5000}
+      heartbeat-interval: ${XUPAN_CHAT_WS_HEARTBEAT_INTERVAL:20s}
+      heartbeat-timeout: ${XUPAN_CHAT_WS_HEARTBEAT_TIMEOUT:30s}
+      max-pending-messages: ${XUPAN_CHAT_WS_MAX_PENDING_MESSAGES:100}
+      max-message-bytes: ${XUPAN_CHAT_WS_MAX_MESSAGE_BYTES:4096}
+      max-messages-per-window: ${XUPAN_CHAT_WS_MAX_MESSAGES_PER_WINDOW:10}
+      message-rate-window: ${XUPAN_CHAT_WS_MESSAGE_RATE_WINDOW:10s}
   auth:
     refresh-cookie-secure: ${XUPAN_AUTH_REFRESH_COOKIE_SECURE:true}
     bootstrap-admin:

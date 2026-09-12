@@ -13,8 +13,10 @@ import com.xupan.server.chat.repository.ChatMuteRepository;
 import com.xupan.server.chat.repository.ChatOutboxRepository;
 import com.xupan.server.chat.repository.ChatReadCursorRepository;
 import com.xupan.server.chat.repository.ChatRoomRepository;
+import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.web.BusinessException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +60,8 @@ class ChatMessageServiceTest {
     private ChatReadCursorRepository readCursorRepository;
     @Mock
     private GameDataRepository gameDataRepository;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     private ChatMessageService service;
 
@@ -65,7 +69,7 @@ class ChatMessageServiceTest {
     void setUp() {
         service = new ChatMessageService(userRepository, roomRepository, messageRepository,
                 outboxRepository, muteRepository, readCursorRepository, new ChatContentPolicy(),
-                gameDataRepository, new ObjectMapper());
+                gameDataRepository, new ObjectMapper(), eventPublisher);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
     }
 
@@ -85,6 +89,7 @@ class ChatMessageServiceTest {
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
         verify(outboxRepository).insertMessageCreatedOutbox(eq(1L), payload.capture(), eq(NOW));
+        verify(eventPublisher).publishEvent(any(ChatMessageCreatedEvent.class));
         assertThat(payload.getValue()).contains("\"roomCode\":\"main\"", "\"sequenceNo\":1",
                 "\"senderId\":7", "\"content\":\"hello\"");
     }
@@ -102,6 +107,7 @@ class ChatMessageServiceTest {
                 .isEqualTo(existing);
         verify(roomRepository, never()).allocateNextSequence(anyLong(), anyLong());
         verify(outboxRepository, never()).insertMessageCreatedOutbox(anyLong(), anyString(), any());
+        verify(eventPublisher, never()).publishEvent(any());
 
         assertThatThrownBy(() -> service.sendUserMessage(USER_ID, "main", "client-1", "新正文", NOW))
                 .isInstanceOf(BusinessException.class)

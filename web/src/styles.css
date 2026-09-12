@@ -98,6 +98,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-time { width: 100%; margin: 18px 0 0; text-align: center; }
 .reference-time span { display: inline-block; border-radius: 4px; padding: 2px 5px; background: var(--reference-muted); color: #fff; font-size: 12px; line-height: 12px; }
 .chat-state { padding: 48px 20px; color: #888; text-align: center; }
+.chat-connection-status { margin: 4px 10px; border: 1px solid #c7dceb; border-radius: 3px; background: #f1f8fd; color: #5c7890; font-size: 12px; line-height: 20px; text-align: center; }
+.chat-connection-status.degraded { border-color: #e6c8a2; background: #fff8ed; color: #9a641d; }
 .reference-message-time { display: block; margin: 0 6px 5px; color: #999; font-size: 11px; line-height: 14px; }
 .chat-retry { margin: 0 6px 7px; border: 1px solid #d66b6b; border-radius: 2px; background: #fff6f6; color: #c23b3b; font-size: 12px; padding: 2px 7px; }
 .chat-unread { position: sticky; bottom: 10px; left: 50%; display: block; margin: 0 auto 8px; border: 1px solid #8abbe5; border-radius: 12px; background: #edf7ff; color: #0876d8; font-size: 12px; padding: 4px 10px; }

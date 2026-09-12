@@ -156,6 +156,33 @@ public class SessionRepository {
         return findStoredWsTicketByHash(ticketHash);
     }
 
+    /** Consumes a room-bound ticket when the handshake has not established a user context yet. */
+    @Transactional
+    public Optional<WsTicket> consumeWsTicket(String ticketHash, String roomCode, Instant now) {
+        String normalizedRoomCode = normalizeRoomCode(roomCode);
+        boolean consumed = jdbcTemplate.update("""
+                UPDATE auth_ws_ticket
+                   SET used_at = ?
+                 WHERE ticket_hash = ?
+                   AND (room_code = ? OR (room_code IS NULL AND ? IS NULL))
+                   AND used_at IS NULL
+                   AND expires_at > ?
+                   AND EXISTS (
+                       SELECT 1
+                         FROM auth_session s
+                         JOIN sys_user u ON u.id = s.user_id
+                        WHERE s.session_id = auth_ws_ticket.session_id
+                          AND s.user_id = auth_ws_ticket.user_id
+                          AND s.revoked_at IS NULL
+                          AND s.access_expires_at > ?
+                          AND s.security_version = u.security_version
+                          AND u.status = 'ACTIVE'
+                   )
+                """, timestamp(now), ticketHash, normalizedRoomCode, normalizedRoomCode,
+                timestamp(now), timestamp(now)) == 1;
+        return consumed ? findStoredWsTicketByHash(ticketHash) : Optional.empty();
+    }
+
     public Optional<WsTicket> consumeWsTicket(
             String ticketHash, long userId, String sessionId, String roomCode) {
         return consumeWsTicket(ticketHash, userId, sessionId, roomCode, Instant.now());

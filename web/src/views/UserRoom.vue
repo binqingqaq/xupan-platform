@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
+import { ChatSocket } from '../services/chatSocket'
 import type {
   BallView,
   ChatMessage,
@@ -10,6 +11,7 @@ import type {
   PlayType,
   VirtualWallet,
 } from '../types'
+import type { ChatSocketState } from '../types/chat'
 
 const ROOM_CODE = 'main'
 type MessageType = 'user' | 'robot' | 'system' | 'result'
@@ -57,6 +59,7 @@ const chatLoading = ref(false)
 const chatPolling = ref(false)
 const chatLastSequence = ref(0)
 const chatReadCursorSaved = ref(0)
+const chatConnectionState = ref<ChatSocketState>('DISCONNECTED')
 const selectedBall = ref(1)
 const messageInput = ref('')
 const keyboardOpen = ref(false)
@@ -86,6 +89,7 @@ const settingAmounts = ref(['50', '100', '200', '500', '1000'])
 let gameRefreshTimer: number | undefined
 let chatRefreshTimer: number | undefined
 let countdownTimer: number | undefined
+const chatSocket = new ChatSocket()
 
 const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单双', '大小', '特', '查', '上下', '流水', '历史', '♫', '取消', '说明', '⇅']
 const numberTokens = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '/', ',', '-', '↲', '✘', '⇦']
@@ -126,6 +130,17 @@ const countdown = computed(() => {
   return `${minutes}:${seconds}`
 })
 const phaseLabel = computed(() => current.value?.phase === 'DRAWING' ? '开奖中' : current.value?.phase === 'BETTING' ? countdown.value : '已结')
+const chatConnectionLabel = computed(() => {
+  switch (chatConnectionState.value) {
+    case 'REQUESTING_TICKET': return '正在准备实时连接...'
+    case 'CONNECTING': return '正在连接聊天室...'
+    case 'CONNECTED': return '正在同步聊天室消息...'
+    case 'SYNCING': return '正在补齐断线消息...'
+    case 'RECONNECT_WAIT': return '实时连接中断，正在重连...'
+    case 'DEGRADED': return '实时连接不可用，已切换普通模式'
+    default: return ''
+  }
+})
 
 const oddsByType = computed(() => new Map((current.value?.odds ?? []).map((item) => [item.playType, item.odds])))
 
@@ -264,8 +279,61 @@ async function loadChatHistory() {
   }
 }
 
+function startChatPolling() {
+  if (chatRefreshTimer !== undefined || !authenticated.value) return
+  void pollChatMessages()
+  chatRefreshTimer = window.setInterval(() => { void pollChatMessages() }, 3000)
+}
+
+function stopChatPolling() {
+  if (chatRefreshTimer !== undefined) {
+    window.clearInterval(chatRefreshTimer)
+    chatRefreshTimer = undefined
+  }
+}
+
+function handleRealtimeMessages(incoming: ChatMessage[]) {
+  const shouldStickToBottom = isNearChatBottom()
+  const added = mergeChatMessages(incoming)
+  if (added === 0) return
+  if (shouldStickToBottom) {
+    scrollToBottom()
+    void saveChatReadCursor(chatLastSequence.value)
+  } else {
+    chatUnread.value += added
+  }
+}
+
+function connectChatSocket() {
+  chatSocket.connect(ROOM_CODE, {
+    onStateChange: ({ state }) => {
+      chatConnectionState.value = state
+      if (state === 'DEGRADED') {
+        if (pendingChatMessage.value?.status === 'sending') pendingChatMessage.value = { ...pendingChatMessage.value, status: 'failed' }
+        startChatPolling()
+      } else if (state === 'READY' || state === 'CONNECTED' || state === 'SYNCING' || state === 'REQUESTING_TICKET' || state === 'CONNECTING' || state === 'RECONNECT_WAIT') {
+        stopChatPolling()
+      }
+    },
+    onMessages: page => handleRealtimeMessages(page.items),
+    onMessage: message => handleRealtimeMessages([message]),
+    onMessageAck: event => {
+      if (pendingChatMessage.value?.clientMessageId === event.clientMessageId) pendingChatMessage.value = null
+    },
+    onError: event => {
+      if (event.clientMessageId && pendingChatMessage.value?.clientMessageId === event.clientMessageId) {
+        pendingChatMessage.value = { ...pendingChatMessage.value, status: 'failed' }
+      }
+      if (event.code === 'AUTH_UNAUTHENTICATED' || event.code === 'AUTH_TOKEN_REVOKED' || event.code === 'AUTH_PERMISSION_DENIED') {
+        authenticated.value = false
+        loginError.value = '登录状态已失效，请重新登录'
+      }
+    },
+  }, { lastReceivedSequence: chatLastSequence.value })
+}
+
 async function pollChatMessages() {
-  if (!authenticated.value || !room.value || chatPolling.value) return
+  if (!authenticated.value || !room.value || chatPolling.value || chatSocket.getState() !== 'DEGRADED') return
   chatPolling.value = true
   try {
     const shouldStickToBottom = isNearChatBottom()
@@ -283,6 +351,8 @@ async function pollChatMessages() {
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
+      chatSocket.disconnect()
+      stopChatPolling()
       authenticated.value = false
       loginError.value = '登录状态已失效，请重新登录'
     }
@@ -301,14 +371,19 @@ async function loadGame() {
 async function load() {
   if (sessionChecked.value && !authenticated.value) return
   try {
+    chatSocket.disconnect()
+    stopChatPolling()
     const user = await api.me()
     await loadGame()
     currentUser.value = user
     authenticated.value = true
     await loadChatHistory()
+    connectChatSocket()
     scrollToBottom()
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
+      chatSocket.disconnect()
+      stopChatPolling()
       authenticated.value = false
       loginError.value = '登录状态已失效，请重新登录'
     } else {
@@ -443,6 +518,7 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
   if (pendingChatMessage.value?.status === 'sending') return
   pendingChatMessage.value = { clientMessageId, body, status: 'sending' }
   scrollToBottom()
+  if (chatSocket.sendMessage(clientMessageId, body)) return
   try {
     const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body })
     mergeChatMessages([sent])
@@ -510,7 +586,6 @@ onMounted(() => {
   document.body.classList.add('reference-room-body')
   void load()
   gameRefreshTimer = window.setInterval(() => { if (authenticated.value) void loadGame() }, 1000)
-  chatRefreshTimer = window.setInterval(() => { void pollChatMessages() }, 3000)
   countdownTimer = window.setInterval(() => {
     clockTick.value = Date.now()
   }, 1000)
@@ -519,7 +594,8 @@ onMounted(() => {
 onUnmounted(() => {
   document.body.classList.remove('reference-room-body')
   if (gameRefreshTimer) window.clearInterval(gameRefreshTimer)
-  if (chatRefreshTimer) window.clearInterval(chatRefreshTimer)
+  stopChatPolling()
+  chatSocket.disconnect()
   if (countdownTimer) window.clearInterval(countdownTimer)
 })
 </script>
@@ -576,6 +652,9 @@ onUnmounted(() => {
 
     <main v-if="viewMode === 'chat'" ref="messageScroll" class="reference-message-scroll" aria-label="聊天室消息" @scroll="handleChatScroll">
       <section class="reference-message-feed">
+        <div v-if="authenticated && chatConnectionLabel" class="chat-connection-status" :class="{ degraded: chatConnectionState === 'DEGRADED' }" role="status">
+          {{ chatConnectionLabel }}
+        </div>
         <div v-if="chatLoading && !displayMessages.length" class="chat-state">正在加载消息...</div>
         <div v-else-if="!displayMessages.length" class="chat-state">还没有消息，发出第一条消息吧。</div>
         <template v-else v-for="message in displayMessages" :key="message.id">

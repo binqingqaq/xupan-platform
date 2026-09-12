@@ -22,6 +22,7 @@ import type {
   ResetAdminUserPasswordRequest,
   UpdateAdminUserRolesRequest,
 } from './types'
+import type { ChatWsTicketResponse } from './types/chat'
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated'
 
@@ -163,7 +164,10 @@ async function request<T>(url: string, options: RequestInit = {}, retryOnUnautho
     credentials: 'include',
   })
   if (response.status === 401) {
-    if (retryOnUnauthorized && !url.startsWith('/api/auth/')) {
+    const retryableAuthRequest = url !== '/api/auth/login'
+      && url !== '/api/auth/refresh'
+      && url !== '/api/auth/logout'
+    if (retryOnUnauthorized && retryableAuthRequest) {
       if (await refreshAccessToken()) return request<T>(url, options, false)
     }
     clearAccessToken()
@@ -192,6 +196,10 @@ export const api = {
     }
   },
   me: () => request<CurrentUserView>('/api/auth/me'),
+  getChatWsTicket: (roomCode: string) =>
+    request<ChatWsTicketResponse>(`/api/auth/ws-ticket?roomCode=${encodeURIComponent(roomCode)}`, {
+      method: 'POST',
+    }),
   current: () => request<GameView>('/api/demo/game/current'),
   placeBet: (payload: { ballNumber: number; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string }) =>
     request<BetView>('/api/demo/game/bets', { method: 'POST', body: JSON.stringify(payload) }),

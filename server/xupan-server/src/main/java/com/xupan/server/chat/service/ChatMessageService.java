@@ -12,9 +12,11 @@ import com.xupan.server.chat.repository.ChatMuteRepository;
 import com.xupan.server.chat.repository.ChatOutboxRepository;
 import com.xupan.server.chat.repository.ChatReadCursorRepository;
 import com.xupan.server.chat.repository.ChatRoomRepository;
+import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +39,7 @@ public class ChatMessageService {
     private final ChatContentPolicy contentPolicy;
     private final GameDataRepository gameDataRepository;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ChatMessageService(UserRepository userRepository,
                               ChatRoomRepository roomRepository,
@@ -46,7 +49,8 @@ public class ChatMessageService {
                               ChatReadCursorRepository readCursorRepository,
                               ChatContentPolicy contentPolicy,
                               GameDataRepository gameDataRepository,
-                              ObjectMapper objectMapper) {
+                              ObjectMapper objectMapper,
+                              ApplicationEventPublisher eventPublisher) {
         this.userRepository = userRepository;
         this.roomRepository = roomRepository;
         this.messageRepository = messageRepository;
@@ -56,6 +60,7 @@ public class ChatMessageService {
         this.contentPolicy = contentPolicy;
         this.gameDataRepository = gameDataRepository;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     public ChatRoomView getRoom(long userId, String roomCode, Instant now) {
@@ -105,6 +110,13 @@ public class ChatMessageService {
     @Transactional
     public ChatMessage sendUserMessage(long userId, String roomCode, String clientMessageId,
                                        String content, Instant now) {
+        return sendUserMessageWithOutcome(userId, roomCode, clientMessageId, content, now).message();
+    }
+
+    @Transactional
+    public ChatMessageSendOutcome sendUserMessageWithOutcome(long userId, String roomCode,
+                                                              String clientMessageId, String content,
+                                                              Instant now) {
         requirePositiveUser(userId);
         UserAccount user = requireActiveUser(userId);
         String clientId = contentPolicy.requireClientMessageId(clientMessageId);
@@ -121,13 +133,14 @@ public class ChatMessageService {
             if (!Objects.equals(existing.get().content(), normalizedContent)) {
                 throw BusinessException.conflict("CHAT_IDEMPOTENCY_CONFLICT", "客户端消息标识对应的正文不一致");
             }
-            return existing.get();
+            return new ChatMessageSendOutcome(existing.get(), true);
         }
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
                 user.displayName(), clientId, normalizedContent, now);
         outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
-        return message;
+        eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+        return new ChatMessageSendOutcome(message, false);
     }
 
     @Transactional
@@ -187,6 +200,9 @@ public class ChatMessageService {
     }
 
     public record ChatRoomView(ChatRoom room, String currentIssueNumber, Instant serverNow) {
+    }
+
+    public record ChatMessageSendOutcome(ChatMessage message, boolean deduplicated) {
     }
 
     private record OutboxMessage(long messageId, String roomCode, long sequenceNo,

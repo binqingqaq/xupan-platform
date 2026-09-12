@@ -35,6 +35,8 @@ public class SecurityConfig {
                         .requestMatchers("/", "/index.html", "/login", "/forbidden", "/room", "/admin", "/admin/users",
                                 "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/actuator/health").permitAll()
+                        // WebSocket authentication is performed by the one-time ticket interceptor.
+                        .requestMatchers("/ws/chat/**").permitAll()
                         .requestMatchers("/api/auth/logout", "/api/auth/me", "/api/auth/ws-ticket").authenticated()
                         .requestMatchers("/api/me/wallet").hasAuthority("PERM_WALLET_READ")
                         .requestMatchers("/api/admin/users/*/wallet/grants").hasAuthority("PERM_WALLET_GRANT")

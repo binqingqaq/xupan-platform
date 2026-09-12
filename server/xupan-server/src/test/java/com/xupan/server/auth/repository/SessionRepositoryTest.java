@@ -194,6 +194,21 @@ class SessionRepositoryTest {
     }
 
     @Test
+    void consumesRoomBoundTicketBeforeHandshakeHasAUserContext() {
+        userId = userRepository.insert("repo-session-user-room-ticket", "Ticket User", "hash", "ACTIVE");
+        Instant now = Instant.parse("2026-09-10T10:00:00Z");
+        repository.insert(session("repo-session-room-ticket", userId, "access-room", "refresh-room", now));
+        repository.insertWsTicket(new WsTicket("room-ticket-hash", userId, "repo-session-room-ticket", "room-a",
+                now.plusSeconds(60), null, now));
+
+        assertThat(repository.consumeWsTicket("room-ticket-hash", "room-b", now)).isEmpty();
+        assertThat(repository.consumeWsTicket("room-ticket-hash", "room-a", now)).get()
+                .extracting(WsTicket::userId, WsTicket::sessionId, WsTicket::usedAt)
+                .containsExactly(userId, "repo-session-room-ticket", now);
+        assertThat(repository.consumeWsTicket("room-ticket-hash", "room-a", now.plusSeconds(1))).isEmpty();
+    }
+
+    @Test
     void rejectsExpiredTicketAndDoesNotMarkItUsed() {
         userId = userRepository.insert("repo-session-user-expired-ticket", "Ticket User", "hash", "ACTIVE");
         Instant expiresAt = Instant.parse("2026-09-10T10:00:00Z");

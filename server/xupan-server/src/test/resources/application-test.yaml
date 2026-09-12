@@ -9,6 +9,17 @@ spring:
 xupan:
   automation:
     enabled: false
+  chat:
+    websocket:
+      allowed-origins: http://127.0.0.1:5173,http://localhost:5173
+      max-connections-per-user: 2
+      max-connections: 4
+      heartbeat-interval: 20s
+      heartbeat-timeout: 30s
+      max-pending-messages: 2
+      max-message-bytes: 4096
+      max-messages-per-window: 10
+      message-rate-window: 10s
   auth:
     refresh-cookie-secure: false
     bootstrap-admin:

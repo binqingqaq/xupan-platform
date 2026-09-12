@@ -73,6 +73,7 @@ export interface ChatRoomView {
 export interface ChatMessage {
   id: number
   sequenceNo: number
+  clientMessageId: string | null
   messageType: ChatMessageType
   senderType: ChatSenderType
   senderId: number | null
@@ -81,6 +82,7 @@ export interface ChatMessage {
   payloadJson: string | null
   status: ChatMessageStatus
   createdAt: string
+  updatedAt: string
 }
 
 export interface ChatMessagePage {
