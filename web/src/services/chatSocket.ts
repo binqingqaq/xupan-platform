@@ -143,6 +143,7 @@ export class ChatSocket {
   private heartbeatTimer: number | undefined
   private generation = 0
   private intentionalDisconnect = false
+  private networkOffline = false
   private lastReceivedSequence = 0
   private syncInFlight = false
   private syncCompleteReceived = false
@@ -165,6 +166,7 @@ export class ChatSocket {
     this.deliveredMessageKeys.clear()
     this.generation += 1
     const generation = this.generation
+    this.bindNetworkEvents()
 
     if (options.websocketFactory) this.websocketFactory = options.websocketFactory
     if (options.random) this.random = options.random
@@ -184,6 +186,8 @@ export class ChatSocket {
   disconnect(): void {
     this.generation += 1
     this.intentionalDisconnect = true
+    this.networkOffline = false
+    this.unbindNetworkEvents()
     this.clearTimers()
     const socket = this.socket
     this.socket = null
@@ -199,7 +203,7 @@ export class ChatSocket {
   }
 
   private async open(generation: number): Promise<void> {
-    if (!this.isCurrent(generation) || !this.roomCode) return
+    if (!this.isCurrent(generation) || !this.roomCode || this.networkOffline) return
     if (typeof WebSocket === 'undefined') {
       this.degrade('browser websocket unsupported')
       return
@@ -355,6 +359,10 @@ export class ChatSocket {
 
   private scheduleReconnect(generation: number): void {
     if (!this.isCurrent(generation) || this.intentionalDisconnect) return
+    if (this.networkOffline) {
+      this.setState('RECONNECT_WAIT', 'network offline')
+      return
+    }
     this.clearReconnectTimer()
     if (this.reconnectAttempt >= this.maxReconnectAttempts) {
       this.degrade('reconnect attempts exhausted')
@@ -376,6 +384,38 @@ export class ChatSocket {
     this.heartbeatTimer = window.setInterval(() => {
       if (this.isCurrent(generation, socket)) this.send({ type: 'ping', nonce: createNonce('ping') })
     }, HEARTBEAT_INTERVAL_MS)
+  }
+
+  private bindNetworkEvents(): void {
+    if (typeof window === 'undefined') return
+    window.addEventListener('offline', this.handleNetworkOffline)
+    window.addEventListener('online', this.handleNetworkOnline)
+  }
+
+  private unbindNetworkEvents(): void {
+    if (typeof window === 'undefined') return
+    window.removeEventListener('offline', this.handleNetworkOffline)
+    window.removeEventListener('online', this.handleNetworkOnline)
+  }
+
+  private handleNetworkOffline = (): void => {
+    if (!this.roomCode || this.intentionalDisconnect) return
+    this.networkOffline = true
+    this.clearTimers()
+    const socket = this.socket
+    this.socket = null
+    if (socket && socket.readyState !== 3) socket.close(1001, 'network offline')
+    this.setState('RECONNECT_WAIT', 'network offline')
+  }
+
+  private handleNetworkOnline = (): void => {
+    if (!this.roomCode || this.intentionalDisconnect) return
+    this.networkOffline = false
+    if (this.socket) return
+    this.reconnectAttempt = 0
+    this.clearReconnectTimer()
+    this.setState('REQUESTING_TICKET', 'network online')
+    void this.open(this.generation)
   }
 
   private canSend(): boolean {

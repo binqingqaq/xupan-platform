@@ -90,15 +90,18 @@ const flushPromises = async () => {
 
 describe('ChatSocket', () => {
   let sockets: FakeSocket[]
+  let clients: ChatSocket[]
 
   beforeEach(() => {
     sockets = []
+    clients = []
     apiMocks.getChatWsTicket.mockResolvedValue({ ticket: 'test-ticket', expiresIn: 60 })
     apiMocks.getChatMessages.mockResolvedValue(createPage([]))
     vi.stubGlobal('WebSocket', FakeWebSocket)
   })
 
   afterEach(() => {
+    clients.forEach(client => client.disconnect())
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
@@ -112,6 +115,7 @@ describe('ChatSocket', () => {
         return fake
       },
     })
+    clients.push(socket)
     return socket
   }
 
@@ -237,6 +241,25 @@ describe('ChatSocket', () => {
     vi.runAllTimers()
     expect(socket.getState()).toBe('DISCONNECTED')
     expect(sockets).toHaveLength(2)
+  })
+
+  it('pauses while the browser is offline and reconnects when it comes back online', async () => {
+    vi.useFakeTimers()
+    const socket = createSocket({ random: () => 0 })
+    socket.connect('main', {})
+    await flushPromises()
+    sockets[0].open()
+
+    window.dispatchEvent(new Event('offline'))
+    expect(socket.getState()).toBe('RECONNECT_WAIT')
+    expect(sockets[0].readyState).toBe(FakeWebSocket.CLOSED)
+
+    window.dispatchEvent(new Event('online'))
+    await flushPromises()
+    expect(sockets).toHaveLength(2)
+    expect(api.getChatWsTicket).toHaveBeenCalledTimes(2)
+
+    socket.disconnect()
   })
 
   it.each([
