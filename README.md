@@ -10,8 +10,8 @@
 - 生产数据库：MySQL `8.4 LTS` + Flyway
 - 测试数据库：测试 Profile 使用内存 H2
 - 当前已具备：玩法领域模型、结算服务、Flyway/MySQL 持久化、赔率控制/下注/开奖 API、认证授权、虚拟余额管理员分配、聊天室 REST 持久化，以及单实例 WebSocket 实时消息链路代码
-- 当前开发中：单实例 WebSocket 的真实数据库运行态和双浏览器人工验收；常驻机器人、Redis 多实例、聊天治理后台和生产部署仍未进入完成状态
-- 当前尚未具备：常驻机器人、多实例实时广播、完整聊天治理、生产部署和真实运营能力
+- 当前阶段已验证：独立 MySQL 8.4.11 运行态、单实例 WebSocket、Nginx Upgrade、服务器发布回滚，以及本地两个 Playwright 隔离浏览器上下文的实时收发
+- 当前仍待补齐：页面刷新恢复、浏览器断网重连和服务器页面 DOM 回归；常驻机器人、Redis 多实例、聊天治理后台和正式生产高可用仍未完成
 - 当前余额能力：仅支持 `DEMO-USER` 虚拟演示余额和可审计余额流水，不代表真实资金系统
 
 ## 环境要求
@@ -47,7 +47,7 @@ cd server\xupan-server
 .\mvnw.cmd test
 ```
 
-当前完整测试套件使用 `src/test/resources/application-test.yaml` 中的内存 H2 和 Flyway，最近一次通过 128 个测试。它不替代真实 MySQL 验证。
+当前完整测试套件使用 `src/test/resources/application-test.yaml` 中的内存 H2 和 Flyway，最近一次通过 135 个测试。前端 Vitest 最近一次通过 11 个测试；这些测试和 H2 均不替代真实 MySQL 验证。
 
 ## 启动服务
 
@@ -75,6 +75,7 @@ npm run dev
 - [项目记忆](docs/项目记忆.md)
 - [环境准备](docs/环境准备.md)
 - [聊天室 WebSocket 部署运行说明](docs/部署运行说明.md)
+- [单实例聊天室运行态验收记录](docs/验收记录/2026-09-13-单实例聊天室运行态验收记录.md)
 - [首期项目方案](docs/项目方案.md)
 - [当前需求基线：汇博盈页面复刻](docs/需求基线/2026-09-10-汇博盈页面复刻.md)
 - [首期实施计划](docs/plans/2026-09-08-首期玩法演示.md)
