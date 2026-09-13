@@ -129,6 +129,12 @@ class ChatControllerTest {
                         .content("{\"clientMessageId\":\"denied-1\",\"content\":\"越权\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
+        mockMvc.perform(post("/api/chat/rooms/main/read-cursor")
+                        .header("Authorization", "Bearer " + noPermissionToken)
+                        .contentType("application/json")
+                        .content("{\"lastReadSequence\":0}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
 
         String token = login(USER_A);
         mockMvc.perform(get("/api/chat/rooms/missing" ).header("Authorization", "Bearer " + token))

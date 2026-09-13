@@ -9,13 +9,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class ChatConnectionRegistryTest {
 
     @Test
     void evictsOldestConnectionForUserAndKeepsIndexesConsistent() throws Exception {
         ChatWebSocketProperties properties = properties(2, 10);
-        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties);
+        ChatConnectionAccessService accessService = allowedAccessService();
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties, accessService);
         WebSocketSession firstSession = openSession();
         WebSocketSession secondSession = openSession();
         WebSocketSession thirdSession = openSession();
@@ -38,7 +40,7 @@ class ChatConnectionRegistryTest {
     @Test
     void broadcastsOnlyToConnectionsInTheRequestedRoom() throws Exception {
         ChatWebSocketProperties properties = properties(3, 10);
-        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties);
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties, allowedAccessService());
         WebSocketSession mainSession = openSession();
         WebSocketSession otherSession = openSession();
         ChatConnection main = connection("main-1", mainSession, Instant.parse("2026-09-11T00:00:00Z"));
@@ -53,6 +55,49 @@ class ChatConnectionRegistryTest {
         verify(mainSession).sendMessage(org.mockito.ArgumentMatchers.any());
         org.mockito.Mockito.verify(otherSession, org.mockito.Mockito.never())
                 .sendMessage(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void removesConnectionBeforeBroadcastWhenCurrentAccessIsRevoked() throws Exception {
+        ChatWebSocketProperties properties = properties(3, 10);
+        ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.forbidden());
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties, accessService);
+        WebSocketSession session = openSession();
+        ChatConnection connection = connection("revoked-1", session, Instant.parse("2026-09-11T00:00:00Z"));
+        connection.markSubscribed();
+        registry.register(connection);
+
+        assertThat(registry.broadcast("main", "{}"))
+                .isZero();
+        assertThat(registry.size()).isZero();
+        verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4403));
+    }
+
+    @Test
+    void removesConnectionDuringHeartbeatWhenSessionIsRevoked() throws Exception {
+        ChatWebSocketProperties properties = properties(3, 10);
+        ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.unauthenticated());
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties, accessService);
+        WebSocketSession session = openSession();
+        ChatConnection connection = connection("revoked-2", session, Instant.parse("2026-09-11T00:00:00Z"));
+        connection.markSubscribed();
+        registry.register(connection);
+
+        assertThat(registry.heartbeat(Instant.parse("2026-09-11T00:00:01Z")))
+                .isEqualTo(1);
+        assertThat(registry.size()).isZero();
+        verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4401));
+    }
+
+    private static ChatConnectionAccessService allowedAccessService() {
+        ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.allowed(null));
+        return accessService;
     }
 
     private static ChatWebSocketProperties properties(int perUser, int total) {

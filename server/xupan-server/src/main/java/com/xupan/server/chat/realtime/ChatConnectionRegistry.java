@@ -20,13 +20,16 @@ public class ChatConnectionRegistry {
     private static final Logger log = LoggerFactory.getLogger(ChatConnectionRegistry.class);
 
     private final ChatWebSocketProperties properties;
+    private final ChatConnectionAccessService accessService;
     private final Object lifecycleLock = new Object();
     private final Map<String, ChatConnection> connections = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> roomConnections = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> userConnections = new ConcurrentHashMap<>();
 
-    public ChatConnectionRegistry(ChatWebSocketProperties properties) {
+    public ChatConnectionRegistry(ChatWebSocketProperties properties,
+                                  ChatConnectionAccessService accessService) {
         this.properties = properties;
+        this.accessService = accessService;
     }
 
     public void register(ChatConnection connection) {
@@ -95,6 +98,12 @@ public class ChatConnectionRegistry {
             if (connection == null || !connection.isReadyForBroadcast()) {
                 continue;
             }
+            ChatConnectionAccessService.AccessCheck access = accessService.check(connection, Instant.now());
+            if (!access.allowed()) {
+                remove(connection.connectionId());
+                connection.close(access.closeStatus());
+                continue;
+            }
             if (connection.sendText(payload, properties.getMaxPendingMessages())) {
                 delivered++;
             } else {
@@ -108,6 +117,14 @@ public class ChatConnectionRegistry {
     public int heartbeat(Instant now) {
         int closed = 0;
         for (ChatConnection connection : new ArrayList<>(connections.values())) {
+            ChatConnectionAccessService.AccessCheck access = accessService.check(connection, now);
+            if (!access.allowed()) {
+                if (remove(connection.connectionId()) != null) {
+                    closed++;
+                }
+                connection.close(access.closeStatus());
+                continue;
+            }
             if (connection.heartbeatExpired(now, properties.getHeartbeatTimeout())
                     || !connection.sendPing(properties.getMaxPendingMessages())) {
                 if (remove(connection.connectionId()) != null) {

@@ -34,20 +34,23 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final ChatMessageService chatMessageService;
     private final ChatRealtimeSyncService syncService;
     private final AuthenticatedUserDetailsService userDetailsService;
+    private final ChatConnectionAccessService accessService;
     private final Map<String, MessageRateWindow> messageRateWindows = new ConcurrentHashMap<>();
 
     public ChatWebSocketHandler(ChatConnectionRegistry connectionRegistry,
                                 ChatWebSocketProperties properties,
-                                ObjectMapper objectMapper,
-                                ChatMessageService chatMessageService,
-                                ChatRealtimeSyncService syncService,
-                                AuthenticatedUserDetailsService userDetailsService) {
+                                 ObjectMapper objectMapper,
+                                 ChatMessageService chatMessageService,
+                                 ChatRealtimeSyncService syncService,
+                                 AuthenticatedUserDetailsService userDetailsService,
+                                 ChatConnectionAccessService accessService) {
         this.connectionRegistry = connectionRegistry;
         this.properties = properties;
         this.objectMapper = objectMapper;
         this.chatMessageService = chatMessageService;
         this.syncService = syncService;
         this.userDetailsService = userDetailsService;
+        this.accessService = accessService;
     }
 
     @Override
@@ -72,6 +75,12 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         ChatConnection connection = connection(session);
         if (connection == null) {
             closeQuietly(session, CloseStatus.NOT_ACCEPTABLE);
+            return;
+        }
+        ChatConnectionAccessService.AccessCheck access = accessService.check(connection, Instant.now());
+        if (!access.allowed()) {
+            remove(session);
+            connection.close(access.closeStatus());
             return;
         }
         try {

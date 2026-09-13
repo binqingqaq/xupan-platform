@@ -2,6 +2,7 @@ package com.xupan.server.chat.service;
 
 import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.auth.repository.UserRepository;
+import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessagePage;
 import com.xupan.server.chat.domain.ChatMessageStatus;
@@ -36,6 +37,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,6 +50,8 @@ class ChatMessageServiceTest {
 
     @Mock
     private UserRepository userRepository;
+    @Mock
+    private PermissionService permissionService;
     @Mock
     private ChatRoomRepository roomRepository;
     @Mock
@@ -67,10 +71,11 @@ class ChatMessageServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new ChatMessageService(userRepository, roomRepository, messageRepository,
+        service = new ChatMessageService(userRepository, permissionService, roomRepository, messageRepository,
                 outboxRepository, muteRepository, readCursorRepository, new ChatContentPolicy(),
                 gameDataRepository, new ObjectMapper(), eventPublisher);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
+        lenient().when(permissionService.hasPermission(USER_ID, "CHAT_ROOM_READ")).thenReturn(true);
     }
 
     @Test
@@ -150,6 +155,17 @@ class ChatMessageServiceTest {
         assertThatThrownBy(() -> service.saveReadCursor(USER_ID, "main", 1L, NOW))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CHAT_CURSOR_INVALID");
+        verify(readCursorRepository, never()).saveReadSequence(anyLong(), anyLong(), anyLong(), any());
+    }
+
+    @Test
+    void readCursorRequiresChatRoomReadPermission() {
+        when(permissionService.hasPermission(USER_ID, "CHAT_ROOM_READ")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.saveReadCursor(USER_ID, "main", 0L, NOW))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("AUTH_PERMISSION_DENIED");
+        verify(roomRepository, never()).findByCodeForUpdate(anyString());
         verify(readCursorRepository, never()).saveReadSequence(anyLong(), anyLong(), anyLong(), any());
     }
 

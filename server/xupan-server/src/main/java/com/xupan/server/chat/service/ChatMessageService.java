@@ -4,6 +4,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.auth.repository.UserRepository;
+import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessagePage;
 import com.xupan.server.chat.domain.ChatRoom;
@@ -31,6 +32,7 @@ import java.util.Optional;
 public class ChatMessageService {
 
     private final UserRepository userRepository;
+    private final PermissionService permissionService;
     private final ChatRoomRepository roomRepository;
     private final ChatMessageRepository messageRepository;
     private final ChatOutboxRepository outboxRepository;
@@ -42,6 +44,7 @@ public class ChatMessageService {
     private final ApplicationEventPublisher eventPublisher;
 
     public ChatMessageService(UserRepository userRepository,
+                              PermissionService permissionService,
                               ChatRoomRepository roomRepository,
                               ChatMessageRepository messageRepository,
                               ChatOutboxRepository outboxRepository,
@@ -52,6 +55,7 @@ public class ChatMessageService {
                               ObjectMapper objectMapper,
                               ApplicationEventPublisher eventPublisher) {
         this.userRepository = userRepository;
+        this.permissionService = permissionService;
         this.roomRepository = roomRepository;
         this.messageRepository = messageRepository;
         this.outboxRepository = outboxRepository;
@@ -147,6 +151,9 @@ public class ChatMessageService {
     public void saveReadCursor(long userId, String roomCode, long lastReadSequence, Instant now) {
         requirePositiveUser(userId);
         requireActiveUser(userId);
+        if (!permissionService.hasPermission(userId, "CHAT_ROOM_READ")) {
+            throw BusinessException.forbidden("AUTH_PERMISSION_DENIED", "当前账号没有聊天室查看权限");
+        }
         ChatRoom room = requireRoomForUpdate(roomCode);
         if (lastReadSequence < 0 || lastReadSequence > room.nextSequenceNo()) {
             throw BusinessException.badRequest("CHAT_CURSOR_INVALID", "已读游标超过房间当前序号");

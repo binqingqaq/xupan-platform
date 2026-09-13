@@ -28,12 +28,13 @@ import static org.mockito.Mockito.when;
 class ChatWebSocketHandlerTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final ChatConnectionRegistry registry = new ChatConnectionRegistry(properties());
     private final ChatMessageService messageService = mock(ChatMessageService.class);
     private final ChatRealtimeSyncService syncService = mock(ChatRealtimeSyncService.class);
     private final AuthenticatedUserDetailsService userDetailsService = mock(AuthenticatedUserDetailsService.class);
+    private final ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
+    private final ChatConnectionRegistry registry = new ChatConnectionRegistry(properties(), accessService);
     private final ChatWebSocketHandler handler = new ChatWebSocketHandler(
-            registry, properties(), objectMapper, messageService, syncService, userDetailsService);
+            registry, properties(), objectMapper, messageService, syncService, userDetailsService, accessService);
     private WebSocketSession session;
 
     @BeforeEach
@@ -49,6 +50,8 @@ class ChatWebSocketHandlerTest {
         org.mockito.Mockito.doReturn(java.util.List.of(
                 new SimpleGrantedAuthority("PERM_CHAT_MESSAGE_SEND"))).when(user).getAuthorities();
         when(userDetailsService.loadUserById(7L)).thenReturn(user);
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.allowed(user));
         attributes.put(ChatWebSocketHandshakeInterceptor.USER_ATTRIBUTE, user);
         attributes.put(ChatWebSocketHandshakeInterceptor.SESSION_ID_ATTRIBUTE, "session-7");
         attributes.put(ChatWebSocketHandshakeInterceptor.ROOM_CODE_ATTRIBUTE, "main");
@@ -113,6 +116,18 @@ class ChatWebSocketHandlerTest {
         verify(messageService, org.mockito.Mockito.never())
                 .sendUserMessageWithOutcome(any(Long.class), any(String.class), any(String.class), any(String.class), any(Instant.class));
         assertThat(sentPayloads()).anyMatch(value -> value.contains("CHAT_PERMISSION_DENIED"));
+    }
+
+    @Test
+    void closesConnectionWhenSessionIsRevokedBeforeNextBusinessFrame() throws Exception {
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.unauthenticated());
+
+        handler.handleTextMessage(session, new TextMessage("{\"type\":\"ping\",\"nonce\":\"n-1\"}"));
+
+        verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4401));
+        verify(messageService, org.mockito.Mockito.never())
+                .saveReadCursor(any(Long.class), any(String.class), any(Long.class), any(Instant.class));
     }
 
     private ChatMessage message(long sequence, String clientMessageId, String content) {

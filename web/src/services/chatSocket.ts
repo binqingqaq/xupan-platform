@@ -146,6 +146,7 @@ export class ChatSocket {
   private lastReceivedSequence = 0
   private syncInFlight = false
   private syncCompleteReceived = false
+  private deliveredMessageKeys = new Set<string>()
 
   constructor(options: ChatSocketOptions = {}) {
     this.websocketFactory = options.websocketFactory ?? ((url) => new WebSocket(url))
@@ -161,6 +162,7 @@ export class ChatSocket {
     this.intentionalDisconnect = false
     this.reconnectAttempt = 0
     this.lastReceivedSequence = Math.max(0, options.lastReceivedSequence ?? 0)
+    this.deliveredMessageKeys.clear()
     this.generation += 1
     const generation = this.generation
 
@@ -289,11 +291,11 @@ export class ChatSocket {
         return
       case 'message.created':
         this.updateLastSequence(event.message)
-        this.handlers.onMessage?.(event.message)
+        if (this.markMessageDelivered(event.message)) this.handlers.onMessage?.(event.message)
         return
       case 'message.ack':
         this.updateLastSequence(event.message)
-        this.handlers.onMessage?.(event.message)
+        if (this.markMessageDelivered(event.message)) this.handlers.onMessage?.(event.message)
         this.handlers.onMessageAck?.(event)
         return
       case 'cursor.ack':
@@ -323,7 +325,8 @@ export class ChatSocket {
       const page = await api.getChatMessages(this.roomCode, { afterSequence: cursor, limit: 100 })
       if (!this.isCurrent(generation)) return
       this.updateLastSequence(page.items)
-      this.handlers.onMessages?.(page)
+      const newItems = page.items.filter(message => this.markMessageDelivered(message))
+      if (newItems.length > 0) this.handlers.onMessages?.({ ...page, items: newItems })
       if (this.lastReceivedSequence > 0) this.ackCursor(this.lastReceivedSequence)
     } catch (error) {
       if (!this.isCurrent(generation)) return
@@ -397,6 +400,13 @@ export class ChatSocket {
     for (const message of messages) {
       this.lastReceivedSequence = Math.max(this.lastReceivedSequence, message.sequenceNo)
     }
+  }
+
+  private markMessageDelivered(message: ChatMessage): boolean {
+    const keys = [`id:${message.id}`, `sequence:${message.sequenceNo}`]
+    if (keys.some(key => this.deliveredMessageKeys.has(key))) return false
+    keys.forEach(key => this.deliveredMessageKeys.add(key))
+    return true
   }
 
   private isCurrent(generation: number, socket?: WebSocket): boolean {
