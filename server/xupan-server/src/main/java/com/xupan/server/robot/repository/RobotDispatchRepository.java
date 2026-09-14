@@ -237,6 +237,18 @@ public class RobotDispatchRepository {
         return count == null ? 0L : count;
     }
 
+    public long countByStatus(RobotDispatchStatus status) {
+        if (status == null) {
+            throw new IllegalArgumentException("ROBOT_DISPATCH_FILTER_INVALID: 状态无效");
+        }
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                  FROM chat_robot_dispatch
+                 WHERE status = ?
+                """, Long.class, status.name());
+        return count == null ? 0L : count;
+    }
+
     private ChatRobotDispatch mapDispatch(java.sql.ResultSet rs, int rowNum)
             throws java.sql.SQLException {
         return new ChatRobotDispatch(rs.getLong("id"), rs.getLong("game_event_id"),

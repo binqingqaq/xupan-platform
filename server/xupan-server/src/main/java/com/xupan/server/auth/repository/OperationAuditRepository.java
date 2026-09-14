@@ -2,6 +2,7 @@ package com.xupan.server.auth.repository;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
@@ -17,7 +18,7 @@ public class OperationAuditRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(Long operatorUserId, String permissionCode, String httpMethod, String requestPath,
                        String resourceId, String result, String errorCode, String requestSummary,
                        String ip, Instant createdAt) {

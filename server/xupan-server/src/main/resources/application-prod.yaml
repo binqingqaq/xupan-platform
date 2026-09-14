@@ -1,0 +1,28 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+logging:
+  level:
+    root: ${XUPAN_LOG_LEVEL:INFO}
+    com.xupan: ${XUPAN_APP_LOG_LEVEL:INFO}
+  file:
+    name: ${XUPAN_LOG_FILE:/opt/xupan-platform/logs/xupan-server.log}
+  logback:
+    rollingpolicy:
+      max-file-size: ${XUPAN_LOG_MAX_FILE_SIZE:50MB}
+      max-history: ${XUPAN_LOG_MAX_HISTORY_DAYS:30}
+      total-size-cap: ${XUPAN_LOG_TOTAL_SIZE_CAP:2GB}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name:xupan-server}

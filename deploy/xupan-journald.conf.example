@@ -1,0 +1,12 @@
+# Example drop-in for /etc/systemd/journald.conf.d/xupan-platform.conf
+#
+# Review the host's existing journald policy and free disk space before
+# installing this file. Applying it requires administrator approval and a
+# systemd-journald reload; the application never changes the host policy.
+
+[Journal]
+Storage=persistent
+Compress=yes
+SystemMaxUse=1G
+SystemMaxFileSize=100M
+MaxRetentionSec=30day

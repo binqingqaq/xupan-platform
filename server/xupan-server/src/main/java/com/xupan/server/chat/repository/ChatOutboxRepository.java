@@ -10,6 +10,8 @@ import java.time.Instant;
 @Repository
 public class ChatOutboxRepository {
 
+    private static final String PENDING_STATUS = "PENDING";
+
     private final JdbcTemplate jdbcTemplate;
 
     public ChatOutboxRepository(JdbcTemplate jdbcTemplate) {
@@ -26,6 +28,15 @@ public class ChatOutboxRepository {
                     (message_id, event_type, payload_json, status, attempt_count, created_at, updated_at)
                 VALUES (?, 'MESSAGE_CREATED', ?, 'PENDING', 0, ?, ?)
                 """, messageId, payloadJson, Timestamp.from(createdAt), Timestamp.from(createdAt));
+    }
+
+    public long countPending() {
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                  FROM chat_outbox
+                 WHERE status = ?
+                """, Long.class, PENDING_STATUS);
+        return count == null ? 0L : count;
     }
 
     private static void requireTransaction(String operation) {

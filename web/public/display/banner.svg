@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="535" height="236" viewBox="0 0 535 236">
+  <defs><linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#f72b3e"/><stop offset=".56" stop-color="#ff7410"/><stop offset="1" stop-color="#ffc20c"/></linearGradient></defs>
+  <rect width="535" height="236" fill="url(#bg)"/>
+  <path d="M-20 236 90 0h31L60 236zm97 0L178 0h24l-54 236zm120 0L260 0h25l-18 236zm102 0L356 0h29l69 236zm112 0L438 0h27l93 236z" fill="#ffcb32" opacity=".72"/>
+  <circle cx="445" cy="52" r="26" fill="#fff" opacity=".9"/><text x="431" y="60" font-family="Arial" font-size="19" font-weight="800" fill="#333">6</text>
+  <path d="M60 78h385l-20 56H80z" fill="#fb1687" stroke="#6c173c" stroke-width="5"/>
+  <text x="268" y="117" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="28" font-weight="900" fill="#fff" stroke="#252044" stroke-width="4" paint-order="stroke">彩票专家预测方案</text>
+  <text x="268" y="188" text-anchor="middle" font-family="Microsoft YaHei, sans-serif" font-size="45" font-weight="900" fill="#fff" stroke="#452a91" stroke-width="5" paint-order="stroke">常玩常留 带你飞</text>
+</svg>

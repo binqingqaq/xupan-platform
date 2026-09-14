@@ -42,7 +42,8 @@ class FlywayAuthMigrationTest {
             "WALLET_READ",
             "WALLET_GRANT",
             "WALLET_ADJUST",
-            "WALLET_LEDGER_READ");
+            "WALLET_LEDGER_READ",
+            "SYSTEM_MONITOR_READ");
 
     private static final Map<String, Set<String>> EXPECTED_ROLE_PERMISSIONS = Map.of(
             "USER", Set.of(
@@ -61,14 +62,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV12InOrder() {
+    void appliesV1ThroughV13InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13");
     }
 
     @Test
@@ -135,6 +136,14 @@ class FlywayAuthMigrationTest {
 
         EXPECTED_ROLE_PERMISSIONS.forEach((roleCode, expectedPermissions) ->
                 assertThat(permissionCodesForRole(roleCode)).isEqualTo(expectedPermissions));
+    }
+
+    @Test
+    void monitorPermissionIsBoundOnlyToAdmin() {
+        assertThat(permissionCodesForRole("ADMIN")).contains("SYSTEM_MONITOR_READ");
+        assertThat(permissionCodesForRole("USER")).doesNotContain("SYSTEM_MONITOR_READ");
+        assertThat(permissionCodesForRole("MODERATOR")).doesNotContain("SYSTEM_MONITOR_READ");
+        assertThat(permissionCodesForRole("OPERATOR")).doesNotContain("SYSTEM_MONITOR_READ");
     }
 
     @Test

@@ -77,6 +77,10 @@ public class ChatConnectionRegistry {
         return connections.size();
     }
 
+    public int activeConnectionCount() {
+        return connections.size();
+    }
+
     public int userConnectionCount(long userId) {
         Set<String> ids = userConnections.get(userId);
         return ids == null ? 0 : ids.size();

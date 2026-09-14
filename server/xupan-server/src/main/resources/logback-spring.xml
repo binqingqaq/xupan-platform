@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <springProperty scope="context" name="LOG_FILE"
+                    source="logging.file.name"
+                    defaultValue="/opt/xupan-platform/logs/xupan-server.log"/>
+    <springProperty scope="context" name="MAX_FILE_SIZE"
+                    source="logging.logback.rollingpolicy.max-file-size"
+                    defaultValue="50MB"/>
+    <springProperty scope="context" name="MAX_HISTORY_DAYS"
+                    source="logging.logback.rollingpolicy.max-history"
+                    defaultValue="30"/>
+    <springProperty scope="context" name="TOTAL_SIZE_CAP"
+                    source="logging.logback.rollingpolicy.total-size-cap"
+                    defaultValue="2GB"/>
+    <springProperty scope="context" name="ROOT_LOG_LEVEL"
+                    source="logging.level.root"
+                    defaultValue="INFO"/>
+
+    <property name="LOG_PATTERN"
+              value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] %logger{36} [requestId=%X{requestId:-}] - %replace(%msg){'(?i)(password|passwd|access_token|refresh_token|authorization|cookie|ticket)([=:][^\s,;]+)', '$1$2***'}%n%replace(%ex{full}){'(?i)(password|passwd|access_token|refresh_token|authorization|cookie|ticket)([=:][^\s,;]+)', '$1$2***'}"/>
+    <property name="LOG_CHARSET" value="UTF-8"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <charset>${LOG_CHARSET}</charset>
+            <pattern>${LOG_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <springProfile name="prod">
+        <appender name="ROLLING_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+            <file>${LOG_FILE}</file>
+            <append>true</append>
+            <encoder>
+                <charset>${LOG_CHARSET}</charset>
+                <pattern>${LOG_PATTERN}</pattern>
+            </encoder>
+            <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+                <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+                <maxFileSize>${MAX_FILE_SIZE}</maxFileSize>
+                <maxHistory>${MAX_HISTORY_DAYS}</maxHistory>
+                <totalSizeCap>${TOTAL_SIZE_CAP}</totalSizeCap>
+            </rollingPolicy>
+        </appender>
+
+        <root level="${ROOT_LOG_LEVEL}">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ROLLING_FILE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="!prod">
+        <root level="${ROOT_LOG_LEVEL}">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

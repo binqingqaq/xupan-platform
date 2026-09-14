@@ -13,7 +13,8 @@ public class SpaController {
             "/display/mobile", "/display/mobile/",
             "/room", "/room/",
             "/admin", "/admin/",
-            "/admin/users", "/admin/users/"
+            "/admin/users", "/admin/users/",
+            "/admin/robots", "/admin/robots/"
     })
     public String forwardToFrontend() {
         return "forward:/index.html";

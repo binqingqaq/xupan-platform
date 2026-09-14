@@ -397,3 +397,83 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .user-modal { max-height: calc(100vh - 20px); padding: 16px; }
   .modal-actions .primary-button, .modal-actions .secondary-button { flex: 1; }
 }
+
+/* 机器人运营管理切片 */
+.robot-management-page .admin-main { display: grid; gap: 18px; }
+.robot-management-page .admin-section { min-width: 0; }
+.robot-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 0; }
+.robot-list-section, .robot-dispatch-section { width: 100%; box-sizing: border-box; }
+.permission-note { margin: -4px 0 16px; color: #7b6a39; font-size: 13px; }
+.robot-table-wrap { max-width: 100%; }
+.robot-table { min-width: 980px; }
+.robot-table tr.is-selected { background: #f1f8fc; }
+.robot-table td { white-space: nowrap; }
+.robot-row-trigger { min-height: 40px; border: 0; background: transparent; color: #17679f; padding: 0; font: inherit; font-weight: 700; text-align: left; text-decoration: underline; text-decoration-color: #b5d4e6; text-underline-offset: 3px; cursor: pointer; }
+.robot-row-trigger:hover { color: #0f679f; text-decoration-color: #167bc0; }
+.robot-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.robot-status, .robot-dispatch-status { display: inline-flex; align-items: center; min-height: 24px; border-radius: 12px; padding: 0 9px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.robot-status-enabled, .robot-dispatch-published { background: #e3f5eb; color: #1d8152; }
+.robot-status-disabled, .robot-dispatch-skipped { background: #f1f2f4; color: #6e7780; }
+.robot-dispatch-pending { background: #edf5fb; color: #286d9b; }
+.robot-dispatch-processing { background: #fff5d9; color: #8a6718; }
+.robot-dispatch-failed { background: #fff0ee; color: #b33e38; }
+.robot-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.robot-detail-section, .robot-template-section { min-width: 0; }
+.robot-detail-state { min-height: 190px; }
+.robot-detail-grid { margin-bottom: 16px; }
+.robot-stat-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; border: 1px solid #dfe8ed; background: #dfe8ed; }
+.robot-stat-grid div { min-width: 0; background: #f8fbfc; padding: 11px 8px; text-align: center; }
+.robot-stat-grid span { display: block; color: #738594; font-size: 11px; }
+.robot-stat-grid strong { display: block; margin-top: 5px; color: #23445b; font-size: 18px; font-variant-numeric: tabular-nums; }
+.robot-stat-grid .robot-stat-danger { color: #b33e38; }
+.action-helper { align-self: center; color: #7b8a96; font-size: 12px; line-height: 1.5; }
+.robot-event-tabs { display: flex; gap: 6px; max-width: 100%; margin-bottom: 14px; overflow-x: auto; padding-bottom: 3px; }
+.robot-event-tabs button { min-width: 100px; min-height: 42px; border: 1px solid #cbd9e3; border-radius: 3px; background: #fff; color: #4a6678; padding: 0 12px; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.robot-event-tabs button:hover { border-color: #6da4c4; background: #f2f8fc; }
+.robot-event-tabs button.active { border-color: #167bc0; background: #eef8fd; color: #17679f; }
+.template-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 10px; color: #738594; font-size: 12px; }
+.template-meta span { font-weight: 700; }
+.template-meta span:nth-child(2) { color: #216b9d; font-variant-numeric: tabular-nums; }
+.template-meta time { margin-left: auto; }
+.robot-template-field { display: grid; gap: 6px; color: #617383; font-size: 12px; font-weight: 700; }
+.robot-template-field textarea { width: 100%; box-sizing: border-box; min-height: 168px; border: 1px solid #cbd9e3; border-radius: 3px; background: #fff; color: #263746; padding: 10px 11px; font: inherit; font-size: 14px; line-height: 1.6; outline: none; resize: vertical; }
+.robot-template-field textarea:focus { border-color: #1577c7; box-shadow: 0 0 0 2px rgba(21,119,199,.14); }
+.robot-template-field textarea:disabled { background: #f3f6f8; color: #788894; cursor: not-allowed; }
+.template-counter { margin-top: 5px; color: #85939d; font-size: 11px; text-align: right; font-variant-numeric: tabular-nums; }
+.template-preview { margin-top: 16px; border: 1px solid #b9dce0; background: #f2fbfb; padding: 13px 14px; }
+.template-preview > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: #27716d; font-size: 12px; }
+.template-preview > div strong { color: #205752; }
+.template-preview p { margin: 11px 0; color: #21474d; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.template-preview small { color: #60807f; line-height: 1.5; }
+.robot-dispatch-filters { align-items: flex-end; }
+.robot-dispatch-filters label { min-width: 136px; }
+.robot-dispatch-filters label:first-child { min-width: 180px; }
+.robot-dispatch-filters input, .robot-dispatch-filters select { min-width: 0; width: 100%; }
+.robot-dispatch-table { min-width: 1320px; }
+.robot-dispatch-table td { max-width: 210px; }
+.robot-error-cell { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.robot-muted-action { color: #9aa5ad; font-size: 12px; white-space: nowrap; }
+.robot-modal { width: min(100%, 620px); }
+.robot-modal small { color: #84929d; font-size: 11px; font-weight: 400; }
+.robot-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.robot-form-grid input { min-width: 0; }
+
+@media (max-width: 760px) {
+  .robot-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .robot-detail-layout { grid-template-columns: 1fr; }
+  .robot-stat-grid { grid-template-columns: repeat(5, minmax(74px, 1fr)); overflow-x: auto; }
+  .robot-stat-grid div { min-width: 74px; }
+  .template-meta time { margin-left: 0; width: 100%; }
+  .robot-dispatch-filters label { flex: 1 1 180px; }
+}
+
+@media (max-width: 480px) {
+  .robot-management-page .admin-main { gap: 14px; }
+  .robot-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .robot-stat-grid { grid-template-columns: repeat(3, minmax(74px, 1fr)); }
+  .robot-form-grid { grid-template-columns: 1fr; }
+  .robot-event-tabs button { min-width: 112px; }
+  .robot-dispatch-filters label, .robot-dispatch-filters label:first-child { min-width: 100%; }
+  .robot-dispatch-filters input, .robot-dispatch-filters select, .robot-dispatch-filters button { width: 100%; }
+  .action-helper { width: 100%; }
+}

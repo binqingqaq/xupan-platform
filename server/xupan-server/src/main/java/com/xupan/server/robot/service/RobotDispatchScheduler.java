@@ -33,7 +33,7 @@ public final class RobotDispatchScheduler {
         try {
             dispatchService.scanPendingEvents(clock.instant(), batchSize);
         } catch (RuntimeException exception) {
-            log.error("机器人事件扫描失败", exception);
+            log.error("机器人事件扫描失败 operation=scanPendingEvents batchSize={}", batchSize, exception);
         }
     }
 }

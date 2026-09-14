@@ -74,6 +74,17 @@ class RobotAdminControllerTest {
                 .andExpect(jsonPath("$.code").value("AUTH_UNAUTHENTICATED"));
     }
 
+    @Test
+    void returnsForbiddenWhenServiceRejectsRobotReadPermission() throws Exception {
+        when(service.listRobots(7L, 1, 20))
+                .thenThrow(com.xupan.server.web.BusinessException.forbidden(
+                        "ROBOT_OPERATION_FORBIDDEN", "没有机器人管理权限"));
+
+        mockMvc.perform(get("/api/admin/robots").principal(authentication))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ROBOT_OPERATION_FORBIDDEN"));
+    }
+
     private static ChatRobot robot() {
         Instant now = Instant.parse("2026-09-13T00:00:00Z");
         return new ChatRobot(1L, "issue-helper", "开奖助手", "robot-default",

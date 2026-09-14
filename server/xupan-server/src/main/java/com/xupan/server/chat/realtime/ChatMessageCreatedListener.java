@@ -22,7 +22,7 @@ public class ChatMessageCreatedListener {
         try {
             broadcaster.broadcast(event.message());
         } catch (RuntimeException exception) {
-            log.error("聊天室消息提交后广播失败 messageId={} roomCode={}",
+            log.error("聊天室消息提交后广播失败 stage=afterCommitBroadcast messageId={} roomCode={}",
                     event.message().id(), event.message().roomCode(), exception);
         }
     }

@@ -32,9 +32,11 @@ public class SecurityConfig {
                         .authenticationEntryPoint(exceptionHandler)
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/index.html", "/login", "/forbidden", "/room", "/admin", "/admin/users",
+                        .requestMatchers("/", "/index.html", "/login", "/forbidden", "/room", "/admin", "/admin/users", "/admin/robots",
                                 "/display", "/display/", "/display/**", "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/actuator/health").permitAll()
+                        .requestMatchers("/actuator/info", "/actuator/metrics", "/actuator/metrics/**")
+                        .hasAuthority("PERM_SYSTEM_MONITOR_READ")
                         // WebSocket authentication is performed by the one-time ticket interceptor.
                         .requestMatchers("/ws/chat/**").permitAll()
                         .requestMatchers("/api/auth/logout", "/api/auth/me", "/api/auth/ws-ticket").authenticated()

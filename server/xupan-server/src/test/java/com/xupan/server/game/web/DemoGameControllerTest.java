@@ -167,6 +167,27 @@ class DemoGameControllerTest {
     }
 
     @Test
+    void resetIssueAppendsStartedEventForRobotDispatch() throws Exception {
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.issueNumber").value("3000000"));
+
+        mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"numbers\":[1,2,3,4,5,6,7,8]}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/demo/game/admin/reset").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.issueNumber").value("3000001"));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue_event "
+                        + "WHERE issue_number = '3000001' AND event_type = 'ISSUE_STARTED'",
+                Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     void manualSettlementCreditsEachBetOwnerWallet() throws Exception {
         long secondUserId = userRepository.insert(SECOND_USERNAME, "第二游戏用户",
                 passwordPolicyService.encode(SECOND_PASSWORD), "ACTIVE");

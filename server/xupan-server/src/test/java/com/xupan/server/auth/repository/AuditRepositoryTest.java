@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
@@ -26,6 +28,9 @@ class AuditRepositoryTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @AfterEach
     void clean() {
@@ -58,6 +63,20 @@ class AuditRepositoryTest {
         assertThatThrownBy(() -> operationAuditRepository.record(null, null, "POST", "/repo-audit/sensitive",
                 null, "FAILURE", "BAD_REQUEST", "password=Password123", null, Instant.now()))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void keepsOperationAuditWhenTheOuterTransactionRollsBack() {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            operationAuditRepository.record(null, "PERM_AUDIT_READ", "GET", "/repo-audit/rollback",
+                    null, "FAILURE", "AUTH_PERMISSION_DENIED", "action=permission-check", null,
+                    Instant.parse("2026-09-10T10:00:00Z"));
+            status.setRollbackOnly();
+        });
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sys_operation_log WHERE request_path = '/repo-audit/rollback'",
+                Integer.class)).isEqualTo(1);
     }
 
     @Test

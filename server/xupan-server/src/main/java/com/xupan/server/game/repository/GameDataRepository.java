@@ -3,6 +3,7 @@ package com.xupan.server.game.repository;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.service.SettlementResult;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -61,13 +62,18 @@ public class GameDataRepository {
     public void saveBettingIssue(String issueNumber, Instant startedAt) {
         Instant bettingEndsAt = startedAt.plusSeconds(180);
         Instant drawEndsAt = startedAt.plusSeconds(300);
-        jdbcTemplate.update("""
-                INSERT INTO game_issue
-                    (issue_number, status, phase, opened_at, issue_started_at,
-                     betting_ends_at, draw_ends_at)
-                VALUES (?, 'OPEN', 'BETTING', ?, ?, ?, ?)
-                """, issueNumber, timestamp(startedAt), timestamp(startedAt),
-                timestamp(bettingEndsAt), timestamp(drawEndsAt));
+        try {
+            jdbcTemplate.update("""
+                    INSERT INTO game_issue
+                        (issue_number, status, phase, opened_at, issue_started_at,
+                         betting_ends_at, draw_ends_at)
+                    VALUES (?, 'OPEN', 'BETTING', ?, ?, ?, ?)
+                    """, issueNumber, timestamp(startedAt), timestamp(startedAt),
+                    timestamp(bettingEndsAt), timestamp(drawEndsAt));
+        } catch (DuplicateKeyException duplicate) {
+            // A reset request and the scheduled finalizer can create the same next issue concurrently.
+            // The existing row is the authoritative state; callers still append events idempotently.
+        }
     }
 
     public void initializeSchedule(String issueNumber, Instant startedAt) {

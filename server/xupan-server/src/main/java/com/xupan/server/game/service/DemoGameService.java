@@ -168,6 +168,8 @@ public class DemoGameService {
             nextSequence = 3_000_000L;
         }
         repository.saveBettingIssue(String.valueOf(nextSequence), Instant.now());
+        eventRepository.appendOnce(String.valueOf(nextSequence), "ISSUE_STARTED",
+                nextSequence + "期开始", Instant.now());
         return current(authenticatedUserId);
     }
 

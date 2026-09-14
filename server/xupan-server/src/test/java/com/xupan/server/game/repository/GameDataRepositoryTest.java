@@ -11,6 +11,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -70,6 +71,21 @@ class GameDataRepositoryTest {
         Integer firstNumber = jdbcTemplate.queryForObject(
                 "SELECT number_1 FROM game_issue WHERE issue_number = 'TEST-0002'", Integer.class);
         assertThat(firstNumber).isEqualTo(1);
+    }
+
+    @Test
+    void savingTheSameBettingIssueIsIdempotent() {
+        Instant startedAt = Instant.parse("2026-01-01T00:00:00Z");
+
+        repository.saveBettingIssue("TEST-REPEAT", startedAt);
+        repository.saveBettingIssue("TEST-REPEAT", startedAt.plusSeconds(30));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE issue_number = 'TEST-REPEAT'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT issue_started_at FROM game_issue WHERE issue_number = 'TEST-REPEAT'", java.sql.Timestamp.class))
+                .isEqualTo(java.sql.Timestamp.from(startedAt));
     }
 
     private void ensureLegacyDemoAccount() {

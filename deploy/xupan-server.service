@@ -9,7 +9,10 @@ User=xupan
 Group=xupan
 WorkingDirectory=/opt/xupan-platform/current
 EnvironmentFile=/etc/xupan-platform/xupan.env
-ExecStart=/www/server/java/jdk-21.0.2/bin/java -Xms256m -Xmx512m -XX:+UseSerialGC -jar /opt/xupan-platform/current/xupan-server.jar
+SyslogIdentifier=xupan-server
+StandardOutput=journal
+StandardError=journal
+ExecStart=/www/server/java/jdk-21.0.2/bin/java -Xms256m -Xmx512m -XX:+UseSerialGC -XX:ErrorFile=/opt/xupan-platform/logs/hs_err_pid%p.log -jar /opt/xupan-platform/current/xupan-server.jar
 Restart=on-failure
 RestartSec=5
 SuccessExitStatus=143
