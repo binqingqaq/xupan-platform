@@ -7,6 +7,11 @@ spring:
   flyway:
     enabled: true
 xupan:
+  robot:
+    dispatch-interval-ms: 60000
+    dispatch-batch-size: 50
+    processing-lease-seconds: 30
+    max-attempts: 8
   automation:
     enabled: false
   chat:

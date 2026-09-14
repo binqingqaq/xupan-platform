@@ -1,5 +1,8 @@
 package com.xupan.server.chat.repository;
 
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessageStatus;
 import com.xupan.server.chat.domain.ChatMessageType;
@@ -14,6 +17,7 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
 
@@ -30,15 +34,22 @@ public class ChatMessageRepository {
             """;
 
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
-    public ChatMessageRepository(JdbcTemplate jdbcTemplate) {
+    public ChatMessageRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
         this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
     }
 
     public Optional<ChatMessage> findByClientMessageId(long roomId, long userId, String clientMessageId) {
         return jdbcTemplate.query(COLUMNS + """
                  WHERE m.room_id = ? AND m.sender_id = ? AND m.client_message_id = ?
                 """, this::mapMessage, roomId, userId, clientMessageId).stream().findFirst();
+    }
+
+    public Optional<ChatMessage> findByIdempotencyKey(String idempotencyKey) {
+        return jdbcTemplate.query(COLUMNS + " WHERE m.idempotency_key = ?", this::mapMessage,
+                        idempotencyKey).stream().findFirst();
     }
 
     public ChatMessage insertUserMessage(long roomId, long sequenceNo, long userId,
@@ -71,6 +82,41 @@ public class ChatMessageRepository {
         }
         return findById(key.longValue()).orElseThrow(() ->
                 new IllegalStateException("写入聊天消息后未找到消息"));
+    }
+
+    public ChatMessage insertRobotMessage(long roomId, long sequenceNo, long robotId,
+                                          String robotName, String issueNumber,
+                                          String idempotencyKey, String content,
+                                          String payloadJson, Instant createdAt) {
+        requireTransaction("insertRobotMessage");
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO chat_message
+                        (room_id, sequence_no, client_message_id, idempotency_key,
+                         issue_number, message_type, sender_type, sender_id, sender_name,
+                         content, payload_json, status, created_at, updated_at)
+                    VALUES (?, ?, NULL, ?, ?, 'ROBOT', 'ROBOT', ?, ?, ?, CAST(? AS JSON),
+                            'ACTIVE', ?, ?)
+                    """, Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, roomId);
+            statement.setLong(2, sequenceNo);
+            statement.setString(3, idempotencyKey);
+            statement.setString(4, issueNumber);
+            statement.setLong(5, robotId);
+            statement.setString(6, robotName);
+            statement.setString(7, content);
+            statement.setString(8, payloadJson);
+            statement.setTimestamp(9, Timestamp.from(createdAt));
+            statement.setTimestamp(10, Timestamp.from(createdAt));
+            return statement;
+        }, keyHolder);
+        Number key = generatedMessageId(keyHolder);
+        if (key == null) {
+            throw new IllegalStateException("写入机器人聊天消息后未取得消息 ID");
+        }
+        return findById(key.longValue()).orElseThrow(() ->
+                new IllegalStateException("写入机器人聊天消息后未找到消息"));
     }
 
     private static Number generatedMessageId(KeyHolder keyHolder) {
@@ -113,9 +159,32 @@ public class ChatMessageRepository {
                 rs.getString("client_message_id"), rs.getString("idempotency_key"),
                 rs.getString("issue_number"), ChatMessageType.valueOf(rs.getString("message_type")),
                 ChatSenderType.valueOf(rs.getString("sender_type")), nullableLong(rs, "sender_id"),
-                rs.getString("sender_name"), rs.getString("content"), rs.getString("payload_json"),
+                rs.getString("sender_name"), rs.getString("content"), jsonText(rs, "payload_json"),
                 ChatMessageStatus.valueOf(rs.getString("status")),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("updated_at")));
+    }
+
+    private String jsonText(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        Object value = rs.getObject(column);
+        if (value == null) {
+            return null;
+        }
+        String text = value instanceof byte[] bytes
+                ? new String(bytes, StandardCharsets.UTF_8)
+                : value.toString();
+        try {
+            JsonNode node = objectMapper.readTree(text);
+            if (node != null && node.isTextual()) {
+                String nestedJson = node.textValue();
+                if (nestedJson != null && (nestedJson.trim().startsWith("{")
+                        || nestedJson.trim().startsWith("["))) {
+                    return nestedJson;
+                }
+            }
+        } catch (JacksonException ignored) {
+            // 保留数据库原始值，由上层 JSON 校验决定如何处理异常数据。
+        }
+        return text;
     }
 
     private static Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException {

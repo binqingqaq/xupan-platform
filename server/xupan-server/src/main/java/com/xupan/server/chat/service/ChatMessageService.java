@@ -148,6 +148,45 @@ public class ChatMessageService {
     }
 
     @Transactional
+    public ChatMessage publishRobotMessage(long robotId, String robotName, String roomCode,
+                                           String issueNumber, String idempotencyKey, String content,
+                                           String payloadJson, Instant createdAt) {
+        requirePositiveRobot(robotId);
+        String normalizedRobotName = requireRobotName(robotName);
+        String normalizedRoomCode = requireRoomCode(roomCode);
+        String normalizedIssueNumber = requireRobotText(issueNumber, "CHAT_ROBOT_ISSUE_INVALID",
+                "机器人期号无效", 64);
+        String normalizedIdempotencyKey = requireRobotText(idempotencyKey,
+                "CHAT_ROBOT_IDEMPOTENCY_KEY_INVALID", "机器人幂等键无效", 128);
+        String normalizedContent = contentPolicy.normalize(content);
+        String normalizedPayloadJson = requirePayloadJson(payloadJson);
+        if (createdAt == null) {
+            throw BusinessException.badRequest("CHAT_ROBOT_TIME_INVALID", "机器人消息时间不能为空");
+        }
+
+        Optional<ChatMessage> existing = messageRepository.findByIdempotencyKey(normalizedIdempotencyKey);
+        if (existing.isPresent()) {
+            return requireSameRobotMessage(existing.get(), robotId, normalizedRobotName,
+                    normalizedRoomCode, normalizedIssueNumber, normalizedContent, normalizedPayloadJson);
+        }
+
+        ChatRoom room = requireRoomForUpdate(normalizedRoomCode);
+        existing = messageRepository.findByIdempotencyKey(normalizedIdempotencyKey);
+        if (existing.isPresent()) {
+            return requireSameRobotMessage(existing.get(), robotId, normalizedRobotName,
+                    normalizedRoomCode, normalizedIssueNumber, normalizedContent, normalizedPayloadJson);
+        }
+
+        long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+        ChatMessage message = messageRepository.insertRobotMessage(room.id(), sequence, robotId,
+                normalizedRobotName, normalizedIssueNumber, normalizedIdempotencyKey,
+                normalizedContent, normalizedPayloadJson, createdAt);
+        outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), createdAt);
+        eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+        return message;
+    }
+
+    @Transactional
     public void saveReadCursor(long userId, String roomCode, long lastReadSequence, Instant now) {
         requirePositiveUser(userId);
         requireActiveUser(userId);
@@ -198,6 +237,74 @@ public class ChatMessageService {
             throw BusinessException.badRequest("CHAT_ROOM_CODE_INVALID", "聊天室编码无效");
         }
         return roomCode;
+    }
+
+    private String requireRobotName(String robotName) {
+        String normalized = contentPolicy.normalize(robotName);
+        if (normalized.length() > 128) {
+            throw BusinessException.badRequest("CHAT_ROBOT_NAME_INVALID", "机器人名称不能超过 128 个字符");
+        }
+        return normalized;
+    }
+
+    private static String requireRobotText(String value, String code, String message, int maxLength) {
+        if (value == null || value.isBlank() || value.length() > maxLength) {
+            throw BusinessException.badRequest(code, message);
+        }
+        for (int offset = 0; offset < value.length();) {
+            int codePoint = value.codePointAt(offset);
+            if (Character.isISOControl(codePoint)) {
+                throw BusinessException.badRequest(code, message);
+            }
+            offset += Character.charCount(codePoint);
+        }
+        return value;
+    }
+
+    private String requirePayloadJson(String payloadJson) {
+        if (payloadJson == null || payloadJson.isBlank() || payloadJson.length() > 4000) {
+            throw BusinessException.badRequest("CHAT_ROBOT_PAYLOAD_INVALID", "机器人追踪数据无效");
+        }
+        try {
+            objectMapper.readTree(payloadJson);
+            return payloadJson;
+        } catch (JacksonException exception) {
+            throw BusinessException.badRequest("CHAT_ROBOT_PAYLOAD_INVALID", "机器人追踪数据必须是合法 JSON");
+        }
+    }
+
+    private ChatMessage requireSameRobotMessage(ChatMessage existing, long robotId, String robotName,
+                                                String roomCode, String issueNumber, String content,
+                                                String payloadJson) {
+        if (existing.messageType() != com.xupan.server.chat.domain.ChatMessageType.ROBOT
+                || existing.senderType() != com.xupan.server.chat.domain.ChatSenderType.ROBOT
+                || !Objects.equals(existing.senderId(), robotId)
+                || !Objects.equals(existing.senderName(), robotName)
+                || !Objects.equals(existing.roomCode(), roomCode)
+                || !Objects.equals(existing.issueNumber(), issueNumber)
+                || !Objects.equals(existing.content(), content)
+                || !sameJson(existing.payloadJson(), payloadJson)) {
+            throw BusinessException.conflict("CHAT_ROBOT_IDEMPOTENCY_CONFLICT",
+                    "机器人幂等键对应的消息参数不一致");
+        }
+        return existing;
+    }
+
+    private boolean sameJson(String left, String right) {
+        if (Objects.equals(left, right)) {
+            return true;
+        }
+        try {
+            return objectMapper.readTree(left).toString().equals(objectMapper.readTree(right).toString());
+        } catch (JacksonException exception) {
+            return false;
+        }
+    }
+
+    private static void requirePositiveRobot(long robotId) {
+        if (robotId <= 0) {
+            throw BusinessException.badRequest("CHAT_ROBOT_INVALID", "机器人标识无效");
+        }
     }
 
     private static void requirePositiveUser(long userId) {

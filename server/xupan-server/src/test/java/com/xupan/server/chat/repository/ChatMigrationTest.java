@@ -21,7 +21,7 @@ class ChatMigrationTest {
 
     @Test
     void chatMigrationsCreateRequiredTablesAndMainRoom() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("12");
         assertThat(tableCount("chat_room")).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_room WHERE room_code = 'main'", Integer.class)).isEqualTo(1);
