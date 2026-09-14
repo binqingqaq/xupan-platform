@@ -8,6 +8,7 @@ import AdminPanel from './views/AdminPanel.vue'
 import UserManagement from './views/UserManagement.vue'
 import { restoreSession, subscribeAuthState } from './api'
 import './styles.css'
+import './styles/display-mobile-home.css'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -20,6 +21,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/room' },
+    { path: '/display/mobile', component: () => import('./views/DisplayMobileHomeStatic.vue') },
     { path: '/login', component: LoginView },
     { path: '/forbidden', component: ForbiddenView },
     { path: '/room', component: UserRoom, meta: { requiresAuth: true } },

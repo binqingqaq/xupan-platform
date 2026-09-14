@@ -33,7 +33,7 @@ public class SecurityConfig {
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/index.html", "/login", "/forbidden", "/room", "/admin", "/admin/users",
-                                "/assets/**", "/favicon.ico").permitAll()
+                                "/display", "/display/", "/display/**", "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/actuator/health").permitAll()
                         // WebSocket authentication is performed by the one-time ticket interceptor.
                         .requestMatchers("/ws/chat/**").permitAll()
