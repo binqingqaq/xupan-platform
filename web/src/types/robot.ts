@@ -13,6 +13,22 @@ export type RobotDispatchStatus =
   | 'PUBLISHED'
   | 'SKIPPED'
 
+export type RobotDrawComponentType = 'DRAW_SUMMARY' | 'DRAW_HISTORY' | 'WINNER_LIST'
+
+export interface RobotDrawComponentConfig {
+  component: RobotDrawComponentType
+  enabled: boolean
+  order: number
+}
+
+export interface RobotDrawComponentList {
+  items: RobotDrawComponentConfig[]
+}
+
+export interface UpdateRobotDrawComponentsRequest {
+  components: RobotDrawComponentConfig[]
+}
+
 export interface RobotSummary {
   id: number
   robotCode: string

@@ -32,12 +32,14 @@ import type {
   RobotDispatchQuery,
   RobotDispatchFilters,
   RobotEventType,
+  RobotDrawComponentList,
   RobotPage,
   RobotStatus,
   TemplateList,
   TemplatePreview,
   TemplateSummary,
   UpdateRobotRequest,
+  UpdateRobotDrawComponentsRequest,
   UpdateTemplateRequest,
 } from './types/robot'
 import { buildDispatchQuery } from './robotAdmin'
@@ -327,6 +329,13 @@ export const api = {
   getAdminRobots: (page = 1, pageSize = 20) =>
     request<RobotPage>(`/api/admin/robots?page=${page}&pageSize=${pageSize}`),
   getAdminRobot: (robotId: number) => request<RobotDetail>(`/api/admin/robots/${robotId}`),
+  getAdminRobotDrawComponents: (robotId: number) =>
+    request<RobotDrawComponentList>(`/api/admin/robots/${robotId}/draw-components`),
+  updateAdminRobotDrawComponents: (robotId: number, payload: UpdateRobotDrawComponentsRequest) =>
+    request<RobotDrawComponentList>(`/api/admin/robots/${robotId}/draw-components`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   createAdminRobot: (payload: CreateRobotRequest) =>
     request<RobotDetail>('/api/admin/robots', { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminRobot: (robotId: number, payload: UpdateRobotRequest) =>

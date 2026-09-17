@@ -2,6 +2,8 @@ import type {
   RobotDispatchFilters,
   RobotDispatchStatus,
   RobotDraft,
+  RobotDrawComponentConfig,
+  RobotDrawComponentType,
   RobotEventType,
   RobotStatus,
 } from './types/robot'
@@ -72,6 +74,27 @@ export function validateTemplateDraft(_eventType: RobotEventType, templateText: 
   }
   if (/\u0000|[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(templateText)) {
     errors.push('机器人模板不能包含控制字符')
+  }
+  return errors
+}
+
+const DRAW_COMPONENT_TYPES: readonly RobotDrawComponentType[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST']
+
+export function validateRobotDrawComponents(components: RobotDrawComponentConfig[]): string[] {
+  const errors: string[] = []
+  if (components.length !== DRAW_COMPONENT_TYPES.length) {
+    errors.push('开奖组件配置必须包含摘要、历史结果和获胜名单三段')
+  }
+  const componentSet = new Set(components.map(item => item.component))
+  if (componentSet.size !== components.length || DRAW_COMPONENT_TYPES.some(type => !componentSet.has(type))) {
+    errors.push('开奖组件配置必须包含三类不同组件')
+  }
+  const orders = components.map(item => item.order)
+  if (orders.some(order => !Number.isInteger(order) || order < 1 || order > 3) || new Set(orders).size !== orders.length) {
+    errors.push('开奖组件顺序必须是唯一的 1-3')
+  }
+  if (components.some(item => typeof item.enabled !== 'boolean')) {
+    errors.push('开奖组件启用状态不合法')
   }
   return errors
 }

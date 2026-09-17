@@ -92,6 +92,22 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-pre { position: relative; margin: 6px; color: #000; font-family: inherit; font-size: 15px; font-weight: 500; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; user-select: text; }
 .message-robot .reference-bubble { max-width: 80%; }
 .message-result .reference-bubble { max-width: 84%; background: #fff; }
+.robot-draw-message { max-width: 100%; margin: 6px; padding: 9px 10px; border: 1px solid #d7e5ec; background: #f8fbfc; color: #263746; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.robot-draw-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
+.robot-draw-heading strong { color: #1c5579; font-size: 13px; }
+.robot-draw-heading span, .robot-draw-heading time, .robot-draw-history-row time { color: #748693; font-size: 11px; font-variant-numeric: tabular-nums; }
+.robot-draw-number-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+.robot-draw-number-grid span, .robot-draw-history-numbers span { display: grid; aspect-ratio: 1; min-width: 0; place-items: center; border-radius: 50%; background: #2683b5; color: #fff; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.robot-draw-number-grid span.is-last, .robot-draw-history-numbers span.is-last { background: #d45758; }
+.robot-draw-history { display: grid; gap: 5px; }
+.robot-draw-history-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 112px; align-items: center; gap: 7px; padding: 5px 0; border-top: 1px solid #e2ebef; }
+.robot-draw-history-row > strong { color: #345568; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.robot-draw-history-numbers { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; min-width: 0; }
+.robot-draw-history-numbers span { font-size: 10px; }
+.robot-draw-winners { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
+.robot-draw-winners li { display: flex; flex-wrap: wrap; gap: 3px 10px; padding: 5px 0; border-top: 1px solid #e2ebef; color: #526a78; }
+.robot-draw-winner-user { min-width: 52px; color: #1c5579; font-weight: 700; }
+.robot-draw-empty { margin: 0; padding: 6px 0 2px; color: #748693; }
 .message-mine .reference-bubble { float: right; margin: 30px 68px 0 0; border-color: #84b559; border-radius: 7px; background: #a1e85a; color: #253f0f; }
 .message-mine .reference-bubble::before { left: auto; right: -16px; border-color: transparent transparent transparent #84b559; }
 .message-mine .reference-bubble::after { left: auto; right: -16px; border-color: transparent transparent transparent #a1e85a; }
@@ -371,6 +387,9 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .header-menu { font-size: 12px; }
   .quick-menu { right: 66px; }
   .reference-send { margin-left: 5px; margin-right: 5px; }
+  .robot-draw-message { margin: 5px; padding: 8px; }
+  .robot-draw-history-row { grid-template-columns: 58px minmax(0, 1fr); }
+  .robot-draw-history-row time { grid-column: 2; }
   .reference-keyboard button { flex-basis: 34px; width: 34px; margin-right: 2px; margin-left: 2px; padding: 5px 2px; }
   .reference-keyboard button.wide { flex-basis: 52px; width: 52px; }
   .scratch-panel h2 { font-size: 22px; }
@@ -539,6 +558,14 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .robot-modal small { color: #84929d; font-size: 11px; font-weight: 400; }
 .robot-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .robot-form-grid input { min-width: 0; }
+.robot-draw-section .modal-note { margin-bottom: 12px; }
+.robot-draw-config-list { display: grid; gap: 1px; border: 1px solid #dfe8ed; background: #dfe8ed; }
+.robot-draw-config-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 58px; background: #fbfcfd; padding: 8px 12px; }
+.robot-draw-toggle { display: flex; align-items: center; gap: 10px; min-height: 44px; color: #26465d; font-size: 14px; font-weight: 700; cursor: pointer; }
+.robot-draw-toggle input { width: 18px; height: 18px; accent-color: #167bc0; }
+.robot-draw-order { display: flex; align-items: center; gap: 8px; color: #617383; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.robot-draw-order select { min-width: 94px; min-height: 40px; border: 1px solid #cbd9e3; border-radius: 3px; background: #fff; color: #263746; padding: 0 8px; }
+.robot-draw-order select:focus { border-color: #1577c7; outline: 2px solid rgba(21,119,199,.14); outline-offset: 0; }
 
 @media (max-width: 760px) {
   .robot-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -554,6 +581,9 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .robot-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .robot-stat-grid { grid-template-columns: repeat(3, minmax(74px, 1fr)); }
   .robot-form-grid { grid-template-columns: 1fr; }
+  .robot-draw-config-row { align-items: stretch; flex-direction: column; gap: 4px; }
+  .robot-draw-order { justify-content: space-between; }
+  .robot-draw-order select { flex: 1; }
   .robot-event-tabs button { min-width: 112px; }
   .robot-dispatch-filters label, .robot-dispatch-filters label:first-child { min-width: 100%; }
   .robot-dispatch-filters input, .robot-dispatch-filters select, .robot-dispatch-filters button { width: 100%; }

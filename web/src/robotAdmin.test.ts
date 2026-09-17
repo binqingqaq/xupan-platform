@@ -7,8 +7,10 @@ import {
   robotStatusLabel,
   toInstantQueryValue,
   validateRobotDraft,
+  validateRobotDrawComponents,
   validateTemplateDraft,
 } from './robotAdmin'
+import { parseRobotDrawPayload } from './robotDrawMessage'
 
 function jsonResponse(body: unknown, status = 200) {
   return {
@@ -81,6 +83,38 @@ describe('robot admin pure functions', () => {
     expect(toInstantQueryValue('')).toBeUndefined()
     expect(toInstantQueryValue('not-a-date')).toBeUndefined()
   })
+
+  it('parses all supported structured draw message payloads and rejects invalid JSON', () => {
+    const summary = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1', component: 'DRAW_SUMMARY', issueNumber: '20260917001',
+      data: { numbers: [1, 2, 3, 4, 5, 6, 7, 8], settledAt: '2026-09-17T12:00:00Z' },
+    }))
+    const history = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1', component: 'DRAW_HISTORY', issueNumber: '20260917001',
+      data: { items: [{ issueNumber: '20260917000', numbers: [8, 7, 6, 5, 4, 3, 2, 1], settledAt: '2026-09-17T11:00:00Z' }] },
+    }))
+    const winners = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1', component: 'WINNER_LIST', issueNumber: '20260917001',
+      data: { items: [{ maskedUser: '张*', ballNumber: 8, playType: '特', stake: 10, netProfit: 90 }] },
+    }))
+
+    expect(summary?.component).toBe('DRAW_SUMMARY')
+    expect(history?.component).toBe('DRAW_HISTORY')
+    expect(winners?.component).toBe('WINNER_LIST')
+    expect(parseRobotDrawPayload('{bad json')).toBeNull()
+    expect(parseRobotDrawPayload(JSON.stringify({ schema: 'xupan.chat-payload.v1', component: 'UNKNOWN', issueNumber: '1', data: {} }))).toBeNull()
+  })
+
+  it('validates the three draw component slots and unique display order', () => {
+    const valid = [
+      { component: 'DRAW_SUMMARY' as const, enabled: true, order: 1 },
+      { component: 'DRAW_HISTORY' as const, enabled: false, order: 2 },
+      { component: 'WINNER_LIST' as const, enabled: true, order: 3 },
+    ]
+    expect(validateRobotDrawComponents(valid)).toEqual([])
+    expect(validateRobotDrawComponents(valid.map(item => ({ ...item, order: 1 })))).toContain('开奖组件顺序必须是唯一的 1-3')
+    expect(validateRobotDrawComponents(valid.slice(0, 2))).toContain('开奖组件配置必须包含摘要、历史结果和获胜名单三段')
+  })
 })
 
 describe('robot admin API contract', () => {
@@ -152,6 +186,32 @@ describe('robot admin API contract', () => {
       method: 'POST',
       credentials: 'include',
       headers: expect.any(Headers),
+    })
+  })
+
+  it('requests and updates robot draw component configuration', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ items: [{ component: 'DRAW_SUMMARY', enabled: true, order: 1 }] }))
+      .mockResolvedValueOnce(jsonResponse({ items: [] }))
+
+    await api.getAdminRobotDrawComponents(7)
+    await api.updateAdminRobotDrawComponents(7, {
+      components: [
+        { component: 'DRAW_SUMMARY', enabled: true, order: 1 },
+        { component: 'DRAW_HISTORY', enabled: false, order: 2 },
+        { component: 'WINNER_LIST', enabled: true, order: 3 },
+      ],
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/admin/robots/7/draw-components')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/admin/robots/7/draw-components')
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'PUT',
+      body: JSON.stringify({ components: [
+        { component: 'DRAW_SUMMARY', enabled: true, order: 1 },
+        { component: 'DRAW_HISTORY', enabled: false, order: 2 },
+        { component: 'WINNER_LIST', enabled: true, order: 3 },
+      ] }),
     })
   })
 

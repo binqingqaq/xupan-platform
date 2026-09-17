@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
+import RobotDrawMessage from '../components/RobotDrawMessage.vue'
+import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { ChatSocket } from '../services/chatSocket'
 import type {
   BallView,
@@ -12,6 +14,7 @@ import type {
   VirtualWallet,
 } from '../types'
 import type { ChatSocketState } from '../types/chat'
+import type { RobotDrawPayload } from '../robotDrawMessage'
 
 const ROOM_CODE = 'main'
 type MessageType = 'user' | 'robot' | 'system' | 'result'
@@ -32,6 +35,7 @@ interface RoomMessage {
   name: string
   avatarKey: string | null
   body: string
+  drawPayload: RobotDrawPayload | null
   time: string
   mine: boolean
 }
@@ -200,6 +204,7 @@ const displayMessages = computed<RoomMessage[]>(() => {
     name: currentUser.value?.displayName || '我',
     avatarKey: currentUser.value?.avatarKey || null,
     body: pending.body,
+    drawPayload: null,
     time: pending.status === 'sending' ? '发送中...' : '发送失败',
     mine: true,
   }]
@@ -226,6 +231,7 @@ function toRoomMessage(message: ChatMessage): RoomMessage {
     name: message.senderName,
     avatarKey: message.avatarKey,
     body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
+    drawPayload: type === 'robot' && message.status === 'ACTIVE' ? parseRobotDrawPayload(message.payloadJson) : null,
     time: formatMessageTime(message.createdAt),
     mine: message.senderId !== null && message.senderId === currentUser.value?.id,
   }
@@ -821,7 +827,8 @@ onUnmounted(() => {
                 <span v-else>{{ avatarText(message.name) }}</span>
               </div>
               <h5 class="reference-name">{{ message.name }}</h5>
-              <pre class="reference-pre">{{ message.body }}</pre>
+              <RobotDrawMessage v-if="message.drawPayload" :payload="message.drawPayload" />
+              <pre v-else class="reference-pre">{{ message.body }}</pre>
               <button v-if="message.sequenceNo === 0 && pendingChatMessage?.status === 'failed'" class="chat-retry" type="button" @click="retryPendingChatMessage">重试</button>
             </div>
           </article>

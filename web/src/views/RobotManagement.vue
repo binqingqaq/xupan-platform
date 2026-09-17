@@ -2,11 +2,14 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
-import { toInstantQueryValue, validateRobotDraft as validateRobotDraftInput } from '../robotAdmin'
+import { toInstantQueryValue, validateRobotDrawComponents, validateRobotDraft as validateRobotDraftInput } from '../robotAdmin'
 import type { CurrentUserView } from '../types'
 import type {
   DispatchPage,
   DispatchSummary,
+  RobotDrawComponentConfig,
+  RobotDrawComponentList,
+  RobotDrawComponentType,
   RobotDetail,
   RobotDispatchStatus,
   RobotEventType,
@@ -31,6 +34,12 @@ const dispatchStatusLabels: Record<RobotDispatchStatus, string> = {
   FAILED: '失败',
   PUBLISHED: '已发布',
   SKIPPED: '已跳过',
+}
+const drawComponentTypes: RobotDrawComponentType[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST']
+const drawComponentLabels: Record<RobotDrawComponentType, string> = {
+  DRAW_SUMMARY: '开奖摘要',
+  DRAW_HISTORY: '历史结果',
+  WINNER_LIST: '获胜名单',
 }
 
 type RobotDraft = {
@@ -75,6 +84,9 @@ const templateSaving = ref(false)
 const templatePreviewing = ref(false)
 const templatePreview = ref<TemplatePreview | null>(null)
 const templateError = ref('')
+const drawComponents = ref<RobotDrawComponentConfig[]>([])
+const drawComponentSaving = ref(false)
+const drawComponentError = ref('')
 const dispatches = ref<DispatchSummary[]>([])
 const dispatchPage = ref(1)
 const dispatchPageSize = ref(20)
@@ -105,6 +117,7 @@ const selectedTemplate = computed<TemplateSummary | null>(() => {
   return candidates[0] ?? null
 })
 const draftErrors = computed(() => validateRobotDraft(robotDraft.value, editing.value))
+const drawComponentErrors = computed(() => validateRobotDrawComponents(drawComponents.value))
 
 function emptyRobotDraft(): RobotDraft {
   return { robotCode: '', displayName: '', avatarKey: 'robot-default', weight: 100, delaySeconds: 0 }
@@ -176,12 +189,20 @@ async function loadRobotDetail(robotId: number) {
   detailLoading.value = true
   detailError.value = ''
   templateError.value = ''
+  drawComponentError.value = ''
   templatePreview.value = null
   try {
     selectedRobot.value = await api.getAdminRobot(robotId)
     syncTemplateDraft()
+    try {
+      syncDrawComponentDraft(await api.getAdminRobotDrawComponents(robotId))
+    } catch (error) {
+      drawComponents.value = []
+      drawComponentError.value = apiErrorMessage(error, '开奖组件配置加载失败')
+    }
   } catch (error) {
     selectedRobot.value = null
+    drawComponents.value = []
     detailError.value = apiErrorMessage(error, '机器人详情加载失败')
   } finally {
     detailLoading.value = false
@@ -192,6 +213,13 @@ function syncTemplateDraft() {
   templateDraft.value = selectedTemplate.value?.templateText ?? ''
   templatePreview.value = null
   templateError.value = selectedTemplate.value ? '' : '服务端未配置模板，页面不会写入默认模板。'
+}
+
+function syncDrawComponentDraft(list: RobotDrawComponentList) {
+  drawComponents.value = drawComponentTypes.map((component, index) => {
+    const existing = list.items.find(item => item.component === component)
+    return { component, enabled: existing?.enabled ?? false, order: existing?.order ?? index + 1 }
+  })
 }
 
 async function loadPage() {
@@ -210,11 +238,33 @@ async function loadPage() {
       selectedRobot.value = null
       templateDraft.value = ''
       templatePreview.value = null
+      drawComponents.value = []
+      drawComponentError.value = ''
     }
   } catch (error) {
     errorMessage.value = apiErrorMessage(error, '机器人列表加载失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function saveDrawComponents() {
+  if (!selectedRobot.value || !canWrite.value || drawComponentSaving.value) return
+  const errors = drawComponentErrors.value
+  if (errors.length) {
+    drawComponentError.value = errors[0]
+    return
+  }
+  drawComponentSaving.value = true
+  drawComponentError.value = ''
+  try {
+    const result = await api.updateAdminRobotDrawComponents(selectedRobot.value.robot.id, { components: drawComponents.value })
+    syncDrawComponentDraft(result)
+    showFeedback('开奖组件配置已保存')
+  } catch (error) {
+    drawComponentError.value = apiErrorMessage(error, '开奖组件配置保存失败')
+  } finally {
+    drawComponentSaving.value = false
   }
 }
 
@@ -495,6 +545,33 @@ onMounted(async () => {
             <div v-if="templatePreview" class="template-preview" aria-live="polite"><div><span>预览结果</span><strong>第 {{ templatePreview.issueNumber }} 期 · {{ eventLabels[templatePreview.eventType] }}</strong></div><p>{{ templatePreview.renderedText }}</p><small>示例事件：{{ templatePreview.eventMessage }} · 版本 v{{ templatePreview.version }}</small></div>
           </template>
         </section>
+      </section>
+
+      <section class="admin-section robot-draw-section">
+        <div class="section-title">
+          <div><span class="eyebrow">DRAW MESSAGE COMPONENTS</span><h2>开奖消息组件</h2></div>
+          <span>控制机器人开奖消息的展示顺序</span>
+        </div>
+        <p v-if="!selectedRobot" class="user-empty-state robot-detail-state">选择机器人后配置开奖消息组件。</p>
+        <template v-else>
+          <p class="modal-note">三类组件都会提交，顺序使用 1-3；关闭仅表示该段不展示。</p>
+          <p v-if="drawComponentError" class="inline-error" role="alert">{{ drawComponentError }}</p>
+          <div class="robot-draw-config-list" aria-label="开奖消息组件配置">
+            <div v-for="component in drawComponents" :key="component.component" class="robot-draw-config-row">
+              <label class="robot-draw-toggle">
+                <input v-model="component.enabled" type="checkbox" :disabled="!canWrite || drawComponentSaving" :aria-label="`启用${drawComponentLabels[component.component]}`" />
+                <span>{{ drawComponentLabels[component.component] }}</span>
+              </label>
+              <label class="robot-draw-order">展示顺序
+                <select v-model.number="component.order" :disabled="!canWrite || drawComponentSaving" :aria-label="`${drawComponentLabels[component.component]}展示顺序`">
+                  <option v-for="order in [1, 2, 3]" :key="order" :value="order">第 {{ order }} 段</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <p v-if="drawComponentErrors.length" class="inline-error" role="alert">{{ drawComponentErrors[0] }}</p>
+          <div class="modal-actions"><button type="button" class="primary-button" :disabled="!canWrite || drawComponentSaving || drawComponentErrors.length > 0" @click="saveDrawComponents">{{ drawComponentSaving ? '保存中...' : '保存开奖组件配置' }}</button></div>
+        </template>
       </section>
 
       <section class="admin-section robot-dispatch-section">
