@@ -51,4 +51,24 @@ describe('renderRobotDrawImage', () => {
     expect(svg).toContain('fill="#d1d1d1"')
     expect(svg).not.toContain('<line')
   })
+
+  it('uses only each route item special number and keeps the supplied current block', () => {
+    const image = renderRobotDrawImage({
+      schema: 'xupan.chat-payload.v1',
+      component: 'DRAW_HISTORY',
+      issueNumber: '3000001',
+      data: {
+        items: [{ issueNumber: '3000001', numbers: [1, 2, 3, 4, 5, 6, 7, 20], settledAt: '2026-09-17T11:00:00Z' }],
+        routeItems: [
+          { issueNumber: '3000000', numbers: [20, 19, 18, 17, 16, 15, 14, 13], settledAt: '2026-09-17T10:00:00Z' },
+          { issueNumber: '3000001', numbers: [1, 2, 3, 4, 5, 6, 7, 20], settledAt: '2026-09-17T11:00:00Z' },
+        ],
+      },
+    })
+    const svg = decodeURIComponent(image.dataUrl.slice(image.dataUrl.indexOf(',') + 1))
+
+    expect(svg).toContain('fill="#5b92f5"')
+    expect(svg).toContain('fill="#ff4550"')
+    expect(svg).not.toContain('fill="#45c68a"')
+  })
 })

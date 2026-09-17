@@ -22,6 +22,7 @@ export interface DrawHistoryPayload {
   issueNumber: string
   data: {
     items: DrawHistoryItem[]
+    routeItems?: DrawHistoryItem[]
   }
 }
 
@@ -110,8 +111,16 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
 
   if (value.component === 'DRAW_HISTORY') {
     const data = value.data
-    return Array.isArray(data.items) && data.items.every(isDrawHistoryItem)
-      ? { schema: value.schema, component: value.component, issueNumber: value.issueNumber, data: { items: data.items } }
+    const routeItems = data.routeItems
+    return Array.isArray(data.items)
+      && data.items.every(isDrawHistoryItem)
+      && (routeItems === undefined || (Array.isArray(routeItems) && routeItems.every(isDrawHistoryItem)))
+      ? {
+        schema: value.schema,
+        component: value.component,
+        issueNumber: value.issueNumber,
+        data: { items: data.items, ...(routeItems === undefined ? {} : { routeItems }) },
+      }
       : null
   }
 

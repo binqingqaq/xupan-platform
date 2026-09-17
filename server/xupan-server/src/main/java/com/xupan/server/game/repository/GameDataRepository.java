@@ -190,6 +190,36 @@ public class GameDataRepository {
                 """, limit);
     }
 
+    /**
+     * Reads the current fixed-size settled block from oldest to newest.
+     * The complete history remains in game_issue; this only selects the block
+     * currently visible in a bounded trend chart.
+     */
+    public List<IssueRecord> findLatestSettledBlock(int blockSize) {
+        if (blockSize < 1 || blockSize > 100) {
+            throw new IllegalArgumentException("开奖走势分组数量必须在 1 到 100 之间");
+        }
+        Long total = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                  FROM game_issue
+                 WHERE phase = 'SETTLED' AND settled_at IS NOT NULL
+                   AND number_1 IS NOT NULL AND number_2 IS NOT NULL
+                   AND number_3 IS NOT NULL AND number_4 IS NOT NULL
+                   AND number_5 IS NOT NULL AND number_6 IS NOT NULL
+                   AND number_7 IS NOT NULL AND number_8 IS NOT NULL
+                """, Long.class);
+        if (total == null || total == 0) {
+            return List.of();
+        }
+        int currentBlockSize = (int) (total % blockSize);
+        if (currentBlockSize == 0) {
+            currentBlockSize = blockSize;
+        }
+        List<IssueRecord> currentBlock = new ArrayList<>(findSettledIssues(currentBlockSize));
+        Collections.reverse(currentBlock);
+        return List.copyOf(currentBlock);
+    }
+
     public List<WinnerRecord> findWinningBets(String issueNumber) {
         if (issueNumber == null || issueNumber.isBlank()) {
             return List.of();

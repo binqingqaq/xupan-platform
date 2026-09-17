@@ -126,7 +126,7 @@ class RobotDispatchServiceTest {
                  WHERE issue_number = ? AND message_type = 'ROBOT'
                 """, String.class, ISSUE_PREFIX + "draw-structured"))
                 .anyMatch(payload -> payload.contains("DRAW_SUMMARY") && payload.contains("1,2,3"))
-                .anyMatch(payload -> payload.contains("DRAW_HISTORY"))
+                .anyMatch(payload -> payload.contains("DRAW_HISTORY") && payload.contains("routeItems"))
                 .anyMatch(payload -> payload.contains("WINNER_LIST")
                         && payload.contains("暂无获胜记录"));
         assertThat(jdbcTemplate.queryForObject(

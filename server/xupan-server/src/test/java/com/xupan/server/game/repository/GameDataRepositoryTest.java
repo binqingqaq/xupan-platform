@@ -93,6 +93,20 @@ class GameDataRepositoryTest {
     }
 
     @Test
+    void startsANewSettledBlockAfterSixtyCompleteIssues() {
+        for (int index = 1; index <= 61; index++) {
+            String issueNumber = "TEST-ROUTE-" + String.format("%03d", index);
+            repository.saveIssue(issueNumber, "CLOSED", List.of(1, 2, 3, 4, 5, 6, 7, index % 20 + 1));
+            jdbcTemplate.update("UPDATE game_issue SET settled_at = ? WHERE issue_number = ?",
+                    java.sql.Timestamp.from(Instant.parse("2026-09-17T11:00:00Z").plusSeconds(index)), issueNumber);
+        }
+
+        assertThat(repository.findLatestSettledBlock(60))
+                .extracting(GameDataRepository.IssueRecord::issueNumber)
+                .containsExactly("TEST-ROUTE-061");
+    }
+
+    @Test
     void savingTheSameBettingIssueIsIdempotent() {
         Instant startedAt = Instant.parse("2026-01-01T00:00:00Z");
 

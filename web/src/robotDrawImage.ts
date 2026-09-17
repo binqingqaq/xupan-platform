@@ -8,7 +8,7 @@ export interface RobotDrawImage {
   alt: string
 }
 
-const COLORS = ['#45c68a', '#f0d500', '#ff4550', '#5b92f5']
+const COLORS = ['#5b92f5', '#45c68a', '#f0d500', '#ff4550']
 const FONT = "Arial, 'Microsoft YaHei', sans-serif"
 
 function escapeXml(value: unknown): string {
@@ -90,7 +90,8 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
     const highlight = rowIndex === 0 ? `<rect x="1" y="${y}" width="1118" height="${rowHeight}" fill="none" stroke="#ff4550"/>` : ''
     return `${highlight}<text x="125" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="255" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="748" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="762.5" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="797" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
   }).join('')
-  const gridValues = items.flatMap(item => item.numbers.map(fanOf)).slice(0, gridColumns * gridRows)
+  const routeItems = payload.data.routeItems ?? items.slice().reverse()
+  const gridValues = routeItems.slice(-gridColumns * gridRows).map(item => fanOf(item.numbers[7]))
   const grid = Array.from({ length: gridColumns * gridRows }, (_, index) => {
     const value = gridValues[index]
     const x = index % gridColumns * 93.25

@@ -257,9 +257,9 @@ public class RobotDispatchService {
         RobotDrawComponent checkedComponent = RobotDrawComponent.valueOf(component);
         Object data = switch (checkedComponent) {
             case DRAW_SUMMARY -> new DrawSummaryData(currentIssue.numbers(), currentIssue.settledAt());
-            case DRAW_HISTORY -> new DrawHistoryData(gameDataRepository.findSettledIssues(10).stream()
-                    .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(),
-                            issue.settledAt())).toList());
+            case DRAW_HISTORY -> new DrawHistoryData(
+                    historyItems(gameDataRepository.findSettledIssues(15)),
+                    historyItems(gameDataRepository.findLatestSettledBlock(60)));
             case WINNER_LIST -> winnerData(issueNumber);
         };
         try {
@@ -278,6 +278,12 @@ public class RobotDispatchService {
                     winner.playType(), winner.stake(), winner.netProfit()));
         }
         return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null);
+    }
+
+    private static List<DrawHistoryItem> historyItems(List<GameDataRepository.IssueRecord> issues) {
+        return issues.stream()
+                .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(), issue.settledAt()))
+                .toList();
     }
 
     private static String mask(String userCode, String displayName) {
@@ -323,7 +329,7 @@ public class RobotDispatchService {
     private record DrawSummaryData(List<Integer> numbers, Instant settledAt) {
     }
 
-    private record DrawHistoryData(List<DrawHistoryItem> items) {
+    private record DrawHistoryData(List<DrawHistoryItem> items, List<DrawHistoryItem> routeItems) {
     }
 
     private record DrawHistoryItem(String issueNumber, List<Integer> numbers, Instant settledAt) {
