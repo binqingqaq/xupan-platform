@@ -165,7 +165,18 @@ export interface VirtualWallet {
 }
 
 export interface WalletSummaryResponse extends VirtualWallet {
+  statistics: WalletStatistics
   ledger: WalletLedgerEntry[]
+}
+
+export interface WalletStatistics {
+  totalBetCount: number
+  settledBetCount: number
+  pendingBetCount: number
+  totalStake: number
+  settledStake: number
+  pendingStake: number
+  netProfit: number
 }
 
 export interface WalletLedgerEntry {

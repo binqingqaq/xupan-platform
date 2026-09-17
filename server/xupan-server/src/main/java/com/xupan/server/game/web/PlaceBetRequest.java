@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public record PlaceBetRequest(
-        @NotNull @Min(1) @Max(8) Integer ballNumber,
+        @NotNull @Min(1) @Max(1) Integer ballNumber,
         @NotNull PlayType playType,
         List<Integer> parameters,
         @NotNull @DecimalMin("0.01") @Digits(integer = 12, fraction = 2) BigDecimal stake,

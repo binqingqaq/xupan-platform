@@ -55,6 +55,22 @@ public class ChatMessageRepository {
     public ChatMessage insertUserMessage(long roomId, long sequenceNo, long userId,
                                          String senderName, String clientMessageId,
                                          String content, Instant createdAt) {
+        return insertUserMessage(roomId, sequenceNo, userId, senderName, clientMessageId,
+                null, ChatMessageType.USER_CHAT, content, null, createdAt);
+    }
+
+    public ChatMessage insertUserBetMessage(long roomId, long sequenceNo, long userId,
+                                            String senderName, String clientMessageId,
+                                            String issueNumber, String content,
+                                            String payloadJson, Instant createdAt) {
+        return insertUserMessage(roomId, sequenceNo, userId, senderName, clientMessageId,
+                issueNumber, ChatMessageType.USER_BET, content, payloadJson, createdAt);
+    }
+
+    private ChatMessage insertUserMessage(long roomId, long sequenceNo, long userId,
+                                          String senderName, String clientMessageId,
+                                          String issueNumber, ChatMessageType messageType,
+                                          String content, String payloadJson, Instant createdAt) {
         requireTransaction("insertUserMessage");
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
@@ -63,17 +79,22 @@ public class ChatMessageRepository {
                         (room_id, sequence_no, client_message_id, idempotency_key,
                          issue_number, message_type, sender_type, sender_id, sender_name,
                          content, payload_json, status, created_at, updated_at)
-                    VALUES (?, ?, ?, NULL, NULL, 'USER_CHAT', 'USER', ?, ?, ?, NULL,
+                    VALUES (?, ?, ?, NULL, ?, ?, 'USER', ?, ?, ?,
+                            CASE WHEN ? IS NULL THEN NULL ELSE CAST(? AS JSON) END,
                             'ACTIVE', ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setLong(1, roomId);
             statement.setLong(2, sequenceNo);
             statement.setString(3, clientMessageId);
-            statement.setLong(4, userId);
-            statement.setString(5, senderName);
-            statement.setString(6, content);
-            statement.setTimestamp(7, Timestamp.from(createdAt));
-            statement.setTimestamp(8, Timestamp.from(createdAt));
+            statement.setString(4, issueNumber);
+            statement.setString(5, messageType.name());
+            statement.setLong(6, userId);
+            statement.setString(7, senderName);
+            statement.setString(8, content);
+            statement.setString(9, payloadJson);
+            statement.setString(10, payloadJson);
+            statement.setTimestamp(11, Timestamp.from(createdAt));
+            statement.setTimestamp(12, Timestamp.from(createdAt));
             return statement;
         }, keyHolder);
         Number key = generatedMessageId(keyHolder);

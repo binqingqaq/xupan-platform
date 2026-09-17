@@ -16,6 +16,10 @@ import com.xupan.server.chat.repository.ChatReadCursorRepository;
 import com.xupan.server.chat.repository.ChatRoomRepository;
 import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.domain.SettlementStatus;
+import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.web.BusinessException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,6 +69,8 @@ class ChatMessageServiceTest {
     @Mock
     private GameDataRepository gameDataRepository;
     @Mock
+    private DemoGameService gameService;
+    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     private ChatMessageService service;
@@ -73,7 +79,7 @@ class ChatMessageServiceTest {
     void setUp() {
         service = new ChatMessageService(userRepository, permissionService, roomRepository, messageRepository,
                 outboxRepository, muteRepository, readCursorRepository, new ChatContentPolicy(),
-                gameDataRepository, new ObjectMapper(), eventPublisher);
+                gameDataRepository, new ObjectMapper(), eventPublisher, gameService);
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
         lenient().when(permissionService.hasPermission(USER_ID, "CHAT_ROOM_READ")).thenReturn(true);
     }
@@ -97,6 +103,31 @@ class ChatMessageServiceTest {
         verify(eventPublisher).publishEvent(any(ChatMessageCreatedEvent.class));
         assertThat(payload.getValue()).contains("\"roomCode\":\"main\"", "\"sequenceNo\":1",
                 "\"senderId\":7", "\"content\":\"hello\"");
+    }
+
+    @Test
+    void recognizesConfirmedBetAndPersistsUserBetMessage() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "bet-1"))
+                .thenReturn(Optional.empty());
+        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class))).thenReturn(
+                new DemoGameService.BetView("BET-1", "3000000", 1, PlayType.FAN,
+                        List.of(1), new java.math.BigDecimal("10.00"),
+                        new java.math.BigDecimal("3.850"), SettlementStatus.PENDING, null, null));
+        when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
+        ChatMessage message = new ChatMessage(11L, 1L, "main", 1L, "bet-1", null,
+                "3000000", ChatMessageType.USER_BET, ChatSenderType.USER, USER_ID,
+                "用户甲", "1番10", "{}", ChatMessageStatus.ACTIVE, NOW, NOW);
+        when(messageRepository.insertUserBetMessage(eq(1L), eq(1L), eq(USER_ID), eq("用户甲"),
+                eq("bet-1"), eq("3000000"), eq("1番10"), anyString(), eq(NOW)))
+                .thenReturn(message);
+
+        ChatMessage result = service.sendUserMessage(USER_ID, "main", "bet-1", "1番10", NOW);
+
+        assertThat(result.messageType()).isEqualTo(ChatMessageType.USER_BET);
+        assertThat(result.issueNumber()).isEqualTo("3000000");
+        verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
     }
 
     @Test

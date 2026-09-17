@@ -6,6 +6,7 @@ import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationResult;
+import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.repository.VirtualWalletRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -112,6 +113,13 @@ public class VirtualWalletService {
         }
         requireWallet(targetUserId);
         return walletRepository.findLedgerByUserId(targetUserId, limit);
+    }
+
+    @Transactional(readOnly = true)
+    public WalletStatistics statistics(long targetUserId) {
+        requireActiveUser(targetUserId);
+        VirtualWallet wallet = requireWallet(targetUserId);
+        return walletRepository.findStatisticsByAccountId(wallet.accountId());
     }
 
     @Transactional

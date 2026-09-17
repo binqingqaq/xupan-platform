@@ -15,11 +15,15 @@ import com.xupan.server.chat.repository.ChatReadCursorRepository;
 import com.xupan.server.chat.repository.ChatRoomRepository;
 import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.service.BetTextParser;
+import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.web.BusinessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -42,7 +46,9 @@ public class ChatMessageService {
     private final GameDataRepository gameDataRepository;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final DemoGameService gameService;
 
+    @Autowired
     public ChatMessageService(UserRepository userRepository,
                               PermissionService permissionService,
                               ChatRoomRepository roomRepository,
@@ -53,7 +59,8 @@ public class ChatMessageService {
                               ChatContentPolicy contentPolicy,
                               GameDataRepository gameDataRepository,
                               ObjectMapper objectMapper,
-                              ApplicationEventPublisher eventPublisher) {
+                              ApplicationEventPublisher eventPublisher,
+                              DemoGameService gameService) {
         this.userRepository = userRepository;
         this.permissionService = permissionService;
         this.roomRepository = roomRepository;
@@ -65,6 +72,24 @@ public class ChatMessageService {
         this.gameDataRepository = gameDataRepository;
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
+        this.gameService = gameService;
+    }
+
+    /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
+    public ChatMessageService(UserRepository userRepository,
+                              PermissionService permissionService,
+                              ChatRoomRepository roomRepository,
+                              ChatMessageRepository messageRepository,
+                              ChatOutboxRepository outboxRepository,
+                              ChatMuteRepository muteRepository,
+                              ChatReadCursorRepository readCursorRepository,
+                              ChatContentPolicy contentPolicy,
+                              GameDataRepository gameDataRepository,
+                              ObjectMapper objectMapper,
+                              ApplicationEventPublisher eventPublisher) {
+        this(userRepository, permissionService, roomRepository, messageRepository, outboxRepository,
+                muteRepository, readCursorRepository, contentPolicy, gameDataRepository, objectMapper,
+                eventPublisher, null);
     }
 
     public ChatRoomView getRoom(long userId, String roomCode, Instant now) {
@@ -139,12 +164,42 @@ public class ChatMessageService {
             }
             return new ChatMessageSendOutcome(existing.get(), true);
         }
+        BetTextParser.ParseResult parsedBet = BetTextParser.parse(normalizedContent);
+        if (parsedBet.status() != BetTextParser.Status.ACCEPTED
+                && BetTextParser.looksLikeBet(normalizedContent)) {
+            throw BusinessException.badRequest("GAME_BET_TEXT_INVALID", parsedBet.reason());
+        }
+        BetTextParser.ParsedBet bet = parsedBet.bet();
+        if (bet != null) {
+            if (gameService == null) {
+                throw new IllegalStateException("下注服务未配置");
+            }
+            DemoGameService.BetView placed = gameService.placeBet(userId, new PlaceBetRequest(
+                    1, bet.playType(), bet.parameters(), bet.stake(), "CHAT-" + clientId));
+            long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+            String betPayload = betPayload(placed);
+            ChatMessage message = messageRepository.insertUserBetMessage(room.id(), sequence, userId,
+                    user.displayName(), clientId, placed.issueNumber(), normalizedContent, betPayload, now);
+            outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
+            eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+            return new ChatMessageSendOutcome(message, false);
+        }
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
                 user.displayName(), clientId, normalizedContent, now);
         outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
         eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
         return new ChatMessageSendOutcome(message, false);
+    }
+
+    private String betPayload(DemoGameService.BetView bet) {
+        try {
+            return objectMapper.writeValueAsString(new BetMessagePayload(
+                    bet.id(), bet.issueNumber(), bet.ballNumber(), bet.playType().name(),
+                    bet.parameters(), bet.stake(), bet.odds(), bet.settlementStatus().name()));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("生成下注消息追踪数据失败", exception);
+        }
     }
 
     @Transactional
@@ -322,5 +377,11 @@ public class ChatMessageService {
     private record OutboxMessage(long messageId, String roomCode, long sequenceNo,
                                  String messageType, String senderType, Long senderId,
                                  String senderName, String content, String createdAt) {
+    }
+
+    private record BetMessagePayload(String betId, String issueNumber, int ballNumber,
+                                     String playType, List<Integer> parameters,
+                                     java.math.BigDecimal stake, java.math.BigDecimal odds,
+                                     String settlementStatus) {
     }
 }

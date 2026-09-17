@@ -30,12 +30,14 @@ public class VirtualWalletController {
     public WalletResponse mine(Authentication authentication) {
         AuthenticatedUser user = principal(authentication);
         return WalletResponse.summary(walletService.getForCurrentUser(user.getUserId()),
+                walletService.statistics(user.getUserId()),
                 walletService.ledger(user.getUserId(), 20));
     }
 
     @GetMapping("/admin/users/{userId}/wallet")
     public WalletResponse adminWallet(@PathVariable long userId) {
-        return WalletResponse.summary(walletService.getForAdmin(userId), walletService.ledger(userId, 20));
+        return WalletResponse.summary(walletService.getForAdmin(userId), walletService.statistics(userId),
+                walletService.ledger(userId, 20));
     }
 
     @GetMapping("/admin/users/{userId}/wallet/ledger")

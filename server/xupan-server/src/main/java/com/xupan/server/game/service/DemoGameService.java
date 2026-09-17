@@ -81,6 +81,9 @@ public class DemoGameService {
         if (request.idempotencyKey() == null || request.idempotencyKey().isBlank()) {
             throw new IllegalArgumentException("GAME_BET_IDEMPOTENCY_KEY_REQUIRED");
         }
+        if (request.ballNumber() != 1) {
+            throw BusinessException.badRequest("GAME_BALL_NOT_SUPPORTED", "下注无效：当前只支持第1球");
+        }
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
         var replay = repository.findBetByAccountIdAndIdempotencyKey(wallet.accountId(), request.idempotencyKey());
         if (replay.isPresent()) {
@@ -90,7 +93,10 @@ public class DemoGameService {
             return toBetView(replay.get());
         }
         if (!自动轮期服务.BETTING.equals(issue.phase())) {
-            throw new IllegalStateException("当前期已封盘，不能下注");
+            String message = 自动轮期服务.DRAWING.equals(issue.phase())
+                    ? "下注无效：当前正在开奖，已停止下注"
+                    : "下注无效：当前期已封盘，不能下注";
+            throw BusinessException.conflict("GAME_BETTING_CLOSED", message);
         }
         BigDecimal snapshotOdds = repository.findOdds(request.playType())
                 .orElseThrow(() -> new IllegalArgumentException("玩法赔率不存在"));
@@ -129,7 +135,7 @@ public class DemoGameService {
                 .filter(bet -> bet.settlementStatus() == SettlementStatus.PENDING)
                 .map(bet -> new PendingSettlement(bet.id(), bet.accountId(), settlementService.settle(
                         bet.playType(), bet.parameters(), bet.stake(), bet.odds(),
-                        results.get(bet.ballNumber() - 1))))
+                        results.get(0))))
                 .toList();
 
         repository.saveIssue(issue.issueNumber(), "CLOSED", numbers);

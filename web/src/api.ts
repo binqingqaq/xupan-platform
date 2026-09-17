@@ -106,6 +106,9 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'WALLET_INACTIVE') return '该用户的虚拟钱包当前不可用'
   if (error.code === 'WALLET_IDEMPOTENCY_CONFLICT') return '该幂等键已用于其他操作，请更换后重试'
   if (error.code === 'WALLET_OPERATION_REPLAYED') return '该操作已经处理，请刷新查看最新结果'
+  if (error.code === 'GAME_BET_TEXT_INVALID') return '下注无效：下注格式暂不支持'
+  if (error.code === 'GAME_BETTING_CLOSED') return '下注无效：本期已封盘'
+  if (error.code === 'GAME_BALL_NOT_SUPPORTED') return '下注无效：当前只支持第1球'
   if (error.code === 'USER_USERNAME_EXISTS') return '登录名已存在，请换一个登录名'
   if (error.code === 'USER_NOT_FOUND') return '用户不存在，请刷新列表后重试'
   if (error.code === 'USER_STATUS_INVALID') return '用户状态不合法'
@@ -253,7 +256,7 @@ export const api = {
       method: 'POST',
     }),
   current: () => request<GameView>('/api/demo/game/current'),
-  placeBet: (payload: { ballNumber: number; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string }) =>
+  placeBet: (payload: { ballNumber: 1; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string }) =>
     request<BetView>('/api/demo/game/bets', { method: 'POST', body: JSON.stringify(payload) }),
   updateOdds: (playType: PlayType, odds: number) =>
     request<OddsView>(`/api/demo/game/admin/odds/${playType}`, {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
+import { parseBetText } from '../betText'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
@@ -12,7 +13,7 @@ import type {
   CurrentUserView,
   GameView,
   PlayType,
-  VirtualWallet,
+  WalletSummaryResponse,
 } from '../types'
 import type { ChatSocketState } from '../types/chat'
 import type { RobotDrawPayload } from '../robotDrawMessage'
@@ -46,7 +47,7 @@ interface OddsCard {
 }
 
 const current = ref<GameView | null>(null)
-const wallet = ref<VirtualWallet | null>(null)
+const wallet = ref<WalletSummaryResponse | null>(null)
 const currentUser = ref<CurrentUserView | null>(null)
 const room = ref<ChatRoomView | null>(null)
 const chatMessages = ref<ChatMessage[]>([])
@@ -57,7 +58,6 @@ const chatPolling = ref(false)
 const chatLastSequence = ref(0)
 const chatReadCursorSaved = ref(0)
 const chatConnectionState = ref<ChatSocketState>('DISCONNECTED')
-const selectedBall = ref(1)
 const messageInput = ref('')
 const quickOpen = ref(false)
 const interfaceOpen = ref(false)
@@ -182,6 +182,46 @@ function oddsFor(playType: PlayType) {
 }
 
 const historyRows = computed(() => toHistoryRows(current.value?.history ?? []))
+const currentBets = computed(() => current.value?.bets ?? [])
+const walletLedger = computed(() => wallet.value?.ledger ?? [])
+
+const settlementStatusLabels: Record<string, string> = {
+  PENDING: '待开奖',
+  WIN: '中奖',
+  DRAW: '和局',
+  LOSE: '未中',
+}
+
+function settlementStatusLabel(status: string) {
+  return settlementStatusLabels[status] ?? status
+}
+
+function playTypeLabel(playType: PlayType) {
+  const labels: Record<PlayType, string> = {
+    FAN: '番', ANGLE: '角', CAR: '车', STRICT: '严', ADD: '加', POSITIVE: '正',
+    TONG: '通', NONE: '无', ODD_EVEN: '单双', BIG_SMALL: '大小', SPECIAL: '特',
+  }
+  return labels[playType]
+}
+
+function formatBetParameters(bet: { playType: PlayType; parameters: number[] }) {
+  if (bet.playType === 'ODD_EVEN') return bet.parameters[0] === 1 ? '单' : '双'
+  if (bet.playType === 'BIG_SMALL') return bet.parameters[0] === 1 ? '大' : '小'
+  if (bet.playType === 'SPECIAL') return bet.parameters.map(number => String(number).padStart(2, '0')).join('/')
+  return bet.parameters.join('')
+}
+
+function signedMoney(value: number) {
+  return `${value >= 0 ? '+' : ''}${Number(value).toFixed(2)}`
+}
+
+function ledgerOperationLabel(operationType: string) {
+  if (operationType === 'BET_DEBIT') return '下注扣款'
+  if (operationType === 'BET_SETTLEMENT') return '开奖结算'
+  if (operationType === 'ADMIN_GRANT') return '余额上分'
+  if (operationType === 'ADMIN_ADJUSTMENT') return '余额调整'
+  return operationType
+}
 
 const messages = computed<RoomMessage[]>(() => chatMessages.value.map(toRoomMessage))
 const displayMessages = computed<RoomMessage[]>(() => {
@@ -588,19 +628,6 @@ function resetQuickSelection() {
   messageInput.value = ''
 }
 
-function parseBetMessage(text: string): { ballNumber: number; playType: PlayType; parameters: number[]; stake: number } | null {
-  const match = text.trim().match(/^(\d{1,4})(番|角|车|加|正|通|无|单双|大小|特)?\/?(\d+(?:\.\d+)?)$/)
-  if (!match) return null
-  const code = match[1]
-  const label = match[2]
-  const stake = Number(match[3])
-  if (!Number.isFinite(stake) || stake <= 0) return null
-  const parameters = code.split('').map(Number)
-  const playType: PlayType = label === '特' ? 'SPECIAL' : label === '角' || (!label && code.length === 2) ? 'ANGLE' : label === '车' || (!label && code.length === 3) ? 'CAR' : label === '通' ? 'TONG' : label === '无' ? 'NONE' : label === '加' ? 'ADD' : label === '正' ? 'POSITIVE' : label === '单双' ? 'ODD_EVEN' : label === '大小' ? 'BIG_SMALL' : 'FAN'
-  if (playType === 'SPECIAL' && Number(code) > 20) return null
-  return { ballNumber: selectedBall.value, playType, parameters, stake }
-}
-
 async function submitMessage() {
   const text = messageInput.value.trim()
   if (!text) return
@@ -611,19 +638,30 @@ async function submitMessage() {
     noticeOpen.value = true
     return
   }
-  const payload = parseBetMessage(text)
-  if (payload) {
+  const parsed = parseBetText(text)
+  if (parsed.kind === 'BET') {
     if (current.value?.phase !== 'BETTING') {
-      showFeedback('本期已停止下注', 'error')
+      showFeedback(current.value?.phase === 'DRAWING'
+        ? '下注无效：当前正在开奖'
+        : '下注无效：本期已封盘', 'error')
       return
     }
     try {
-      await api.placeBet({ ...payload, idempotencyKey: createBetIdempotencyKey() })
+      const sent = await api.sendChatMessage(ROOM_CODE, {
+        clientMessageId: createBetIdempotencyKey(),
+        content: text,
+      })
+      mergeChatMessages([sent])
       await loadGame()
       showFeedback('下注已发送')
     } catch (error) {
       showFeedback(apiErrorMessage(error, '下注失败，请稍后重试'), 'error')
     }
+    return
+  }
+
+  if (parsed.kind === 'INVALID') {
+    showFeedback(parsed.message, 'error')
     return
   }
 
@@ -674,10 +712,6 @@ function closeOverlays() {
   scratchOpen.value = false
   noticeOpen.value = false
   settingsOpen.value = false
-}
-
-function selectBall(ball: BallView) {
-  selectedBall.value = ball.ballNumber
 }
 
 function messageClass(message: RoomMessage) {
@@ -782,10 +816,11 @@ onUnmounted(() => {
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
         <span v-if="showingPreviousBalls" class="reference-ball-context">上期结果</span>
         <div class="reference-ball-row" :aria-label="ballNumbersLabel">
-          <button v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8, 'is-selected': selectedBall === ball.ballNumber }" type="button" :aria-label="`选择第${ball.ballNumber}球`" @click="selectBall(ball)">
+          <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8 }">
             {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
-          </button>
+          </span>
         </div>
+        <span class="reference-ball-context fixed-ball-label">默认第1球</span>
         <span class="reference-countdown" :class="{ 'is-drawing': current?.phase === 'DRAWING' }">{{ phaseLabel }}</span>
         <button class="collapse-button" :class="{ expanded: historyOpen }" type="button" :aria-expanded="historyOpen" aria-label="展开历史开奖记录" title="展开历史开奖记录" @click="toggleHistory"><span class="collapse-chevron" aria-hidden="true"></span></button>
       </div>
@@ -804,6 +839,35 @@ onUnmounted(() => {
 
     <main ref="messageScroll" class="reference-message-scroll" :style="{ bottom: `${composerHeight}px` }" aria-label="聊天室消息" @scroll="handleChatScroll">
       <section class="reference-message-feed">
+        <section v-if="wallet" class="account-summary" aria-label="我的下注与余额流水">
+          <header class="account-summary-header">
+            <strong>第{{ displayIssueNumber }}期 · 我的下注</strong>
+            <span>余额 {{ balance }}</span>
+          </header>
+          <div v-if="wallet?.statistics" class="account-statistics">
+            <span>累计 {{ wallet.statistics.totalBetCount }} 注</span>
+            <span>已结算 {{ wallet.statistics.settledBetCount }} 注</span>
+            <span>投注额 {{ Number(wallet.statistics.totalStake).toFixed(2) }}</span>
+            <strong :class="{ positive: Number(wallet.statistics.netProfit) > 0, negative: Number(wallet.statistics.netProfit) < 0 }">
+              净盈亏 {{ signedMoney(Number(wallet.statistics.netProfit)) }}
+            </strong>
+          </div>
+          <div v-if="currentBets.length" class="bet-summary-list">
+            <div v-for="bet in currentBets" :key="bet.id" class="bet-summary-row">
+              <span>{{ formatBetParameters(bet) }}{{ playTypeLabel(bet.playType) }} · 第1球 · {{ Number(bet.stake).toFixed(2) }}</span>
+              <strong :class="{ positive: Number(bet.netProfit ?? 0) > 0, negative: Number(bet.netProfit ?? 0) < 0 }">
+                {{ settlementStatusLabel(bet.settlementStatus) }}<template v-if="bet.netProfit !== null"> {{ signedMoney(Number(bet.netProfit)) }}</template>
+              </strong>
+            </div>
+          </div>
+          <div v-if="walletLedger.length" class="ledger-summary-list">
+            <div v-for="entry in walletLedger.slice(0, 3)" :key="entry.id" class="ledger-summary-row">
+              <span>{{ ledgerOperationLabel(entry.operationType) }}</span>
+              <strong :class="{ positive: Number(entry.amount) > 0, negative: Number(entry.amount) < 0 }">{{ signedMoney(Number(entry.amount)) }}</strong>
+              <small>{{ Number(entry.balanceAfter).toFixed(2) }}</small>
+            </div>
+          </div>
+        </section>
         <div v-if="authenticated && chatConnectionLabel" class="chat-connection-status" :class="{ degraded: chatConnectionState === 'DEGRADED' }" role="status">
           {{ chatConnectionLabel }}
         </div>
@@ -878,7 +942,7 @@ onUnmounted(() => {
         <div class="scratch-time">{{ countdown }}</div>
         <h2>已开奖,请开牌,祝您好运</h2>
         <p>期号：{{ displayIssueNumber }}</p>
-        <div class="scratch-balls"><button v-for="ball in ballNumbers" :key="ball.ballNumber" type="button" :class="{ active: selectedBall === ball.ballNumber }" @click="selectedBall = ball.ballNumber">{{ ball.ballNumber }}</button></div>
+        <div class="scratch-balls"><span v-for="ball in ballNumbers" :key="ball.ballNumber">{{ ball.ballNumber }}</span></div>
         <div class="scratch-cards">
           <button v-for="card in 2" :key="card" class="scratch-card" type="button" :class="{ revealed: scratchRevealed }" @click="scratchRevealed = true">
             <span>{{ scratchRevealed ? (ballNumbers[card - 1]?.number ?? '--') : '刮开' }}</span>
@@ -937,3 +1001,80 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.fixed-ball-label {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  color: #68717d;
+  font-size: 11px;
+}
+
+.account-summary {
+  width: calc(100% - 24px);
+  max-width: 720px;
+  margin: 8px auto 4px;
+  padding: 8px 10px;
+  border: 1px solid #d8dce2;
+  border-radius: 4px;
+  background: #fff;
+  color: #3f4650;
+  font-size: 12px;
+}
+
+.account-summary-header,
+.bet-summary-row,
+.ledger-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-summary-header {
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.account-statistics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding-top: 6px;
+  color: #68717d;
+}
+
+.bet-summary-list,
+.ledger-summary-list {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.bet-summary-row,
+.ledger-summary-row {
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.bet-summary-row > span,
+.ledger-summary-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ledger-summary-row {
+  color: #68717d;
+}
+
+.ledger-summary-row small {
+  min-width: 48px;
+  color: #3f4650;
+  text-align: right;
+}
+
+.positive { color: #0b9967; }
+.negative { color: #e63b4a; }
+</style>

@@ -262,6 +262,7 @@ public class GameDataRepository {
                                         String issueNumber, int ballNumber,
                                         PlayType playType, List<Integer> parameters,
                                         BigDecimal stake, BigDecimal odds) {
+        requireFirstBall(ballNumber);
         String parameterText = parameters == null ? "" : parameters.stream()
                 .map(String::valueOf).collect(Collectors.joining(","));
         jdbcTemplate.update(connection -> {
@@ -296,6 +297,12 @@ public class GameDataRepository {
                  WHERE id = ? AND settlement_status = 'PENDING' AND settled_at IS NULL
                 """, settlement.status().name(), settlement.netProfit(), settlement.explanation(),
                 Timestamp.from(Instant.now()), betId) == 1;
+    }
+
+    private static void requireFirstBall(int ballNumber) {
+        if (ballNumber != 1) {
+            throw new IllegalArgumentException("下注无效：当前只支持第1球");
+        }
     }
 
     public List<BetRecord> findBetsByIssue(String issueNumber) {

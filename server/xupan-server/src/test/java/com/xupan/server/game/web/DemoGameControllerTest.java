@@ -111,14 +111,14 @@ class DemoGameControllerTest {
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.settlementStatus").value("PENDING"))
                 .andExpect(jsonPath("$.odds").value(3.85));
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.settlementStatus").value("PENDING"));
         assertThat(jdbcTemplate.queryForObject(
@@ -158,6 +158,14 @@ class DemoGameControllerTest {
                 WHERE a.sys_user_id = ? AND l.operation_type = 'BET_DEBIT'
                 """, Integer.class, testUserId)).isEqualTo(1);
 
+        mockMvc.perform(get("/api/me/wallet").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statistics.totalBetCount").value(1))
+                .andExpect(jsonPath("$.statistics.settledBetCount").value(1))
+                .andExpect(jsonPath("$.statistics.pendingBetCount").value(0))
+                .andExpect(jsonPath("$.statistics.totalStake").value(15.00))
+                .andExpect(jsonPath("$.statistics.netProfit").value(42.75));
+
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
@@ -166,7 +174,8 @@ class DemoGameControllerTest {
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-CLOSED-001\"}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("GAME_BETTING_CLOSED"));
     }
 
     @Test
@@ -207,11 +216,11 @@ class DemoGameControllerTest {
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":10.00,\"idempotencyKey\":\"GAME-TEST-TWO-A\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"GAME-TEST-TWO-A\"}"))
                 .andExpect(status().isCreated());
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(secondAccessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":10.00,\"idempotencyKey\":\"GAME-TEST-TWO-B\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"GAME-TEST-TWO-B\"}"))
                 .andExpect(status().isCreated());
 
         Long firstAccountId = jdbcTemplate.queryForObject(
@@ -250,6 +259,12 @@ class DemoGameControllerTest {
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
+                        .content("{\"ballNumber\":2,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-INVALID-BALL-2\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("REQUEST_INVALID"));
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
                         .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.001,\"idempotencyKey\":\"BET-INVALID-SCALE\"}"))
                 .andExpect(status().isBadRequest());
 
@@ -260,15 +275,30 @@ class DemoGameControllerTest {
     }
 
     @Test
+    void rejectsBetDuringDrawingWithExplicitBusinessCode() throws Exception {
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk());
+        jdbcTemplate.update("UPDATE game_issue SET phase = 'DRAWING', status = 'CLOSED' "
+                + "WHERE issue_number = '3000000'");
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-DRAWING-001\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("GAME_BETTING_CLOSED"))
+                .andExpect(jsonPath("$.message").value("下注无效：当前正在开奖，已停止下注"));
+    }
+
+    @Test
     void rejectsReplayWithDifferentBetParametersUsingStableConflictCode() throws Exception {
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-CONFLICT-001\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":15.00,\"idempotencyKey\":\"BET-CONFLICT-001\"}"))
                 .andExpect(status().isCreated());
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":16.00,\"idempotencyKey\":\"BET-CONFLICT-001\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":16.00,\"idempotencyKey\":\"BET-CONFLICT-001\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("WALLET_IDEMPOTENCY_CONFLICT"));
 
@@ -284,7 +314,7 @@ class DemoGameControllerTest {
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
-                        .content("{\"ballNumber\":8,\"playType\":\"FAN\",\"parameters\":[2],\"stake\":15.00,\"idempotencyKey\":\"BET-INSUFFICIENT-001\"}"))
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":15.00,\"idempotencyKey\":\"BET-INSUFFICIENT-001\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("WALLET_INSUFFICIENT_BALANCE"));
 

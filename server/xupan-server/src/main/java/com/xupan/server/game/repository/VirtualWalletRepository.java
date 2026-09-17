@@ -3,6 +3,7 @@ package com.xupan.server.game.repository;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationType;
+import com.xupan.server.game.domain.WalletStatistics;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -197,6 +198,32 @@ public class VirtualWalletRepository {
                  ORDER BY l.id DESC
                  LIMIT ?
                 """, ledgerMapper(), userId, limit);
+    }
+
+    public WalletStatistics findStatisticsByAccountId(long accountId) {
+        if (accountId <= 0) {
+            throw new IllegalArgumentException("钱包统计账户无效");
+        }
+        return jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) AS total_bet_count,
+                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN 1 ELSE 0 END), 0)
+                           AS settled_bet_count,
+                       COALESCE(SUM(CASE WHEN settlement_status = 'PENDING' THEN 1 ELSE 0 END), 0)
+                           AS pending_bet_count,
+                       COALESCE(SUM(stake), 0) AS total_stake,
+                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN stake ELSE 0 END), 0)
+                           AS settled_stake,
+                       COALESCE(SUM(CASE WHEN settlement_status = 'PENDING' THEN stake ELSE 0 END), 0)
+                           AS pending_stake,
+                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN net_profit ELSE 0 END), 0)
+                           AS net_profit
+                  FROM game_bet
+                 WHERE user_id = ?
+                """, (rs, rowNum) -> new WalletStatistics(
+                rs.getLong("total_bet_count"), rs.getLong("settled_bet_count"),
+                rs.getLong("pending_bet_count"), rs.getBigDecimal("total_stake"),
+                rs.getBigDecimal("settled_stake"), rs.getBigDecimal("pending_stake"),
+                rs.getBigDecimal("net_profit")), accountId);
     }
 
     private WalletLedgerEntry append(VirtualWallet wallet, WalletOperationType operationType,

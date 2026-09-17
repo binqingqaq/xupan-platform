@@ -3,6 +3,7 @@ package com.xupan.server.game.web;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationResult;
+import com.xupan.server.game.domain.WalletStatistics;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -21,12 +22,15 @@ public record WalletResponse(
         String operationType,
         Long ledgerId,
         Instant operatedAt,
+        WalletStatistics statistics,
         List<LedgerEntryResponse> ledger
 ) {
 
-    public static WalletResponse summary(VirtualWallet wallet, List<WalletLedgerEntry> ledger) {
+    public static WalletResponse summary(VirtualWallet wallet, WalletStatistics statistics,
+                                         List<WalletLedgerEntry> ledger) {
         return new WalletResponse(wallet.accountId(), wallet.userId(), wallet.userCode(), wallet.displayName(),
                 wallet.balance(), wallet.status(), null, null, null, null, null, null,
+                statistics,
                 ledger == null ? List.of() : ledger.stream().map(LedgerEntryResponse::from).toList());
     }
 
@@ -35,7 +39,7 @@ public record WalletResponse(
         return new WalletResponse(result.wallet().accountId(), result.wallet().userId(), result.wallet().userCode(),
                 result.wallet().displayName(), result.wallet().balance(), result.wallet().status(),
                 entry.balanceBefore(), entry.amount(), entry.balanceAfter(), entry.operationType().name(),
-                entry.id(), entry.createdAt(), List.of());
+                entry.id(), entry.createdAt(), null, List.of());
     }
 
     public record LedgerEntryResponse(

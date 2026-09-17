@@ -41,7 +41,7 @@ class GameDataRepositoryTest {
         repository.saveOdds(PlayType.FAN, new BigDecimal("3.850"));
         long accountId = legacyDemoAccountId();
 
-        long betId = repository.saveBetWithOddsSnapshot(accountId, "BET-TEST-0001", "REPO-REQUEST-001", "TEST-0001", 8,
+        long betId = repository.saveBetWithOddsSnapshot(accountId, "BET-TEST-0001", "REPO-REQUEST-001", "TEST-0001", 1,
                 PlayType.FAN, List.of(2), new BigDecimal("15.00"), new BigDecimal("3.850"));
 
         assertThat(repository.findCurrentIssue()).get().satisfies(issue -> {
@@ -51,7 +51,7 @@ class GameDataRepositoryTest {
         assertThat(repository.findOdds(PlayType.FAN).orElseThrow()).isEqualByComparingTo("3.850");
         assertThat(repository.findBetByIdempotencyKey(accountId, "REPO-REQUEST-001"))
                 .get().extracting(GameDataRepository.BetRecord::accountId).isEqualTo(accountId);
-        assertThatThrownBy(() -> repository.requireBetRequestMatch(accountId, "REPO-REQUEST-001", "TEST-0001", 8,
+        assertThatThrownBy(() -> repository.requireBetRequestMatch(accountId, "REPO-REQUEST-001", "TEST-0001", 1,
                 PlayType.FAN, List.of(3), new BigDecimal("15.00")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("WALLET_IDEMPOTENCY_CONFLICT");
