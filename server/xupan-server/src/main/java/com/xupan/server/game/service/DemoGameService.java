@@ -55,6 +55,9 @@ public class DemoGameService {
                 .map(GameDataRepository.IssueRecord::numbers)
                 .map(DemoGameService::toBallViews)
                 .orElseGet(List::of);
+        List<HistoryView> historyViews = repository.findSettledIssues(10).stream()
+                .map(DemoGameService::toHistoryView)
+                .toList();
         List<OddsView> oddsViews = new ArrayList<>();
         for (PlayType playType : PlayType.values()) {
             repository.findOdds(playType).ifPresent(value -> oddsViews.add(new OddsView(playType, value)));
@@ -63,7 +66,7 @@ public class DemoGameService {
                 .map(DemoGameService::toBetView)
                 .toList();
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
-        return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, previousBallViews, oddsViews, betViews,
+        return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, previousBallViews, historyViews, oddsViews, betViews,
                 new AccountView(wallet.userCode(), wallet.displayName(), wallet.balance(), wallet.status()),
                 now, issue.bettingEndsAt(), issue.drawEndsAt(),
                 自动轮期服务.DRAWING.equals(issue.phase()),
@@ -222,6 +225,10 @@ public class DemoGameService {
         return ballViews;
     }
 
+    private static HistoryView toHistoryView(GameDataRepository.IssueRecord issue) {
+        return new HistoryView(issue.issueNumber(), toBallViews(issue.numbers()), issue.settledAt());
+    }
+
     private static BetView toBetView(GameDataRepository.BetRecord bet) {
         return new BetView(bet.betCode(), bet.issueNumber(), bet.ballNumber(), bet.playType(), bet.parameters(),
                 bet.stake(), bet.odds(), bet.settlementStatus(), bet.netProfit(), bet.explanation());
@@ -250,12 +257,16 @@ public class DemoGameService {
     }
 
     public record GameView(String issueNumber, String status, String phase, List<BallView> balls,
-                           List<BallView> previousBalls, List<OddsView> odds, List<BetView> bets, AccountView account,
+                           List<BallView> previousBalls, List<HistoryView> history, List<OddsView> odds,
+                           List<BetView> bets, AccountView account,
                            Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,
                            boolean preview, List<EventView> events) {
     }
 
     public record BallView(int ballNumber, Integer number, Integer fan, String parity, String size) {
+    }
+
+    public record HistoryView(String issueNumber, List<BallView> balls, Instant settledAt) {
     }
 
     public record OddsView(PlayType playType, BigDecimal odds) {

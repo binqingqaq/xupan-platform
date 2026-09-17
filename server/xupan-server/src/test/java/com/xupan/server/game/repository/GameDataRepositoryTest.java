@@ -74,6 +74,25 @@ class GameDataRepositoryTest {
     }
 
     @Test
+    void readsOnlyCompleteSettledHistoryInSettlementOrder() {
+        repository.saveIssue("TEST-HISTORY-OLD", "OPEN", null);
+        repository.saveIssue("TEST-HISTORY-OLD", "CLOSED", List.of(1, 2, 3, 4, 5, 6, 7, 8));
+        repository.saveIssue("TEST-HISTORY-NEW", "OPEN", null);
+        repository.saveIssue("TEST-HISTORY-NEW", "CLOSED", List.of(11, 12, 13, 14, 15, 16, 17, 18));
+
+        jdbcTemplate.update("UPDATE game_issue SET settled_at = ? WHERE issue_number = ?",
+                java.sql.Timestamp.from(Instant.parse("2026-09-17T11:00:40Z")), "TEST-HISTORY-OLD");
+        jdbcTemplate.update("UPDATE game_issue SET settled_at = ? WHERE issue_number = ?",
+                java.sql.Timestamp.from(Instant.parse("2026-09-17T11:05:40Z")), "TEST-HISTORY-NEW");
+
+        assertThat(repository.findSettledIssues(10))
+                .extracting(GameDataRepository.IssueRecord::issueNumber)
+                .containsExactly("TEST-HISTORY-NEW", "TEST-HISTORY-OLD");
+        assertThat(repository.findSettledIssues(10).get(0).numbers())
+                .containsExactly(11, 12, 13, 14, 15, 16, 17, 18);
+    }
+
+    @Test
     void savingTheSameBettingIssueIsIdempotent() {
         Instant startedAt = Instant.parse("2026-01-01T00:00:00Z");
 

@@ -21,6 +21,12 @@ export interface BallView {
   size: string | null
 }
 
+export interface GameHistoryView {
+  issueNumber: string
+  balls: BallView[]
+  settledAt: string
+}
+
 export interface OddsView {
   playType: PlayType
   odds: number
@@ -207,6 +213,7 @@ export interface GameView {
   phase: 'BETTING' | 'DRAWING' | 'SETTLED'
   balls: BallView[]
   previousBalls: BallView[]
+  history: GameHistoryView[]
   odds: OddsView[]
   bets: BetView[]
   account: AccountView

@@ -100,7 +100,8 @@ class DemoGameControllerTest {
         mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.issueNumber").value("3000000"))
-                .andExpect(jsonPath("$.status").value("OPEN"));
+                .andExpect(jsonPath("$.status").value("OPEN"))
+                .andExpect(jsonPath("$.history").isEmpty());
 
         mockMvc.perform(put("/api/demo/game/admin/odds/FAN").with(bearer(accessToken))
                         .contentType("application/json")
@@ -140,6 +141,8 @@ class DemoGameControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("CLOSED"))
                 .andExpect(jsonPath("$.balls[7].number").value(18))
+                .andExpect(jsonPath("$.history[0].issueNumber").value("3000000"))
+                .andExpect(jsonPath("$.history[0].balls[7].number").value(18))
                 .andExpect(jsonPath("$.bets[0].settlementStatus").value("WIN"))
                 .andExpect(jsonPath("$.bets[0].netProfit").value(42.75))
                 .andExpect(jsonPath("$.account.balance").value(1042.75));

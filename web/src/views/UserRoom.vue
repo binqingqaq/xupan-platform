@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
+import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { ChatSocket } from '../services/chatSocket'
 import type {
@@ -18,15 +19,6 @@ import type { RobotDrawPayload } from '../robotDrawMessage'
 
 const ROOM_CODE = 'main'
 type MessageType = 'user' | 'robot' | 'system' | 'result'
-
-interface HistoryRow {
-  issue: string
-  time: string
-  numbers: string[]
-  fan: string
-  size: string
-  parity: string
-}
 
 interface RoomMessage {
   id: string
@@ -140,9 +132,16 @@ const oddsCards: OddsCard[] = [
 const ballNumbers = computed(() => {
   const game = current.value
   if (!game) return []
-  if (game.phase === 'BETTING' && game.previousBalls?.length) return game.previousBalls
+  if (game.phase !== 'SETTLED') {
+    if (game.previousBalls?.length) return game.previousBalls
+    return (game.balls ?? []).map((ball) => ({ ...ball, number: null, fan: null, parity: null, size: null }))
+  }
   return game.balls ?? []
 })
+const showingPreviousBalls = computed(() => current.value?.phase !== 'SETTLED' && Boolean(current.value?.previousBalls?.length))
+const ballNumbersLabel = computed(() => showingPreviousBalls.value
+  ? '上期开奖号码（当前期暂未开奖，仅作参考）'
+  : '当前期开奖号码')
 const issueNumber = computed(() => current.value?.issueNumber || '00000000')
 const displayIssueNumber = computed(() => {
   const match = issueNumber.value.match(/(\d+)$/)
@@ -182,16 +181,7 @@ function oddsFor(playType: PlayType) {
   return (oddsByType.value.get(playType) ?? 0).toFixed(2)
 }
 
-const historyRows = computed<HistoryRow[]>(() => {
-  const balls = ballNumbers.value.map((ball, index) => ball.number === null ? String(((index + 3) % 20) + 1).padStart(2, '0') : String(ball.number).padStart(2, '0'))
-  return Array.from({ length: 10 }, (_, index) => {
-    const issue = Math.max(1, Number(displayIssueNumber.value) - index).toString().padStart(8, '0')
-    const shifted = balls.map((_, ballIndex) => balls[(ballIndex + index) % (balls.length || 1)] || '00')
-    const first = Number(shifted[0])
-    const fan = first % 4 || 4
-    return { issue, time: `${(3 + index * 5).toString().padStart(2, '0')}:40`, numbers: shifted, fan: String(fan), size: first >= 11 ? '大' : '小', parity: fan % 2 ? '单' : '双' }
-  })
-})
+const historyRows = computed(() => toHistoryRows(current.value?.history ?? []))
 
 const messages = computed<RoomMessage[]>(() => chatMessages.value.map(toRoomMessage))
 const displayMessages = computed<RoomMessage[]>(() => {
@@ -790,7 +780,8 @@ onUnmounted(() => {
       </div>
       <div class="reference-issuebar">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
-        <div class="reference-ball-row" aria-label="开奖号码">
+        <span v-if="showingPreviousBalls" class="reference-ball-context">上期结果</span>
+        <div class="reference-ball-row" :aria-label="ballNumbersLabel">
           <button v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8, 'is-selected': selectedBall === ball.ballNumber }" type="button" :aria-label="`选择第${ball.ballNumber}球`" @click="selectBall(ball)">
             {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
           </button>

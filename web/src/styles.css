@@ -54,6 +54,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 
 .reference-issuebar { display: flex; align-items: center; height: 35px; overflow: hidden; border-bottom: 1px solid #dedede; white-space: nowrap; }
 .reference-issue-number { flex: 0 0 clamp(138px, 10.2vw, 192px); width: clamp(138px, 10.2vw, 192px); transform: translateX(clamp(14px, 1.1vw, 22px)); padding-left: 0; color: #363636; font-size: 14px; line-height: 35px; text-align: center; }
+.reference-ball-context { flex: 0 0 auto; margin-right: 8px; color: #8a8a8a; font-size: 10px; line-height: 35px; }
 .reference-ball-row { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; column-gap: clamp(18px, 3.4vw, 58px); min-width: 0; height: 35px; overflow: hidden; }
 .reference-ball { flex: 0 0 25px; width: 25px; height: 25px; border: 0; border-radius: 50%; background: var(--reference-blue); color: #fff; font-size: 14px; font-weight: 700; line-height: 25px; padding: 0; }
 .reference-ball.is-red { background: var(--reference-red); }
@@ -355,6 +356,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .pagination-actions button { flex: 1; }
   .drawer-header, .modal-header, .drawer-body, .modal-form { padding: 18px; }
   .reference-issue-number { flex-basis: 92px; width: 92px; transform: translateX(8px); font-size: 12px; }
+  .reference-ball-context { margin-right: 3px; font-size: 9px; }
   .reference-countdown { flex-basis: 54px; width: 54px; margin-right: 10px; font-size: 12px; }
   .collapse-button { flex-basis: 42px; width: 42px; margin-right: 6px; }
   .reference-bubble { max-width: 270px; margin-top: 30px; }
