@@ -84,6 +84,26 @@ public class RobotAdminController {
                 robotAdminService.listTemplates(operator.getUserId(), robotId));
     }
 
+    @GetMapping("/{robotId}/draw-components")
+    public RobotAdminResponse.DrawComponentList drawComponents(Authentication authentication,
+                                                                @PathVariable long robotId) {
+        AuthenticatedUser operator = principal(authentication);
+        return RobotAdminResponse.DrawComponentList.from(robotAdminService.listDrawComponents(
+                operator.getUserId(), robotId));
+    }
+
+    @PutMapping("/{robotId}/draw-components")
+    public RobotAdminResponse.DrawComponentList updateDrawComponents(
+            Authentication authentication, @PathVariable long robotId,
+            @Valid @RequestBody RobotAdminRequest.UpdateDrawComponents request) {
+        AuthenticatedUser operator = principal(authentication);
+        return RobotAdminResponse.DrawComponentList.from(robotAdminService.updateDrawComponents(
+                operator.getUserId(), robotId, request.components().stream()
+                        .map(component -> new RobotAdminService.DrawComponentUpdate(
+                                component.component(), component.enabled(), component.order()))
+                        .toList()));
+    }
+
     @PutMapping("/{robotId}/templates/{eventType}")
     public RobotAdminResponse.TemplateSummary updateTemplate(Authentication authentication,
                                                               @PathVariable long robotId,

@@ -3,6 +3,7 @@ package com.xupan.server.robot.web;
 import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.ChatRobotDispatch;
 import com.xupan.server.robot.domain.ChatRobotTemplate;
+import com.xupan.server.robot.domain.RobotDrawComponentConfig;
 import com.xupan.server.robot.service.RobotAdminService;
 
 import java.time.Instant;
@@ -42,6 +43,18 @@ public final class RobotAdminResponse {
     public record TemplateList(List<TemplateSummary> items) {
         static TemplateList from(List<ChatRobotTemplate> templates) {
             return new TemplateList(templates.stream().map(TemplateSummary::from).toList());
+        }
+    }
+
+    public record DrawComponentList(List<DrawComponentSummary> items) {
+        static DrawComponentList from(List<RobotDrawComponentConfig> configs) {
+            return new DrawComponentList(configs.stream().map(DrawComponentSummary::from).toList());
+        }
+    }
+
+    public record DrawComponentSummary(String component, boolean enabled, int order) {
+        static DrawComponentSummary from(RobotDrawComponentConfig config) {
+            return new DrawComponentSummary(config.component().name(), config.enabled(), config.order());
         }
     }
 

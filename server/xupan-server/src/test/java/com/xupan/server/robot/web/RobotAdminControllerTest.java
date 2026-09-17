@@ -5,6 +5,8 @@ import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.auth.web.AuthenticationExceptionHandler;
 import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.RobotStatus;
+import com.xupan.server.robot.domain.RobotDrawComponent;
+import com.xupan.server.robot.domain.RobotDrawComponentConfig;
 import com.xupan.server.robot.service.RobotAdminService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,11 +18,13 @@ import java.time.Instant;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -83,6 +87,31 @@ class RobotAdminControllerTest {
         mockMvc.perform(get("/api/admin/robots").principal(authentication))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("ROBOT_OPERATION_FORBIDDEN"));
+    }
+
+    @Test
+    void readsAndUpdatesDrawComponentConfiguration() throws Exception {
+        when(service.listDrawComponents(7L, 1L)).thenReturn(List.of(
+                new RobotDrawComponentConfig(RobotDrawComponent.DRAW_SUMMARY, true, 1),
+                new RobotDrawComponentConfig(RobotDrawComponent.DRAW_HISTORY, true, 2),
+                new RobotDrawComponentConfig(RobotDrawComponent.WINNER_LIST, true, 3)));
+        when(service.updateDrawComponents(eq(7L), eq(1L), any())).thenReturn(List.of(
+                new RobotDrawComponentConfig(RobotDrawComponent.DRAW_SUMMARY, true, 1),
+                new RobotDrawComponentConfig(RobotDrawComponent.DRAW_HISTORY, true, 2),
+                new RobotDrawComponentConfig(RobotDrawComponent.WINNER_LIST, false, 3)));
+
+        mockMvc.perform(get("/api/admin/robots/1/draw-components").principal(authentication))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[2].component").value("WINNER_LIST"));
+        mockMvc.perform(put("/api/admin/robots/1/draw-components").principal(authentication)
+                        .contentType("application/json")
+                        .content("{\"components\":["
+                                + "{\"component\":\"DRAW_SUMMARY\",\"enabled\":true,\"order\":1},"
+                                + "{\"component\":\"DRAW_HISTORY\",\"enabled\":true,\"order\":2},"
+                                + "{\"component\":\"WINNER_LIST\",\"enabled\":false,\"order\":3}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[2].enabled").value(false));
+        verify(service).updateDrawComponents(eq(7L), eq(1L), any());
     }
 
     private static ChatRobot robot() {

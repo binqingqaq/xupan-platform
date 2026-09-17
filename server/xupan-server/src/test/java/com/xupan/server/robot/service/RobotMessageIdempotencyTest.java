@@ -1,5 +1,6 @@
 package com.xupan.server.robot.service;
 
+import com.xupan.server.robot.domain.RobotDrawComponent;
 import com.xupan.server.web.BusinessException;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +25,14 @@ class RobotMessageIdempotencyTest {
                 .isEqualTo(idempotency.idempotencyKey(1001L));
         assertThat(idempotency.idempotencyKey(1001L))
                 .isNotEqualTo(idempotency.idempotencyKey(1002L));
+    }
+
+    @Test
+    void componentKeysAreStableAndSeparateFromLegacyEventKey() {
+        assertThat(idempotency.idempotencyKey(1001L, RobotDrawComponent.DRAW_SUMMARY))
+                .isEqualTo(idempotency.idempotencyKey(1001L, RobotDrawComponent.DRAW_SUMMARY))
+                .isNotEqualTo(idempotency.idempotencyKey(1001L, RobotDrawComponent.DRAW_HISTORY))
+                .isNotEqualTo(idempotency.idempotencyKey(1001L));
     }
 
     @Test

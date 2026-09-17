@@ -11,6 +11,7 @@ import com.xupan.server.robot.domain.RobotDispatchStatus;
 import com.xupan.server.robot.domain.RobotEventType;
 import com.xupan.server.robot.domain.RobotStatus;
 import com.xupan.server.robot.repository.RobotDispatchRepository;
+import com.xupan.server.robot.repository.RobotDrawComponentRepository;
 import com.xupan.server.robot.repository.RobotRepository;
 import com.xupan.server.robot.repository.RobotTemplateRepository;
 import com.xupan.server.robot.service.RobotAdminService;
@@ -56,6 +57,8 @@ class RobotAdminServiceTest {
     private ChatMessageRepository chatMessageRepository;
     @Mock
     private ApplicationEventPublisher eventPublisher;
+    @Mock
+    private RobotDrawComponentRepository drawComponentRepository;
 
     private RobotAdminService service;
 
@@ -63,7 +66,7 @@ class RobotAdminServiceTest {
     void setUp() {
         service = new RobotAdminService(robotRepository, templateRepository, dispatchRepository,
                 templateRenderer, permissionService, auditRepository, chatMessageRepository,
-                eventPublisher);
+                eventPublisher, drawComponentRepository);
     }
 
     @Test

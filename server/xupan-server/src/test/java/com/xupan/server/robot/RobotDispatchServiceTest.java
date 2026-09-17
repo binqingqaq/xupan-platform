@@ -37,6 +37,7 @@ class RobotDispatchServiceTest {
         connectionRegistry.closeAll();
         clean();
         jdbcTemplate.update("UPDATE chat_robot SET status = 'ENABLED' WHERE robot_code = 'issue-helper'");
+        resetDrawComponents();
     }
 
     @AfterEach
@@ -44,6 +45,7 @@ class RobotDispatchServiceTest {
         connectionRegistry.closeAll();
         clean();
         jdbcTemplate.update("UPDATE chat_robot SET status = 'ENABLED' WHERE robot_code = 'issue-helper'");
+        resetDrawComponents();
     }
 
     @Test
@@ -101,6 +103,66 @@ class RobotDispatchServiceTest {
                 Integer.class, ISSUE_PREFIX + "disabled")).isZero();
     }
 
+    @Test
+    void drawResultPublishesThreeStructuredMessagesFromGameIssue() {
+        insertSettledIssue("draw-structured");
+        long eventId = insertEvent("draw-structured", "DRAW_RESULT", "开奖文案不含号码");
+
+        dispatchService.scanPendingEvents(NOW, 50);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM chat_message WHERE issue_number = ? AND message_type = 'ROBOT'",
+                Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT payload_json
+                  FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT'
+                 ORDER BY sequence_no
+                """, String.class, ISSUE_PREFIX + "draw-structured"))
+                .hasSize(3)
+                .allSatisfy(payload -> assertThat(payload).contains("xupan.chat-payload.v1"));
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT payload_json FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT'
+                """, String.class, ISSUE_PREFIX + "draw-structured"))
+                .anyMatch(payload -> payload.contains("DRAW_SUMMARY") && payload.contains("1,2,3"))
+                .anyMatch(payload -> payload.contains("DRAW_HISTORY"))
+                .anyMatch(payload -> payload.contains("WINNER_LIST")
+                        && payload.contains("暂无获胜记录"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(DISTINCT idempotency_key) FROM chat_message WHERE issue_number = ?",
+                Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(3);
+        assertThat(dispatchRepository.findByGameEventId(eventId)).get()
+                .extracting(d -> d.status(), d -> d.messageId())
+                .satisfies(values -> {
+                    assertThat(values.get(0)).isEqualTo(RobotDispatchStatus.PUBLISHED);
+                    assertThat(values.get(1)).isNotNull();
+                });
+    }
+
+    @Test
+    void drawResultCanDisableWinnerListWithoutChangingOtherComponents() {
+        insertSettledIssue("draw-disabled-winner");
+        jdbcTemplate.update("""
+                UPDATE chat_robot_draw_component
+                   SET enabled = FALSE
+                 WHERE component = 'WINNER_LIST'
+                   AND robot_id = (SELECT id FROM chat_robot WHERE robot_code = 'issue-helper')
+                """);
+        insertEvent("draw-disabled-winner", "DRAW_RESULT", "开奖结果已发布");
+
+        dispatchService.scanPendingEvents(NOW, 50);
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM chat_message WHERE issue_number = ? AND message_type = 'ROBOT'",
+                Integer.class, ISSUE_PREFIX + "draw-disabled-winner")).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForList("""
+                SELECT payload_json FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT'
+                """, String.class, ISSUE_PREFIX + "draw-disabled-winner"))
+                .noneMatch(payload -> payload.contains("WINNER_LIST"));
+    }
+
     private long insertEvent(String suffix, String eventType, String message) {
         String issue = ISSUE_PREFIX + suffix;
         jdbcTemplate.update("""
@@ -124,5 +186,24 @@ class RobotDispatchServiceTest {
                 ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM chat_message WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM game_issue_event WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM game_bet WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
+    }
+
+    private void insertSettledIssue(String suffix) {
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (issue_number, status, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, phase, settled_at)
+                VALUES (?, 'CLOSED', 1, 2, 3, 4, 5, 6, 7, 8, 'SETTLED', ?)
+                """, ISSUE_PREFIX + suffix, java.sql.Timestamp.from(NOW));
+    }
+
+    private void resetDrawComponents() {
+        jdbcTemplate.update("""
+                UPDATE chat_robot_draw_component
+                   SET enabled = TRUE
+                 WHERE robot_id = (SELECT id FROM chat_robot WHERE robot_code = 'issue-helper')
+                """);
     }
 }

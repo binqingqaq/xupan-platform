@@ -7,6 +7,8 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.util.List;
+
 /** Request payloads for the robot administration API. */
 public final class RobotAdminRequest {
 
@@ -40,6 +42,18 @@ public final class RobotAdminRequest {
 
     public record UpdateTemplate(
             @NotBlank @Size(max = 1000) String templateText
+    ) {
+    }
+
+    public record UpdateDrawComponents(
+            @NotNull @Size(min = 3, max = 3) List<@jakarta.validation.Valid DrawComponent> components
+    ) {
+    }
+
+    public record DrawComponent(
+            @NotBlank @Size(max = 32) String component,
+            boolean enabled,
+            @NotNull @Min(1) @Max(3) Integer order
     ) {
     }
 }

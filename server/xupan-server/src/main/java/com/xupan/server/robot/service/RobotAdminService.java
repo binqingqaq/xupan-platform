@@ -8,9 +8,12 @@ import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.ChatRobotDispatch;
 import com.xupan.server.robot.domain.ChatRobotTemplate;
 import com.xupan.server.robot.domain.RobotDispatchStatus;
+import com.xupan.server.robot.domain.RobotDrawComponent;
+import com.xupan.server.robot.domain.RobotDrawComponentConfig;
 import com.xupan.server.robot.domain.RobotEventType;
 import com.xupan.server.robot.domain.RobotStatus;
 import com.xupan.server.robot.repository.RobotDispatchRepository;
+import com.xupan.server.robot.repository.RobotDrawComponentRepository;
 import com.xupan.server.robot.repository.RobotRepository;
 import com.xupan.server.robot.repository.RobotTemplateRepository;
 import com.xupan.server.web.BusinessException;
@@ -53,6 +56,7 @@ public class RobotAdminService {
     private final OperationAuditRepository auditRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final RobotDrawComponentRepository drawComponentRepository;
 
     public RobotAdminService(RobotRepository robotRepository,
                              RobotTemplateRepository templateRepository,
@@ -61,7 +65,8 @@ public class RobotAdminService {
                              PermissionService permissionService,
                              OperationAuditRepository auditRepository,
                              ChatMessageRepository chatMessageRepository,
-                             ApplicationEventPublisher eventPublisher) {
+                             ApplicationEventPublisher eventPublisher,
+                             RobotDrawComponentRepository drawComponentRepository) {
         this.robotRepository = robotRepository;
         this.templateRepository = templateRepository;
         this.dispatchRepository = dispatchRepository;
@@ -70,6 +75,7 @@ public class RobotAdminService {
         this.auditRepository = auditRepository;
         this.chatMessageRepository = chatMessageRepository;
         this.eventPublisher = eventPublisher;
+        this.drawComponentRepository = drawComponentRepository;
     }
 
     @Transactional(readOnly = true)
@@ -103,6 +109,7 @@ public class RobotAdminService {
                     try {
                         long id = robotRepository.insert(code, name, avatar, RobotStatus.ENABLED,
                                 weight, delaySeconds);
+                        drawComponentRepository.insertDefaults(id);
                         ChatRobot robot = requireRobot(id);
                         return detail(robot);
                     } catch (DataIntegrityViolationException exception) {
@@ -183,6 +190,29 @@ public class RobotAdminService {
         requirePermission(operatorUserId, PERMISSION_READ, "GET", path, Long.toString(robotId));
         requireRobot(robotId);
         return templateRepository.findAll(robotId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<RobotDrawComponentConfig> listDrawComponents(long operatorUserId, long robotId) {
+        String path = "/api/admin/robots/" + robotId + "/draw-components";
+        requirePermission(operatorUserId, PERMISSION_READ, "GET", path, Long.toString(robotId));
+        requireRobot(robotId);
+        return drawComponentRepository.findAll(robotId);
+    }
+
+    @Transactional
+    public List<RobotDrawComponentConfig> updateDrawComponents(long operatorUserId, long robotId,
+                                                                List<DrawComponentUpdate> updates) {
+        String path = "/api/admin/robots/" + robotId + "/draw-components";
+        requirePermission(operatorUserId, PERMISSION_WRITE, "PUT", path,
+                Long.toString(robotId));
+        return audited(operatorUserId, PERMISSION_WRITE, "PUT", path,
+                Long.toString(robotId), "action=draw-components-update", () -> {
+                    requireRobot(robotId);
+                    List<RobotDrawComponentConfig> configs = normalizeDrawComponents(updates);
+                    drawComponentRepository.replaceAll(robotId, configs);
+                    return drawComponentRepository.findAll(robotId);
+                });
     }
 
     @Transactional
@@ -419,6 +449,35 @@ public class RobotAdminService {
         }
     }
 
+    private static List<RobotDrawComponentConfig> normalizeDrawComponents(
+            List<DrawComponentUpdate> updates) {
+        if (updates == null || updates.size() != RobotDrawComponent.values().length) {
+            throw BusinessException.badRequest("ROBOT_DRAW_COMPONENT_INVALID", "必须提供三段配置");
+        }
+        List<RobotDrawComponentConfig> configs = updates.stream().map(update -> {
+            if (update == null || update.component() == null || update.component().isBlank()) {
+                throw BusinessException.badRequest("ROBOT_DRAW_COMPONENT_INVALID", "组件不能为空");
+            }
+            RobotDrawComponent component;
+            try {
+                component = RobotDrawComponent.fromDatabaseValue(
+                        update.component().trim().toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException exception) {
+                throw BusinessException.badRequest("ROBOT_DRAW_COMPONENT_INVALID", "组件不支持");
+            }
+            return new RobotDrawComponentConfig(component, update.enabled(), update.order());
+        }).toList();
+        if (configs.stream().map(RobotDrawComponentConfig::component).distinct().count()
+                != RobotDrawComponent.values().length
+                || configs.stream().map(RobotDrawComponentConfig::order).distinct().count()
+                != configs.size()
+                || configs.stream().anyMatch(config -> config.order() < 1
+                || config.order() > configs.size())) {
+            throw BusinessException.badRequest("ROBOT_DRAW_COMPONENT_INVALID", "组件或排序配置无效");
+        }
+        return configs;
+    }
+
     private static RobotEventType optionalEventType(String value) {
         return value == null || value.isBlank() ? null : parseEventType(value);
     }
@@ -470,5 +529,8 @@ public class RobotAdminService {
 
     public record DispatchStatistics(long pending, long processing, long failed,
                                      long published, long skipped) {
+    }
+
+    public record DrawComponentUpdate(String component, boolean enabled, int order) {
     }
 }

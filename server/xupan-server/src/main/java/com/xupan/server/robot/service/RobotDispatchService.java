@@ -2,6 +2,10 @@ package com.xupan.server.robot.service;
 
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.robot.domain.RobotDrawComponent;
+import com.xupan.server.robot.domain.RobotDrawComponentConfig;
+import com.xupan.server.robot.repository.RobotDrawComponentRepository;
 import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.ChatRobotDispatch;
 import com.xupan.server.robot.domain.ChatRobotTemplate;
@@ -19,6 +23,8 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -39,6 +45,8 @@ public class RobotDispatchService {
     private final ChatMessageService chatMessageService;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transactionTemplate;
+    private final RobotDrawComponentRepository drawComponentRepository;
+    private final GameDataRepository gameDataRepository;
 
     public RobotDispatchService(RobotDispatchRepository dispatchRepository,
                                 RobotRepository robotRepository,
@@ -50,7 +58,9 @@ public class RobotDispatchService {
                                 RobotRetryPolicy retryPolicy,
                                 ChatMessageService chatMessageService,
                                 ObjectMapper objectMapper,
-                                TransactionTemplate transactionTemplate) {
+                                TransactionTemplate transactionTemplate,
+                                RobotDrawComponentRepository drawComponentRepository,
+                                GameDataRepository gameDataRepository) {
         this.dispatchRepository = dispatchRepository;
         this.robotRepository = robotRepository;
         this.templateRepository = templateRepository;
@@ -62,6 +72,8 @@ public class RobotDispatchService {
         this.chatMessageService = chatMessageService;
         this.objectMapper = objectMapper;
         this.transactionTemplate = transactionTemplate;
+        this.drawComponentRepository = drawComponentRepository;
+        this.gameDataRepository = gameDataRepository;
     }
 
     public int scanPendingEvents(Instant now, int batchSize) {
@@ -162,12 +174,23 @@ public class RobotDispatchService {
             if (event == null) {
                 return skip(dispatch, "GAME_EVENT_NOT_FOUND", now);
             }
-            String content = templateRenderer.render(template,
-                    eventAdapter.renderContext(event, robot));
-            String payload = payload(dispatch, robot, template, event);
-            ChatMessage message = chatMessageService.publishRobotMessage(robot.id(),
-                    robot.displayName(), ROOM_CODE, event.issueNumber(),
-                    idempotency.idempotencyKey(event.id()), content, payload, now);
+            RobotEventType checkedEventType = eventAdapter.eventType(event.eventType());
+            ChatMessage message;
+            if (checkedEventType == RobotEventType.DRAW_RESULT) {
+                Optional<ChatMessage> drawMessage = publishDrawMessages(dispatch, robot, template,
+                        event, now);
+                if (drawMessage.isEmpty()) {
+                    return skip(dispatch, "DRAW_COMPONENTS_DISABLED", now);
+                }
+                message = drawMessage.get();
+            } else {
+                String content = templateRenderer.render(template,
+                        eventAdapter.renderContext(event, robot));
+                String payload = payload(dispatch, robot, template, event);
+                message = chatMessageService.publishRobotMessage(robot.id(),
+                        robot.displayName(), ROOM_CODE, event.issueNumber(),
+                        idempotency.idempotencyKey(event.id()), content, payload, now);
+            }
             if (dispatchRepository.markPublished(dispatch.id(), message.id(), now) != 1) {
                 throw new IllegalStateException("机器人投递状态更新失败");
             }
@@ -207,9 +230,69 @@ public class RobotDispatchService {
         }
     }
 
+    private Optional<ChatMessage> publishDrawMessages(ChatRobotDispatch dispatch, ChatRobot robot,
+                                                       ChatRobotTemplate template,
+                                                       RobotDispatchRepository.UnscheduledGameEvent event,
+                                                       Instant now) {
+        GameDataRepository.IssueRecord issue = gameDataRepository
+                .findIssueByIssueNumber(event.issueNumber())
+                .filter(value -> value.numbers().size() == 8
+                        && value.numbers().stream().allMatch(java.util.Objects::nonNull))
+                .orElseThrow(() -> BusinessException.badRequest("ROBOT_DRAW_DATA_NOT_FOUND",
+                        "开奖事件对应的期号数据不存在或不完整"));
+        String content = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
+        ChatMessage latest = null;
+        for (RobotDrawComponentConfig config : drawComponentRepository.findEnabledOrdered(robot.id())) {
+            String component = config.component().name();
+            String componentPayload = structuredPayload(component, event.issueNumber(), issue);
+            latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                    event.issueNumber(), idempotency.idempotencyKey(event.id(), config.component()),
+                    content, componentPayload, now);
+        }
+        return Optional.ofNullable(latest);
+    }
+
+    private String structuredPayload(String component, String issueNumber,
+                                     GameDataRepository.IssueRecord currentIssue) {
+        RobotDrawComponent checkedComponent = RobotDrawComponent.valueOf(component);
+        Object data = switch (checkedComponent) {
+            case DRAW_SUMMARY -> new DrawSummaryData(currentIssue.numbers(), currentIssue.settledAt());
+            case DRAW_HISTORY -> new DrawHistoryData(gameDataRepository.findSettledIssues(10).stream()
+                    .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(),
+                            issue.settledAt())).toList());
+            case WINNER_LIST -> winnerData(issueNumber);
+        };
+        try {
+            return objectMapper.writeValueAsString(new StructuredPayload(
+                    "xupan.chat-payload.v1", checkedComponent.name(), issueNumber, data));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("生成开奖结构化消息失败", exception);
+        }
+    }
+
+    private WinnerListData winnerData(String issueNumber) {
+        // 当前仅用于演示：金额随真实 WIN 注单展示，用户标识只保留首字符。
+        List<WinnerItem> items = new ArrayList<>();
+        for (GameDataRepository.WinnerRecord winner : gameDataRepository.findWinningBets(issueNumber)) {
+            items.add(new WinnerItem(mask(winner.userCode(), winner.displayName()), winner.ballNumber(),
+                    winner.playType(), winner.stake(), winner.netProfit()));
+        }
+        return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null);
+    }
+
+    private static String mask(String userCode, String displayName) {
+        String value = userCode == null || userCode.isBlank() ? displayName : userCode;
+        if (value == null || value.isBlank()) {
+            return "匿名用户";
+        }
+        String normalized = value.trim();
+        return normalized.length() == 1 ? "*" : normalized.substring(0, 1) + "***";
+    }
+
     private static boolean isPermanentTemplateError(BusinessException exception) {
         return exception.code().startsWith("ROBOT_TEMPLATE")
                 || exception.code().startsWith("ROBOT_RENDER")
+                || exception.code().startsWith("ROBOT_DRAW")
                 || exception.code().equals("ROBOT_EVENT_TYPE_INVALID")
                 || exception.code().equals("ROBOT_EVENT_CONTEXT_INVALID");
     }
@@ -232,5 +315,24 @@ public class RobotDispatchService {
 
     private record RobotMessagePayload(long gameEventId, long dispatchId, String robotCode,
                                        int templateVersion, String eventType) {
+    }
+
+    private record StructuredPayload(String schema, String component, String issueNumber, Object data) {
+    }
+
+    private record DrawSummaryData(List<Integer> numbers, Instant settledAt) {
+    }
+
+    private record DrawHistoryData(List<DrawHistoryItem> items) {
+    }
+
+    private record DrawHistoryItem(String issueNumber, List<Integer> numbers, Instant settledAt) {
+    }
+
+    private record WinnerListData(List<WinnerItem> items, String emptyMessage) {
+    }
+
+    private record WinnerItem(String maskedUser, int ballNumber, String playType,
+                              BigDecimal stake, BigDecimal netProfit) {
     }
 }

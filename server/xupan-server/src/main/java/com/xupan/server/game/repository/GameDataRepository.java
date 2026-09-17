@@ -158,6 +158,55 @@ public class GameDataRepository {
                 """);
     }
 
+    public Optional<IssueRecord> findIssueByIssueNumber(String issueNumber) {
+        if (issueNumber == null || issueNumber.isBlank()) {
+            return Optional.empty();
+        }
+        return findIssue("""
+                SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
+                  FROM game_issue
+                 WHERE issue_number = ?
+                """, issueNumber.trim());
+    }
+
+    public List<IssueRecord> findSettledIssues(int limit) {
+        if (limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("开奖历史查询数量必须在 1 到 100 之间");
+        }
+        return findIssues("""
+                SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
+                  FROM game_issue
+                 WHERE phase = 'SETTLED' AND settled_at IS NOT NULL
+                   AND number_1 IS NOT NULL AND number_2 IS NOT NULL
+                   AND number_3 IS NOT NULL AND number_4 IS NOT NULL
+                   AND number_5 IS NOT NULL AND number_6 IS NOT NULL
+                   AND number_7 IS NOT NULL AND number_8 IS NOT NULL
+                 ORDER BY settled_at DESC, id DESC
+                 LIMIT ?
+                """, limit);
+    }
+
+    public List<WinnerRecord> findWinningBets(String issueNumber) {
+        if (issueNumber == null || issueNumber.isBlank()) {
+            return List.of();
+        }
+        return jdbcTemplate.query("""
+                SELECT b.id, a.user_code, a.display_name, b.ball_number, b.play_type,
+                       b.stake, b.net_profit
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.issue_number = ? AND b.settlement_status = 'WIN'
+                 ORDER BY b.id
+                """, (rs, rowNum) -> new WinnerRecord(rs.getLong("id"),
+                rs.getString("user_code"), rs.getString("display_name"),
+                rs.getInt("ball_number"), rs.getString("play_type"),
+                rs.getBigDecimal("stake"), rs.getBigDecimal("net_profit")), issueNumber.trim());
+    }
+
     public void saveOdds(PlayType playType, BigDecimal odds) {
         int updated = jdbcTemplate.update("""
                 UPDATE game_odds
@@ -297,6 +346,22 @@ public class GameDataRepository {
                 : Optional.empty());
     }
 
+    private Optional<IssueRecord> findIssue(String sql, Object... args) {
+        return jdbcTemplate.query(sql, rs -> rs.next()
+                ? Optional.of(new IssueRecord(rs.getString("issue_number"), rs.getString("status"),
+                rs.getString("phase"), numbers(rs), instant(rs, "issue_started_at"),
+                instant(rs, "betting_ends_at"), instant(rs, "draw_ends_at"),
+                instant(rs, "settled_at")))
+                : Optional.empty(), args);
+    }
+
+    private List<IssueRecord> findIssues(String sql, int limit) {
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new IssueRecord(
+                rs.getString("issue_number"), rs.getString("status"), rs.getString("phase"),
+                numbers(rs), instant(rs, "issue_started_at"), instant(rs, "betting_ends_at"),
+                instant(rs, "draw_ends_at"), instant(rs, "settled_at")), limit);
+    }
+
     private static List<Integer> parseParameters(String value) {
         if (value == null || value.isBlank()) {
             return List.of();
@@ -325,6 +390,10 @@ public class GameDataRepository {
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
                             BigDecimal netProfit, String explanation) {
+    }
+
+    public record WinnerRecord(long betId, String userCode, String displayName, int ballNumber,
+                               String playType, BigDecimal stake, BigDecimal netProfit) {
     }
 
     private static BigDecimal normalizedStake(BigDecimal value) {
