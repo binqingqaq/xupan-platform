@@ -17,6 +17,8 @@ describe('renderRobotDrawImage', () => {
     expect(svg).toContain('18')
     expect(svg).not.toMatch(/<(image|use)\b/)
     expect(svg).not.toMatch(/(?:href|xlink:href)="https?:\/\//)
+    expect(svg).not.toContain('fill="#f5f5f7"')
+    expect(svg).not.toMatch(/<rect[^>]+stroke="#d1d1d1"/)
     expect(image.width).toBeGreaterThan(image.height)
   })
 

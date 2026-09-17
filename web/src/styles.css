@@ -93,6 +93,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-pre { position: relative; margin: 6px; color: #000; font-family: inherit; font-size: 15px; font-weight: 500; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; user-select: text; }
 .message-robot .reference-bubble { max-width: 80%; }
 .message-result .reference-bubble { max-width: 84%; background: #fff; }
+.message-robot .reference-bubble.has-robot-image { background: #fff; box-shadow: none; }
+.message-robot .reference-avatar { box-shadow: none; }
 .robot-draw-image-wrap { max-width: 100%; margin: 0; padding: 0; line-height: 0; user-select: none; -webkit-user-select: none; }
 .robot-draw-image { display: block; width: 100%; max-width: 100%; height: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .message-mine .reference-bubble { float: right; margin: 30px 68px 0 0; border-color: #84b559; border-radius: 7px; background: #a1e85a; color: #253f0f; }
@@ -348,7 +350,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .collapse-button { flex-basis: 42px; width: 42px; margin-right: 6px; }
   .reference-bubble { max-width: 270px; margin-top: 30px; }
   .message-result .reference-bubble { width: 84%; max-width: 84%; }
-  .message-robot .reference-bubble { width: 84%; max-width: 84%; }
+  .message-robot .reference-bubble { width: calc(100% - 72px); max-width: calc(100% - 72px); }
   .reference-avatar { top: -10px; left: -55px; width: 45px; height: 45px; }
   .reference-pre { font-size: 15px; line-height: 20px; }
   .history-heading, .history-row { grid-template-columns: 36px 44px minmax(150px, 1fr) 55px; }

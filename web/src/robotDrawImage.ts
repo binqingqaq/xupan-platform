@@ -46,7 +46,7 @@ function ball(number: number, x: number, y: number, radius: number, last = false
 }
 
 function svgDocument(width: number, height: number, body: string) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="${width}" height="${height}" fill="#f5f5f7"/>${body}</svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${body}</svg>`
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
 }
 
@@ -57,7 +57,6 @@ function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMM
   const xPositions = numbers.map((_, index) => 74 + index * 116)
   const fan = fanOf(numbers[7])
   const body = `
-    <rect x="1" y="1" width="958" height="236" rx="11" fill="#fff" stroke="#d1d1d1"/>
     <text x="28" y="47" fill="#f1010a" font-family="${FONT}" font-size="25" font-weight="400">开盘结果</text>
     <text x="166" y="47" fill="#111" font-family="${FONT}" font-size="20">第${escapeXml(payload.issueNumber)}期</text>
     <text x="28" y="111" fill="#111" font-family="${FONT}" font-size="19">${escapeXml(formatDate(payload.data.settledAt))}</text>
@@ -94,10 +93,9 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
     const value = gridValues[index]
     const x = index % gridColumns * 93.25
     const y = gridTop + Math.floor(index / gridColumns) * 37
-    return `<rect x="${x + 1}" y="${y}" width="92.25" height="36" fill="#fff" stroke="#a6a6a6"/><rect x="${x + 32}" y="${y + 5}" width="28" height="26" fill="${value ? COLORS[value - 1] : '#fff'}" stroke="#111"/>${value ? `<text x="${x + 46}" y="${y + 24}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${value}</text>` : ''}`
+    return `<rect x="${x + 1}" y="${y}" width="92.25" height="36" fill="#fff" stroke="#d5dadd"/><rect x="${x + 32}" y="${y + 5}" width="28" height="26" fill="${value ? COLORS[value - 1] : '#fff'}" stroke="#4b4f52"/>${value ? `<text x="${x + 46}" y="${y + 24}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${value}</text>` : ''}`
   }).join('')
   const body = `
-    <rect x="1" y="1" width="1118" height="${height - 2}" rx="10" fill="#fff" stroke="#d1d1d1"/>
     <rect x="1" y="1" width="1118" height="37" rx="10" fill="#3db3d9"/>
     <rect x="1" y="27" width="1118" height="11" fill="#3db3d9"/>
     <text x="125" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">期数</text>
@@ -124,10 +122,9 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
     ? payload.data.items.map((item, index) => `<text x="28" y="${130 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
     : `<text x="28" y="130" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
   const body = `
-    <rect x="1" y="1" width="958" height="${height - 2}" rx="11" fill="#fff" stroke="#d1d1d1"/>
     <text x="28" y="40" fill="#111" font-family="${FONT}" font-size="22">${escapeXml(payload.issueNumber)}结果:</text>
     <text x="28" y="72" fill="#111" font-family="${FONT}" font-size="20">${escapeXml(payload.issueNumber)}期开奖数据</text>
-    <line x1="28" y1="91" x2="932" y2="91" stroke="#111" stroke-width="2"/>
+    <line x1="28" y1="91" x2="932" y2="91" stroke="#c7cdd1" stroke-width="1"/>
     <text x="28" y="116" fill="#111" font-family="${FONT}" font-size="19" font-weight="700">获胜名单</text>
     ${lines}
   `

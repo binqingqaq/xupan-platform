@@ -812,7 +812,7 @@ onUnmounted(() => {
         <template v-else v-for="(message, messageIndex) in displayMessages" :key="message.id">
           <div v-if="shouldShowMessageTime(messageIndex)" class="reference-time"><span>{{ message.time }}</span></div>
           <article class="reference-message" :class="messageClass(message)">
-            <div class="reference-bubble">
+            <div class="reference-bubble" :class="{ 'has-robot-image': Boolean(message.drawPayload) }">
               <div class="reference-avatar" :class="{ 'is-robot': message.type === 'robot' }">
               <img v-if="isStoredAvatarKey(message.avatarKey)" :src="api.avatarUrl(message.avatarKey)" alt="" />
                 <span v-else>{{ avatarText(message.name) }}</span>
