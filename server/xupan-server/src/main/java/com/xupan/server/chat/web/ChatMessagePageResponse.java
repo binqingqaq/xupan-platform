@@ -12,9 +12,10 @@ public record ChatMessagePageResponse(
         boolean hasMore
 ) {
 
-    public static ChatMessagePageResponse from(String roomCode, ChatMessagePage page) {
+    public static ChatMessagePageResponse from(String roomCode, ChatMessagePage page,
+                                                ChatAvatarResolver avatarResolver) {
         return new ChatMessagePageResponse(roomCode,
-                page.items().stream().map(ChatMessageResponse::from).toList(),
+                page.items().stream().map(avatarResolver::toResponse).toList(),
                 page.nextBeforeSequence(), page.nextAfterSequence(), page.hasMore());
     }
 }

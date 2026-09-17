@@ -7,6 +7,8 @@ import com.xupan.server.chat.domain.ChatMessageStatus;
 import com.xupan.server.chat.domain.ChatMessageType;
 import com.xupan.server.chat.domain.ChatSenderType;
 import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.chat.web.ChatAvatarResolver;
+import com.xupan.server.chat.web.ChatMessageResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.TextMessage;
@@ -32,9 +34,11 @@ class ChatWebSocketHandlerTest {
     private final ChatRealtimeSyncService syncService = mock(ChatRealtimeSyncService.class);
     private final AuthenticatedUserDetailsService userDetailsService = mock(AuthenticatedUserDetailsService.class);
     private final ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
+    private final ChatAvatarResolver avatarResolver = mock(ChatAvatarResolver.class);
     private final ChatConnectionRegistry registry = new ChatConnectionRegistry(properties(), accessService);
     private final ChatWebSocketHandler handler = new ChatWebSocketHandler(
-            registry, properties(), objectMapper, messageService, syncService, userDetailsService, accessService);
+            registry, properties(), objectMapper, messageService, syncService, userDetailsService, accessService,
+            avatarResolver);
     private WebSocketSession session;
 
     @BeforeEach
@@ -73,6 +77,7 @@ class ChatWebSocketHandlerTest {
         when(syncService.prepare(eq(7L), eq("main"), eq(3L), any(Instant.class)))
                 .thenReturn(new ChatRealtimeSyncService.SyncPlan(3L, 5L));
         ChatMessage message = message(5L, "m-1", "hello");
+        when(avatarResolver.toResponse(message)).thenReturn(ChatMessageResponse.from(message));
         when(messageService.sendUserMessageWithOutcome(eq(7L), eq("main"), eq("m-1"), eq("hello"), any(Instant.class)))
                 .thenReturn(new ChatMessageService.ChatMessageSendOutcome(message, false));
 

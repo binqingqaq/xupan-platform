@@ -179,6 +179,19 @@ public class UserAdminService {
         return getUser(targetUserId, operatorUserId);
     }
 
+    @Transactional
+    public void updateAvatar(long targetUserId, String avatarKey, long operatorUserId) {
+        requireAdmin(operatorUserId);
+        if (userRepository.findById(targetUserId).isEmpty()) {
+            throw BusinessException.notFound("USER_NOT_FOUND", "用户不存在");
+        }
+        if (userRepository.updateAvatarKey(targetUserId, avatarKey) != 1) {
+            throw BusinessException.notFound("USER_NOT_FOUND", "用户不存在");
+        }
+        audit(operatorUserId, "PUT", "/api/admin/users/" + targetUserId + "/avatar",
+                Long.toString(targetUserId), "avatarKey=" + avatarKey);
+    }
+
     private long createUserInternal(String username, String displayName, String rawPassword,
                                     String roleCode, long operatorUserId) {
         String normalizedUsername = required(username, "REQUEST_INVALID", "用户名不能为空");
@@ -211,7 +224,7 @@ public class UserAdminService {
     }
 
     private UserSummary toSummary(UserRepository.UserManagementRow user) {
-        return new UserSummary(user.id(), user.username(), user.displayName(), user.status(),
+        return new UserSummary(user.id(), user.username(), user.displayName(), user.avatarKey(), user.status(),
                 userRepository.findRoleCodes(user.id()), user.createdAt(), user.lastLoginAt());
     }
 
@@ -219,7 +232,7 @@ public class UserAdminService {
         VirtualWallet wallet = walletRepository.findByUserId(user.id()).orElse(null);
         WalletSummary walletSummary = wallet == null ? null
                 : new WalletSummary(wallet.accountId(), wallet.balance(), wallet.status());
-        return new UserDetail(user.id(), user.username(), user.displayName(), user.status(),
+        return new UserDetail(user.id(), user.username(), user.displayName(), user.avatarKey(), user.status(),
                 userRepository.findRoleCodes(user.id()), user.createdAt(), user.lastLoginAt(), walletSummary);
     }
 
@@ -288,11 +301,11 @@ public class UserAdminService {
     public record UserPage(List<UserSummary> items, int page, int pageSize, long total) {
     }
 
-    public record UserSummary(long id, String username, String displayName, String status,
+    public record UserSummary(long id, String username, String displayName, String avatarKey, String status,
                               List<String> roles, Instant createdAt, Instant lastLoginAt) {
     }
 
-    public record UserDetail(long id, String username, String displayName, String status,
+    public record UserDetail(long id, String username, String displayName, String avatarKey, String status,
                              List<String> roles, Instant createdAt, Instant lastLoginAt,
                              WalletSummary wallet) {
     }

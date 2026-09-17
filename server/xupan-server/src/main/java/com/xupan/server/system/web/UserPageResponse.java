@@ -11,10 +11,10 @@ public record UserPageResponse(List<UserSummary> items, int page, int pageSize, 
                 page.page(), page.pageSize(), page.total());
     }
 
-    public record UserSummary(long id, String username, String displayName, String status,
+    public record UserSummary(long id, String username, String displayName, String avatarKey, String status,
                               List<String> roles, Instant createdAt, Instant lastLoginAt) {
         static UserSummary from(UserAdminService.UserSummary user) {
-            return new UserSummary(user.id(), user.username(), user.displayName(), user.status(),
+            return new UserSummary(user.id(), user.username(), user.displayName(), user.avatarKey(), user.status(),
                     user.roles(), user.createdAt(), user.lastLoginAt());
         }
     }

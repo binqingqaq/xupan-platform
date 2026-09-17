@@ -46,6 +46,7 @@ public final class ChatProtocol {
         CONNECTED("connected"),
         SYNC_REQUIRED("sync.required"),
         MESSAGE_CREATED("message.created"),
+        ROBOT_UPDATED("robot.updated"),
         MESSAGE_ACK("message.ack"),
         CURSOR_ACK("cursor.ack"),
         PONG("pong"),
@@ -103,6 +104,9 @@ public final class ChatProtocol {
                               Long sequence, String nonce, String code, Object message,
                               Boolean deduplicated,
                               String clientMessageId) {
+    }
+
+    public record RobotUpdated(long robotId, String displayName) {
     }
 
     public static ClientEvent parseClientEvent(ObjectMapper objectMapper, String payload) {
@@ -164,6 +168,12 @@ public final class ChatProtocol {
         return new ServerEvent(ServerEventType.MESSAGE_CREATED.wireName(), null, null,
                 message.createdAt().toString(), null, null, message.sequenceNo(), null,
                 null, message, null, null);
+    }
+
+    public static ServerEvent robotUpdated(long robotId, String displayName) {
+        return new ServerEvent(ServerEventType.ROBOT_UPDATED.wireName(), null, null,
+                Instant.now().toString(), null, null, null, null, null,
+                new RobotUpdated(robotId, displayName), null, null);
     }
 
     public static ServerEvent messageAck(String clientMessageId, ChatMessageResponse message,

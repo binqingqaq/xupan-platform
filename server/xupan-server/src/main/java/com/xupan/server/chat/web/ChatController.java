@@ -21,9 +21,11 @@ import java.time.Instant;
 public class ChatController {
 
     private final ChatMessageService chatMessageService;
+    private final ChatAvatarResolver avatarResolver;
 
-    public ChatController(ChatMessageService chatMessageService) {
+    public ChatController(ChatMessageService chatMessageService, ChatAvatarResolver avatarResolver) {
         this.chatMessageService = chatMessageService;
+        this.avatarResolver = avatarResolver;
     }
 
     @GetMapping
@@ -40,7 +42,7 @@ public class ChatController {
                                             @RequestParam(defaultValue = "50") int limit) {
         AuthenticatedUser user = principal(authentication);
         return ChatMessagePageResponse.from(roomCode, chatMessageService.history(user.getUserId(), roomCode,
-                beforeSequence, afterSequence, limit, Instant.now()));
+                beforeSequence, afterSequence, limit, Instant.now()), avatarResolver);
     }
 
     @PostMapping("/messages")
@@ -49,7 +51,7 @@ public class ChatController {
                                     @PathVariable String roomCode,
                                     @RequestBody SendChatMessageRequest request) {
         AuthenticatedUser user = principal(authentication);
-        return ChatMessageResponse.from(chatMessageService.sendUserMessage(user.getUserId(), roomCode,
+        return avatarResolver.toResponse(chatMessageService.sendUserMessage(user.getUserId(), roomCode,
                 request == null ? null : request.clientMessageId(),
                 request == null ? null : request.content(), Instant.now()));
     }

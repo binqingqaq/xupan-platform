@@ -20,7 +20,7 @@ public class UserRepository {
             failed_login_count, locked_until, security_version, last_login_at, last_login_ip
             """;
     private static final String ADMIN_USER_COLUMNS = """
-            id, username, display_name, status, created_at, last_login_at
+            id, username, display_name, avatar_key, status, created_at, last_login_at
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -70,6 +70,18 @@ public class UserRepository {
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
                 """, passwordHash, userId);
+    }
+
+    @Transactional
+    public int updateAvatarKey(long userId, String avatarKey) {
+        if (avatarKey == null || avatarKey.isBlank() || avatarKey.length() > 255) {
+            throw new IllegalArgumentException("avatarKey 无效");
+        }
+        return jdbcTemplate.update("""
+                UPDATE sys_user
+                   SET avatar_key = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, avatarKey, userId);
     }
 
     public List<UserManagementRow> findManagementPage(String status, String keyword,
@@ -243,7 +255,7 @@ public class UserRepository {
     private UserManagementRow mapManagementRow(java.sql.ResultSet rs, int rowNum)
             throws java.sql.SQLException {
         return new UserManagementRow(rs.getLong("id"), rs.getString("username"),
-                rs.getString("display_name"), rs.getString("status"),
+                rs.getString("display_name"), rs.getString("avatar_key"), rs.getString("status"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("last_login_at")));
     }
 
@@ -273,7 +285,7 @@ public class UserRepository {
         }
     }
 
-    public record UserManagementRow(long id, String username, String displayName,
+    public record UserManagementRow(long id, String username, String displayName, String avatarKey,
                                     String status, Instant createdAt, Instant lastLoginAt) {
     }
 

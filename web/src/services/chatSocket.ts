@@ -85,6 +85,16 @@ function parseServerEvent(value: unknown): ChatServerEvent | null {
       return isChatMessage(value.message)
         ? { type: 'message.created', message: value.message }
         : null
+    case 'robot.updated': {
+      if (!isJsonObject(value.message)
+        || !isFiniteNumber(value.message.robotId)
+        || !isString(value.message.displayName)) return null
+      return {
+        type: 'robot.updated',
+        robotId: value.message.robotId,
+        displayName: value.message.displayName,
+      }
+    }
     case 'message.ack':
       return isString(value.clientMessageId) && isChatMessage(value.message) && typeof value.deduplicated === 'boolean'
         ? {
@@ -301,6 +311,9 @@ export class ChatSocket {
         this.updateLastSequence(event.message)
         if (this.markMessageDelivered(event.message)) this.handlers.onMessage?.(event.message)
         this.handlers.onMessageAck?.(event)
+        return
+      case 'robot.updated':
+        this.handlers.onRobotUpdated?.(event)
         return
       case 'cursor.ack':
         this.handlers.onCursorAck?.(event)

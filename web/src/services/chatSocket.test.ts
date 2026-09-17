@@ -68,6 +68,7 @@ const createMessage = (sequenceNo: number, id = sequenceNo): ChatMessage => ({
   senderType: 'USER',
   senderId: 10,
   senderName: '测试用户',
+  avatarKey: null,
   content: `消息 ${sequenceNo}`,
   payloadJson: null,
   status: 'ACTIVE',
@@ -147,6 +148,30 @@ describe('ChatSocket', () => {
     expect(JSON.stringify(sockets[0].sent)).not.toContain('test-ticket')
     expect(JSON.stringify(sockets[0].sent)).not.toMatch(/accessToken|userId|senderName/)
     expect(states).toEqual(['REQUESTING_TICKET', 'CONNECTING', 'CONNECTED'])
+  })
+
+  it('notifies listeners when a robot display name is updated', async () => {
+    const updated: Array<{ robotId: number; displayName: string }> = []
+    const socket = createSocket()
+    socket.connect('main', {
+      onRobotUpdated: event => updated.push(event),
+    })
+    await flushPromises()
+
+    sockets[0].open()
+    sockets[0].receive({
+      type: 'connected',
+      roomCode: 'main',
+      connectionId: 'c-1',
+      serverTime: '2026-09-13T10:00:00Z',
+    })
+    sockets[0].receive({
+      type: 'robot.updated',
+      message: { robotId: 11, displayName: '新机器人' },
+    })
+
+    expect(updated).toEqual([{ type: 'robot.updated', robotId: 11, displayName: '新机器人' }])
+    socket.disconnect()
   })
 
   it('loads after-sequence history and reaches READY without duplicate delivery', async () => {

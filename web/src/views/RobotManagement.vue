@@ -87,6 +87,8 @@ const dispatchFilters = reactive<DispatchFilters>({
   from: '',
   to: '',
 })
+const avatarFile = ref<File | null>(null)
+const avatarUploading = ref(false)
 
 const canWrite = computed(() => currentUser.value?.permissions.includes('ROBOT_WRITE') === true)
 const canTemplateWrite = computed(() => currentUser.value?.permissions.includes('ROBOT_TEMPLATE_WRITE') === true)
@@ -141,6 +143,11 @@ function closeRobotModal() {
   createOpen.value = false
   editingRobotId.value = null
   robotDraft.value = emptyRobotDraft()
+  avatarFile.value = null
+}
+
+function selectAvatar(event: Event) {
+  avatarFile.value = (event.target as HTMLInputElement).files?.[0] || null
 }
 
 function openCreate() {
@@ -242,6 +249,11 @@ async function submitRobot() {
     } else {
       detail = await api.updateAdminRobot(editingRobotId.value, payload)
     }
+    if (avatarFile.value) {
+      avatarUploading.value = true
+      await api.uploadAdminRobotAvatar(detail.robot.id, avatarFile.value)
+      detail = await api.getAdminRobot(detail.robot.id)
+    }
     closeRobotModal()
     selectedRobotId.value = detail.robot.id
     await loadPage()
@@ -249,6 +261,7 @@ async function submitRobot() {
   } catch (error) {
     showFeedback(apiErrorMessage(error, editing.value ? '机器人配置保存失败' : '机器人创建失败'), 'error')
   } finally {
+    avatarUploading.value = false
     saving.value = false
   }
 }
@@ -502,7 +515,8 @@ onMounted(async () => {
         <form class="user-form" @submit.prevent="submitRobot">
           <label>机器人编码<input v-model="robotDraft.robotCode" autocomplete="off" maxlength="32" :readonly="editing" required /><small v-if="editing">编码创建后不可修改。</small></label>
           <label>展示名<input v-model="robotDraft.displayName" maxlength="32" required /></label>
-          <label>头像标识<input v-model="robotDraft.avatarKey" maxlength="64" required /></label>
+          <label>头像标识（兼容字段）<input v-model="robotDraft.avatarKey" maxlength="64" required /></label>
+          <label>上传真实头像<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="saving || avatarUploading" @change="selectAvatar" /><small>支持 JPG、PNG、GIF、WebP，最大 5 MB；选择后随本次保存上传。</small></label>
           <div class="robot-form-grid"><label>权重<input v-model.number="robotDraft.weight" type="number" min="1" max="100" step="1" required /></label><label>延时（秒）<input v-model.number="robotDraft.delaySeconds" type="number" min="0" max="300" step="1" required /></label></div>
           <p v-if="draftErrors.length" class="inline-error" role="alert">{{ draftErrors.join('；') }}</p>
           <div class="modal-actions"><button type="button" class="secondary-button" :disabled="saving" @click="closeRobotModal">取消</button><button type="submit" class="primary-button" :disabled="saving || !canWrite">{{ saving ? '保存中...' : editing ? '保存配置' : '创建机器人' }}</button></div>

@@ -4,6 +4,7 @@ import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.security.AuthenticatedUserDetailsService;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.chat.web.ChatMessageResponse;
+import com.xupan.server.chat.web.ChatAvatarResolver;
 import com.xupan.server.web.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,15 +36,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final ChatRealtimeSyncService syncService;
     private final AuthenticatedUserDetailsService userDetailsService;
     private final ChatConnectionAccessService accessService;
+    private final ChatAvatarResolver avatarResolver;
     private final Map<String, MessageRateWindow> messageRateWindows = new ConcurrentHashMap<>();
 
     public ChatWebSocketHandler(ChatConnectionRegistry connectionRegistry,
                                 ChatWebSocketProperties properties,
                                  ObjectMapper objectMapper,
                                  ChatMessageService chatMessageService,
-                                 ChatRealtimeSyncService syncService,
-                                 AuthenticatedUserDetailsService userDetailsService,
-                                 ChatConnectionAccessService accessService) {
+                                ChatRealtimeSyncService syncService,
+                                AuthenticatedUserDetailsService userDetailsService,
+                                ChatConnectionAccessService accessService,
+                                ChatAvatarResolver avatarResolver) {
         this.connectionRegistry = connectionRegistry;
         this.properties = properties;
         this.objectMapper = objectMapper;
@@ -51,6 +54,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         this.syncService = syncService;
         this.userDetailsService = userDetailsService;
         this.accessService = accessService;
+        this.avatarResolver = avatarResolver;
     }
 
     @Override
@@ -143,7 +147,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
         ChatMessageService.ChatMessageSendOutcome outcome = chatMessageService.sendUserMessageWithOutcome(
                 connection.userId(), connection.roomCode(), event.clientMessageId(), event.content(), Instant.now());
-        ChatMessageResponse response = ChatMessageResponse.from(outcome.message());
+        ChatMessageResponse response = avatarResolver.toResponse(outcome.message());
         send(connection, ChatProtocol.messageAck(event.clientMessageId(), response, outcome.deduplicated()));
     }
 

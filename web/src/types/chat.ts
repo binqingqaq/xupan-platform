@@ -32,6 +32,12 @@ export interface ChatMessageCreatedEvent {
   message: ChatMessage
 }
 
+export interface ChatRobotUpdatedEvent {
+  type: 'robot.updated'
+  robotId: number
+  displayName: string
+}
+
 export interface ChatMessageAckEvent {
   type: 'message.ack'
   clientMessageId: string
@@ -66,6 +72,7 @@ export type ChatServerEvent =
   | ChatConnectedEvent
   | ChatSyncRequiredEvent
   | ChatMessageCreatedEvent
+  | ChatRobotUpdatedEvent
   | ChatMessageAckEvent
   | ChatCursorAckEvent
   | ChatPongEvent
@@ -109,6 +116,7 @@ export interface ChatSocketHandlers {
   onStateChange?: (change: ChatSocketStateChange) => void
   onMessages?: (page: ChatMessagePage) => void
   onMessage?: (message: ChatMessage) => void
+  onRobotUpdated?: (event: ChatRobotUpdatedEvent) => void
   onMessageAck?: (event: ChatMessageAckEvent) => void
   onCursorAck?: (event: ChatCursorAckEvent) => void
   onError?: (event: ChatErrorEvent) => void

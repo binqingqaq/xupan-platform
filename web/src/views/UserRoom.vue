@@ -30,6 +30,7 @@ interface RoomMessage {
   sequenceNo: number
   type: MessageType
   name: string
+  avatarKey: string | null
   body: string
   time: string
   mine: boolean
@@ -62,10 +63,16 @@ const chatReadCursorSaved = ref(0)
 const chatConnectionState = ref<ChatSocketState>('DISCONNECTED')
 const selectedBall = ref(1)
 const messageInput = ref('')
-const keyboardOpen = ref(false)
 const quickOpen = ref(false)
 const interfaceOpen = ref(false)
 const menuOpen = ref(false)
+function interfaceModeFromUrl(): 'ui1' | 'ui2' {
+  if (typeof window === 'undefined') return 'ui1'
+  return new URLSearchParams(window.location.search).get('ui') === '1' ? 'ui2' : 'ui1'
+}
+
+const interfaceMode = ref<'ui1' | 'ui2'>(interfaceModeFromUrl())
+const keyboardOpen = ref(interfaceMode.value === 'ui2')
 const viewMode = ref<'chat' | 'odds'>('chat')
 const historyOpen = ref(false)
 const settingsOpen = ref(false)
@@ -81,19 +88,37 @@ const loginPassword = ref('')
 const loginBusy = ref(false)
 const loginError = ref('')
 const messageScroll = ref<HTMLElement | null>(null)
+const messageInputElement = ref<HTMLTextAreaElement | null>(null)
+const composerElement = ref<HTMLElement | null>(null)
+const composerHeight = ref(58)
+let composerResizeObserver: ResizeObserver | null = null
 const clockTick = ref(Date.now())
 const serverOffsetMs = ref(0)
 const selectedQuickNumber = ref('1')
 const selectedQuickAmount = ref(100)
 const settingAmounts = ref(['50', '100', '200', '500', '1000'])
+const avatarInput = ref<HTMLInputElement | null>(null)
+const avatarUploading = ref(false)
+const keyboardFlat = ref(false)
+const voiceEnabled = ref(false)
 let gameRefreshTimer: number | undefined
 let chatRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 const chatSocket = new ChatSocket()
 
-const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单双', '大小', '特', '查', '上下', '流水', '历史', '♫', '取消', '说明', '⇅']
+const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单', '双', '大', '小', '特', '查', '上', '下', '流水', '历史', '♫', '取消', '说明', '⇅']
+const playMainTokens = playTokens.slice(0, -3)
+const keyboardActionTokens = playTokens.slice(-3)
+const keyboardFirstRowActionTokens = ['取消']
+const keyboardSecondRowActionTokens = ['说明', '⇅']
 const numberTokens = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '/', ',', '-', '↲', '✘', '⇦']
 const quickTokens = ['1番100', '12角100', '3通12/100', '01特100', '查', '流水', '历史']
+const interfaceTwoKeyboardRows = [
+  ['查', '上', '下', '无', '大', '小', '单', '双', '✘', '取消'],
+  ['番', '角', '念', '正', '加', '通', '车', '特', '说明', '⇅'],
+  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
+  ['+', '-', '/', '=', ',', '.', '流水', '历史', '↲', '⇦'],
+]
 const oddsCards: OddsCard[] = [
   { label: '番', hint: '单号', playType: 'FAN', tone: 'yellow' },
   { label: '角', hint: '二码', playType: 'ANGLE', tone: 'pink' },
@@ -108,7 +133,12 @@ const oddsCards: OddsCard[] = [
   { label: '特', hint: '特码', playType: 'SPECIAL', tone: 'green' },
 ]
 
-const ballNumbers = computed(() => current.value?.balls ?? [])
+const ballNumbers = computed(() => {
+  const game = current.value
+  if (!game) return []
+  if (game.phase === 'BETTING' && game.previousBalls?.length) return game.previousBalls
+  return game.balls ?? []
+})
 const issueNumber = computed(() => current.value?.issueNumber || '00000000')
 const displayIssueNumber = computed(() => {
   const match = issueNumber.value.match(/(\d+)$/)
@@ -168,6 +198,7 @@ const displayMessages = computed<RoomMessage[]>(() => {
     sequenceNo: 0,
     type: 'user',
     name: currentUser.value?.displayName || '我',
+    avatarKey: currentUser.value?.avatarKey || null,
     body: pending.body,
     time: pending.status === 'sending' ? '发送中...' : '发送失败',
     mine: true,
@@ -193,6 +224,7 @@ function toRoomMessage(message: ChatMessage): RoomMessage {
     sequenceNo: message.sequenceNo,
     type,
     name: message.senderName,
+    avatarKey: message.avatarKey,
     body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
     time: formatMessageTime(message.createdAt),
     mine: message.senderId !== null && message.senderId === currentUser.value?.id,
@@ -234,6 +266,13 @@ function scrollToBottom() {
       chatUnread.value = 0
     }
   })
+}
+
+function updateComposerHeight() {
+  const element = composerElement.value
+  if (!element) return
+  const nextHeight = Math.ceil(element.getBoundingClientRect().height)
+  if (nextHeight > 0 && nextHeight !== composerHeight.value) composerHeight.value = nextHeight
 }
 
 function isNearChatBottom() {
@@ -317,6 +356,12 @@ function connectChatSocket() {
     },
     onMessages: page => handleRealtimeMessages(page.items),
     onMessage: message => handleRealtimeMessages([message]),
+    onRobotUpdated: event => {
+      chatMessages.value = chatMessages.value.map(message =>
+        message.senderType === 'ROBOT' && message.senderId === event.robotId
+          ? { ...message, senderName: event.displayName }
+          : message)
+    },
     onMessageAck: event => {
       if (pendingChatMessage.value?.clientMessageId === event.clientMessageId) pendingChatMessage.value = null
     },
@@ -416,23 +461,69 @@ async function login() {
 }
 
 function appendToken(token: string) {
-  if (token === '取消' || token === '✘' || token === '⇦') {
+  const uniqueTokens: Record<string, string> = {
+    查: '查',
+    上: '上',
+    下: '下',
+    流水: '流水',
+    历史: '历史',
+    取消: '取消',
+    说明: '玩法',
+  }
+  const uniqueText = uniqueTokens[token]
+  if (uniqueText) {
+    if (messageInput.value !== uniqueText) messageInput.value = uniqueText
+    resizeMessageInput()
+    return
+  }
+  if (token === '✘') {
     messageInput.value = ''
+    resizeMessageInput()
     return
   }
-  if (token === '说明') {
-    noticeOpen.value = true
+  if (token === '⇦') {
+    messageInput.value = messageInput.value.slice(0, -1)
+    resizeMessageInput()
     return
   }
-  if (token === '历史' || token === '流水' || token === '查' || token === '上下') {
-    messageInput.value = token
+  if (token === '⇅') {
+    keyboardFlat.value = !keyboardFlat.value
+    return
+  }
+  if (token === '♫') {
+    voiceEnabled.value = !voiceEnabled.value
     return
   }
   if (token === '↲') {
-    void submitMessage()
+    messageInput.value += '\n'
+    resizeMessageInput()
     return
   }
   messageInput.value += token
+  resizeMessageInput()
+}
+
+function resizeMessageInput() {
+  nextTick(() => {
+    const element = messageInputElement.value
+    if (!element) return
+    element.style.height = '34px'
+    element.style.height = `${Math.min(Math.max(element.scrollHeight, 34), 176)}px`
+  })
+}
+
+function openKeyboardFromInput() {
+  if (!keyboardOpen.value) keyboardOpen.value = true
+}
+
+function keyboardKeyClass(token: string) {
+  if (/^\d$/.test(token) || token === '/' || token === ',' || token === '-') return 'keyboard-key-primary'
+  if (token === '✘') return 'keyboard-key-danger-light'
+  if (token === '⇦') return 'keyboard-key-warning'
+  if (token === '♫' || token === '⇅') return 'keyboard-key-danger'
+  if (token === '取消' || token === '说明') return 'keyboard-key-link'
+  if (['查', '上', '下', '流水', '历史'].includes(token)) return 'keyboard-key-info'
+  return 'keyboard-key-success'
 }
 
 function setViewMode(mode: 'chat' | 'odds') {
@@ -442,6 +533,13 @@ function setViewMode(mode: 'chat' | 'odds') {
   menuOpen.value = false
   historyOpen.value = false
   if (mode === 'chat') scrollToBottom()
+}
+
+function setInterfaceMode(mode: 'ui1' | 'ui2') {
+  if (typeof window === 'undefined') return
+  const url = new URL(window.location.href)
+  url.searchParams.set('ui', mode === 'ui1' ? '4' : '1')
+  window.location.href = url.toString()
 }
 
 function toggleHistory() {
@@ -454,6 +552,23 @@ function toggleHistory() {
 function openSettings() {
   settingsOpen.value = true
   menuOpen.value = false
+}
+
+async function uploadCurrentUserAvatar(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  avatarUploading.value = true
+  try {
+    await api.uploadMyAvatar(file)
+    currentUser.value = await api.me()
+    showFeedback('头像已更新')
+  } catch (error) {
+    showFeedback(apiErrorMessage(error, '头像上传失败'), 'error')
+  } finally {
+    avatarUploading.value = false
+  }
 }
 
 function selectOddsCard(card: OddsCard) {
@@ -494,7 +609,12 @@ async function submitMessage() {
   const text = messageInput.value.trim()
   if (!text) return
   messageInput.value = ''
+  resizeMessageInput()
   keyboardOpen.value = false
+  if (text === '玩法') {
+    noticeOpen.value = true
+    return
+  }
   const payload = parseBetMessage(text)
   if (payload) {
     if (current.value?.phase !== 'BETTING') {
@@ -568,8 +688,31 @@ function messageClass(message: RoomMessage) {
   return [`message-${message.type}`, message.mine ? 'message-mine' : '']
 }
 
+function messageTimeInMinutes(value: string) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value)
+  if (!match) return null
+  return Number(match[1]) * 60 + Number(match[2])
+}
+
+function shouldShowMessageTime(index: number) {
+  if (index === 0) return true
+  const currentMessage = displayMessages.value[index]
+  const previousMessage = displayMessages.value[index - 1]
+  if (!currentMessage || !previousMessage) return true
+  const currentMinutes = messageTimeInMinutes(currentMessage.time)
+  const previousMinutes = messageTimeInMinutes(previousMessage.time)
+  if (currentMinutes === null || previousMinutes === null) return true
+  let difference = currentMinutes - previousMinutes
+  if (difference < 0) difference += 24 * 60
+  return difference >= 5
+}
+
 function avatarText(name: string) {
   return name === '机器人' ? '机' : name.slice(0, 1)
+}
+
+function isStoredAvatarKey(value: string | null | undefined): value is string {
+  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|gif|webp)$/i.test(value))
 }
 
 function createBetIdempotencyKey() {
@@ -584,6 +727,16 @@ function createChatClientMessageId() {
 
 onMounted(() => {
   document.body.classList.add('reference-room-body')
+  updateComposerHeight()
+  if (typeof ResizeObserver !== 'undefined' && composerElement.value) {
+    composerResizeObserver = new ResizeObserver(() => {
+      updateComposerHeight()
+      scrollToBottom()
+    })
+    composerResizeObserver.observe(composerElement.value)
+  } else {
+    window.addEventListener('resize', updateComposerHeight)
+  }
   void load()
   gameRefreshTimer = window.setInterval(() => { if (authenticated.value) void loadGame() }, 1000)
   countdownTimer = window.setInterval(() => {
@@ -593,6 +746,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.body.classList.remove('reference-room-body')
+  composerResizeObserver?.disconnect()
+  window.removeEventListener('resize', updateComposerHeight)
   if (gameRefreshTimer) window.clearInterval(gameRefreshTimer)
   stopChatPolling()
   chatSocket.disconnect()
@@ -601,7 +756,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="reference-room">
+  <div class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2' }">
     <header class="reference-header">
       <div class="reference-toolbar">
         <strong class="balance-text">虚拟余额:{{ balance }}</strong>
@@ -617,8 +772,8 @@ onUnmounted(() => {
           <button v-for="token in quickTokens" :key="token" type="button" @click="appendToken(token); quickOpen = false">{{ token }}</button>
         </div>
         <div v-if="interfaceOpen" class="header-menu interface-menu">
-          <button type="button" :class="{ selected: viewMode === 'chat' }" @click="setViewMode('chat')">界面1</button>
-          <button type="button" :class="{ selected: viewMode === 'odds' }" @click="setViewMode('odds')">界面2</button>
+          <button type="button" :class="{ selected: interfaceMode === 'ui1' }" @click="setInterfaceMode('ui1')">界面1</button>
+          <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')">界面2</button>
         </div>
         <div v-if="menuOpen" class="header-menu menu-panel">
           <button type="button" @click="noticeOpen = true; menuOpen = false">玩法说明</button>
@@ -631,7 +786,7 @@ onUnmounted(() => {
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
         <div class="reference-ball-row" aria-label="开奖号码">
           <button v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8, 'is-selected': selectedBall === ball.ballNumber }" type="button" :aria-label="`选择第${ball.ballNumber}球`" @click="selectBall(ball)">
-            {{ ball.number === null ? '0' : String(ball.number).padStart(2, '0') }}
+            {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
           </button>
         </div>
         <span class="reference-countdown" :class="{ 'is-drawing': current?.phase === 'DRAWING' }">{{ phaseLabel }}</span>
@@ -650,20 +805,23 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <main v-if="viewMode === 'chat'" ref="messageScroll" class="reference-message-scroll" aria-label="聊天室消息" @scroll="handleChatScroll">
+    <main ref="messageScroll" class="reference-message-scroll" :style="{ bottom: `${composerHeight}px` }" aria-label="聊天室消息" @scroll="handleChatScroll">
       <section class="reference-message-feed">
         <div v-if="authenticated && chatConnectionLabel" class="chat-connection-status" :class="{ degraded: chatConnectionState === 'DEGRADED' }" role="status">
           {{ chatConnectionLabel }}
         </div>
         <div v-if="chatLoading && !displayMessages.length" class="chat-state">正在加载消息...</div>
         <div v-else-if="!displayMessages.length" class="chat-state">还没有消息，发出第一条消息吧。</div>
-        <template v-else v-for="message in displayMessages" :key="message.id">
+        <template v-else v-for="(message, messageIndex) in displayMessages" :key="message.id">
+          <div v-if="shouldShowMessageTime(messageIndex)" class="reference-time"><span>{{ message.time }}</span></div>
           <article class="reference-message" :class="messageClass(message)">
             <div class="reference-bubble">
-              <div class="reference-avatar" :class="{ 'is-robot': message.type === 'robot' }">{{ avatarText(message.name) }}</div>
+              <div class="reference-avatar" :class="{ 'is-robot': message.type === 'robot' }">
+              <img v-if="isStoredAvatarKey(message.avatarKey)" :src="api.avatarUrl(message.avatarKey)" alt="" />
+                <span v-else>{{ avatarText(message.name) }}</span>
+              </div>
               <h5 class="reference-name">{{ message.name }}</h5>
               <pre class="reference-pre">{{ message.body }}</pre>
-              <time class="reference-message-time">{{ message.time }}</time>
               <button v-if="message.sequenceNo === 0 && pendingChatMessage?.status === 'failed'" class="chat-retry" type="button" @click="retryPendingChatMessage">重试</button>
             </div>
           </article>
@@ -672,47 +830,47 @@ onUnmounted(() => {
       </section>
     </main>
 
-    <main v-else class="reference-odds-scroll" aria-label="赔率和快捷下注">
-      <section class="odds-grid">
-        <button v-for="card in oddsCards" :key="card.playType" class="odds-card" :class="`odds-${card.tone}`" type="button" @click="selectOddsCard(card)">
-          <strong>{{ card.label }}</strong>
-          <span>{{ card.hint }}</span>
-          <b>{{ oddsFor(card.playType) }}</b>
-        </button>
-      </section>
-    </main>
-
     <button class="scratch-entry" type="button" @click="openScratch">搓牌开奖</button>
 
-    <footer class="reference-composer">
-      <div v-if="viewMode === 'chat' && keyboardOpen" class="reference-keyboard">
-        <div class="keyboard-play-row">
-          <button v-for="token in playTokens" :key="token" type="button" :class="{ active: messageInput.includes(token) }" @click="appendToken(token)">{{ token }}</button>
-        </div>
-        <div class="keyboard-number-row">
-          <button v-for="token in numberTokens" :key="token" type="button" :class="{ danger: token === '✘' || token === '⇦' }" @click="appendToken(token)">{{ token }}</button>
-        </div>
-        <div class="keyboard-amount-row">
-          <button v-for="amount in [50, 100, 200, 500, 1000]" :key="amount" type="button" @click="messageInput += amount">{{ amount }}+</button>
-        </div>
-      </div>
-      <div v-if="viewMode === 'chat'" class="composer-row">
+    <footer ref="composerElement" class="reference-composer">
+      <div class="composer-row">
         <button class="keyboard-toggle" type="button" aria-label="打开数字键盘" title="打开数字键盘" :class="{ active: keyboardOpen }" @click="toggleKeyboard">
           <span v-for="row in 2" :key="row"><i v-for="dot in 4" :key="dot"></i></span>
         </button>
-        <textarea v-model="messageInput" class="reference-input" rows="1" aria-label="下注或聊天内容" @keydown.enter.exact.prevent="submitMessage"></textarea>
+        <textarea ref="messageInputElement" v-model="messageInput" class="reference-input" rows="1" aria-label="下注或聊天内容" @click="openKeyboardFromInput" @input="resizeMessageInput" @keydown.enter.exact.prevent="submitMessage"></textarea>
         <button class="reference-send" type="button" :disabled="pendingChatMessage?.status === 'sending'" @click="submitMessage">发送</button>
       </div>
-      <div v-else class="odds-quickbar">
-        <div class="odds-quickbar-top"><strong>{{ displayIssueNumber }}期</strong><span>{{ current?.phase === 'BETTING' ? '待结' : current?.phase === 'DRAWING' ? '开奖中' : '已结' }}</span></div>
-        <div class="odds-quickbar-actions">
-          <button type="button" @click="openSettings">设置</button>
-          <button type="button" class="active" @click="setViewMode('odds')">快速下注</button>
-          <button type="button" @click="resetQuickSelection">重置</button>
-          <button type="button" @click="setViewMode('chat')">返回聊天</button>
+      <div v-if="keyboardOpen && interfaceMode === 'ui1'" class="reference-keyboard">
+        <div class="keyboard-columns" :class="{ 'keyboard-columns-flat': keyboardFlat, 'keyboard-columns-stacked': !keyboardFlat }">
+          <div class="keyboard-panel keyboard-play-panel">
+            <div class="keyboard-buttons">
+              <button v-for="token in playMainTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput.includes(token), selected: token === '♫' && voiceEnabled, wide: token.length > 1 }]" @click="appendToken(token)">{{ token }}</button>
+              <template v-if="!keyboardFlat">
+                <button v-for="token in keyboardFirstRowActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token }]" @click="appendToken(token)">{{ token }}</button>
+              </template>
+            </div>
+            <div v-if="!keyboardFlat" class="keyboard-second-row-buttons">
+              <button v-for="token in keyboardSecondRowActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === (token === '说明' ? '玩法' : token) }]" @click="appendToken(token)">{{ token }}</button>
+            </div>
+          </div>
+          <div class="keyboard-panel keyboard-number-panel">
+            <div class="keyboard-buttons">
+              <button v-for="token in numberTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { wide: token.length > 1 }]" @click="appendToken(token)">{{ token }}</button>
+            </div>
+          </div>
+          <div v-if="keyboardFlat" class="keyboard-action-panel">
+            <div class="keyboard-buttons">
+              <button v-for="token in keyboardActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === (token === '说明' ? '玩法' : token) }]" @click="appendToken(token)">{{ token }}</button>
+            </div>
+          </div>
         </div>
-        <div class="odds-quickbar-row"><button v-for="number in ['1','2','3','4','5','6','7','8','9','0']" :key="number" type="button" :class="{ selected: selectedQuickNumber === number }" @click="applyQuickNumber(number)">{{ number }}</button></div>
-        <div class="odds-quickbar-row"><button v-for="amount in [50,100,200,500,1000]" :key="amount" type="button" :class="{ selected: selectedQuickAmount === amount }" @click="applyQuickAmount(amount)">{{ amount }}</button><button type="button">X</button></div>
+      </div>
+      <div v-if="keyboardOpen && interfaceMode === 'ui2'" class="reference-keyboard interface-two-keyboard">
+        <div class="interface-two-keyboard-grid">
+          <div v-for="(row, rowIndex) in interfaceTwoKeyboardRows" :key="`interface-two-row-${rowIndex}`" class="interface-two-keyboard-row">
+            <button v-for="token in row" :key="`interface-two-${rowIndex}-${token}`" type="button" :class="[keyboardKeyClass(token), { active: messageInput === (token === '说明' ? '玩法' : token), selected: token === '♫' && voiceEnabled }]" @click="appendToken(token)">{{ token }}</button>
+          </div>
+        </div>
       </div>
     </footer>
 
@@ -752,6 +910,14 @@ onUnmounted(() => {
       <section class="settings-panel" role="dialog" aria-modal="true" aria-label="设置">
         <header><strong>设置</strong><button type="button" aria-label="关闭设置" @click="settingsOpen = false">×</button></header>
         <div class="settings-body">
+          <div class="avatar-setting-row">
+            <div class="avatar-setting-preview">
+              <img v-if="isStoredAvatarKey(currentUser?.avatarKey)" :src="api.avatarUrl(currentUser.avatarKey)" alt="当前头像" />
+              <span v-else>{{ avatarText(currentUser?.displayName || '我') }}</span>
+            </div>
+            <div><strong>我的头像</strong><small>支持 JPG、PNG、GIF、WebP，最大 5 MB</small></div>
+          </div>
+          <label class="avatar-file-field">选择头像<input ref="avatarInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="avatarUploading" @change="uploadCurrentUserAvatar" /></label>
           <label v-for="(amount, index) in settingAmounts" :key="index">快捷金额 {{ index + 1 }}<input v-model="settingAmounts[index]" inputmode="numeric" aria-label="快捷金额"></label>
           <button class="settings-save" type="button" @click="settingsOpen = false; showFeedback('设置已保存')">保存</button>
         </div>

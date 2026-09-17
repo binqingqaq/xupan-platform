@@ -40,6 +40,8 @@ const resetPassword = ref('')
 const resetPasswordConfirmation = ref('')
 const selectedRoleCodes = ref<string[]>([])
 const confirmAdminRole = ref(false)
+const avatarFile = ref<File | null>(null)
+const avatarUploading = ref(false)
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const hasUsers = computed(() => users.value.length > 0)
@@ -144,7 +146,27 @@ function closeDetail() {
   closePasswordModal()
   rolesOpen.value = false
   selectedUser.value = null
+  avatarFile.value = null
   detailError.value = ''
+}
+
+function selectAvatar(event: Event) {
+  avatarFile.value = (event.target as HTMLInputElement).files?.[0] || null
+}
+
+async function uploadSelectedAvatar() {
+  if (!selectedUser.value || !avatarFile.value) return
+  avatarUploading.value = true
+  try {
+    await api.uploadAdminUserAvatar(selectedUser.value.id, avatarFile.value)
+    selectedUser.value = await api.getAdminUser(selectedUser.value.id)
+    avatarFile.value = null
+    showFeedback('用户头像已更新')
+  } catch (error) {
+    showFeedback(apiErrorMessage(error, '用户头像上传失败'), 'error')
+  } finally {
+    avatarUploading.value = false
+  }
 }
 
 function closeCreateModal() {
@@ -388,6 +410,7 @@ onBeforeUnmount(() => {
         <p v-if="detailError" class="inline-error" role="alert">{{ detailError }}</p>
         <div v-else-if="!selectedUser" class="user-empty-state">正在加载详情...</div>
         <template v-else>
+          <div class="admin-avatar-editor"><div class="admin-avatar-preview"><img v-if="selectedUser.avatarKey" :src="api.avatarUrl(selectedUser.avatarKey)" alt="用户头像" /><span v-else>{{ selectedUser.displayName.slice(0, 1) }}</span></div><label>真实头像<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="avatarUploading" @change="selectAvatar" /></label><button type="button" class="secondary-button" :disabled="!avatarFile || avatarUploading" @click="uploadSelectedAvatar">{{ avatarUploading ? '上传中...' : '上传头像' }}</button></div>
           <dl class="user-detail-grid"><div><dt>ID</dt><dd>{{ selectedUser.id }}</dd></div><div><dt>用户名</dt><dd>{{ selectedUser.username }}</dd></div><div><dt>展示名</dt><dd>{{ selectedUser.displayName }}</dd></div><div><dt>状态</dt><dd><span class="user-status" :class="statusClass(selectedUser.status)">{{ statusLabel(selectedUser.status) }}</span></dd></div><div><dt>角色</dt><dd>{{ selectedUser.roles.join(' / ') || '--' }}</dd></div><div><dt>创建时间</dt><dd>{{ dateTime(selectedUser.createdAt) }}</dd></div><div><dt>最后登录</dt><dd>{{ dateTime(selectedUser.lastLoginAt) }}</dd></div><div><dt>虚拟余额</dt><dd>{{ selectedUser.wallet ? `¥${selectedUser.wallet.balance.toFixed(2)}` : '--' }}</dd></div></dl>
           <div class="detail-actions">
             <button v-if="selectedStatus !== 'ACTIVE'" type="button" class="secondary-button" :disabled="busy" @click="openStatusConfirmation(selectedUser, 'ACTIVE')">启用</button>

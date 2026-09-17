@@ -50,14 +50,11 @@ public class DemoGameService {
     }
 
     private GameView toGameView(GameDataRepository.IssueRecord issue, Instant now, long authenticatedUserId) {
-        List<BallResult> results = toResults(automationService.previewNumbers(issue, now));
-        List<BallView> ballViews = new ArrayList<>();
-        for (int index = 0; index < 8; index++) {
-            BallResult result = results.size() == 8 ? results.get(index) : null;
-            ballViews.add(result == null
-                    ? new BallView(index + 1, null, null, null, null)
-                    : new BallView(index + 1, result.number(), result.fan(), result.parity(), result.size()));
-        }
+        List<BallView> ballViews = toBallViews(automationService.previewNumbers(issue, now));
+        List<BallView> previousBallViews = repository.findLatestSettledIssue()
+                .map(GameDataRepository.IssueRecord::numbers)
+                .map(DemoGameService::toBallViews)
+                .orElseGet(List::of);
         List<OddsView> oddsViews = new ArrayList<>();
         for (PlayType playType : PlayType.values()) {
             repository.findOdds(playType).ifPresent(value -> oddsViews.add(new OddsView(playType, value)));
@@ -66,7 +63,7 @@ public class DemoGameService {
                 .map(DemoGameService::toBetView)
                 .toList();
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
-        return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, oddsViews, betViews,
+        return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, previousBallViews, oddsViews, betViews,
                 new AccountView(wallet.userCode(), wallet.displayName(), wallet.balance(), wallet.status()),
                 now, issue.bettingEndsAt(), issue.drawEndsAt(),
                 自动轮期服务.DRAWING.equals(issue.phase()),
@@ -211,11 +208,18 @@ public class DemoGameService {
         return values;
     }
 
-    private static List<BallResult> toResults(List<Integer> numbers) {
-        if (numbers.size() != 8 || numbers.stream().anyMatch(number -> number == null)) {
-            return List.of();
+    private static List<BallView> toBallViews(List<Integer> numbers) {
+        List<BallView> ballViews = new ArrayList<>();
+        for (int index = 0; index < 8; index++) {
+            Integer number = numbers.size() == 8 ? numbers.get(index) : null;
+            if (number == null) {
+                ballViews.add(new BallView(index + 1, null, null, null, null));
+                continue;
+            }
+            BallResult result = BallResult.fromNumber(number);
+            ballViews.add(new BallView(index + 1, result.number(), result.fan(), result.parity(), result.size()));
         }
-        return numbers.stream().map(BallResult::fromNumber).toList();
+        return ballViews;
     }
 
     private static BetView toBetView(GameDataRepository.BetRecord bet) {
@@ -246,7 +250,7 @@ public class DemoGameService {
     }
 
     public record GameView(String issueNumber, String status, String phase, List<BallView> balls,
-                           List<OddsView> odds, List<BetView> bets, AccountView account,
+                           List<BallView> previousBalls, List<OddsView> odds, List<BetView> bets, AccountView account,
                            Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,
                            boolean preview, List<EventView> events) {
     }

@@ -16,6 +16,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -85,6 +86,23 @@ class ChatMessageRepositoryTest {
         readCursorRepository.saveReadSequence(room.id(), userId, 1L, NOW.plusSeconds(1));
 
         assertThat(readCursorRepository.currentReadSequence(room.id(), userId)).isEqualTo(3L);
+    }
+
+    @Test
+    @Transactional
+    void updatesSenderNameForAllHistoricalRobotMessages() {
+        var room = roomRepository.findByCodeForUpdate("main").orElseThrow();
+        ChatMessage first = messageRepository.insertRobotMessage(room.id(),
+                room.nextSequenceNo() + 1, 99L, "旧机器人", "20260911001", null,
+                "第一条", "{}", NOW);
+        ChatMessage second = messageRepository.insertRobotMessage(room.id(),
+                room.nextSequenceNo() + 2, 99L, "旧机器人", "20260911001", null,
+                "第二条", "{}", NOW.plusSeconds(1));
+
+        assertThat(messageRepository.updateRobotSenderName(99L, "新机器人")).isEqualTo(2);
+        assertThat(messageRepository.findBeforeSequence(room.id(), room.nextSequenceNo() + 3, 10))
+                .extracting(ChatMessage::id, ChatMessage::senderName)
+                .containsExactly(tuple(second.id(), "新机器人"), tuple(first.id(), "新机器人"));
     }
 
     @Test

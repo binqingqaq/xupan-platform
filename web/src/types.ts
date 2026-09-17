@@ -78,6 +78,7 @@ export interface ChatMessage {
   senderType: ChatSenderType
   senderId: number | null
   senderName: string
+  avatarKey: string | null
   content: string
   payloadJson: string | null
   status: ChatMessageStatus
@@ -97,6 +98,7 @@ export interface AdminUserView {
   id: number
   username: string
   displayName: string
+  avatarKey: string | null
   status: string
   roles?: string[]
   createdAt?: string
@@ -204,6 +206,7 @@ export interface GameView {
   status: 'OPEN' | 'CLOSED'
   phase: 'BETTING' | 'DRAWING' | 'SETTLED'
   balls: BallView[]
+  previousBalls: BallView[]
   odds: OddsView[]
   bets: BetView[]
   account: AccountView

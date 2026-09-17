@@ -6,12 +6,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
-public record UserDetailResponse(long id, String username, String displayName, String status,
+public record UserDetailResponse(long id, String username, String displayName, String avatarKey, String status,
                                  List<String> roles, Instant createdAt, Instant lastLoginAt,
                                  WalletResponse wallet) {
     public static UserDetailResponse from(UserAdminService.UserDetail detail) {
         UserAdminService.WalletSummary wallet = detail.wallet();
-        return new UserDetailResponse(detail.id(), detail.username(), detail.displayName(), detail.status(),
+        return new UserDetailResponse(detail.id(), detail.username(), detail.displayName(), detail.avatarKey(), detail.status(),
                 detail.roles(), detail.createdAt(), detail.lastLoginAt(),
                 wallet == null ? null : new WalletResponse(wallet.accountId(), wallet.balance(), wallet.status()));
     }

@@ -9,6 +9,9 @@ spring:
   flyway:
     enabled: true
 xupan:
+  avatar:
+    storage-dir: ${XUPAN_AVATAR_STORAGE_DIR:${user.dir}/var/uploads/avatars}
+    max-size-bytes: ${XUPAN_AVATAR_MAX_SIZE_BYTES:5242880}
   robot:
     dispatch-interval-ms: ${XUPAN_ROBOT_DISPATCH_INTERVAL_MS:1000}
     dispatch-batch-size: ${XUPAN_ROBOT_DISPATCH_BATCH_SIZE:50}

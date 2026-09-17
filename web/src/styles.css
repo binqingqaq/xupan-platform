@@ -79,13 +79,15 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .history-panel-row b { color: #555; font-weight: 400; white-space: nowrap; }
 .history-ball { display: grid; place-items: center; width: 22px; height: 22px; justify-self: center; border-radius: 50%; background: var(--reference-blue); color: #fff; font-size: 12px; font-weight: 700; line-height: 22px; }
 .history-ball.is-red { background: var(--reference-red); }
-.reference-message { position: relative; min-height: 82px; zoom: 1; }
+.reference-message { position: relative; min-height: 0; padding-top: 30px; padding-bottom: 12px; zoom: 1; }
 .reference-message::after { display: block; height: 0; clear: both; content: "."; visibility: hidden; }
-.reference-bubble { position: relative; float: left; display: inline-block; min-width: 30px; max-width: 80%; min-height: 30px; margin: 30px 0 0 68px; border: 1px solid var(--reference-border); border-radius: 10px; background: #fff; }
+.reference-bubble { position: relative; float: left; display: inline-block; min-width: 30px; max-width: 80%; min-height: 30px; margin: 0 0 0 68px; border: 1px solid var(--reference-border); border-radius: 10px; background: #fff; }
+.reference-message .reference-bubble { margin-top: 0; }
 .reference-bubble::before, .reference-bubble::after { position: absolute; left: -16px; display: block; width: 0; height: 0; overflow: hidden; content: ""; border-width: 8px; border-style: solid dashed dashed; border-color: transparent var(--reference-border) transparent transparent; top: 7px; }
 .reference-bubble::after { left: -16px; top: 5px; border-width: 10px; border-color: transparent #fff transparent transparent; }
 .reference-avatar { position: absolute; top: -10px; left: -55px; display: grid; place-items: center; width: 45px; height: 45px; overflow: hidden; border-radius: 50%; background: #d5c4b4; color: #fff; font-size: 17px; font-weight: 700; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .reference-avatar.is-robot { background: #7bd246; color: #fff; }
+.reference-avatar img, .admin-avatar-preview img, .avatar-setting-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .reference-name { position: absolute; top: -18px; left: 0; margin: 0; color: #f14668; font-size: 12px; font-weight: 700; line-height: 15px; white-space: nowrap; }
 .reference-pre { position: relative; margin: 6px; color: #000; font-family: inherit; font-size: 15px; font-weight: 500; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; user-select: text; }
 .message-robot .reference-bubble { max-width: 80%; }
@@ -95,8 +97,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .message-mine .reference-bubble::after { left: auto; right: -16px; border-color: transparent transparent transparent #a1e85a; }
 .message-mine .reference-avatar { left: auto; right: -60px; }
 .message-mine .reference-name { left: auto; right: 0; }
-.reference-time { width: 100%; margin: 18px 0 0; text-align: center; }
-.reference-time span { display: inline-block; border-radius: 4px; padding: 2px 5px; background: var(--reference-muted); color: #fff; font-size: 12px; line-height: 12px; }
+.reference-time { position: relative; z-index: 1; width: 100%; height: 0; margin: 0; line-height: 16px; text-align: center; }
+.reference-time span { position: relative; top: 4px; display: inline-block; border-radius: 4px; padding: 2px 5px; background: var(--reference-muted); color: #fff; font-size: 12px; line-height: 12px; }
 .chat-state { padding: 48px 20px; color: #888; text-align: center; }
 .chat-connection-status { margin: 4px 10px; border: 1px solid #c7dceb; border-radius: 3px; background: #f1f8fd; color: #5c7890; font-size: 12px; line-height: 20px; text-align: center; }
 .chat-connection-status.degraded { border-color: #e6c8a2; background: #fff8ed; color: #9a641d; }
@@ -130,18 +132,87 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .keyboard-toggle > span { display: flex; justify-content: center; gap: 2px; height: 5px; }
 .keyboard-toggle i { display: block; width: 4px; height: 4px; border-radius: 2px; background: #686868; }
 .keyboard-toggle::after { position: absolute; bottom: 3px; left: 50%; width: 12px; height: 3px; transform: translateX(-50%); border-radius: 2px; background: #686868; content: ""; }
-.keyboard-toggle.active { border-color: #0876d8; }
-.reference-input { flex: 1; min-width: 0; height: 34px; margin: 10px 0 10px 9px; resize: none; overflow: hidden; border: 1px solid #dcdcde; border-radius: 8px; background: #fcfcfc; color: #000; padding: 5px 8px; font-size: 16px; line-height: 22px; outline: none; }
-.reference-input:focus { border-color: #485fc7; box-shadow: 0 0 0 2px rgba(72,95,199,.18); }
+.keyboard-toggle.active { border-color: #7d7d81; }
+.keyboard-toggle:focus, .keyboard-toggle:focus-visible { outline: none; box-shadow: none; }
+.reference-input { flex: 1; min-width: 0; height: 34px; max-height: 176px; margin: 10px 0 10px 9px; resize: none; overflow-x: hidden; overflow-y: auto; border: 1px solid #dcdcde; border-radius: 8px; background: #fcfcfc; color: #000; padding: 5px 8px; font-size: 16px; line-height: 22px; outline: none; }
+.reference-input:focus, .reference-input:focus-visible { border-color: #dcdcde; box-shadow: none; outline: none; }
 .reference-send { flex: 0 0 55px; width: 55px; height: 32px; margin: 0 5px 0 8px; border: 0; border-radius: 2px; background: var(--reference-send); color: #fff; font-size: 14px; font-weight: 700; line-height: 32px; padding: 0; }
 .reference-send:disabled { cursor: wait; opacity: .6; }
-.reference-keyboard { padding: 5px 2%; background: #d0d3dc; }
-.keyboard-play-row, .keyboard-number-row, .keyboard-amount-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-bottom: 4px; }
-.reference-keyboard button { min-width: 32px; min-height: 30px; border: 0; border-radius: 2px; background: #fdffff; color: #000; font-size: 14px; font-weight: 700; padding: 0 7px; }
-.keyboard-play-row button { min-width: 41px; font-size: 13px; }
-.keyboard-amount-row button { background: #fff; }
-.reference-keyboard button:hover, .reference-keyboard button:active, .reference-keyboard button.active { background: #0876d8; color: #fff; }
-.reference-keyboard button.danger { color: #f00; }
+.reference-keyboard { padding: 4px 0 0; background: var(--reference-bg); }
+.keyboard-columns { display: flex; align-items: flex-start; }
+.keyboard-columns-stacked { flex-direction: row; }
+.keyboard-panel { width: 50%; min-width: 0; }
+.keyboard-columns-stacked .keyboard-panel { width: 50%; }
+.keyboard-number-panel { flex: 1 1 auto; width: auto; }
+.keyboard-action-panel { flex: 0 0 auto; min-width: 0; margin-left: auto; }
+.keyboard-play-panel > .keyboard-buttons { justify-content: flex-start; }
+.keyboard-second-row-buttons { display: flex; align-items: center; justify-content: center; }
+.keyboard-buttons { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; }
+.keyboard-columns-flat { flex-wrap: wrap; align-items: center; justify-content: center; }
+.keyboard-columns-flat .keyboard-panel { width: auto; }
+.keyboard-columns-flat .keyboard-number-panel { flex: 0 0 auto; }
+.keyboard-columns-flat .keyboard-buttons { flex-wrap: nowrap; }
+.keyboard-columns-flat .keyboard-number-panel { margin-left: 54px; }
+.keyboard-columns-flat .keyboard-action-panel { margin-left: 0; }
+.reference-keyboard button { flex: 0 0 39px; width: 39px; height: 30px; min-height: 30px; margin: 0 2.8px 4px; border: 1px solid #dbdbdb; border-radius: 9999px; background: #fff; color: #363636; font-family: "Helvetica Neue", Helvetica, "PingFang SC", "Microsoft YaHei", Tahoma, Arial, sans-serif; font-size: 12px; font-weight: 700; line-height: 18px; padding: 5px 4px; transition: box-shadow .12s ease, border-color .12s ease; }
+.reference-keyboard button.wide { flex-basis: 59px; width: 59px; }
+.reference-keyboard button:hover, .reference-keyboard button:active, .reference-keyboard button.active, .reference-keyboard button.selected { border-color: #8f8f8f; box-shadow: inset 0 0 0 1px rgba(72,72,72,.32); }
+.reference-keyboard button.keyboard-key-success { background: #effaf5; }
+.reference-keyboard button.keyboard-key-info { background: #eff5fb; }
+.reference-keyboard button.keyboard-key-danger { border-color: #f14668; background: #f14668; color: #fff; }
+.reference-keyboard button.keyboard-key-link { background: #eff1fa; }
+.reference-keyboard button.keyboard-key-primary { background: #ebfffc; }
+.reference-keyboard button.keyboard-key-danger-light { background: #feecef; color: #d33; }
+.reference-keyboard button.keyboard-key-warning { background: #fffaeb; color: #8a5a00; }
+.reference-keyboard button:focus-visible { outline: 2px solid #485fc7; outline-offset: 2px; }
+
+/* 界面2保留同一聊天室数据，只切换为参考站的紧凑消息和方格键盘布局。 */
+.reference-room.interface-two .reference-message-feed { padding-top: 0; }
+.reference-room.interface-two .reference-message { min-height: 0; padding-top: 20px; padding-bottom: 10px; }
+.reference-room.interface-two .reference-bubble { max-width: 72%; margin-top: 0; margin-left: 68px; border-radius: 4px; }
+.reference-room.interface-two .message-mine .reference-bubble { margin-right: 68px; }
+.reference-room.interface-two .reference-avatar { top: -8px; left: -58px; width: 46px; height: 46px; border-radius: 2px; font-size: 13px; }
+.reference-room.interface-two .message-mine .reference-avatar { right: -58px; }
+.reference-room.interface-two .message-mine .reference-avatar { display: none; }
+.reference-room.interface-two .reference-name { top: -17px; font-size: 12px; }
+.reference-room.interface-two .reference-pre { margin: 4px; font-size: 16px; line-height: 22px; }
+.reference-room.interface-two .reference-message-time { margin: 0 4px 3px; font-size: 11px; line-height: 14px; }
+.reference-room.interface-two .reference-time { height: 0; margin: 0; line-height: 14px; }
+.reference-room.interface-two .reference-time span { top: 2px; font-size: 11px; line-height: 11px; }
+.reference-room.interface-two .composer-row { min-height: 46px; }
+.reference-room.interface-two .reference-input { height: 30px; margin-top: 7px; margin-bottom: 7px; border-radius: 2px; }
+.reference-room.interface-two .reference-keyboard { border-top: 1px solid #c3c6cf; background: #d0d3dd; padding: 4px 3%; }
+.reference-room.interface-two .keyboard-columns { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); align-items: stretch; gap: 4px; }
+.reference-room.interface-two .keyboard-panel,
+.reference-room.interface-two .keyboard-buttons,
+.reference-room.interface-two .keyboard-second-row-buttons,
+.reference-room.interface-two .keyboard-action-panel { display: contents; width: auto; margin: 0; }
+.reference-room.interface-two .reference-keyboard button { width: auto; min-width: 0; height: 30px; min-height: 30px; margin: 0; border: 0; border-radius: 0; background: #fff; color: #111; font-size: 14px; font-weight: 700; padding: 0 4px; box-shadow: none; }
+.reference-room.interface-two .reference-keyboard button.wide { width: auto; grid-column: span 2; }
+.reference-room.interface-two .reference-keyboard button:hover,
+.reference-room.interface-two .reference-keyboard button:active,
+.reference-room.interface-two .reference-keyboard button.active,
+.reference-room.interface-two .reference-keyboard button.selected { border: 0; box-shadow: inset 0 0 0 2px #1988d0; }
+.reference-room.interface-two .reference-keyboard button.keyboard-key-danger { background: #fff; color: #e50000; }
+.reference-room.interface-two .reference-keyboard button.keyboard-key-danger-light { background: #fff; color: #e50000; }
+.reference-room.interface-two .reference-keyboard button.keyboard-key-warning { background: #fff; color: #111; }
+.reference-room.interface-two .reference-keyboard button.keyboard-key-info,
+.reference-room.interface-two .reference-keyboard button.keyboard-key-success,
+.reference-room.interface-two .reference-keyboard button.keyboard-key-link,
+.reference-room.interface-two .reference-keyboard button.keyboard-key-primary { background: #fff; }
+.reference-room.interface-two .keyboard-columns-flat .keyboard-number-panel { margin-left: 0; }
+.reference-room.interface-two .interface-menu { z-index: 100; }
+.reference-room.interface-two .interface-two-keyboard { border-top: 1px solid #c3c6cf; background: #d0d3dd; padding: 4px 3%; }
+.interface-two-keyboard-grid { display: grid; gap: 4px; }
+.interface-two-keyboard-row { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.interface-two-keyboard-row button { min-width: 0; height: 30px; border: 0; border-radius: 0; background: #fff; color: #111; font-size: 14px; font-weight: 700; line-height: 30px; padding: 0 4px; }
+.interface-two-keyboard-row button.keyboard-key-danger,
+.interface-two-keyboard-row button.keyboard-key-danger-light { background: #fff; color: #e50000; }
+.interface-two-keyboard-row button.keyboard-key-warning { background: #fff; color: #111; }
+.interface-two-keyboard-row button:hover,
+.interface-two-keyboard-row button:active,
+.interface-two-keyboard-row button.active,
+.interface-two-keyboard-row button.selected { box-shadow: inset 0 0 0 2px #1988d0; }
 
 .odds-quickbar { min-height: 170px; padding: 6px 10px 8px; background: #1577c7; color: #fff; }
 .odds-quickbar-top { display: flex; align-items: center; justify-content: space-between; height: 25px; font-size: 14px; }
@@ -178,6 +249,14 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .settings-body label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; font-size: 13px; }
 .settings-body input { width: 130px; height: 34px; border: 1px solid #ccc; border-radius: 2px; padding: 4px 8px; font-size: 14px; }
 .settings-save { display: block; width: 100%; height: 36px; margin-top: 8px; border: 0; border-radius: 2px; background: #1577c7; color: #fff; font-weight: 700; }
+.avatar-setting-row, .admin-avatar-editor { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.avatar-setting-preview, .admin-avatar-preview { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 48px; overflow: hidden; border-radius: 50%; background: #d5c4b4; color: #fff; font-size: 20px; font-weight: 700; }
+.avatar-setting-row small, .admin-avatar-editor small { display: block; margin-top: 3px; color: #888; font-size: 11px; }
+.avatar-file-field { display: block !important; margin-bottom: 8px; }
+.avatar-file-field input { width: 100% !important; height: auto !important; padding: 6px 0 !important; border: 0 !important; }
+.admin-avatar-editor { align-items: flex-end; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid #ededed; border-bottom: 1px solid #ededed; }
+.admin-avatar-editor label { flex: 1 1 180px; font-size: 12px; }
+.admin-avatar-editor input { display: block; width: 100%; margin-top: 5px; }
 
 .reference-toast { position: fixed; right: 18px; bottom: 76px; z-index: 120; max-width: min(360px, calc(100vw - 36px)); margin: 0; border: 1px solid; border-radius: 4px; background: #fff; padding: 10px 14px; font-size: 13px; }
 .toast-success { border-color: #a9d7cc; color: #157d67; }
@@ -244,7 +323,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 
 @media (min-width: 620px) {
   .reference-pre { font-size: 20px; line-height: 24px; }
-  .reference-message { min-height: 96px; }
+  .reference-message { min-height: 0; }
   .reference-bubble { max-width: 55%; }
   .message-result .reference-bubble { max-width: 90%; }
 }
@@ -273,6 +352,9 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .odds-quickbar { min-height: 170px; padding-left: 5px; padding-right: 5px; }
   .odds-quickbar button { min-width: 28px; padding: 0 5px; }
   .odds-quickbar-actions button { min-width: 65px; }
+  .keyboard-columns { flex-direction: column; }
+  .keyboard-panel { width: 100%; }
+  .keyboard-action-panel { width: 100%; }
   .history-panel-heading, .history-panel-row { grid-template-columns: 46px minmax(190px, 1fr) 72px; gap: 5px; }
 }
 
@@ -289,8 +371,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .header-menu { font-size: 12px; }
   .quick-menu { right: 66px; }
   .reference-send { margin-left: 5px; margin-right: 5px; }
-  .reference-keyboard button { min-width: 28px; padding: 0 5px; }
-  .keyboard-play-row button { min-width: 34px; }
+  .reference-keyboard button { flex-basis: 34px; width: 34px; margin-right: 2px; margin-left: 2px; padding: 5px 2px; }
+  .reference-keyboard button.wide { flex-basis: 52px; width: 52px; }
   .scratch-panel h2 { font-size: 22px; }
 }
 

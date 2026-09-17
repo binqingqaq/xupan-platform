@@ -119,6 +119,17 @@ public class ChatMessageRepository {
                 new IllegalStateException("写入机器人聊天消息后未找到消息"));
     }
 
+    public int updateRobotSenderName(long robotId, String senderName) {
+        if (robotId <= 0 || senderName == null || senderName.isBlank()) {
+            throw new IllegalArgumentException("机器人消息名称参数无效");
+        }
+        return jdbcTemplate.update("""
+                UPDATE chat_message
+                 SET sender_name = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE sender_type = 'ROBOT' AND sender_id = ? AND sender_name <> ?
+                """, senderName, robotId, senderName);
+    }
+
     private static Number generatedMessageId(KeyHolder keyHolder) {
         if (keyHolder.getKeys() != null) {
             for (var entry : keyHolder.getKeys().entrySet()) {

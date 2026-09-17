@@ -138,6 +138,26 @@ public class GameDataRepository {
                 """);
     }
 
+    public Optional<IssueRecord> findLatestSettledIssue() {
+        return findIssue("""
+                SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
+                  FROM game_issue
+                 WHERE phase = 'SETTLED'
+                   AND number_1 IS NOT NULL
+                   AND number_2 IS NOT NULL
+                   AND number_3 IS NOT NULL
+                   AND number_4 IS NOT NULL
+                   AND number_5 IS NOT NULL
+                   AND number_6 IS NOT NULL
+                   AND number_7 IS NOT NULL
+                   AND number_8 IS NOT NULL
+                 ORDER BY id DESC
+                 LIMIT 1
+                """);
+    }
+
     public void saveOdds(PlayType playType, BigDecimal odds) {
         int updated = jdbcTemplate.update("""
                 UPDATE game_odds

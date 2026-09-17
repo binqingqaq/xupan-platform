@@ -2,6 +2,8 @@ package com.xupan.server.robot.service;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.chat.realtime.ChatRobotUpdatedEvent;
+import com.xupan.server.chat.repository.ChatMessageRepository;
 import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.ChatRobotDispatch;
 import com.xupan.server.robot.domain.ChatRobotTemplate;
@@ -12,6 +14,7 @@ import com.xupan.server.robot.repository.RobotDispatchRepository;
 import com.xupan.server.robot.repository.RobotRepository;
 import com.xupan.server.robot.repository.RobotTemplateRepository;
 import com.xupan.server.web.BusinessException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,6 +43,7 @@ public class RobotAdminService {
     private static final String PERMISSION_READ = "ROBOT_READ";
     private static final String PERMISSION_WRITE = "ROBOT_WRITE";
     private static final String PERMISSION_TEMPLATE_WRITE = "ROBOT_TEMPLATE_WRITE";
+    private static final String CHAT_ROOM_CODE = "main";
 
     private final RobotRepository robotRepository;
     private final RobotTemplateRepository templateRepository;
@@ -47,19 +51,25 @@ public class RobotAdminService {
     private final RobotTemplateRenderer templateRenderer;
     private final PermissionService permissionService;
     private final OperationAuditRepository auditRepository;
+    private final ChatMessageRepository chatMessageRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public RobotAdminService(RobotRepository robotRepository,
                              RobotTemplateRepository templateRepository,
                              RobotDispatchRepository dispatchRepository,
                              RobotTemplateRenderer templateRenderer,
                              PermissionService permissionService,
-                             OperationAuditRepository auditRepository) {
+                             OperationAuditRepository auditRepository,
+                             ChatMessageRepository chatMessageRepository,
+                             ApplicationEventPublisher eventPublisher) {
         this.robotRepository = robotRepository;
         this.templateRepository = templateRepository;
         this.dispatchRepository = dispatchRepository;
         this.templateRenderer = templateRenderer;
         this.permissionService = permissionService;
         this.auditRepository = auditRepository;
+        this.chatMessageRepository = chatMessageRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -115,7 +125,7 @@ public class RobotAdminService {
         requirePermission(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId));
         return audited(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId),
                 "action=update", () -> {
-                    requireRobot(robotId);
+                    ChatRobot current = requireRobot(robotId);
                     String name = normalizeText(displayName, "ROBOT_DISPLAY_NAME_INVALID",
                             "机器人显示名称不能为空或过长", 32);
                     String avatar = normalizeText(avatarKey, "ROBOT_AVATAR_INVALID",
@@ -124,6 +134,11 @@ public class RobotAdminService {
                     validateDelay(delaySeconds);
                     if (robotRepository.update(robotId, name, avatar, weight, delaySeconds) != 1) {
                         throw BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在");
+                    }
+                    int synchronizedMessages = chatMessageRepository.updateRobotSenderName(robotId, name);
+                    if (!current.displayName().equals(name) || synchronizedMessages > 0) {
+                        eventPublisher.publishEvent(new ChatRobotUpdatedEvent(robotId, name,
+                                CHAT_ROOM_CODE));
                     }
                     return detail(requireRobot(robotId));
                 });
@@ -141,6 +156,24 @@ public class RobotAdminService {
                         throw BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在");
                     }
                     return detail(requireRobot(robotId));
+                });
+    }
+
+    @Transactional
+    public RobotDetail updateAvatar(long operatorUserId, long robotId, String avatarKey) {
+        String path = "/api/admin/robots/" + robotId + "/avatar";
+        requirePermission(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId));
+        return audited(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId),
+                "action=avatar-update", () -> {
+                    ChatRobot robot = requireRobot(robotId);
+                    if (avatarKey == null || avatarKey.isBlank() || avatarKey.length() > 255) {
+                        throw BusinessException.badRequest("ROBOT_AVATAR_INVALID", "机器人头像键无效");
+                    }
+                    if (robotRepository.updateAvatarKey(robotId, avatarKey) != 1) {
+                        throw BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在");
+                    }
+                    return detail(robotRepository.findById(robotId).orElseThrow(() ->
+                            BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在")));
                 });
     }
 

@@ -143,6 +143,18 @@ public class RobotRepository {
                 """, requiredStatus(status).name(), robotId);
     }
 
+    @Transactional
+    public int updateAvatarKey(long robotId, String avatarKey) {
+        if (robotId <= 0 || avatarKey == null || avatarKey.isBlank() || avatarKey.length() > 255) {
+            throw new IllegalArgumentException("机器人头像参数无效");
+        }
+        return jdbcTemplate.update("""
+                UPDATE chat_robot
+                   SET avatar_key = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, avatarKey, robotId);
+    }
+
     private ChatRobot mapRobot(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         return new ChatRobot(rs.getLong("id"), rs.getString("robot_code"),
                 rs.getString("display_name"), rs.getString("avatar_key"),

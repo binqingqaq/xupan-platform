@@ -2,6 +2,8 @@ package com.xupan.server.robot;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.chat.realtime.ChatRobotUpdatedEvent;
+import com.xupan.server.chat.repository.ChatMessageRepository;
 import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.ChatRobotDispatch;
 import com.xupan.server.robot.domain.ChatRobotTemplate;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Instant;
 import java.util.List;
@@ -49,13 +52,18 @@ class RobotAdminServiceTest {
     private PermissionService permissionService;
     @Mock
     private OperationAuditRepository auditRepository;
+    @Mock
+    private ChatMessageRepository chatMessageRepository;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     private RobotAdminService service;
 
     @BeforeEach
     void setUp() {
         service = new RobotAdminService(robotRepository, templateRepository, dispatchRepository,
-                templateRenderer, permissionService, auditRepository);
+                templateRenderer, permissionService, auditRepository, chatMessageRepository,
+                eventPublisher);
     }
 
     @Test
@@ -91,6 +99,41 @@ class RobotAdminServiceTest {
         verify(auditRepository).record(eq(OPERATOR_ID), eq("ROBOT_WRITE"), eq("POST"),
                 eq("/api/admin/robots"), eq(null), eq("SUCCESS"), eq(null),
                 eq("action=create"), eq(null), any());
+    }
+
+    @Test
+    void updatesRobotNameAndSynchronizesHistoricalMessages() {
+        when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_WRITE")).thenReturn(true);
+        ChatRobot previous = robot(11L, "notice_bot", "旧名称", RobotStatus.ENABLED, 30, 5);
+        ChatRobot updated = robot(11L, "notice_bot", "新名称", RobotStatus.ENABLED, 30, 5);
+        when(robotRepository.findById(11L)).thenReturn(Optional.of(previous), Optional.of(updated));
+        when(robotRepository.update(11L, "新名称", "robot-default", 30, 5)).thenReturn(1);
+        when(chatMessageRepository.updateRobotSenderName(11L, "新名称")).thenReturn(3);
+        stubDispatchStatistics(11L);
+        when(templateRepository.findAll(11L)).thenReturn(List.of());
+
+        RobotAdminService.RobotDetail result = service.updateRobot(OPERATOR_ID, 11L,
+                "新名称", "robot-default", 30, 5);
+
+        assertThat(result.robot()).isEqualTo(updated);
+        verify(chatMessageRepository).updateRobotSenderName(11L, "新名称");
+        verify(eventPublisher).publishEvent(any(ChatRobotUpdatedEvent.class));
+    }
+
+    @Test
+    void repairsHistoricalMessagesEvenWhenRobotNameIsAlreadyCurrent() {
+        when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_WRITE")).thenReturn(true);
+        ChatRobot robot = robot(11L, "notice_bot", "机器人", RobotStatus.ENABLED, 30, 5);
+        when(robotRepository.findById(11L)).thenReturn(Optional.of(robot), Optional.of(robot));
+        when(robotRepository.update(11L, "机器人", "robot-default", 30, 5)).thenReturn(1);
+        when(chatMessageRepository.updateRobotSenderName(11L, "机器人")).thenReturn(7784);
+        stubDispatchStatistics(11L);
+        when(templateRepository.findAll(11L)).thenReturn(List.of());
+
+        service.updateRobot(OPERATOR_ID, 11L, "机器人", "robot-default", 30, 5);
+
+        verify(chatMessageRepository).updateRobotSenderName(11L, "机器人");
+        verify(eventPublisher).publishEvent(any(ChatRobotUpdatedEvent.class));
     }
 
     @Test

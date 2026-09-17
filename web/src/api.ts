@@ -92,6 +92,9 @@ export class ApiError extends Error {
 
 export function apiErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof ApiError)) return fallback
+  if (error.code === 'AVATAR_FILE_INVALID') return '请选择有效的头像图片'
+  if (error.code === 'AVATAR_FILE_TOO_LARGE') return '头像图片不能超过 5 MB'
+  if (error.code === 'AVATAR_FILE_TYPE_INVALID') return '头像只支持 JPG、PNG、GIF 或 WebP 图片'
   if (error.code === 'AUTH_INVALID_CREDENTIALS') return '用户名或密码错误'
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
@@ -191,7 +194,9 @@ export async function restoreSession(): Promise<CurrentUserView | null> {
 
 async function request<T>(url: string, options: RequestInit = {}, retryOnUnauthorized = true): Promise<T> {
   const headers = new Headers(options.headers)
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
   headers.set('Accept', 'application/json')
   const accessToken = getAccessToken()
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
@@ -217,6 +222,9 @@ async function request<T>(url: string, options: RequestInit = {}, retryOnUnautho
 }
 
 export const api = {
+  avatarUrl: (avatarKey: string | null | undefined) => avatarKey
+    ? `/api/media/avatars/${encodeURIComponent(avatarKey)}`
+    : '',
   hasAccessToken: () => Boolean(getAccessToken()),
   login: (username: string, password: string) => request<{ accessToken: string; user: CurrentUserView }>('/api/auth/login', {
     method: 'POST',
@@ -233,6 +241,11 @@ export const api = {
     }
   },
   me: () => request<CurrentUserView>('/api/auth/me'),
+  uploadMyAvatar: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<{ avatarKey: string; url: string }>('/api/me/avatar', { method: 'PUT', body: form })
+  },
   getChatWsTicket: (roomCode: string) =>
     request<ChatWsTicketResponse>(`/api/auth/ws-ticket?roomCode=${encodeURIComponent(roomCode)}`, {
       method: 'POST',
@@ -285,6 +298,11 @@ export const api = {
     return request<AdminUserPage>(`/api/admin/users?${query.toString()}`)
   },
   getAdminUser: (userId: number) => request<AdminUserDetail>(`/api/admin/users/${userId}`),
+  uploadAdminUserAvatar: (userId: number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<{ avatarKey: string; url: string }>(`/api/admin/users/${userId}/avatar`, { method: 'PUT', body: form })
+  },
   getAdminRoles: () => request<AdminRoleOption[]>('/api/admin/roles'),
   createAdminUser: (payload: CreateAdminUserRequest) =>
     request<AdminUserView>('/api/admin/users', { method: 'POST', body: JSON.stringify(payload) }),
@@ -313,6 +331,11 @@ export const api = {
     request<RobotDetail>('/api/admin/robots', { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminRobot: (robotId: number, payload: UpdateRobotRequest) =>
     request<RobotDetail>(`/api/admin/robots/${robotId}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  uploadAdminRobotAvatar: (robotId: number, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<{ avatarKey: string; url: string }>(`/api/admin/robots/${robotId}/avatar`, { method: 'PUT', body: form })
+  },
   changeAdminRobotStatus: (robotId: number, status: RobotStatus) => {
     const payload: ChangeRobotStatusRequest = { status }
     return request<RobotDetail>(`/api/admin/robots/${robotId}/status`, {
