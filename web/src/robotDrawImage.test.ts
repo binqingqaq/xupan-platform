@@ -35,4 +35,20 @@ describe('renderRobotDrawImage', () => {
     expect(svg).toContain('特&amp;')
     expect(svg).not.toContain('<用户>')
   })
+
+  it('renders the route chart labels in its own header row without a table separator line', () => {
+    const image = renderRobotDrawImage({
+      schema: 'xupan.chat-payload.v1',
+      component: 'DRAW_HISTORY',
+      issueNumber: '3000001',
+      data: { items: [{ issueNumber: '3000000', numbers: [1, 2, 3, 4, 5, 6, 7, 8], settledAt: '2026-09-17T11:00:00Z' }] },
+    })
+    const svg = decodeURIComponent(image.dataUrl.slice(image.dataUrl.indexOf(',') + 1))
+
+    expect(svg).toContain('>路</text>')
+    expect(svg).toContain('>字</text>')
+    expect(svg).toContain('>图</text>')
+    expect(svg).toContain('fill="#d1d1d1"')
+    expect(svg).not.toContain('<line')
+  })
 })

@@ -79,21 +79,27 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
   const gridTop = tableTop + Math.max(payload.data.items.length, 1) * rowHeight + 8
   const gridColumns = 12
   const gridRows = 5
-  const height = gridTop + gridRows * 37 + 10
+  const gridHeaderHeight = 26
+  const height = gridTop + gridHeaderHeight + gridRows * 37 + 10
   const items = payload.data.items
   const rows = items.map((item, rowIndex) => {
     const y = tableTop + rowIndex * rowHeight
     const numberStart = 345
     const circles = item.numbers.map((number, index) => ball(number, numberStart + index * 43, y + 17, 12, index === 7)).join('')
     const special = item.numbers[7]
-    return `<line x1="1" y1="${y + rowHeight}" x2="1119" y2="${y + rowHeight}" stroke="#e1e1e1"/><text x="125" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="255" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="748" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="762.5" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="797" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
+    const highlight = rowIndex === 0 ? `<rect x="1" y="${y}" width="1118" height="${rowHeight}" fill="none" stroke="#ff4550"/>` : ''
+    return `${highlight}<text x="125" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="255" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="748" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="762.5" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="797" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
   }).join('')
   const gridValues = items.flatMap(item => item.numbers.map(fanOf)).slice(0, gridColumns * gridRows)
   const grid = Array.from({ length: gridColumns * gridRows }, (_, index) => {
     const value = gridValues[index]
     const x = index % gridColumns * 93.25
-    const y = gridTop + Math.floor(index / gridColumns) * 37
-    return `<rect x="${x + 1}" y="${y}" width="92.25" height="36" fill="#fff" stroke="#d5dadd"/><rect x="${x + 32}" y="${y + 5}" width="28" height="26" fill="${value ? COLORS[value - 1] : '#fff'}" stroke="#4b4f52"/>${value ? `<text x="${x + 46}" y="${y + 24}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${value}</text>` : ''}`
+    const y = gridTop + gridHeaderHeight + Math.floor(index / gridColumns) * 37
+    return `<rect x="${x + 1}" y="${y}" width="92.25" height="36" fill="#fff" stroke="#888"/><rect x="${x + 32}" y="${y + 5}" width="28" height="26" fill="${value ? COLORS[value - 1] : '#fff'}" stroke="#111"/>${value ? `<text x="${x + 46}" y="${y + 24}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${value}</text>` : ''}`
+  }).join('')
+  const gridHeader = Array.from({ length: gridColumns }, (_, index) => {
+    const x = index * 93.25
+    return `<rect x="${x + 1}" y="${gridTop}" width="92.25" height="${gridHeaderHeight}" fill="#d1d1d1" stroke="#888"/>`
   }).join('')
   const body = `
     <rect x="1" y="1" width="1118" height="37" rx="10" fill="#3db3d9"/>
@@ -103,7 +109,10 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
     <text x="535" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">结果</text>
     <text x="900" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">番</text>
     ${rows || '<text x="560" y="70" fill="#777" font-family="' + FONT + '" font-size="16" text-anchor="middle">暂无历史开奖</text>'}
-    <text x="535" y="${gridTop - 7}" fill="#555" font-family="${FONT}" font-size="13" text-anchor="middle">路　字　图</text>
+    ${gridHeader}
+    <text x="419.5" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">路</text>
+    <text x="512.75" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">字</text>
+    <text x="606" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">图</text>
     ${grid}
   `
   return {
