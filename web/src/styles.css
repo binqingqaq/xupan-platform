@@ -93,22 +93,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-pre { position: relative; margin: 6px; color: #000; font-family: inherit; font-size: 15px; font-weight: 500; line-height: 20px; white-space: pre-wrap; overflow-wrap: break-word; user-select: text; }
 .message-robot .reference-bubble { max-width: 80%; }
 .message-result .reference-bubble { max-width: 84%; background: #fff; }
-.robot-draw-message { max-width: 100%; margin: 6px; padding: 9px 10px; border: 1px solid #d7e5ec; background: #f8fbfc; color: #263746; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
-.robot-draw-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 8px; }
-.robot-draw-heading strong { color: #1c5579; font-size: 13px; }
-.robot-draw-heading span, .robot-draw-heading time, .robot-draw-history-row time { color: #748693; font-size: 11px; font-variant-numeric: tabular-nums; }
-.robot-draw-number-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
-.robot-draw-number-grid span, .robot-draw-history-numbers span { display: grid; aspect-ratio: 1; min-width: 0; place-items: center; border-radius: 50%; background: #2683b5; color: #fff; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.robot-draw-number-grid span.is-last, .robot-draw-history-numbers span.is-last { background: #d45758; }
-.robot-draw-history { display: grid; gap: 5px; }
-.robot-draw-history-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 112px; align-items: center; gap: 7px; padding: 5px 0; border-top: 1px solid #e2ebef; }
-.robot-draw-history-row > strong { color: #345568; font-size: 11px; font-weight: 600; white-space: nowrap; }
-.robot-draw-history-numbers { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; min-width: 0; }
-.robot-draw-history-numbers span { font-size: 10px; }
-.robot-draw-winners { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
-.robot-draw-winners li { display: flex; flex-wrap: wrap; gap: 3px 10px; padding: 5px 0; border-top: 1px solid #e2ebef; color: #526a78; }
-.robot-draw-winner-user { min-width: 52px; color: #1c5579; font-weight: 700; }
-.robot-draw-empty { margin: 0; padding: 6px 0 2px; color: #748693; }
+.robot-draw-image-wrap { max-width: 100%; margin: 0; padding: 0; line-height: 0; user-select: none; -webkit-user-select: none; }
+.robot-draw-image { display: block; width: 100%; max-width: 100%; height: auto; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .message-mine .reference-bubble { float: right; margin: 30px 68px 0 0; border-color: #84b559; border-radius: 7px; background: #a1e85a; color: #253f0f; }
 .message-mine .reference-bubble::before { left: auto; right: -16px; border-color: transparent transparent transparent #84b559; }
 .message-mine .reference-bubble::after { left: auto; right: -16px; border-color: transparent transparent transparent #a1e85a; }
@@ -343,6 +329,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .reference-message { min-height: 0; }
   .reference-bubble { max-width: 55%; }
   .message-result .reference-bubble { max-width: 90%; }
+  .message-robot .reference-bubble { width: min(90%, 960px); max-width: min(90%, 960px); }
 }
 
 @media (max-width: 620px) {
@@ -361,6 +348,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .collapse-button { flex-basis: 42px; width: 42px; margin-right: 6px; }
   .reference-bubble { max-width: 270px; margin-top: 30px; }
   .message-result .reference-bubble { width: 84%; max-width: 84%; }
+  .message-robot .reference-bubble { width: 84%; max-width: 84%; }
   .reference-avatar { top: -10px; left: -55px; width: 45px; height: 45px; }
   .reference-pre { font-size: 15px; line-height: 20px; }
   .history-heading, .history-row { grid-template-columns: 36px 44px minmax(150px, 1fr) 55px; }
@@ -389,9 +377,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .header-menu { font-size: 12px; }
   .quick-menu { right: 66px; }
   .reference-send { margin-left: 5px; margin-right: 5px; }
-  .robot-draw-message { margin: 5px; padding: 8px; }
-  .robot-draw-history-row { grid-template-columns: 58px minmax(0, 1fr); }
-  .robot-draw-history-row time { grid-column: 2; }
   .reference-keyboard button { flex-basis: 34px; width: 34px; margin-right: 2px; margin-left: 2px; padding: 5px 2px; }
   .reference-keyboard button.wide { flex-basis: 52px; width: 52px; }
   .scratch-panel h2 { font-size: 22px; }

@@ -1,0 +1,36 @@
+import { describe, expect, it } from 'vitest'
+import { renderRobotDrawImage } from './robotDrawImage'
+
+describe('renderRobotDrawImage', () => {
+  it('creates a self-contained summary image without a selectable text payload', () => {
+    const image = renderRobotDrawImage({
+      schema: 'xupan.chat-payload.v1',
+      component: 'DRAW_SUMMARY',
+      issueNumber: '3000001',
+      data: { numbers: [1, 2, 3, 4, 5, 6, 7, 18], settledAt: '2026-09-17T11:05:40Z' },
+    })
+
+    expect(image.dataUrl).toMatch(/^data:image\/svg\+xml;charset=UTF-8,/)
+    const svg = decodeURIComponent(image.dataUrl.slice(image.dataUrl.indexOf(',') + 1))
+    expect(svg).toContain('<svg')
+    expect(svg).toContain('3000001')
+    expect(svg).toContain('18')
+    expect(svg).not.toMatch(/<(image|use)\b/)
+    expect(svg).not.toMatch(/(?:href|xlink:href)="https?:\/\//)
+    expect(image.width).toBeGreaterThan(image.height)
+  })
+
+  it('escapes user-facing winner content inside the image document', () => {
+    const image = renderRobotDrawImage({
+      schema: 'xupan.chat-payload.v1',
+      component: 'WINNER_LIST',
+      issueNumber: '3000001',
+      data: { items: [{ maskedUser: '<用户>', ballNumber: 8, playType: '特&', stake: 10, netProfit: 90 }] },
+    })
+    const svg = decodeURIComponent(image.dataUrl.slice(image.dataUrl.indexOf(',') + 1))
+
+    expect(svg).toContain('&lt;用户&gt;')
+    expect(svg).toContain('特&amp;')
+    expect(svg).not.toContain('<用户>')
+  })
+})

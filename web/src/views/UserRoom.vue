@@ -223,7 +223,7 @@ function toRoomMessage(message: ChatMessage): RoomMessage {
     body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
     drawPayload: type === 'robot' && message.status === 'ACTIVE' ? parseRobotDrawPayload(message.payloadJson) : null,
     time: formatMessageTime(message.createdAt),
-    mine: message.senderId !== null && message.senderId === currentUser.value?.id,
+    mine: type === 'user' && message.senderId !== null && message.senderId === currentUser.value?.id,
   }
 }
 
