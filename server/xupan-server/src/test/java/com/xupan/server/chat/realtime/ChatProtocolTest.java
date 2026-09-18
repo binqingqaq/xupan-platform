@@ -62,4 +62,19 @@ class ChatProtocolTest {
         assertThat(json).contains("\"type\":\"message.created\"", "\"sequenceNo\":2",
                 "\"senderId\":7", "\"content\":\"hello\"", "\"message\":{");
     }
+
+    @Test
+    void measuresWirePayloadInUtf8BytesAndRejectsOversizedServerEvents() {
+        assertThat(ChatProtocol.utf8Bytes("中文😀")).isEqualTo(10);
+
+        Instant now = Instant.parse("2026-09-11T00:00:00Z");
+        ChatMessageResponse message = new ChatMessageResponse(1L, 2L, "m-1", ChatMessageType.USER_CHAT.name(),
+                ChatSenderType.USER.name(), 7L, "用户甲", "x".repeat(200), null,
+                ChatMessageStatus.ACTIVE.name(), now, now);
+
+        assertThatThrownBy(() -> ChatProtocol.encode(objectMapper, ChatProtocol.messageCreated(message), 100))
+                .isInstanceOf(ChatProtocol.ProtocolException.class)
+                .extracting(exception -> ((ChatProtocol.ProtocolException) exception).code())
+                .isEqualTo(ChatProtocol.ErrorCode.FRAME_TOO_LARGE);
+    }
 }

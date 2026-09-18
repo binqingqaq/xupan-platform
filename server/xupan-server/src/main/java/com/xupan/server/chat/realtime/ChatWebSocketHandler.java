@@ -203,7 +203,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void send(ChatConnection connection, ChatProtocol.ServerEvent event) {
-        String payload = ChatProtocol.encode(objectMapper, event);
+        String payload = ChatProtocol.encode(objectMapper, event, properties.getMaxOutboundMessageBytes());
         if (!connection.sendText(payload, properties.getMaxPendingMessages())) {
             remove(connection.session());
             connection.close(CloseStatus.SESSION_NOT_RELIABLE);

@@ -17,6 +17,7 @@ public class ChatWebSocketProperties {
     private Duration heartbeatTimeout = Duration.ofSeconds(30);
     private int maxPendingMessages = 100;
     private int maxMessageBytes = ChatProtocol.MAX_FRAME_BYTES;
+    private int maxOutboundMessageBytes = 64 * 1024;
     private int maxMessagesPerWindow = 10;
     private Duration messageRateWindow = Duration.ofSeconds(10);
 
@@ -81,6 +82,14 @@ public class ChatWebSocketProperties {
 
     public void setMaxMessageBytes(int maxMessageBytes) {
         this.maxMessageBytes = positive(maxMessageBytes, "maxMessageBytes");
+    }
+
+    public int getMaxOutboundMessageBytes() {
+        return maxOutboundMessageBytes;
+    }
+
+    public void setMaxOutboundMessageBytes(int maxOutboundMessageBytes) {
+        this.maxOutboundMessageBytes = positive(maxOutboundMessageBytes, "maxOutboundMessageBytes");
     }
 
     public int getMaxMessagesPerWindow() {

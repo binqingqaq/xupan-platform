@@ -11,7 +11,7 @@ import java.util.Objects;
 /** Structured wire contract shared by the WebSocket handler and its tests. */
 public final class ChatProtocol {
 
-    public static final int MAX_FRAME_BYTES = 4096;
+    public static final int MAX_FRAME_BYTES = 16 * 1024;
 
     private ChatProtocol() {
     }
@@ -152,11 +152,28 @@ public final class ChatProtocol {
     }
 
     public static String encode(ObjectMapper objectMapper, ServerEvent event) {
+        return encode(objectMapper, event, MAX_FRAME_BYTES);
+    }
+
+    public static String encode(ObjectMapper objectMapper, ServerEvent event, int maxFrameBytes) {
+        if (maxFrameBytes < 1) {
+            throw new IllegalArgumentException("maxFrameBytes 必须大于 0");
+        }
+        final String payload;
         try {
-            return objectMapper.writeValueAsString(event);
+            payload = objectMapper.writeValueAsString(event);
         } catch (JacksonException exception) {
             throw new IllegalStateException("聊天室事件序列化失败", exception);
         }
+        if (utf8Bytes(payload) > maxFrameBytes) {
+            throw new ProtocolException(ErrorCode.FRAME_TOO_LARGE, "聊天室服务端消息帧过大");
+        }
+        return payload;
+    }
+
+    public static int utf8Bytes(String value) {
+        Objects.requireNonNull(value, "value");
+        return value.getBytes(StandardCharsets.UTF_8).length;
     }
 
     public static ServerEvent connected(String connectionId, String roomCode, Instant serverTime) {

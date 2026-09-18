@@ -13,23 +13,26 @@ public class ChatRealtimeBroadcaster {
     private final ChatConnectionRegistry connectionRegistry;
     private final ObjectMapper objectMapper;
     private final ChatAvatarResolver avatarResolver;
+    private final ChatWebSocketProperties properties;
 
     public ChatRealtimeBroadcaster(ChatConnectionRegistry connectionRegistry, ObjectMapper objectMapper,
-                                   ChatAvatarResolver avatarResolver) {
+                                   ChatAvatarResolver avatarResolver, ChatWebSocketProperties properties) {
         this.connectionRegistry = connectionRegistry;
         this.objectMapper = objectMapper;
         this.avatarResolver = avatarResolver;
+        this.properties = properties;
     }
 
     public int broadcast(ChatMessage message) {
         ChatMessageResponse response = avatarResolver.toResponse(message);
-        String payload = ChatProtocol.encode(objectMapper, ChatProtocol.messageCreated(response));
+        String payload = ChatProtocol.encode(objectMapper, ChatProtocol.messageCreated(response),
+                properties.getMaxOutboundMessageBytes());
         return connectionRegistry.broadcast(message.roomCode(), payload);
     }
 
     public int broadcastRobotUpdated(String roomCode, long robotId, String displayName) {
         String payload = ChatProtocol.encode(objectMapper,
-                ChatProtocol.robotUpdated(robotId, displayName));
+                ChatProtocol.robotUpdated(robotId, displayName), properties.getMaxOutboundMessageBytes());
         return connectionRegistry.broadcast(roomCode, payload);
     }
 }

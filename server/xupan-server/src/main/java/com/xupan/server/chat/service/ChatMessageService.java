@@ -14,6 +14,7 @@ import com.xupan.server.chat.repository.ChatOutboxRepository;
 import com.xupan.server.chat.repository.ChatReadCursorRepository;
 import com.xupan.server.chat.repository.ChatRoomRepository;
 import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
+import com.xupan.server.chat.realtime.ChatProtocol;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.BetTextParser;
 import com.xupan.server.game.service.DemoGameService;
@@ -35,8 +36,6 @@ import java.util.Optional;
 @Service
 public class ChatMessageService {
 
-    private static final int MAX_ROBOT_PAYLOAD_LENGTH = 20_000;
-
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final ChatRoomRepository roomRepository;
@@ -49,6 +48,7 @@ public class ChatMessageService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final DemoGameService gameService;
+    private final ChatMessageProperties messageProperties;
 
     @Autowired
     public ChatMessageService(UserRepository userRepository,
@@ -62,7 +62,8 @@ public class ChatMessageService {
                               GameDataRepository gameDataRepository,
                               ObjectMapper objectMapper,
                               ApplicationEventPublisher eventPublisher,
-                              DemoGameService gameService) {
+                              DemoGameService gameService,
+                              ChatMessageProperties messageProperties) {
         this.userRepository = userRepository;
         this.permissionService = permissionService;
         this.roomRepository = roomRepository;
@@ -75,6 +76,25 @@ public class ChatMessageService {
         this.objectMapper = objectMapper;
         this.eventPublisher = eventPublisher;
         this.gameService = gameService;
+        this.messageProperties = messageProperties;
+    }
+
+    /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
+    public ChatMessageService(UserRepository userRepository,
+                              PermissionService permissionService,
+                              ChatRoomRepository roomRepository,
+                              ChatMessageRepository messageRepository,
+                              ChatOutboxRepository outboxRepository,
+                              ChatMuteRepository muteRepository,
+                              ChatReadCursorRepository readCursorRepository,
+                              ChatContentPolicy contentPolicy,
+                              GameDataRepository gameDataRepository,
+                              ObjectMapper objectMapper,
+                              ApplicationEventPublisher eventPublisher,
+                              DemoGameService gameService) {
+        this(userRepository, permissionService, roomRepository, messageRepository, outboxRepository,
+                muteRepository, readCursorRepository, contentPolicy, gameDataRepository, objectMapper,
+                eventPublisher, gameService, new ChatMessageProperties());
     }
 
     /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
@@ -91,7 +111,7 @@ public class ChatMessageService {
                               ApplicationEventPublisher eventPublisher) {
         this(userRepository, permissionService, roomRepository, messageRepository, outboxRepository,
                 muteRepository, readCursorRepository, contentPolicy, gameDataRepository, objectMapper,
-                eventPublisher, null);
+                eventPublisher, null, new ChatMessageProperties());
     }
 
     public ChatRoomView getRoom(long userId, String roomCode, Instant now) {
@@ -320,7 +340,7 @@ public class ChatMessageService {
 
     private String requirePayloadJson(String payloadJson) {
         if (payloadJson == null || payloadJson.isBlank()
-                || payloadJson.length() > MAX_ROBOT_PAYLOAD_LENGTH) {
+                || ChatProtocol.utf8Bytes(payloadJson) > messageProperties.getMaxRobotPayloadBytes()) {
             throw BusinessException.badRequest("CHAT_ROBOT_PAYLOAD_INVALID", "机器人追踪数据无效");
         }
         try {

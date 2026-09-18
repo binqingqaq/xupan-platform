@@ -18,6 +18,8 @@ xupan:
     processing-lease-seconds: ${XUPAN_ROBOT_PROCESSING_LEASE_SECONDS:30}
     max-attempts: ${XUPAN_ROBOT_MAX_ATTEMPTS:8}
   chat:
+    message:
+      max-robot-payload-bytes: ${XUPAN_CHAT_MAX_ROBOT_PAYLOAD_BYTES:65536}
     websocket:
       allowed-origins: ${XUPAN_CHAT_WS_ALLOWED_ORIGINS:http://127.0.0.1:5173,http://localhost:5173}
       max-connections-per-user: ${XUPAN_CHAT_WS_MAX_CONNECTIONS_PER_USER:3}
@@ -25,7 +27,9 @@ xupan:
       heartbeat-interval: ${XUPAN_CHAT_WS_HEARTBEAT_INTERVAL:20s}
       heartbeat-timeout: ${XUPAN_CHAT_WS_HEARTBEAT_TIMEOUT:30s}
       max-pending-messages: ${XUPAN_CHAT_WS_MAX_PENDING_MESSAGES:100}
-      max-message-bytes: ${XUPAN_CHAT_WS_MAX_MESSAGE_BYTES:4096}
+      container-configured: ${XUPAN_CHAT_WS_CONTAINER_CONFIGURED:true}
+      max-message-bytes: ${XUPAN_CHAT_WS_MAX_MESSAGE_BYTES:16384}
+      max-outbound-message-bytes: ${XUPAN_CHAT_WS_MAX_OUTBOUND_MESSAGE_BYTES:65536}
       max-messages-per-window: ${XUPAN_CHAT_WS_MAX_MESSAGES_PER_WINDOW:10}
       message-rate-window: ${XUPAN_CHAT_WS_MESSAGE_RATE_WINDOW:10s}
   auth:

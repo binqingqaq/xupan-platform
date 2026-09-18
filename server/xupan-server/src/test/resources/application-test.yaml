@@ -15,6 +15,8 @@ xupan:
   automation:
     enabled: false
   chat:
+    message:
+      max-robot-payload-bytes: 65536
     websocket:
       allowed-origins: http://127.0.0.1:5173,http://localhost:5173
       max-connections-per-user: 2
@@ -22,7 +24,9 @@ xupan:
       heartbeat-interval: 20s
       heartbeat-timeout: 30s
       max-pending-messages: 2
-      max-message-bytes: 4096
+      container-configured: false
+      max-message-bytes: 16384
+      max-outbound-message-bytes: 65536
       max-messages-per-window: 10
       message-rate-window: 10s
   auth:
