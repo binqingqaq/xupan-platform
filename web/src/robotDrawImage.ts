@@ -36,6 +36,11 @@ function timeOnly(value: string) {
   return formatted.includes(' ') ? formatted.slice(11) : formatted
 }
 
+function slashDate(value: string) {
+  const formatted = formatDate(value)
+  return formatted.replace(/-/g, '/')
+}
+
 function fanOf(number: number) {
   return number % 4 || 4
 }
@@ -127,17 +132,35 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
 function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIST' }>): RobotDrawImage {
   const width = 960
   const lineHeight = 31
-  const height = 156 + Math.max(payload.data.items.length, 1) * lineHeight
+  const numbers = payload.data.numbers
+  const exactResult = numbers && payload.data.settledAt
+  const height = exactResult
+    ? 220 + Math.max(payload.data.items.length, 1) * lineHeight
+    : 156 + Math.max(payload.data.items.length, 1) * lineHeight
   const lines = payload.data.items.length
-    ? payload.data.items.map((item, index) => `<text x="28" y="${130 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
-    : `<text x="28" y="130" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
-  const body = `
-    <text x="28" y="40" fill="#111" font-family="${FONT}" font-size="22">${escapeXml(payload.issueNumber)}结果:</text>
-    <text x="28" y="72" fill="#111" font-family="${FONT}" font-size="20">${escapeXml(payload.issueNumber)}期开奖数据</text>
-    <line x1="28" y1="91" x2="932" y2="91" stroke="#c7cdd1" stroke-width="1"/>
-    <text x="28" y="116" fill="#111" font-family="${FONT}" font-size="19" font-weight="700">获胜名单</text>
-    ${lines}
-  `
+    ? payload.data.items.map((item, index) => exactResult
+      ? `<text x="28" y="${166 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">(${escapeXml(item.maskedUser)})　"${escapeXml(item.betText || item.playType)}"　盆:${item.netProfit.toFixed(1)}</text>`
+      : `<text x="28" y="${130 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
+    : `<text x="28" y="${exactResult ? 166 : 130}" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
+  const resultLine = exactResult
+    ? `${numbers.map(displayNumber).join(',')} =&gt; ${fanOf(numbers[7])},${numbers[7] % 2 === 0 ? '双' : '单'},${numbers[7] >= 11 ? '大' : '小'}`
+    : `${payload.issueNumber}期开奖数据`
+  const body = exactResult
+    ? `
+      <text x="28" y="40" fill="#111" font-family="${FONT}" font-size="22">${escapeXml(payload.issueNumber)}结果:</text>
+      <text x="28" y="72" fill="#111" font-family="${FONT}" font-size="20">${resultLine}</text>
+      <text x="28" y="104" fill="#111" font-family="${FONT}" font-size="18">-----------</text>
+      <text x="28" y="135" fill="#111" font-family="${FONT}" font-size="19" font-weight="700">获胜名单:</text>
+      ${lines}
+      <text x="28" y="${166 + Math.max(payload.data.items.length, 1) * lineHeight + 25}" fill="#111" font-family="${FONT}" font-size="18">时间:${slashDate(payload.data.settledAt || new Date().toISOString())}</text>
+    `
+    : `
+      <text x="28" y="40" fill="#111" font-family="${FONT}" font-size="22">${escapeXml(payload.issueNumber)}结果:</text>
+      <text x="28" y="72" fill="#111" font-family="${FONT}" font-size="20">${resultLine}</text>
+      <line x1="28" y1="91" x2="932" y2="91" stroke="#c7cdd1" stroke-width="1"/>
+      <text x="28" y="116" fill="#111" font-family="${FONT}" font-size="19" font-weight="700">获胜名单</text>
+      ${lines}
+    `
   return {
     dataUrl: svgDocument(width, height, body),
     width,

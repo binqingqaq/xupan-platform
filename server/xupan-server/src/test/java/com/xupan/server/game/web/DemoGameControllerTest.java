@@ -59,6 +59,8 @@ class DemoGameControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM game_bet");
+        jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
+        jdbcTemplate.update("DELETE FROM game_issue_event");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?))", TEST_USERNAME, SECOND_USERNAME);
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
@@ -272,6 +274,37 @@ class DemoGameControllerTest {
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,21]}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void betSummaryMovesBetFromPendingToSettledAndKeepsTodayTotals() throws Exception {
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":20.00,\"idempotencyKey\":\"BET-SUMMARY-001\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/demo/game/bets/summary").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.todayTurnover").value(20.00))
+                .andExpect(jsonPath("$.todayNetProfit").value(0.00))
+                .andExpect(jsonPath("$.pending.length()").value(1))
+                .andExpect(jsonPath("$.settled").isEmpty());
+
+        mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"numbers\":[1,2,3,4,5,6,7,8]}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/demo/game/bets/summary").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.todayTurnover").value(20.00))
+                .andExpect(jsonPath("$.todayNetProfit").value(57.00))
+                .andExpect(jsonPath("$.pending").isEmpty())
+                .andExpect(jsonPath("$.settled.length()").value(1))
+                .andExpect(jsonPath("$.settled[0].settlementStatus").value("WIN"));
     }
 
     @Test

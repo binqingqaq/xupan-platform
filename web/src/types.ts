@@ -45,6 +45,13 @@ export interface BetView {
   explanation: string | null
 }
 
+export interface MyBetSummaryResponse {
+  todayTurnover: number
+  todayNetProfit: number
+  pending: BetView[]
+  settled: BetView[]
+}
+
 export interface AccountView {
   id?: number
   userCode: string
@@ -116,6 +123,63 @@ export interface AdminUserPage {
   page: number
   pageSize: number
   total: number
+}
+
+export type TestPlayerStatus = 'ACTIVE' | 'DISABLED' | 'LOCKED'
+
+export interface TestPlayerView {
+  id: number
+  accountId?: number
+  userId?: number
+  username: string
+  userCode?: string
+  displayName: string
+  avatarKey: string | null
+  status: TestPlayerStatus
+  isTestPlayer: true
+  balance: number
+  createdAt: string
+  updatedAt?: string
+  lastLoginAt?: string | null
+}
+
+export interface TestPlayerPage {
+  items: TestPlayerView[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface CreateTestPlayerRequest {
+  userCode: string
+  displayName: string
+  avatarKey?: string
+}
+
+export interface TestPlayerBetRequest {
+  ballNumber: 1
+  playType: PlayType
+  parameters: number[]
+  stake: number
+  idempotencyKey: string
+}
+
+export interface ChangeTestPlayerStatusRequest {
+  status: 'ACTIVE' | 'DISABLED'
+}
+
+export interface TestPlayerBalanceRequest {
+  amount?: number
+  reason: string
+  idempotencyKey: string
+}
+
+export interface TestPlayerBalanceOperationResponse extends TestPlayerView {
+  balanceBefore: number
+  amount: number
+  balanceAfter: number
+  ledgerId: number
+  operatedAt: string
 }
 
 export interface AdminUserDetail extends AdminUserView {

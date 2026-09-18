@@ -40,6 +40,11 @@ public class DemoGameController {
         return gameService.placeBet(authenticatedUser(authentication).getUserId(), request);
     }
 
+    @GetMapping("/bets/summary")
+    public DemoGameService.BetSummaryView betSummary(Authentication authentication) {
+        return gameService.betSummary(authenticatedUser(authentication).getUserId());
+    }
+
     @PostMapping("/admin/draw")
     public DemoGameService.GameView draw(Authentication authentication,
                                          @Valid @RequestBody DrawRequest request) {

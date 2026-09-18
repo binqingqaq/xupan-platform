@@ -9,12 +9,15 @@ import com.xupan.server.game.repository.GameIssueEventRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -25,21 +28,25 @@ import java.util.UUID;
 public class DemoGameService {
 
     private static final String INITIAL_ISSUE = "3000000";
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private final SettlementService settlementService;
     private final GameDataRepository repository;
     private final VirtualWalletService walletService;
     private final GameIssueEventRepository eventRepository;
     private final 自动轮期服务 automationService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public DemoGameService(SettlementService settlementService, GameDataRepository repository,
                            VirtualWalletService walletService,
                            GameIssueEventRepository eventRepository,
-                           自动轮期服务 automationService) {
+                           自动轮期服务 automationService,
+                           ApplicationEventPublisher eventPublisher) {
         this.settlementService = settlementService;
         this.repository = repository;
         this.walletService = walletService;
         this.eventRepository = eventRepository;
         this.automationService = automationService;
+        this.eventPublisher = eventPublisher;
     }
 
     public synchronized GameView current(long authenticatedUserId) {
@@ -47,6 +54,22 @@ public class DemoGameService {
         automationService.advanceIfEnabled(now);
         GameDataRepository.IssueRecord issue = ensureInitialized();
         return toGameView(issue, now, authenticatedUserId);
+    }
+
+    public BetSummaryView betSummary(long authenticatedUserId) {
+        VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
+        LocalDate today = LocalDate.now(BUSINESS_ZONE);
+        Instant from = today.atStartOfDay(BUSINESS_ZONE).toInstant();
+        Instant to = today.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
+        GameDataRepository.BetDayStatistics dayStatistics = repository.findBetDayStatistics(wallet.accountId(), from, to);
+        List<BetView> pending = repository.findBetsByAccountId(wallet.accountId(), SettlementStatus.PENDING, 100)
+                .stream().map(DemoGameService::toBetView).toList();
+        List<BetView> settled = repository.findBetsByAccountId(wallet.accountId(), null, 100)
+                .stream()
+                .filter(bet -> bet.settlementStatus() != SettlementStatus.PENDING)
+                .map(DemoGameService::toBetView)
+                .toList();
+        return new BetSummaryView(dayStatistics.turnover(), dayStatistics.netProfit(), pending, settled);
     }
 
     private GameView toGameView(GameDataRepository.IssueRecord issue, Instant now, long authenticatedUserId) {
@@ -77,6 +100,12 @@ public class DemoGameService {
 
     @Transactional
     public synchronized BetView placeBet(long authenticatedUserId, PlaceBetRequest request) {
+        return placeBetForUser(authenticatedUserId, request);
+    }
+
+    /** Uses the same bet, wallet debit, idempotency and settlement path for an admin-selected test player. */
+    @Transactional
+    public synchronized BetView placeBetForUser(long userId, PlaceBetRequest request) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
         if (request.idempotencyKey() == null || request.idempotencyKey().isBlank()) {
             throw new IllegalArgumentException("GAME_BET_IDEMPOTENCY_KEY_REQUIRED");
@@ -84,7 +113,7 @@ public class DemoGameService {
         if (request.ballNumber() != 1) {
             throw BusinessException.badRequest("GAME_BALL_NOT_SUPPORTED", "下注无效：当前只支持第1球");
         }
-        VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
+        VirtualWallet wallet = walletService.getForCurrentUser(userId);
         var replay = repository.findBetByAccountIdAndIdempotencyKey(wallet.accountId(), request.idempotencyKey());
         if (replay.isPresent()) {
             if (!sameBetRequest(replay.get(), issue, request)) {
@@ -115,7 +144,7 @@ public class DemoGameService {
             }
             return toBetView(concurrentReplay);
         }
-        walletService.debitForBet(authenticatedUserId, betId, betCode, issue.issueNumber(), money(request.stake()));
+        walletService.debitForBet(userId, betId, betCode, issue.issueNumber(), money(request.stake()));
         return repository.findBetByCode(betCode)
                 .map(DemoGameService::toBetView)
                 .orElseThrow(() -> new IllegalStateException("下注保存后未找到注单"));
@@ -149,6 +178,9 @@ public class DemoGameService {
                 walletService.creditForSettlement(settlementUserId, pending.betId(), issue.issueNumber(), payout,
                         "开奖结算：" + issue.issueNumber());
             }
+            eventPublisher.publishEvent(new BetSettlementCompletedEvent(
+                    pending.betId(), pending.accountId(), issue.issueNumber(), pending.settlement().status(),
+                    pending.settlement().stake(), pending.settlement().netProfit(), payout));
         }
         return toGameView(repository.findLatestIssue().orElseThrow(), Instant.now(), authenticatedUserId);
     }
@@ -281,6 +313,10 @@ public class DemoGameService {
     public record BetView(String id, String issueNumber, int ballNumber, PlayType playType,
                           List<Integer> parameters, BigDecimal stake, BigDecimal odds,
                           SettlementStatus settlementStatus, BigDecimal netProfit, String explanation) {
+    }
+
+    public record BetSummaryView(BigDecimal todayTurnover, BigDecimal todayNetProfit,
+                                 List<BetView> pending, List<BetView> settled) {
     }
 
     public record AccountView(String userCode, String displayName, BigDecimal balance, String status) {

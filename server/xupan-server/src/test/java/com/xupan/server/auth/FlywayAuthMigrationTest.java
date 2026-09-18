@@ -62,14 +62,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV14InOrder() {
+    void appliesV1ThroughV15InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
     }
 
     @Test
@@ -81,7 +81,7 @@ class FlywayAuthMigrationTest {
         assertThat(columnNames("SYS_USER")).containsExactlyInAnyOrder(
                 "ID", "USERNAME", "DISPLAY_NAME", "AVATAR_KEY", "PASSWORD_HASH", "STATUS",
                 "FAILED_LOGIN_COUNT", "LOCKED_UNTIL", "SECURITY_VERSION", "LAST_LOGIN_AT",
-                "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT");
+                "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT", "USER_TYPE");
         assertThat(columnNames("AUTH_SESSION")).containsExactlyInAnyOrder(
                 "ID", "SESSION_ID", "USER_ID", "ACCESS_TOKEN_HASH", "ACCESS_EXPIRES_AT",
                 "REFRESH_TOKEN_HASH", "REFRESH_EXPIRES_AT", "DEVICE_LABEL", "IP_DIGEST",

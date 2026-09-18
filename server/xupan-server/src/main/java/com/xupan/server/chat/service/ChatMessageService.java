@@ -17,15 +17,23 @@ import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.chat.realtime.ChatProtocol;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.BetTextParser;
+import com.xupan.server.game.service.BetSettlementCompletedEvent;
 import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
+import com.xupan.server.robot.domain.ChatRobot;
+import com.xupan.server.robot.repository.RobotRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -49,6 +57,12 @@ public class ChatMessageService {
     private final ApplicationEventPublisher eventPublisher;
     private final DemoGameService gameService;
     private final ChatMessageProperties messageProperties;
+    private final RobotRepository robotRepository;
+    private final VirtualWalletService walletService;
+    private final TransactionTemplate transactionTemplate;
+
+    private static final String FEEDBACK_ROBOT_CODE = "issue-helper";
+    private static final String ROOM_CODE = "main";
 
     @Autowired
     public ChatMessageService(UserRepository userRepository,
@@ -63,7 +77,10 @@ public class ChatMessageService {
                               ObjectMapper objectMapper,
                               ApplicationEventPublisher eventPublisher,
                               DemoGameService gameService,
-                              ChatMessageProperties messageProperties) {
+                              ChatMessageProperties messageProperties,
+                              RobotRepository robotRepository,
+                              VirtualWalletService walletService,
+                              TransactionTemplate transactionTemplate) {
         this.userRepository = userRepository;
         this.permissionService = permissionService;
         this.roomRepository = roomRepository;
@@ -77,6 +94,9 @@ public class ChatMessageService {
         this.eventPublisher = eventPublisher;
         this.gameService = gameService;
         this.messageProperties = messageProperties;
+        this.robotRepository = robotRepository;
+        this.walletService = walletService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
@@ -94,7 +114,7 @@ public class ChatMessageService {
                               DemoGameService gameService) {
         this(userRepository, permissionService, roomRepository, messageRepository, outboxRepository,
                 muteRepository, readCursorRepository, contentPolicy, gameDataRepository, objectMapper,
-                eventPublisher, gameService, new ChatMessageProperties());
+                eventPublisher, gameService, new ChatMessageProperties(), null, null, null);
     }
 
     /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
@@ -111,7 +131,7 @@ public class ChatMessageService {
                               ApplicationEventPublisher eventPublisher) {
         this(userRepository, permissionService, roomRepository, messageRepository, outboxRepository,
                 muteRepository, readCursorRepository, contentPolicy, gameDataRepository, objectMapper,
-                eventPublisher, null, new ChatMessageProperties());
+                eventPublisher, null, new ChatMessageProperties(), null, null, null);
     }
 
     public ChatRoomView getRoom(long userId, String roomCode, Instant now) {
@@ -158,16 +178,27 @@ public class ChatMessageService {
         return new ChatMessagePage(items, nextBefore, nextAfter, hasMore);
     }
 
-    @Transactional
     public ChatMessage sendUserMessage(long userId, String roomCode, String clientMessageId,
                                        String content, Instant now) {
         return sendUserMessageWithOutcome(userId, roomCode, clientMessageId, content, now).message();
     }
 
-    @Transactional
     public ChatMessageSendOutcome sendUserMessageWithOutcome(long userId, String roomCode,
                                                               String clientMessageId, String content,
                                                               Instant now) {
+        try {
+            return inTransaction(() -> processNewUserMessage(userId, roomCode, clientMessageId, content, now));
+        } catch (BetRejectedException rejected) {
+            // DemoGameService deliberately rolls back its bet/wallet transaction on a business rejection.
+            // Persist the original input and its public feedback in a fresh transaction afterwards.
+            return inTransaction(() -> persistRejectedBet(userId, roomCode, clientMessageId, content, now,
+                    rejected.cause()));
+        }
+    }
+
+    private ChatMessageSendOutcome processNewUserMessage(long userId, String roomCode,
+                                                         String clientMessageId, String content,
+                                                         Instant now) {
         requirePositiveUser(userId);
         UserAccount user = requireActiveUser(userId);
         String clientId = contentPolicy.requireClientMessageId(clientMessageId);
@@ -187,41 +218,204 @@ public class ChatMessageService {
             return new ChatMessageSendOutcome(existing.get(), true);
         }
         BetTextParser.ParseResult parsedBet = BetTextParser.parse(normalizedContent);
-        if (parsedBet.status() != BetTextParser.Status.ACCEPTED
-                && BetTextParser.looksLikeBet(normalizedContent)) {
-            throw BusinessException.badRequest("GAME_BET_TEXT_INVALID", parsedBet.reason());
-        }
-        BetTextParser.ParsedBet bet = parsedBet.bet();
-        if (bet != null) {
+        List<BetTextParser.ParsedBet> bets = parsedBet.bets();
+        if (!bets.isEmpty()) {
             if (gameService == null) {
                 throw new IllegalStateException("下注服务未配置");
             }
-            DemoGameService.BetView placed = gameService.placeBet(userId, new PlaceBetRequest(
-                    1, bet.playType(), bet.parameters(), bet.stake(), "CHAT-" + clientId));
+            List<DemoGameService.BetView> placedBets = new ArrayList<>(bets.size());
+            for (int index = 0; index < bets.size(); index++) {
+                BetTextParser.ParsedBet bet = bets.get(index);
+                try {
+                    String idempotencyKey = bets.size() == 1
+                            ? "CHAT-" + clientId
+                            : "CHAT-" + clientId + "-" + (index + 1);
+                    placedBets.add(gameService.placeBet(userId, new PlaceBetRequest(
+                            1, bet.playType(), bet.parameters(), bet.stake(), idempotencyKey)));
+                } catch (BusinessException exception) {
+                    throw new BetRejectedException(exception);
+                }
+            }
+            DemoGameService.BetView firstBet = placedBets.get(0);
             long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
-            String betPayload = betPayload(placed);
+            String betPayload = betPayload(placedBets);
             ChatMessage message = messageRepository.insertUserBetMessage(room.id(), sequence, userId,
-                    user.displayName(), clientId, placed.issueNumber(), normalizedContent, betPayload, now);
-            outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
-            eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+                    user.displayName(), clientId, firstBet.issueNumber(), normalizedContent, betPayload, now);
+            publishUserMessage(message, now);
+            if (walletService == null || robotRepository == null) {
+                throw new IllegalStateException("下注反馈服务未配置");
+            }
+            java.math.BigDecimal totalStake = placedBets.stream()
+                    .map(DemoGameService.BetView::stake)
+                    .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
+            String remainingBalance = formatMoney(walletService.getForCurrentUser(userId).balance());
+            publishFeedback(roomCode, firstBet.issueNumber(), clientId, message.id(),
+                    "BET_ACCEPTED", "@" + user.displayName() + "  攻击成功，使用粮草"
+                            + formatMoney(totalStake) + ", 剩余粮草：" + remainingBalance, now);
             return new ChatMessageSendOutcome(message, false);
         }
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
                 user.displayName(), clientId, normalizedContent, now);
-        outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
-        eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+        publishUserMessage(message, now);
+        publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
+                "INVALID_COMMAND", "@" + user.displayName() + ", 指令格式不正确!", now);
         return new ChatMessageSendOutcome(message, false);
+    }
+
+    private ChatMessageSendOutcome persistRejectedBet(long userId, String roomCode,
+                                                       String clientMessageId, String content,
+                                                       Instant now, BusinessException rejection) {
+        requirePositiveUser(userId);
+        UserAccount user = requireActiveUser(userId);
+        String clientId = contentPolicy.requireClientMessageId(clientMessageId);
+        String normalizedContent = contentPolicy.normalize(content);
+        ChatRoom room = requireRoomForUpdate(roomCode);
+        if (!room.isOpen()) {
+            throw BusinessException.conflict("CHAT_ROOM_CLOSED", "聊天室当前不接受新消息");
+        }
+        Optional<ChatMessage> existing = messageRepository.findByClientMessageId(room.id(), userId, clientId);
+        if (existing.isPresent()) {
+            if (!Objects.equals(existing.get().content(), normalizedContent)) {
+                throw BusinessException.conflict("CHAT_IDEMPOTENCY_CONFLICT", "客户端消息标识对应的正文不一致");
+            }
+            return new ChatMessageSendOutcome(existing.get(), true);
+        }
+        long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+        ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
+                user.displayName(), clientId, normalizedContent, now);
+        publishUserMessage(message, now);
+        publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
+                "BET_REJECTED", rejectedFeedback(user.displayName(), rejection), now);
+        return new ChatMessageSendOutcome(message, false);
+    }
+
+    private void publishUserMessage(ChatMessage message, Instant createdAt) {
+        outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), createdAt);
+        eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+    }
+
+    private void publishFeedback(String roomCode, String issueNumber, String clientMessageId,
+                                 long sourceMessageId, String feedbackType, String content,
+                                 Instant createdAt) {
+        if (robotRepository == null) {
+            throw new IllegalStateException("下注反馈服务未配置");
+        }
+        ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
+                .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
+        publishRobotMessage(robot.id(), robot.displayName(), roomCode, issueNumber,
+                feedbackIdempotencyKey(roomCode, sourceMessageId, clientMessageId), content,
+                feedbackPayload(sourceMessageId, feedbackType), createdAt);
+    }
+
+    private String feedbackPayload(long sourceMessageId, String feedbackType) {
+        try {
+            return objectMapper.writeValueAsString(new FeedbackPayload(
+                    "USER_INPUT_FEEDBACK", feedbackType, sourceMessageId));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("生成用户输入反馈追踪数据失败", exception);
+        }
+    }
+
+    private String settlementFeedbackPayload(BetSettlementCompletedEvent event) {
+        try {
+            return objectMapper.writeValueAsString(new SettlementFeedbackPayload(
+                    "SETTLEMENT_FEEDBACK", event.betId(), event.status().name(),
+                    event.issueNumber(), event.returnAmount(), event.netProfit()));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("生成结算反馈追踪数据失败", exception);
+        }
+    }
+
+    private String feedbackIssueNumber() {
+        return gameDataRepository.findCurrentIssue()
+                .map(GameDataRepository.IssueRecord::issueNumber)
+                .or(() -> gameDataRepository.findLatestIssue().map(GameDataRepository.IssueRecord::issueNumber))
+                .orElse("UNKNOWN");
+    }
+
+    private static String rejectedFeedback(String displayName, BusinessException exception) {
+        String prefix = "@" + displayName + ", ";
+        return switch (exception.code()) {
+            case "WALLET_INSUFFICIENT_BALANCE" -> prefix + "余额不足!";
+            case "GAME_BETTING_CLOSED" -> exception.publicMessage().contains("正在开奖")
+                    ? prefix + "当前正在开奖，下注无效!"
+                    : prefix + "当前已封盘，下注无效!";
+            default -> prefix + "下注失败：" + exception.publicMessage();
+        };
+    }
+
+    private static String formatMoney(java.math.BigDecimal value) {
+        return value.stripTrailingZeros().toPlainString();
+    }
+
+    private static String settlementFeedback(String displayName,
+                                             java.math.BigDecimal balance,
+                                             BetSettlementCompletedEvent event) {
+        String prefix = "@" + displayName + ", ";
+        String currentBalance = formatMoney(balance);
+        return switch (event.status()) {
+            case WIN -> prefix + "第" + event.issueNumber() + "期中奖，返还粮草"
+                    + formatMoney(event.returnAmount()) + ", 当前粮草：" + currentBalance;
+            case DRAW -> prefix + "第" + event.issueNumber() + "期和局，返还粮草"
+                    + formatMoney(event.returnAmount()) + ", 当前粮草：" + currentBalance;
+            case LOSE -> prefix + "第" + event.issueNumber() + "期未中奖，使用粮草"
+                    + formatMoney(event.stake()) + ", 当前粮草：" + currentBalance;
+            case PENDING -> prefix + "第" + event.issueNumber() + "期结算处理中!";
+        };
+    }
+
+    private static String feedbackIdempotencyKey(String roomCode, long sourceMessageId,
+                                                 String clientMessageId) {
+        String source = roomCode + "\u0000" + sourceMessageId + "\u0000" + clientMessageId;
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(source.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder("CHAT-FEEDBACK-");
+            for (byte value : digest) {
+                hex.append(String.format("%02x", value));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("反馈幂等键算法不可用", exception);
+        }
+    }
+
+    private <T> T inTransaction(java.util.function.Supplier<T> callback) {
+        if (transactionTemplate == null) {
+            return callback.get();
+        }
+        T result = transactionTemplate.execute(status -> callback.get());
+        if (result == null) {
+            throw new IllegalStateException("聊天消息事务未返回结果");
+        }
+        return result;
     }
 
     private String betPayload(DemoGameService.BetView bet) {
         try {
-            return objectMapper.writeValueAsString(new BetMessagePayload(
-                    bet.id(), bet.issueNumber(), bet.ballNumber(), bet.playType().name(),
-                    bet.parameters(), bet.stake(), bet.odds(), bet.settlementStatus().name()));
+            return objectMapper.writeValueAsString(betMessagePayload(bet));
         } catch (JacksonException exception) {
             throw new IllegalStateException("生成下注消息追踪数据失败", exception);
         }
+    }
+
+    private String betPayload(List<DemoGameService.BetView> bets) {
+        if (bets.size() == 1) {
+            return betPayload(bets.get(0));
+        }
+        try {
+            return objectMapper.writeValueAsString(new BatchBetMessagePayload(
+                    bets.stream().map(this::betMessagePayload).toList()));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("生成组合下注消息追踪数据失败", exception);
+        }
+    }
+
+    private BetMessagePayload betMessagePayload(DemoGameService.BetView bet) {
+        return new BetMessagePayload(bet.id(), bet.issueNumber(), bet.ballNumber(),
+                bet.playType().name(), bet.parameters(), bet.stake(), bet.odds(),
+                bet.settlementStatus().name());
     }
 
     @Transactional
@@ -261,6 +455,20 @@ public class ChatMessageService {
         outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), createdAt);
         eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
         return message;
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void publishSettlementFeedback(BetSettlementCompletedEvent event) {
+        if (event == null || walletService == null || robotRepository == null) {
+            throw new IllegalArgumentException("结算反馈参数或服务未配置");
+        }
+        var wallet = walletService.getByAccountId(event.accountId());
+        ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
+                .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
+        String content = settlementFeedback(wallet.displayName(), wallet.balance(), event);
+        String key = "CHAT-SETTLEMENT-" + event.betId() + "-" + event.status().name();
+        publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE, event.issueNumber(), key,
+                content, settlementFeedbackPayload(event), Instant.now());
     }
 
     @Transactional
@@ -406,5 +614,29 @@ public class ChatMessageService {
                                      String playType, List<Integer> parameters,
                                      java.math.BigDecimal stake, java.math.BigDecimal odds,
                                      String settlementStatus) {
+    }
+
+    private record BatchBetMessagePayload(List<BetMessagePayload> bets) {
+    }
+
+    private record FeedbackPayload(String eventType, String feedbackType, long sourceMessageId) {
+    }
+
+    private record SettlementFeedbackPayload(String eventType, long betId, String status,
+                                             String issueNumber, java.math.BigDecimal returnAmount,
+                                             java.math.BigDecimal netProfit) {
+    }
+
+    private static final class BetRejectedException extends RuntimeException {
+        private final BusinessException cause;
+
+        private BetRejectedException(BusinessException cause) {
+            super(cause);
+            this.cause = cause;
+        }
+
+        private BusinessException cause() {
+            return cause;
+        }
     }
 }

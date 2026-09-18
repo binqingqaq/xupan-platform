@@ -20,7 +20,7 @@ class RobotMigrationTest {
 
     @Test
     void appliesRobotMigrationsAndSeedsDefaultConfiguration() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("15");
         assertThat(tableExists("CHAT_ROBOT")).isTrue();
         assertThat(tableExists("CHAT_ROBOT_TEMPLATE")).isTrue();
         assertThat(tableExists("CHAT_ROBOT_DISPATCH")).isTrue();

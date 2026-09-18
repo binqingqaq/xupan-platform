@@ -198,6 +198,7 @@ onMounted(load)
       </div>
       <nav class="admin-header-actions" aria-label="后台导航">
         <RouterLink class="header-link" to="/admin/users">用户管理</RouterLink>
+        <RouterLink class="header-link" to="/admin/test-players">测试玩家</RouterLink>
         <RouterLink v-if="currentUser?.permissions.includes('ROBOT_READ')" class="header-link" to="/admin/robots">机器人管理</RouterLink>
         <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
         <button class="header-link" type="button" @click="logout">退出登录</button>

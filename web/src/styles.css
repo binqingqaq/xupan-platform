@@ -48,9 +48,38 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .header-menu button { min-height: 34px; border: 0; border-bottom: 1px solid #f0f0f0; background: #fff; color: #4a4a4a; text-align: left; padding: 0 12px; font-size: 13px; }
 .header-menu button:hover { background: #f2f7fb; }
 .header-menu button.selected { background: #e8f3fd; color: #0876d8; font-weight: 700; }
-.quick-menu { right: 66px; grid-template-columns: repeat(2, auto); }
+.quick-menu { right: 66px; grid-template-columns: repeat(2, minmax(88px, auto)); }
+.quick-menu-section-title { grid-column: 1 / -1; min-height: 25px; border-bottom: 1px solid #e8edf1; background: #f7fafc; color: #7b8994; font-size: 11px; line-height: 25px; padding: 0 10px; }
 .interface-menu { right: 60px; }
-.menu-panel { right: 2px; }
+.menu-button.active span { background: #1577c7; }
+
+.account-panel-layer { position: fixed; inset: 30px 0 0; z-index: 60; display: flex; justify-content: flex-end; background: rgba(0, 0, 0, .34); }
+.account-panel { display: flex; width: min(86vw, 1640px); height: 100%; flex-direction: column; overflow: hidden; border-left: 1px solid #c9d0d6; background: #fff; color: #29343d; }
+.account-panel-toolbar { display: flex; align-items: center; justify-content: space-between; flex: 0 0 48px; padding: 0 18px; background: #167ac5; color: #fff; }
+.account-panel-toolbar strong { font-size: 16px; font-weight: 700; }
+.account-panel-toolbar button { width: 36px; height: 36px; border: 0; background: transparent; color: #fff; font-size: 28px; line-height: 1; padding: 0; }
+.account-panel-toolbar button:hover { background: rgba(255, 255, 255, .14); }
+.account-panel-summary { display: grid; grid-template-columns: auto minmax(130px, 1fr) repeat(2, minmax(150px, 1fr)); align-items: center; gap: 18px; min-height: 104px; padding: 16px 22px; border-bottom: 1px solid #e1e6ea; background: #fff; }
+.account-panel-avatar { display: grid; place-items: center; width: 64px; height: 64px; overflow: hidden; border-radius: 50%; background: #e9f1f6; color: #2471a7; font-size: 24px; font-weight: 700; }
+.account-panel-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.account-panel-identity, .account-panel-stat { display: grid; gap: 6px; min-width: 0; }
+.account-panel-identity strong { color: #263f52; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-panel-identity span, .account-panel-stat span { color: #7b8994; font-size: 12px; }
+.account-panel-stat { align-content: center; text-align: center; }
+.account-panel-stat strong { color: #236f9f; font-size: 18px; font-variant-numeric: tabular-nums; }
+.account-panel-stat.positive strong { color: #16845b; }
+.account-panel-stat.negative strong { color: #d9444f; }
+.account-panel-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); flex: 0 0 40px; border-bottom: 1px solid #cfd6dc; background: #f1f3f5; }
+.account-panel-tabs button { border: 0; border-right: 1px solid #d5dbe0; background: #d9dde1; color: #2e7db3; font-size: 14px; font-weight: 700; }
+.account-panel-tabs button:last-child { border-right: 0; }
+.account-panel-tabs button.active { background: #167ac5; color: #fff; }
+.account-bet-table { flex: 1 1 auto; overflow: auto; }
+.account-bet-row { display: grid; grid-template-columns: minmax(90px, .8fr) minmax(86px, .7fr) minmax(180px, 2.2fr) minmax(120px, 1fr); align-items: center; min-height: 38px; border-bottom: 1px solid #edf0f2; color: #35424d; font-size: 13px; }
+.account-bet-row > span, .account-bet-row > strong { min-width: 0; padding: 0 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-bet-row > strong { color: #657682; font-weight: 700; }
+.account-bet-heading { position: sticky; top: 0; z-index: 1; min-height: 38px; border-bottom: 1px solid #d3dae0; background: #f8fafb; color: #586b78; font-size: 12px; font-weight: 700; }
+.account-panel-empty { display: grid; min-height: 180px; place-items: center; color: #8a99a4; font-size: 13px; }
+.account-panel-error { color: #c6454b; }
 
 .reference-issuebar { display: flex; align-items: center; height: 35px; overflow: hidden; border-bottom: 1px solid #dedede; white-space: nowrap; }
 .reference-issue-number { flex: 0 0 clamp(138px, 10.2vw, 192px); width: clamp(138px, 10.2vw, 192px); transform: translateX(clamp(14px, 1.1vw, 22px)); padding-left: 0; color: #363636; font-size: 14px; line-height: 35px; text-align: center; }
@@ -364,6 +393,15 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .keyboard-panel { width: 100%; }
   .keyboard-action-panel { width: 100%; }
   .history-panel-heading, .history-panel-row { grid-template-columns: 46px minmax(190px, 1fr) 72px; gap: 5px; }
+  .account-panel-layer { inset: 30px 0 0; }
+  .account-panel { width: 100%; border-left: 0; }
+  .account-panel-summary { grid-template-columns: auto minmax(0, 1fr); gap: 10px 14px; padding: 12px 14px; }
+  .account-panel-avatar { width: 52px; height: 52px; font-size: 19px; }
+  .account-panel-identity { align-self: center; }
+  .account-panel-stat { min-height: 42px; border-top: 1px solid #edf0f2; text-align: left; }
+  .account-panel-stat strong { font-size: 16px; }
+  .account-bet-row { grid-template-columns: 82px 66px minmax(126px, 1fr) 92px; min-height: 36px; font-size: 12px; }
+  .account-bet-row > span, .account-bet-row > strong { padding: 0 8px; }
 }
 
 @media (max-width: 520px) {
@@ -577,4 +615,55 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .robot-dispatch-filters label, .robot-dispatch-filters label:first-child { min-width: 100%; }
   .robot-dispatch-filters input, .robot-dispatch-filters select, .robot-dispatch-filters button { width: 100%; }
   .action-helper { width: 100%; }
+}
+
+/* 透明测试玩家管理切片 */
+.test-player-page .admin-main { display: grid; gap: 18px; }
+.test-player-summary { margin-bottom: 0; }
+.test-player-list-section { min-width: 0; }
+.test-player-notice { margin: -4px 0 16px; border-left: 3px solid #3a9a95; background: #f1fbfa; color: #356e6b; padding: 10px 12px; font-size: 13px; line-height: 1.6; }
+.test-player-filter-bar label:first-child { min-width: 220px; }
+.test-player-table { min-width: 1120px; }
+.test-player-table td { white-space: nowrap; }
+.test-player-person { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.test-player-person > span:last-child { display: grid; gap: 3px; }
+.test-player-person small { color: #7a8c99; font-size: 11px; }
+.test-player-avatar { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; overflow: hidden; border: 1px solid #c8dbe4; border-radius: 50%; background: #eaf5f7; color: #287a79; font-size: 15px; font-weight: 800; }
+.test-player-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.test-player-avatar-large { width: 56px; height: 56px; flex-basis: 56px; font-size: 20px; }
+.test-player-badge { display: inline-flex; align-items: center; min-height: 24px; border: 1px solid #86c8c1; border-radius: 3px; background: #effbf9; color: #24766f; padding: 0 8px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.test-player-status-active { background: #e3f5eb; color: #1d8152; }
+.test-player-status-disabled { background: #f1f2f4; color: #6e7780; }
+.test-player-status-locked { background: #fff0e6; color: #b35b25; }
+.test-player-status-unknown { background: #eef2f5; color: #65727d; }
+.numeric-cell, .detail-money { font-variant-numeric: tabular-nums; }
+.test-player-row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.test-player-modal { width: min(100%, 600px); }
+.test-player-detail-modal { width: min(100%, 820px); }
+.test-player-detail-identity { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; padding: 14px; border: 1px solid #dce9ed; background: #f7fbfc; }
+.test-player-detail-identity > div:last-child { display: grid; gap: 5px; }
+.test-player-detail-identity strong { color: #17324d; font-size: 18px; }
+.test-player-detail-identity small { color: #718492; font-size: 13px; }
+.test-player-balance-section, .test-player-avatar-section { margin-top: 18px; border-top: 1px solid #e3ebef; padding-top: 18px; }
+.test-player-balance-section h3, .test-player-avatar-section h3 { margin: 3px 0 0; color: #17324d; font-size: 18px; }
+.test-player-balance-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
+.test-player-balance-form label, .test-player-avatar-upload label { display: grid; gap: 6px; color: #617383; font-size: 12px; font-weight: 700; }
+.test-player-balance-form input, .test-player-avatar-upload input { width: 100%; min-width: 0; box-sizing: border-box; min-height: 40px; border: 1px solid #cbd9e3; border-radius: 3px; background: #fff; color: #263746; padding: 0 9px; font-size: 14px; }
+.test-player-balance-form input:focus, .test-player-avatar-upload input:focus { border-color: #1577c7; box-shadow: 0 0 0 2px rgba(21,119,199,.14); outline: none; }
+.test-player-balance-form .primary-button { grid-column: 1 / -1; justify-self: start; }
+.test-player-avatar-upload { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
+.test-player-avatar-upload label { min-width: min(100%, 280px); }
+.field-hint { color: #84939e; font-size: 11px; font-weight: 400; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .test-player-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .test-player-balance-form { grid-template-columns: 1fr; }
+  .test-player-balance-form .primary-button { grid-column: auto; justify-self: stretch; }
+}
+
+@media (max-width: 480px) {
+  .test-player-filter-bar label:first-child { min-width: 100%; }
+  .test-player-avatar-upload { align-items: stretch; flex-direction: column; }
+  .test-player-avatar-upload label { min-width: 100%; }
+  .test-player-avatar-upload button { width: 100%; }
 }

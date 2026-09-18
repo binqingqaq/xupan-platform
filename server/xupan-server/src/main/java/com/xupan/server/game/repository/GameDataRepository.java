@@ -321,6 +321,61 @@ public class GameDataRepository {
                 rs.getBigDecimal("net_profit"), rs.getString("explanation")), issueNumber);
     }
 
+    public List<BetAuditRecord> findBetAuditByIssue(String issueNumber) {
+        return jdbcTemplate.query("""
+                SELECT b.id, a.display_name, b.play_type, b.parameters_text, b.stake
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.issue_number = ?
+                 ORDER BY b.id
+                """, (rs, rowNum) -> new BetAuditRecord(
+                rs.getLong("id"), rs.getString("display_name"),
+                PlayType.valueOf(rs.getString("play_type")),
+                parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake")), issueNumber);
+    }
+
+    public List<BetRecord> findBetsByAccountId(long accountId, SettlementStatus status, int limit) {
+        if (accountId <= 0 || limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("注单查询参数无效");
+        }
+        String statusClause = status == null ? "" : " AND settlement_status = ?";
+        if (status == null) {
+            return jdbcTemplate.query("""
+                    SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type,
+                           parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation
+                      FROM game_bet
+                     WHERE user_id = ?
+                     ORDER BY id DESC
+                     LIMIT ?
+                    """, betMapper(), accountId, limit);
+        }
+        return jdbcTemplate.query("""
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type,
+                       parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation
+                  FROM game_bet
+                 WHERE user_id = ?
+                """ + statusClause + """
+                 ORDER BY id DESC
+                 LIMIT ?
+                """, betMapper(), accountId, status.name(), limit);
+    }
+
+    public BetDayStatistics findBetDayStatistics(long accountId, Instant fromInclusive, Instant toExclusive) {
+        if (accountId <= 0 || fromInclusive == null || toExclusive == null
+                || !fromInclusive.isBefore(toExclusive)) {
+            throw new IllegalArgumentException("注单日统计查询参数无效");
+        }
+        return jdbcTemplate.queryForObject("""
+                SELECT COALESCE(SUM(stake), 0) AS turnover,
+                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN net_profit ELSE 0 END), 0)
+                           AS net_profit
+                  FROM game_bet
+                 WHERE user_id = ? AND created_at >= ? AND created_at < ?
+                """, (rs, rowNum) -> new BetDayStatistics(
+                rs.getBigDecimal("turnover"), rs.getBigDecimal("net_profit")),
+                accountId, timestamp(fromInclusive), timestamp(toExclusive));
+    }
+
     public Optional<BetRecord> findBetByCode(String betCode) {
         return findBetsByCode(betCode).stream().findFirst();
     }
@@ -375,6 +430,16 @@ public class GameDataRepository {
                 rs.getBigDecimal("net_profit"), rs.getString("explanation")), betCode);
     }
 
+    private static org.springframework.jdbc.core.RowMapper<BetRecord> betMapper() {
+        return (rs, rowNum) -> new BetRecord(
+                rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"),
+                rs.getString("request_idempotency_key"), rs.getString("issue_number"),
+                rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
+                parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
+                rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
+                rs.getBigDecimal("net_profit"), rs.getString("explanation"));
+    }
+
     private Optional<IssueRecord> findIssue(String sql) {
         return jdbcTemplate.query(sql, rs -> rs.next()
                 ? Optional.of(new IssueRecord(rs.getString("issue_number"), rs.getString("status"),
@@ -427,6 +492,21 @@ public class GameDataRepository {
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
                             BigDecimal netProfit, String explanation) {
+    }
+
+    public record BetAuditRecord(long id, String displayName, PlayType playType,
+                                 List<Integer> parameters, BigDecimal stake) {
+    }
+
+    public record BetDayStatistics(BigDecimal turnover, BigDecimal netProfit) {
+        public BetDayStatistics {
+            turnover = normalizeMoney(turnover);
+            netProfit = normalizeMoney(netProfit);
+        }
+
+        private static BigDecimal normalizeMoney(BigDecimal value) {
+            return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
+        }
     }
 
     public record WinnerRecord(long betId, String userCode, String displayName, int ballNumber,

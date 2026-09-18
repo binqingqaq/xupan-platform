@@ -3,7 +3,9 @@ import type {
   AdminRoleOption,
   AdminUserDetail,
   AdminUserPage,
+  ChangeTestPlayerStatusRequest,
   ChangeAdminUserStatusRequest,
+  CreateTestPlayerRequest,
   CreateAdminUserRequest,
   BetView,
   ChatMessage,
@@ -11,6 +13,7 @@ import type {
   ChatRoomView,
   CurrentUserView,
   GameView,
+  MyBetSummaryResponse,
   OddsView,
   PlayType,
   VirtualWallet,
@@ -21,6 +24,11 @@ import type {
   WalletSummaryResponse,
   ResetAdminUserPasswordRequest,
   UpdateAdminUserRolesRequest,
+  TestPlayerBalanceOperationResponse,
+  TestPlayerBalanceRequest,
+  TestPlayerBetRequest,
+  TestPlayerPage,
+  TestPlayerView,
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
@@ -101,6 +109,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
   if (error.status === 401) return '登录状态已失效，请重新登录'
+  if (error.code === 'TEST_PLAYER_OPERATION_FORBIDDEN') return '当前账号没有测试玩家管理权限'
   if (error.status === 403 || error.code === 'AUTH_PERMISSION_DENIED') return '当前账号没有执行此操作的权限'
   if (error.code === 'WALLET_INSUFFICIENT_BALANCE') return '虚拟余额不足，下注未提交'
   if (error.code === 'WALLET_INACTIVE') return '该用户的虚拟钱包当前不可用'
@@ -117,6 +126,12 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'USER_ROLE_INVALID') return '角色无效或已停用，请刷新角色列表'
   if (error.code === 'USER_PASSWORD_INVALID') return '密码不符合安全策略，请重新设置'
   if (error.code === 'USER_QUERY_INVALID') return '筛选或分页参数不合法'
+  if (error.code === 'TEST_PLAYER_NOT_FOUND') return '测试玩家不存在，请刷新列表后重试'
+  if (error.code === 'TEST_PLAYER_USERNAME_EXISTS') return '测试玩家登录名已存在，请换一个登录名'
+  if (error.code === 'TEST_PLAYER_STATUS_INVALID') return '测试玩家状态不合法'
+  if (error.code === 'TEST_PLAYER_QUERY_INVALID') return '测试玩家筛选或分页参数不合法'
+  if (error.code === 'TEST_PLAYER_BALANCE_INVALID') return '测试玩家余额操作金额或原因不合法'
+  if (error.code === 'TEST_PLAYER_BALANCE_RESET_CONFLICT') return '测试玩家余额已变化，请刷新后重试'
   if (error.code === 'ROBOT_NOT_FOUND') return '机器人不存在，请刷新后重试'
   if (error.code === 'ROBOT_CODE_EXISTS') return '机器人编码已存在，请换一个编码'
   if (error.code === 'ROBOT_CODE_INVALID') return '机器人编码格式不合法'
@@ -256,6 +271,7 @@ export const api = {
       method: 'POST',
     }),
   current: () => request<GameView>('/api/demo/game/current'),
+  getMyBetSummary: () => request<MyBetSummaryResponse>('/api/demo/game/bets/summary'),
   placeBet: (payload: { ballNumber: 1; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string }) =>
     request<BetView>('/api/demo/game/bets', { method: 'POST', body: JSON.stringify(payload) }),
   updateOdds: (playType: PlayType, odds: number) =>
@@ -317,6 +333,39 @@ export const api = {
     request<void>(`/api/admin/users/${userId}/password`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUserRoles: (userId: number, payload: UpdateAdminUserRolesRequest) =>
     request<AdminUserDetail>(`/api/admin/users/${userId}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
+  getTestPlayers: (params: { status?: string; keyword?: string; page?: number; pageSize?: number } = {}) => {
+    const query = new URLSearchParams()
+    query.set('status', params.status ?? '')
+    query.set('keyword', params.keyword ?? '')
+    query.set('page', String(params.page ?? 1))
+    query.set('pageSize', String(params.pageSize ?? 20))
+    return request<TestPlayerPage>(`/api/admin/test-players?${query.toString()}`)
+  },
+  getTestPlayer: (userCode: string) => request<TestPlayerView>(`/api/admin/test-players/${encodeURIComponent(userCode)}`),
+  createTestPlayer: (payload: CreateTestPlayerRequest) =>
+    request<TestPlayerView>('/api/admin/test-players', { method: 'POST', body: JSON.stringify(payload) }),
+  changeTestPlayerStatus: (userCode: string, payload: ChangeTestPlayerStatusRequest) =>
+    request<TestPlayerView>(`/api/admin/test-players/${encodeURIComponent(userCode)}/status`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  uploadTestPlayerAvatar: (userCode: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<{ avatarKey: string; url: string }>(`/api/admin/test-players/${encodeURIComponent(userCode)}/avatar`, { method: 'PUT', body: form })
+  },
+  grantTestPlayerBalance: (userCode: string, payload: Required<TestPlayerBalanceRequest>) =>
+    request<TestPlayerBalanceOperationResponse>(`/api/admin/test-players/${encodeURIComponent(userCode)}/balance/grants`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  resetTestPlayerBalance: (userCode: string, payload: Omit<TestPlayerBalanceRequest, 'amount'>) =>
+    request<TestPlayerBalanceOperationResponse>(`/api/admin/test-players/${encodeURIComponent(userCode)}/balance/reset`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  placeTestPlayerBet: (userCode: string, payload: TestPlayerBetRequest) =>
+    request<unknown>(`/api/admin/test-players/${encodeURIComponent(userCode)}/bets`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getAdminWallet: (userId: number) => request<WalletSummaryResponse>(`/api/admin/users/${userId}/wallet`),
   getAdminWalletLedger: (userId: number, limit = 50) => request<WalletLedgerEntry[]>(`/api/admin/users/${userId}/wallet/ledger?limit=${limit}`),
   grantWallet: (userId: number, payload: WalletGrantRequest) =>

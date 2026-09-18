@@ -17,7 +17,7 @@ public class UserRepository {
 
     private static final String USER_COLUMNS = """
             id, username, display_name, avatar_key, password_hash, status,
-            failed_login_count, locked_until, security_version, last_login_at, last_login_ip
+            failed_login_count, locked_until, security_version, last_login_at, last_login_ip, user_type
             """;
     private static final String ADMIN_USER_COLUMNS = """
             id, username, display_name, avatar_key, status, created_at, last_login_at
@@ -92,7 +92,7 @@ public class UserRepository {
             throw new IllegalArgumentException("用户查询关键字长度不能超过 64");
         }
         StringBuilder sql = new StringBuilder("SELECT ").append(ADMIN_USER_COLUMNS)
-                .append(" FROM sys_user WHERE 1 = 1");
+                .append(" FROM sys_user WHERE user_type = 'REAL'");
         List<Object> args = new java.util.ArrayList<>();
         appendManagementFilter(sql, args, status, keyword);
         sql.append(" ORDER BY id LIMIT ? OFFSET ?");
@@ -106,7 +106,7 @@ public class UserRepository {
         if (keyword != null && keyword.trim().length() > 64) {
             throw new IllegalArgumentException("用户查询关键字长度不能超过 64");
         }
-        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM sys_user WHERE 1 = 1");
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM sys_user WHERE user_type = 'REAL'");
         List<Object> args = new java.util.ArrayList<>();
         appendManagementFilter(sql, args, status, keyword);
         Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, args.toArray());
@@ -114,7 +114,8 @@ public class UserRepository {
     }
 
     public Optional<UserManagementRow> findManagementUser(long userId) {
-        return jdbcTemplate.query("SELECT " + ADMIN_USER_COLUMNS + " FROM sys_user WHERE id = ?",
+        return jdbcTemplate.query("SELECT " + ADMIN_USER_COLUMNS
+                        + " FROM sys_user WHERE id = ? AND user_type = 'REAL'",
                 this::mapManagementRow, userId).stream().findFirst();
     }
 
@@ -156,6 +157,22 @@ public class UserRepository {
         Long key = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
         if (key == null) {
             throw new IllegalStateException("创建用户后未取得用户 ID");
+        }
+        return key;
+    }
+
+    @Transactional
+    public long insertTestPlayer(String username, String displayName, String avatarKey,
+                                 String passwordHash) {
+        jdbcTemplate.update("""
+                INSERT INTO sys_user
+                    (username, display_name, avatar_key, password_hash, status, user_type)
+                VALUES (?, ?, ?, ?, 'ACTIVE', 'TEST')
+                """, username, displayName, avatarKey, passwordHash);
+        Long key = jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
+        if (key == null) {
+            throw new IllegalStateException("创建测试身份后未取得用户 ID");
         }
         return key;
     }
@@ -249,7 +266,7 @@ public class UserRepository {
                 rs.getString("avatar_key"), rs.getString("password_hash"), rs.getString("status"),
                 rs.getInt("failed_login_count"), instant(rs.getTimestamp("locked_until")),
                 rs.getLong("security_version"), instant(rs.getTimestamp("last_login_at")),
-                rs.getString("last_login_ip"));
+                rs.getString("last_login_ip"), rs.getString("user_type"));
     }
 
     private UserManagementRow mapManagementRow(java.sql.ResultSet rs, int rowNum)

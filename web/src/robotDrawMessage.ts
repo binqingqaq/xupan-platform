@@ -30,6 +30,7 @@ export interface WinnerItem {
   maskedUser: string
   ballNumber: number
   playType: string
+  betText?: string
   stake: number
   netProfit: number
 }
@@ -41,6 +42,8 @@ export interface WinnerListPayload {
   data: {
     items: WinnerItem[]
     emptyMessage?: string
+    numbers?: number[]
+    settledAt?: string
   }
 }
 
@@ -86,6 +89,7 @@ function isWinnerItem(value: unknown): value is WinnerItem {
     && typeof value.ballNumber === 'number'
     && Number.isFinite(value.ballNumber)
     && isText(value.playType)
+    && (value.betText === undefined || isText(value.betText))
     && typeof value.stake === 'number'
     && Number.isFinite(value.stake)
     && typeof value.netProfit === 'number'
@@ -125,14 +129,23 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
   }
 
   const data = value.data
+  const hasResult = data.numbers === undefined && data.settledAt === undefined
+    ? true
+    : isNumberArray(data.numbers) && isText(data.settledAt)
   return Array.isArray(data.items)
     && data.items.every(isWinnerItem)
+    && hasResult
     && (data.emptyMessage === undefined || typeof data.emptyMessage === 'string')
     ? {
       schema: value.schema,
       component: value.component,
       issueNumber: value.issueNumber,
-      data: { items: data.items, ...(typeof data.emptyMessage === 'string' ? { emptyMessage: data.emptyMessage } : {}) },
+      data: {
+        items: data.items,
+        ...(typeof data.emptyMessage === 'string' ? { emptyMessage: data.emptyMessage } : {}),
+        ...(isNumberArray(data.numbers) ? { numbers: data.numbers } : {}),
+        ...(isText(data.settledAt) ? { settledAt: data.settledAt } : {}),
+      },
     }
     : null
 }

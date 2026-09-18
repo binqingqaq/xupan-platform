@@ -32,6 +32,14 @@ class UserAccountTest {
         assertThat(userWithStatus("DELETED").canLogin(Instant.now())).isFalse();
     }
 
+    @Test
+    void testPlayerIdentityCannotLoginEvenWhenActive() {
+        UserAccount user = new UserAccount(1L, "test-player", "测试玩家", null, "hash", "ACTIVE", 0,
+                null, 0L, null, null, "TEST");
+
+        assertThat(user.canLogin(Instant.now())).isFalse();
+    }
+
     private static UserAccount userWithStatus(String status) {
         return new UserAccount(1L, "alice", "Alice", null, "hash", status, 0,
                 null, 0L, null, null);

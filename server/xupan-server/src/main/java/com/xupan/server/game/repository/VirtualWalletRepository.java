@@ -60,15 +60,26 @@ public class VirtualWalletRepository {
 
     @Transactional
     public long createForUser(long userId, String userCode, String displayName) {
+        return createForIdentity(userId, userCode, displayName, "REAL");
+    }
+
+    @Transactional
+    public long createForTestPlayer(long userId, String userCode, String displayName) {
+        return createForIdentity(userId, userCode, displayName, "TEST");
+    }
+
+    private long createForIdentity(long userId, String userCode, String displayName,
+                                   String identityType) {
         if (userId <= 0) {
             throw new IllegalArgumentException("WALLET_USER_INVALID: userId 必须为正数");
         }
         String code = requiredText(userCode, "userCode", 64);
         String name = requiredText(displayName, "displayName", 128);
         jdbcTemplate.update("""
-                INSERT INTO demo_user_account (sys_user_id, user_code, display_name, balance, status)
-                VALUES (?, ?, ?, 0.00, 'ACTIVE')
-                """, userId, code, name);
+                INSERT INTO demo_user_account
+                    (sys_user_id, user_code, display_name, balance, status, identity_type)
+                VALUES (?, ?, ?, 0.00, 'ACTIVE', ?)
+                """, userId, code, name, identityType);
         Long accountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, userId);
         if (accountId == null) {
@@ -150,6 +161,30 @@ public class VirtualWalletRepository {
         }
         String operatorName = operatorName(operatorUserId);
         return append(wallet, WalletOperationType.ADMIN_ADJUST, value, operatorUserId, operatorName,
+                key, null, null, safeReason);
+    }
+
+    public WalletLedgerEntry appendAdminReset(long operatorUserId, long targetUserId,
+                                               String reason, String idempotencyKey) {
+        String safeReason = reason(reason);
+        String key = idempotencyKey(idempotencyKey);
+        VirtualWallet wallet = lockWallet(targetUserId);
+        Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
+        if (replay.isPresent()) {
+            WalletLedgerEntry existing = replay.get();
+            if (existing.operationType() != WalletOperationType.ADMIN_RESET
+                    || existing.userId() != targetUserId
+                    || !existing.reason().equals(safeReason)) {
+                throw new IllegalStateException("WALLET_IDEMPOTENCY_CONFLICT: 幂等键参数不一致");
+            }
+            return existing;
+        }
+        BigDecimal amount = money(wallet.balance().negate());
+        if (amount.signum() == 0) {
+            throw new IllegalStateException("WALLET_ALREADY_RESET: 钱包余额已经为零");
+        }
+        String operatorName = operatorName(operatorUserId);
+        return append(wallet, WalletOperationType.ADMIN_RESET, amount, operatorUserId, operatorName,
                 key, null, null, safeReason);
     }
 

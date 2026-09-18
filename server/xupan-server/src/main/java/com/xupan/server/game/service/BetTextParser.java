@@ -4,6 +4,7 @@ import com.xupan.server.game.domain.PlayType;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -36,10 +37,34 @@ public final class BetTextParser {
     }
 
     /**
-     * Parses one complete bet item. Surrounding whitespace is ignored, but
-     * whitespace inside an item is not accepted.
+     * Parses one complete bet item or a comma-separated combo. Surrounding
+     * whitespace is ignored, but whitespace inside an item is not accepted.
      */
     public static ParseResult parse(String text) {
+        if (text != null && (text.contains(",") || text.contains("，"))) {
+            String source = text.trim();
+            String[] items = source.split("[,，]", -1);
+            if (items.length < 2) {
+                return invalid("组合下注格式不正确");
+            }
+
+            List<ParsedBet> bets = new ArrayList<>(items.length);
+            for (String item : items) {
+                if (item.isBlank()) {
+                    return invalid("组合下注格式不正确");
+                }
+                ParseResult itemResult = parseSingle(item.trim());
+                if (!itemResult.accepted()) {
+                    return invalid("组合下注格式不正确");
+                }
+                bets.addAll(itemResult.bets());
+            }
+            return new ParseResult(Status.ACCEPTED, bets.get(0), "", bets);
+        }
+        return parseSingle(text);
+    }
+
+    private static ParseResult parseSingle(String text) {
         if (text == null || text.isBlank()) {
             return invalid("下注文本不能为空");
         }
@@ -209,15 +234,20 @@ public final class BetTextParser {
         INVALID
     }
 
-    public record ParseResult(Status status, ParsedBet bet, String reason) {
+    public record ParseResult(Status status, ParsedBet bet, String reason, List<ParsedBet> bets) {
+        public ParseResult(Status status, ParsedBet bet, String reason) {
+            this(status, bet, reason, bet == null ? List.of() : List.of(bet));
+        }
+
         public ParseResult {
             Objects.requireNonNull(status, "status");
             Objects.requireNonNull(reason, "reason");
-            if (status == Status.ACCEPTED && bet == null) {
-                throw new IllegalArgumentException("accepted result requires a bet");
+            bets = List.copyOf(Objects.requireNonNull(bets, "bets"));
+            if (status == Status.ACCEPTED && (bet == null || bets.isEmpty())) {
+                throw new IllegalArgumentException("accepted result requires bets");
             }
-            if (status != Status.ACCEPTED && bet != null) {
-                throw new IllegalArgumentException("non-accepted result cannot contain a bet");
+            if (status != Status.ACCEPTED && (bet != null || !bets.isEmpty())) {
+                throw new IllegalArgumentException("non-accepted result cannot contain bets");
             }
         }
 

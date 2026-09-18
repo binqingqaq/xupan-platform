@@ -19,7 +19,12 @@ import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.service.BetSettlementCompletedEvent;
+import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
+import com.xupan.server.robot.domain.ChatRobot;
+import com.xupan.server.robot.domain.RobotStatus;
+import com.xupan.server.robot.repository.RobotRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +46,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -71,6 +77,10 @@ class ChatMessageServiceTest {
     @Mock
     private DemoGameService gameService;
     @Mock
+    private RobotRepository robotRepository;
+    @Mock
+    private VirtualWalletService walletService;
+    @Mock
     private ApplicationEventPublisher eventPublisher;
 
     private ChatMessageService service;
@@ -79,8 +89,23 @@ class ChatMessageServiceTest {
     void setUp() {
         service = new ChatMessageService(userRepository, permissionService, roomRepository, messageRepository,
                 outboxRepository, muteRepository, readCursorRepository, new ChatContentPolicy(),
-                gameDataRepository, new ObjectMapper(), eventPublisher, gameService);
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
+                gameDataRepository, new ObjectMapper(), eventPublisher, gameService,
+                new ChatMessageProperties(), robotRepository, walletService, null);
+        lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
+        lenient().when(robotRepository.findByCode("issue-helper")).thenReturn(Optional.of(new ChatRobot(
+                900001L, "issue-helper", "机器人", "robot-default", RobotStatus.ENABLED,
+                100, 0, NOW, NOW)));
+        lenient().when(messageRepository.findByIdempotencyKey(anyString())).thenReturn(Optional.empty());
+        lenient().when(gameDataRepository.findCurrentIssue()).thenReturn(Optional.empty());
+        lenient().when(gameDataRepository.findLatestIssue()).thenReturn(Optional.empty());
+        lenient().when(roomRepository.allocateNextSequence(eq(1L), anyLong()))
+                .thenAnswer(invocation -> ((Long) invocation.getArgument(1)) + 1L);
+        lenient().when(messageRepository.insertRobotMessage(anyLong(), anyLong(), anyLong(), anyString(),
+                anyString(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(robotMessage());
+        lenient().when(walletService.getForCurrentUser(USER_ID))
+                .thenReturn(new com.xupan.server.game.domain.VirtualWallet(1L, USER_ID,
+                        "USER-A", "用户甲", new java.math.BigDecimal("990.00"), "ACTIVE"));
         lenient().when(permissionService.hasPermission(USER_ID, "CHAT_ROOM_READ")).thenReturn(true);
     }
 
@@ -99,10 +124,10 @@ class ChatMessageServiceTest {
                 .isEqualTo(message);
 
         ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
-        verify(outboxRepository).insertMessageCreatedOutbox(eq(1L), payload.capture(), eq(NOW));
-        verify(eventPublisher).publishEvent(any(ChatMessageCreatedEvent.class));
-        assertThat(payload.getValue()).contains("\"roomCode\":\"main\"", "\"sequenceNo\":1",
-                "\"senderId\":7", "\"content\":\"hello\"");
+        verify(outboxRepository, times(2)).insertMessageCreatedOutbox(anyLong(), payload.capture(), eq(NOW));
+        verify(eventPublisher, times(2)).publishEvent(any(ChatMessageCreatedEvent.class));
+        assertThat(payload.getAllValues().get(0)).contains("\"roomCode\":\"main\"", "\"senderId\":7",
+                "\"content\":\"hello\"");
     }
 
     @Test
@@ -128,6 +153,87 @@ class ChatMessageServiceTest {
         assertThat(result.messageType()).isEqualTo(ChatMessageType.USER_BET);
         assertThat(result.issueNumber()).isEqualTo("3000000");
         verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
+        ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(NOW));
+        assertThat(feedback.getValue()).isEqualTo("@用户甲  攻击成功，使用粮草10, 剩余粮草：990");
+    }
+
+    @Test
+    void invalidInputIsPersistedAndGetsVisibleRobotFeedback() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "invalid-1"))
+                .thenReturn(Optional.empty());
+        ChatMessage message = message(12L, 1L, "大家早上好");
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "invalid-1",
+                "大家早上好", NOW)).thenReturn(message);
+
+        assertThat(service.sendUserMessage(USER_ID, "main", "invalid-1", "大家早上好", NOW))
+                .isEqualTo(message);
+
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(NOW));
+        assertThat(content.getValue()).isEqualTo("@用户甲, 指令格式不正确!");
+    }
+
+    @Test
+    void insufficientBalanceIsPersistedWithDirectRobotFeedback() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "insufficient-1"))
+                .thenReturn(Optional.empty());
+        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class))).thenThrow(
+                BusinessException.conflict("WALLET_INSUFFICIENT_BALANCE", "本次钱包操作无法完成"));
+        ChatMessage message = message(13L, 1L, "1番100");
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "insufficient-1",
+                "1番100", NOW)).thenReturn(message);
+
+        assertThat(service.sendUserMessage(USER_ID, "main", "insufficient-1", "1番100", NOW))
+                .isEqualTo(message);
+
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(NOW));
+        assertThat(content.getValue()).isEqualTo("@用户甲, 余额不足!");
+    }
+
+    @Test
+    void drawingAndClosedBettingReturnTheConfirmedPhaseFeedback() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class))).thenThrow(
+                BusinessException.conflict("GAME_BETTING_CLOSED", "下注无效：当前正在开奖，已停止下注"));
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "drawing-1"))
+                .thenReturn(Optional.empty());
+        ChatMessage drawingMessage = message(14L, 1L, "1番10");
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "drawing-1",
+                "1番10", NOW)).thenReturn(drawingMessage);
+
+        service.sendUserMessage(USER_ID, "main", "drawing-1", "1番10", NOW);
+
+        ArgumentCaptor<String> drawingFeedback = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), drawingFeedback.capture(), anyString(), eq(NOW));
+        assertThat(drawingFeedback.getValue()).isEqualTo("@用户甲, 当前正在开奖，下注无效!");
+    }
+
+    @Test
+    void publishesSettlementFeedbackWithCommittedWalletBalance() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(walletService.getByAccountId(1L)).thenReturn(
+                new com.xupan.server.game.domain.VirtualWallet(1L, USER_ID, "USER-A", "用户甲",
+                        new java.math.BigDecimal("128.50"), "ACTIVE"));
+
+        service.publishSettlementFeedback(new BetSettlementCompletedEvent(41L, 1L, "3000000",
+                SettlementStatus.WIN, new java.math.BigDecimal("10.00"),
+                new java.math.BigDecimal("28.50"), new java.math.BigDecimal("38.50")));
+
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("3000000"), eq("CHAT-SETTLEMENT-41-WIN"), content.capture(), anyString(), any());
+        assertThat(content.getValue()).isEqualTo("@用户甲, 第3000000期中奖，返还粮草38.5, 当前粮草：128.5");
     }
 
     @Test
@@ -209,5 +315,11 @@ class ChatMessageServiceTest {
         return new ChatMessage(id, 1L, "main", sequence, "client-1", null, null,
                 ChatMessageType.USER_CHAT, ChatSenderType.USER, USER_ID, "用户甲", content, null,
                 ChatMessageStatus.ACTIVE, NOW, NOW);
+    }
+
+    private ChatMessage robotMessage() {
+        return new ChatMessage(99L, 1L, "main", 2L, null, "feedback-key", "UNKNOWN",
+                ChatMessageType.ROBOT, ChatSenderType.ROBOT, 900001L, "机器人", "反馈",
+                "{\"eventType\":\"USER_INPUT_FEEDBACK\"}", ChatMessageStatus.ACTIVE, NOW, NOW);
     }
 }

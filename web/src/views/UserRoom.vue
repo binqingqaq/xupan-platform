@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
-import { parseBetText } from '../betText'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { ChatSocket } from '../services/chatSocket'
+import { mayAffectBetAccount } from '../chatSubmission'
 import type {
   BallView,
   ChatMessage,
   ChatRoomView,
   CurrentUserView,
   GameView,
+  MyBetSummaryResponse,
   PlayType,
   WalletSummaryResponse,
 } from '../types'
@@ -36,6 +37,7 @@ interface RoomMessage {
 interface PendingChatMessage {
   clientMessageId: string
   body: string
+  refreshAccount: boolean
   status: 'sending' | 'failed'
 }
 
@@ -62,6 +64,10 @@ const messageInput = ref('')
 const quickOpen = ref(false)
 const interfaceOpen = ref(false)
 const menuOpen = ref(false)
+const betSummary = ref<MyBetSummaryResponse | null>(null)
+const accountPanelTab = ref<'pending' | 'settled'>('pending')
+const accountPanelLoading = ref(false)
+const accountPanelError = ref('')
 function interfaceModeFromUrl(): 'ui1' | 'ui2' {
   if (typeof window === 'undefined') return 'ui1'
   return new URLSearchParams(window.location.search).get('ui') === '1' ? 'ui2' : 'ui1'
@@ -184,6 +190,9 @@ function oddsFor(playType: PlayType) {
 const historyRows = computed(() => toHistoryRows(current.value?.history ?? []))
 const currentBets = computed(() => current.value?.bets ?? [])
 const walletLedger = computed(() => wallet.value?.ledger ?? [])
+const accountPanelBets = computed(() => accountPanelTab.value === 'pending'
+  ? (betSummary.value?.pending ?? [])
+  : (betSummary.value?.settled ?? []))
 
 const settlementStatusLabels: Record<string, string> = {
   PENDING: '待开奖',
@@ -400,10 +409,14 @@ function connectChatSocket() {
     },
     onMessageAck: event => {
       if (pendingChatMessage.value?.clientMessageId === event.clientMessageId) pendingChatMessage.value = null
+      if (event.message.messageType === 'USER_BET') void refreshAccountAfterBetSubmission()
     },
     onError: event => {
       if (event.clientMessageId && pendingChatMessage.value?.clientMessageId === event.clientMessageId) {
+        const shouldRefreshAccount = pendingChatMessage.value.refreshAccount
         pendingChatMessage.value = { ...pendingChatMessage.value, status: 'failed' }
+        if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
+        void refreshChatMessagesAfterSubmission()
       }
       if (event.code === 'AUTH_UNAUTHENTICATED' || event.code === 'AUTH_TOKEN_REVOKED' || event.code === 'AUTH_PERMISSION_DENIED') {
         authenticated.value = false
@@ -506,6 +519,11 @@ function appendToken(token: string) {
     取消: '取消',
     说明: '玩法',
   }
+  if (token === '说明') {
+    noticeOpen.value = true
+    keyboardOpen.value = false
+    return
+  }
   const uniqueText = uniqueTokens[token]
   if (uniqueText) {
     if (messageInput.value !== uniqueText) messageInput.value = uniqueText
@@ -585,9 +603,29 @@ function toggleHistory() {
   interfaceOpen.value = false
 }
 
+async function loadAccountPanel() {
+  accountPanelLoading.value = true
+  accountPanelError.value = ''
+  try {
+    betSummary.value = await api.getMyBetSummary()
+  } catch (error) {
+    accountPanelError.value = apiErrorMessage(error, '账户数据加载失败，请稍后重试')
+  } finally {
+    accountPanelLoading.value = false
+  }
+}
+
+function toggleAccountPanel() {
+  menuOpen.value = !menuOpen.value
+  quickOpen.value = false
+  interfaceOpen.value = false
+  if (menuOpen.value) void loadAccountPanel()
+}
+
 function openSettings() {
   settingsOpen.value = true
   menuOpen.value = false
+  quickOpen.value = false
 }
 
 async function uploadCurrentUserAvatar(event: Event) {
@@ -633,63 +671,57 @@ async function submitMessage() {
   if (!text) return
   messageInput.value = ''
   resizeMessageInput()
-  keyboardOpen.value = false
-  if (text === '玩法') {
-    noticeOpen.value = true
-    return
-  }
-  const parsed = parseBetText(text)
-  if (parsed.kind === 'BET') {
-    if (current.value?.phase !== 'BETTING') {
-      showFeedback(current.value?.phase === 'DRAWING'
-        ? '下注无效：当前正在开奖'
-        : '下注无效：本期已封盘', 'error')
-      return
-    }
-    try {
-      const sent = await api.sendChatMessage(ROOM_CODE, {
-        clientMessageId: createBetIdempotencyKey(),
-        content: text,
-      })
-      mergeChatMessages([sent])
-      await loadGame()
-      showFeedback('下注已发送')
-    } catch (error) {
-      showFeedback(apiErrorMessage(error, '下注失败，请稍后重试'), 'error')
-    }
-    return
-  }
-
-  if (parsed.kind === 'INVALID') {
-    showFeedback(parsed.message, 'error')
-    return
-  }
-
   await sendPlainTextMessage(text)
 }
 
 async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()) {
   if (pendingChatMessage.value?.status === 'sending') return
-  pendingChatMessage.value = { clientMessageId, body, status: 'sending' }
+  const shouldRefreshAccount = mayAffectBetAccount(body)
+  pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'sending' }
   scrollToBottom()
   if (chatSocket.sendMessage(clientMessageId, body)) return
   try {
     const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body })
     mergeChatMessages([sent])
     pendingChatMessage.value = null
+    if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
+    void refreshChatMessagesAfterSubmission()
     if (isNearChatBottom()) {
       scrollToBottom()
       void saveChatReadCursor(chatLastSequence.value)
     }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
-      pendingChatMessage.value = { clientMessageId, body, status: 'failed' }
+      pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'failed' }
       authenticated.value = false
       loginError.value = '登录状态已失效，请重新登录'
     } else {
-      pendingChatMessage.value = { clientMessageId, body, status: 'failed' }
+      pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'failed' }
       showFeedback(apiErrorMessage(error, '消息发送失败，可点击重试'), 'error')
     }
+    if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
+    void refreshChatMessagesAfterSubmission()
+  }
+}
+
+async function refreshAccountAfterBetSubmission() {
+  try {
+    await loadGame()
+    if (menuOpen.value) void loadAccountPanel()
+  } catch {
+    // The normal game refresh loop will retry; chat delivery must not be blocked.
+  }
+}
+
+async function refreshChatMessagesAfterSubmission() {
+  try {
+    const page = await api.getChatMessages(ROOM_CODE, {
+      afterSequence: chatLastSequence.value,
+      limit: 100,
+    })
+    handleRealtimeMessages(page.items)
+  } catch {
+    // WebSocket sync or the next degraded-mode poll will recover the message.
   }
 }
 
@@ -709,6 +741,7 @@ function openScratch() {
 }
 
 function closeOverlays() {
+  menuOpen.value = false
   scratchOpen.value = false
   noticeOpen.value = false
   settingsOpen.value = false
@@ -743,11 +776,6 @@ function avatarText(name: string) {
 
 function isStoredAvatarKey(value: string | null | undefined): value is string {
   return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|gif|webp)$/i.test(value))
-}
-
-function createBetIdempotencyKey() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `bet-${crypto.randomUUID()}`
-  return `bet-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function createChatClientMessageId() {
@@ -794,22 +822,22 @@ onUnmounted(() => {
         <div class="header-actions">
           <button class="quick-button" type="button" @click="quickOpen = !quickOpen">快捷</button>
           <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
-          <button class="menu-button" type="button" aria-label="打开菜单" title="打开菜单" @click="menuOpen = !menuOpen">
+          <button class="menu-button" type="button" aria-label="打开账户流水" title="账户流水" :class="{ active: menuOpen }" @click="toggleAccountPanel">
             <span></span><span></span><span></span>
           </button>
         </div>
         <div v-if="quickOpen" class="header-menu quick-menu">
+          <div class="quick-menu-section-title">常用功能</div>
+          <button type="button" @click="noticeOpen = true; quickOpen = false">玩法说明</button>
+          <button type="button" @click="keyboardOpen = true; quickOpen = false">展开键盘</button>
+          <button type="button" @click="toggleHistory">历史记录</button>
+          <button type="button" @click="openSettings">设置</button>
+          <div class="quick-menu-section-title">快捷指令</div>
           <button v-for="token in quickTokens" :key="token" type="button" @click="appendToken(token); quickOpen = false">{{ token }}</button>
         </div>
         <div v-if="interfaceOpen" class="header-menu interface-menu">
           <button type="button" :class="{ selected: interfaceMode === 'ui1' }" @click="setInterfaceMode('ui1')">界面1</button>
           <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')">界面2</button>
-        </div>
-        <div v-if="menuOpen" class="header-menu menu-panel">
-          <button type="button" @click="noticeOpen = true; menuOpen = false">玩法说明</button>
-          <button type="button" @click="keyboardOpen = true; menuOpen = false">展开键盘</button>
-          <button type="button" @click="toggleHistory">历史记录</button>
-          <button type="button" @click="openSettings">设置</button>
         </div>
       </div>
       <div class="reference-issuebar">
@@ -825,6 +853,53 @@ onUnmounted(() => {
         <button class="collapse-button" :class="{ expanded: historyOpen }" type="button" :aria-expanded="historyOpen" aria-label="展开历史开奖记录" title="展开历史开奖记录" @click="toggleHistory"><span class="collapse-chevron" aria-hidden="true"></span></button>
       </div>
     </header>
+
+    <div v-if="menuOpen" class="account-panel-layer" role="presentation" @click.self="menuOpen = false">
+      <section class="account-panel" role="dialog" aria-modal="true" aria-label="账户流水">
+        <header class="account-panel-toolbar">
+          <strong>账户流水</strong>
+          <button type="button" aria-label="关闭账户流水" title="关闭" @click="menuOpen = false">×</button>
+        </header>
+        <div class="account-panel-summary">
+          <div class="account-panel-avatar">
+            <img v-if="isStoredAvatarKey(currentUser?.avatarKey)" :src="api.avatarUrl(currentUser.avatarKey)" alt="当前头像" />
+            <span v-else>{{ avatarText(currentUser?.displayName || '我') }}</span>
+          </div>
+          <div class="account-panel-identity">
+            <strong>{{ currentUser?.displayName || '我' }}</strong>
+            <span>余额 {{ balance }}</span>
+          </div>
+          <div class="account-panel-stat">
+            <span>今日流水</span>
+            <strong>{{ Number(betSummary?.todayTurnover ?? 0).toFixed(2) }}</strong>
+          </div>
+          <div class="account-panel-stat" :class="{ positive: Number(betSummary?.todayNetProfit ?? 0) > 0, negative: Number(betSummary?.todayNetProfit ?? 0) < 0 }">
+            <span>今日总盈亏</span>
+            <strong>{{ signedMoney(Number(betSummary?.todayNetProfit ?? 0)) }}</strong>
+          </div>
+        </div>
+        <div class="account-panel-tabs" role="tablist" aria-label="注单状态">
+          <button type="button" role="tab" :aria-selected="accountPanelTab === 'pending'" :class="{ active: accountPanelTab === 'pending' }" @click="accountPanelTab = 'pending'">未结算</button>
+          <button type="button" role="tab" :aria-selected="accountPanelTab === 'settled'" :class="{ active: accountPanelTab === 'settled' }" @click="accountPanelTab = 'settled'">已结算</button>
+        </div>
+        <div class="account-bet-table" role="table" aria-label="注单列表">
+          <div class="account-bet-row account-bet-heading" role="row">
+            <span>期号</span><span>球位</span><span>内容</span><span>结果</span>
+          </div>
+          <div v-if="accountPanelLoading" class="account-panel-empty">正在加载账户数据...</div>
+          <div v-else-if="accountPanelError" class="account-panel-empty account-panel-error">{{ accountPanelError }}</div>
+          <div v-else-if="!accountPanelBets.length" class="account-panel-empty">暂无{{ accountPanelTab === 'pending' ? '未结算' : '已结算' }}注单</div>
+          <div v-else v-for="bet in accountPanelBets" :key="`account-${bet.id}`" class="account-bet-row" role="row">
+            <span>{{ bet.issueNumber }}</span>
+            <span>第{{ bet.ballNumber }}球</span>
+            <span>{{ formatBetParameters(bet) }}{{ playTypeLabel(bet.playType) }} / {{ Number(bet.stake).toFixed(2) }}</span>
+            <strong :class="{ positive: Number(bet.netProfit ?? 0) > 0, negative: Number(bet.netProfit ?? 0) < 0 }">
+              {{ settlementStatusLabel(bet.settlementStatus) }}<template v-if="bet.netProfit !== null"> {{ signedMoney(Number(bet.netProfit)) }}</template>
+            </strong>
+          </div>
+        </div>
+      </section>
+    </div>
 
     <div v-if="historyOpen" class="reference-history-scrim" aria-hidden="true" @click="historyOpen = false"></div>
     <div v-if="historyOpen" class="reference-history-panel" role="dialog" aria-label="历史记录">

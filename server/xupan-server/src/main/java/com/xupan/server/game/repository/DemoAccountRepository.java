@@ -5,6 +5,7 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 
@@ -54,6 +55,108 @@ public class DemoAccountRepository {
                 rs.getString("operator_name"), rs.getTimestamp("created_at").toInstant()), userCode);
     }
 
+    public List<TestPlayerRecord> findTestPlayers(String status, String keyword,
+                                                   int page, int pageSize) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                       a.balance, a.status, u.status AS user_status, a.identity_type,
+                       a.created_at, a.updated_at
+                  FROM demo_user_account a
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.identity_type = 'TEST'
+                """);
+        java.util.ArrayList<Object> args = new java.util.ArrayList<>();
+        appendTestPlayerFilter(sql, args, status, keyword);
+        sql.append(" ORDER BY a.id LIMIT ? OFFSET ?");
+        args.add(pageSize);
+        args.add((long) (page - 1) * pageSize);
+        return jdbcTemplate.query(sql.toString(), testPlayerMapper(), args.toArray());
+    }
+
+    public long countTestPlayers(String status, String keyword) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT COUNT(*)
+                  FROM demo_user_account a
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.identity_type = 'TEST'
+                """);
+        java.util.ArrayList<Object> args = new java.util.ArrayList<>();
+        appendTestPlayerFilter(sql, args, status, keyword);
+        Long count = jdbcTemplate.queryForObject(sql.toString(), Long.class, args.toArray());
+        return count == null ? 0L : count;
+    }
+
+    public Optional<TestPlayerRecord> findTestPlayer(long accountId) {
+        return jdbcTemplate.query("""
+                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                       a.balance, a.status, u.status AS user_status, a.identity_type,
+                       a.created_at, a.updated_at
+                  FROM demo_user_account a
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.id = ? AND a.identity_type = 'TEST'
+                """, testPlayerMapper(), accountId).stream().findFirst();
+    }
+
+    public Optional<TestPlayerRecord> findTestPlayerByUserId(long userId) {
+        return jdbcTemplate.query("""
+                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                       a.balance, a.status, u.status AS user_status, a.identity_type,
+                       a.created_at, a.updated_at
+                  FROM demo_user_account a
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.sys_user_id = ? AND a.identity_type = 'TEST'
+                """, testPlayerMapper(), userId).stream().findFirst();
+    }
+
+    public Optional<TestPlayerRecord> findTestPlayerByCode(String userCode) {
+        return jdbcTemplate.query("""
+                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                       a.balance, a.status, u.status AS user_status, a.identity_type,
+                       a.created_at, a.updated_at
+                  FROM demo_user_account a
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.user_code = ? AND a.identity_type = 'TEST'
+                """, testPlayerMapper(), userCode).stream().findFirst();
+    }
+
+    public boolean existsByUserCode(String userCode) {
+        Boolean exists = jdbcTemplate.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM demo_user_account WHERE user_code = ?)",
+                Boolean.class, userCode);
+        return Boolean.TRUE.equals(exists);
+    }
+
+    public int updateTestPlayerStatus(long accountId, String status) {
+        return jdbcTemplate.update("""
+                UPDATE demo_user_account
+                   SET status = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND identity_type = 'TEST'
+                """, status, accountId);
+    }
+
+    private static void appendTestPlayerFilter(StringBuilder sql, List<Object> args,
+                                               String status, String keyword) {
+        if (status != null && !status.isBlank()) {
+            sql.append(" AND a.status = ?");
+            args.add(status);
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            sql.append(" AND (a.user_code LIKE ? OR a.display_name LIKE ?)");
+            String pattern = "%" + keyword.trim() + "%";
+            args.add(pattern);
+            args.add(pattern);
+        }
+    }
+
+    private static org.springframework.jdbc.core.RowMapper<TestPlayerRecord> testPlayerMapper() {
+        return (rs, rowNum) -> new TestPlayerRecord(
+                rs.getLong("id"), rs.getLong("sys_user_id"), rs.getString("user_code"),
+                rs.getString("display_name"), rs.getString("avatar_key"),
+                rs.getBigDecimal("balance"), rs.getString("status"),
+                rs.getString("user_status"), rs.getString("identity_type"),
+                rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
+    }
+
     public AccountRecord adjust(String userCode, BigDecimal delta, String operationType,
                                 String reason, String operatorName) {
         AccountRecord current = findByCode(userCode);
@@ -96,6 +199,12 @@ public class DemoAccountRepository {
 
     public record AccountRecord(long id, String userCode, String displayName,
                                 BigDecimal balance, String status) {
+    }
+
+    public record TestPlayerRecord(long id, long userId, String userCode, String displayName,
+                                   String avatarKey, BigDecimal balance, String status,
+                                   String userStatus, String identityType,
+                                   Instant createdAt, Instant updatedAt) {
     }
 
     public record LedgerRecord(long id, String userCode, String operationType,

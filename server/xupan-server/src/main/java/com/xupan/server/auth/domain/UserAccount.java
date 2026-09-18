@@ -14,10 +14,21 @@ public record UserAccount(
         Instant lockedUntil,
         long securityVersion,
         Instant lastLoginAt,
-        String lastLoginIp) {
+        String lastLoginIp,
+        String userType) {
+
+    /** Compatibility constructor for domain-focused tests and legacy callers. */
+    public UserAccount(long id, String username, String displayName, String avatarKey,
+                       String passwordHash, String status, int failedLoginCount,
+                       Instant lockedUntil, long securityVersion, Instant lastLoginAt,
+                       String lastLoginIp) {
+        this(id, username, displayName, avatarKey, passwordHash, status, failedLoginCount,
+                lockedUntil, securityVersion, lastLoginAt, lastLoginIp, "REAL");
+    }
 
     public boolean canLogin(Instant now) {
-        if (now == null || "DISABLED".equals(status) || "DELETED".equals(status)) {
+        if (now == null || "TEST".equals(userType)
+                || "DISABLED".equals(status) || "DELETED".equals(status)) {
             return false;
         }
         if ("LOCKED".equals(status)) {

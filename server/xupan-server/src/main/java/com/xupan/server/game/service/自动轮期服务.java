@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -34,6 +35,7 @@ public class 自动轮期服务 {
     private final GameIssueEventRepository eventRepository;
     private final SettlementService settlementService;
     private final VirtualWalletService walletService;
+    private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
     private final boolean automationEnabled;
 
@@ -42,29 +44,33 @@ public class 自动轮期服务 {
                         GameIssueEventRepository eventRepository,
                         SettlementService settlementService,
                         VirtualWalletService walletService,
+                        ApplicationEventPublisher eventPublisher,
                         @Value("${xupan.automation.enabled:true}") boolean automationEnabled) {
         this(gameRepository, eventRepository, settlementService, walletService,
-                Clock.systemUTC(), automationEnabled);
+                eventPublisher, Clock.systemUTC(), automationEnabled);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
                  GameIssueEventRepository eventRepository,
                  SettlementService settlementService,
                  VirtualWalletService walletService,
+                 ApplicationEventPublisher eventPublisher,
                  Clock clock) {
-        this(gameRepository, eventRepository, settlementService, walletService, clock, true);
+        this(gameRepository, eventRepository, settlementService, walletService, eventPublisher, clock, true);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
                  GameIssueEventRepository eventRepository,
                  SettlementService settlementService,
                  VirtualWalletService walletService,
+                 ApplicationEventPublisher eventPublisher,
                  Clock clock,
                  boolean automationEnabled) {
         this.gameRepository = gameRepository;
         this.eventRepository = eventRepository;
         this.settlementService = settlementService;
         this.walletService = walletService;
+        this.eventPublisher = eventPublisher;
         this.clock = clock;
         this.automationEnabled = automationEnabled;
     }
@@ -98,7 +104,7 @@ public class 自动轮期服务 {
             if (!now.isBefore(issue.bettingEndsAt())
                     && gameRepository.transitionPhase(issue.issueNumber(), BETTING, DRAWING)) {
                 eventRepository.appendOnce(issue.issueNumber(), "BETTING_CLOSED",
-                        issue.issueNumber() + "期停止\n-----------\n进入开奖中，停止下注!", now);
+                        issue.issueNumber() + "期停止", now);
                 issue = gameRepository.findCurrentIssue().orElseThrow();
             }
         }
@@ -143,6 +149,11 @@ public class 自动轮期服务 {
                             long settlementUserId = walletService.getByAccountId(bet.accountId()).userId();
                             walletService.creditForSettlement(settlementUserId, bet.id(), issue.issueNumber(), payout,
                                     "开奖结算：" + issue.issueNumber());
+                        }
+                        if (eventPublisher != null) {
+                            eventPublisher.publishEvent(new BetSettlementCompletedEvent(
+                                    bet.id(), bet.accountId(), issue.issueNumber(), settlement.status(),
+                                    settlement.stake(), settlement.netProfit(), payout));
                         }
                     }
                 });
@@ -191,7 +202,13 @@ public class 自动轮期服务 {
         return issueNumber + "结果:\n" + numbers.stream()
                 .map(number -> String.format("%02d", number))
                 .reduce((left, right) -> left + "," + right).orElse("")
-                + "\n机器人已完成开奖和结算";
+                + " => " + fanText(numbers.get(7));
+    }
+
+    private static String fanText(int special) {
+        int fan = special % 4 == 0 ? 4 : special % 4;
+        return fan + "," + (special % 2 == 0 ? "双" : "单") + ","
+                + (special >= 11 ? "大" : "小");
     }
 
     private static BigDecimal payout(SettlementResult settlement) {

@@ -127,6 +127,9 @@ public class AuthenticationService {
     }
 
     private static String statusFailureCode(UserAccount user) {
+        if ("TEST".equals(user.userType())) {
+            return "AUTH_TEST_PLAYER_LOGIN_DISABLED";
+        }
         if ("DISABLED".equals(user.status()) || "DELETED".equals(user.status())) {
             return "AUTH_ACCOUNT_DISABLED";
         }

@@ -71,6 +71,15 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.content").value("大家好"))
                 .andReturn();
         int sequence = JsonPath.read(sent.getResponse().getContentAsString(), "$.sequenceNo");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM chat_message WHERE sender_type = 'ROBOT' "
+                        + "AND content = ?", Integer.class,
+                "@聊天室用户甲, 指令格式不正确!")).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM chat_outbox WHERE message_id IN "
+                        + "(SELECT id FROM chat_message WHERE sender_type = 'ROBOT' "
+                        + "AND content = ?)", Integer.class,
+                "@聊天室用户甲, 指令格式不正确!")).isEqualTo(1);
 
         mockMvc.perform(post("/api/chat/rooms/main/messages")
                         .header("Authorization", "Bearer " + tokenA)

@@ -2,6 +2,7 @@ package com.xupan.server.robot.service;
 
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.robot.domain.RobotDrawComponent;
 import com.xupan.server.robot.domain.RobotDrawComponentConfig;
@@ -25,8 +26,11 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class RobotDispatchService {
@@ -176,7 +180,9 @@ public class RobotDispatchService {
             }
             RobotEventType checkedEventType = eventAdapter.eventType(event.eventType());
             ChatMessage message;
-            if (checkedEventType == RobotEventType.DRAW_RESULT) {
+            if (checkedEventType == RobotEventType.BETTING_CLOSED) {
+                message = publishBettingClosedMessages(dispatch, robot, template, event, now);
+            } else if (checkedEventType == RobotEventType.DRAW_RESULT) {
                 Optional<ChatMessage> drawMessage = publishDrawMessages(dispatch, robot, template,
                         event, now);
                 if (drawMessage.isEmpty()) {
@@ -204,6 +210,63 @@ public class RobotDispatchService {
         } catch (RuntimeException exception) {
             return fail(dispatch, safeError(exception), now);
         }
+    }
+
+    private ChatMessage publishBettingClosedMessages(ChatRobotDispatch dispatch, ChatRobot robot,
+                                                     ChatRobotTemplate template,
+                                                     RobotDispatchRepository.UnscheduledGameEvent event,
+                                                     Instant now) {
+        String stopContent = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
+        chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                event.issueNumber(), idempotency.idempotencyKey(event.id()), stopContent,
+                payload(dispatch, robot, template, event), now);
+
+        String auditKey = idempotency.idempotencyKey(event.id()) + "-audit";
+        return chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                event.issueNumber(), auditKey, bettingAuditText(event.issueNumber()),
+                payload(dispatch, robot, template, event), now);
+    }
+
+    private String bettingAuditText(String issueNumber) {
+        Map<String, List<String>> grouped = new LinkedHashMap<>();
+        for (GameDataRepository.BetAuditRecord bet : gameDataRepository.findBetAuditByIssue(issueNumber)) {
+            grouped.computeIfAbsent(normalizeDisplayName(bet.displayName()), ignored -> new ArrayList<>())
+                    .add(formatBetText(bet.playType(), bet.parameters(), bet.stake()));
+        }
+        StringBuilder content = new StringBuilder("-----------\n")
+                .append(issueNumber).append('\n')
+                .append("核对列表:(").append(String.format("%04d", Math.floorMod(issueNumber.hashCode(), 10000)))
+                .append(")\n");
+        grouped.forEach((name, bets) -> content.append('(').append(name).append(") \"")
+                .append(String.join("，", bets)).append("\"\n"));
+        return content.append("-----------\n")
+                .append("不在核对列表无效,在核对列表的以开奖前是否公告退单为准!")
+                .toString();
+    }
+
+    private static String normalizeDisplayName(String displayName) {
+        if (displayName == null || displayName.isBlank()) {
+            return "匿名用户";
+        }
+        return displayName.replace('\r', ' ').replace('\n', ' ').trim();
+    }
+
+    private static String formatBetText(PlayType playType, List<Integer> parameters, BigDecimal stake) {
+        String amount = stake.stripTrailingZeros().toPlainString();
+        String values = parameters.stream().map(String::valueOf).collect(Collectors.joining());
+        return switch (playType) {
+            case FAN -> values + "番" + amount;
+            case ANGLE, CAR -> values + "/" + amount;
+            case STRICT -> values.charAt(0) + "严" + values.charAt(1) + "/" + amount;
+            case ADD -> values.charAt(0) + "加" + values.substring(1) + "/" + amount;
+            case POSITIVE -> values + "正" + amount;
+            case TONG -> values.substring(0, 1) + "通" + values.substring(1) + "/" + amount;
+            case NONE -> values.substring(0, 2) + "无" + values.substring(2) + "/" + amount;
+            case ODD_EVEN -> (parameters.get(0) == 1 ? "单" : "双") + amount;
+            case BIG_SMALL -> (parameters.get(0) == 1 ? "大" : "小") + amount;
+            case SPECIAL -> parameters.stream().map(value -> String.format("%02d", value))
+                    .collect(Collectors.joining("/")) + "特" + amount;
+        };
     }
 
     private DispatchResult skip(ChatRobotDispatch dispatch, String reason, Instant now) {
@@ -260,7 +323,7 @@ public class RobotDispatchService {
             case DRAW_HISTORY -> new DrawHistoryData(
                     historyItems(gameDataRepository.findSettledIssues(15)),
                     historyItems(gameDataRepository.findLatestSettledBlock(60)));
-            case WINNER_LIST -> winnerData(issueNumber);
+            case WINNER_LIST -> winnerData(issueNumber, currentIssue);
         };
         try {
             return objectMapper.writeValueAsString(new StructuredPayload(
@@ -270,29 +333,24 @@ public class RobotDispatchService {
         }
     }
 
-    private WinnerListData winnerData(String issueNumber) {
-        // 当前仅用于演示：金额随真实 WIN 注单展示，用户标识只保留首字符。
+    private WinnerListData winnerData(String issueNumber, GameDataRepository.IssueRecord issue) {
         List<WinnerItem> items = new ArrayList<>();
+        Map<Long, GameDataRepository.BetRecord> betsById = gameDataRepository.findBetsByIssue(issueNumber)
+                .stream().collect(Collectors.toMap(GameDataRepository.BetRecord::id, value -> value));
         for (GameDataRepository.WinnerRecord winner : gameDataRepository.findWinningBets(issueNumber)) {
-            items.add(new WinnerItem(mask(winner.userCode(), winner.displayName()), winner.ballNumber(),
-                    winner.playType(), winner.stake(), winner.netProfit()));
+            GameDataRepository.BetRecord bet = betsById.get(winner.betId());
+            String betText = bet == null ? winner.playType() : formatBetText(bet.playType(), bet.parameters(), bet.stake());
+            items.add(new WinnerItem(normalizeDisplayName(winner.displayName()), winner.ballNumber(),
+                    winner.playType(), betText, winner.stake(), winner.netProfit()));
         }
-        return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null);
+        return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null,
+                issue.numbers(), issue.settledAt());
     }
 
     private static List<DrawHistoryItem> historyItems(List<GameDataRepository.IssueRecord> issues) {
         return issues.stream()
                 .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(), issue.settledAt()))
                 .toList();
-    }
-
-    private static String mask(String userCode, String displayName) {
-        String value = userCode == null || userCode.isBlank() ? displayName : userCode;
-        if (value == null || value.isBlank()) {
-            return "匿名用户";
-        }
-        String normalized = value.trim();
-        return normalized.length() == 1 ? "*" : normalized.substring(0, 1) + "***";
     }
 
     private static boolean isPermanentTemplateError(BusinessException exception) {
@@ -335,10 +393,11 @@ public class RobotDispatchService {
     private record DrawHistoryItem(String issueNumber, List<Integer> numbers, Instant settledAt) {
     }
 
-    private record WinnerListData(List<WinnerItem> items, String emptyMessage) {
+    private record WinnerListData(List<WinnerItem> items, String emptyMessage,
+                                  List<Integer> numbers, Instant settledAt) {
     }
 
     private record WinnerItem(String maskedUser, int ballNumber, String playType,
-                              BigDecimal stake, BigDecimal netProfit) {
+                              String betText, BigDecimal stake, BigDecimal netProfit) {
     }
 }

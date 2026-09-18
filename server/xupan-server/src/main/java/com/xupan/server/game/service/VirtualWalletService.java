@@ -84,6 +84,20 @@ public class VirtualWalletService {
     }
 
     @Transactional
+    public WalletOperationResult reset(long operatorUserId, long targetUserId,
+                                       String reason, String idempotencyKey) {
+        requireActiveUser(operatorUserId);
+        requireActiveUser(targetUserId);
+        String normalizedReason = requiredText(reason, "重置原因不能为空", 255);
+        String normalizedKey = requiredText(idempotencyKey, "幂等键不能为空", 128);
+        WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendAdminReset(operatorUserId,
+                targetUserId, normalizedReason, normalizedKey));
+        WalletOperationResult result = resultFor(targetUserId, ledger);
+        auditWalletOperation(operatorUserId, targetUserId, "WALLET_ADJUST", "resets", result);
+        return result;
+    }
+
+    @Transactional
     public WalletOperationResult debitForBet(long targetUserId, long betId,
                                              String betCode, String issueNumber,
                                              BigDecimal stake) {
@@ -131,6 +145,27 @@ public class VirtualWalletService {
             try {
                 return walletRepository.createForUser(userId,
                         code, requiredText(displayName == null ? user.displayName() : displayName,
+                                "显示名称不能为空", 128));
+            } catch (DataIntegrityViolationException exception) {
+                return walletRepository.findByUserId(userId)
+                        .map(VirtualWallet::accountId)
+                        .orElseThrow(() -> exception);
+            }
+        });
+    }
+
+    @Transactional
+    public long ensureTestWalletForUser(long userId, String userCode, String displayName) {
+        UserAccount user = userRepository.findById(userId)
+                .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "用户不存在"));
+        if (!"TEST".equals(user.userType())) {
+            throw BusinessException.conflict("TEST_PLAYER_IDENTITY_INVALID", "目标身份不是测试玩家");
+        }
+        return walletRepository.findByUserId(userId).map(VirtualWallet::accountId).orElseGet(() -> {
+            try {
+                return walletRepository.createForTestPlayer(userId,
+                        requiredText(userCode, "用户编码不能为空", 64),
+                        requiredText(displayName == null ? user.displayName() : displayName,
                                 "显示名称不能为空", 128));
             } catch (DataIntegrityViolationException exception) {
                 return walletRepository.findByUserId(userId)
@@ -190,7 +225,7 @@ public class VirtualWalletService {
             case "WALLET_INACTIVE" ->
                     BusinessException.conflict(code, "虚拟钱包已停用");
             case "WALLET_INSUFFICIENT_BALANCE", "WALLET_IDEMPOTENCY_CONFLICT",
-                 "WALLET_CONCURRENT_UPDATE", "WALLET_BET_MISMATCH" ->
+                 "WALLET_CONCURRENT_UPDATE", "WALLET_BET_MISMATCH", "WALLET_ALREADY_RESET" ->
                     BusinessException.conflict(code, "本次钱包操作无法完成");
             case "WALLET_AMOUNT_INVALID" ->
                     BusinessException.badRequest(code, "金额格式无效");
