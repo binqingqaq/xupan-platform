@@ -35,6 +35,8 @@ import java.util.Optional;
 @Service
 public class ChatMessageService {
 
+    private static final int MAX_ROBOT_PAYLOAD_LENGTH = 20_000;
+
     private final UserRepository userRepository;
     private final PermissionService permissionService;
     private final ChatRoomRepository roomRepository;
@@ -317,7 +319,8 @@ public class ChatMessageService {
     }
 
     private String requirePayloadJson(String payloadJson) {
-        if (payloadJson == null || payloadJson.isBlank() || payloadJson.length() > 4000) {
+        if (payloadJson == null || payloadJson.isBlank()
+                || payloadJson.length() > MAX_ROBOT_PAYLOAD_LENGTH) {
             throw BusinessException.badRequest("CHAT_ROBOT_PAYLOAD_INVALID", "机器人追踪数据无效");
         }
         try {
