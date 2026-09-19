@@ -107,6 +107,8 @@ D:\codes\liuhecai\_ruoyi-reference\RuoYi-Vue
 .\mvnw.cmd spring-boot:run
 ```
 
+本机启动数据库凭据时，必须从 `docs/本地环境密钥.md` 的“应用账号”章节读取 `xupan_app` 对应的用户名和密码；该文件同时包含 root 管理账号和面板密码，禁止按文件中的第一个“密码”字段取值。实际密码不得复制到 `AGENTS.md`、Git、日志或聊天中。
+
 运行前确认当前终端的 `JAVA_HOME` 指向 JDK 21。测试使用 `test` Profile 和内存 H2；生产启动需要后续补充外部 MySQL 配置。
 
 ## 服务器 SSH 连接
