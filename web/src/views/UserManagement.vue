@@ -328,7 +328,7 @@ onBeforeUnmount(() => {
       </div>
       <nav class="admin-header-actions" aria-label="后台导航">
         <RouterLink class="header-link" to="/admin">运营后台</RouterLink>
-        <RouterLink class="header-link" to="/admin/test-players">测试玩家</RouterLink>
+        <RouterLink class="header-link" to="/admin/test-players">玩家工作台</RouterLink>
         <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
         <button class="header-link" type="button" @click="logout">退出登录</button>
       </nav>

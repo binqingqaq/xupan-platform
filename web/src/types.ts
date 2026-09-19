@@ -150,6 +150,137 @@ export interface TestPlayerPage {
   total: number
 }
 
+export type PlayerKind = 'NORMAL' | 'BOT'
+export type PlayerDeskStatus = 'ACTIVE' | 'DISABLED' | 'LOCKED'
+
+export interface PlayerDeskSummary {
+  totalPoints: number
+  normalCount: number
+  botCount: number
+}
+
+export interface PlayerDeskItem {
+  userId: number
+  accountId: number
+  userCode: string
+  username: string
+  displayName: string
+  avatarKey: string | null
+  status: PlayerDeskStatus
+  playerKind: PlayerKind
+  userType: 'REAL' | 'TEST'
+  balance: number
+  createdAt?: string
+  lastLoginAt?: string | null
+  behaviorEnabled: boolean
+  lastActionAt: string | null
+}
+
+export interface PlayerDeskPage {
+  items: PlayerDeskItem[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface PlayerDeskWalletStatistics {
+  totalBetCount: number
+  settledBetCount: number
+  pendingBetCount: number
+  totalStake: number
+  settledStake: number
+  pendingStake: number
+  netProfit: number
+}
+
+export interface PlayerDeskBehavior {
+  id?: number
+  accountId?: number
+  enabled: boolean
+  betsPerIssue: number
+  stakeMin: number
+  stakeMax: number
+  chatEnabled: boolean
+  messagesPerIssue: number
+  nextRunAt?: string | null
+  lastIssueNumber?: string | null
+  lastErrorCode?: string | null
+  lastErrorMessage?: string | null
+  version?: number
+  updatedAt?: string
+}
+
+export type PlayerActionType = 'CHAT_TEXT' | 'BET_TEXT'
+export type PlayerActionStatus = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'SKIPPED' | 'FAILED'
+
+export interface PlayerActionSummary {
+  id: number
+  issueNumber: string | null
+  actionNo: number
+  actionType: PlayerActionType
+  sourceText: string
+  status: PlayerActionStatus
+  attempts: number
+  errorCode: string | null
+  errorMessage: string | null
+  messageId: number | null
+  betId: number | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PlayerDeskLedgerEntry extends WalletLedgerEntry {
+}
+
+export interface PlayerDeskDetail extends PlayerDeskItem {
+  createdAt: string
+  lastLoginAt: string | null
+  walletStatistics: PlayerDeskWalletStatistics
+  ledger: PlayerDeskLedgerEntry[]
+  bets: BetView[]
+  behavior: PlayerDeskBehavior | null
+  recentActions: PlayerActionSummary[]
+}
+
+export interface CreateNormalPlayerRequest {
+  username: string
+  displayName: string
+  rawPassword: string
+}
+
+export interface CreateBotPlayerRequest {
+  userCode: string
+  displayName: string
+  avatarKey?: string
+}
+
+export interface PlayerBalanceAdjustmentRequest {
+  amount: number
+  reason: string
+  idempotencyKey: string
+}
+
+export interface TestPlayerBehaviorRequest {
+  enabled: boolean
+  betsPerIssue: number
+  stakeMin: number
+  stakeMax: number
+  chatEnabled: boolean
+  messagesPerIssue: number
+}
+
+export interface TestPlayerMessageRequest {
+  content: string
+  clientMessageId: string
+}
+
+export interface PlayerMessageOutcome {
+  message: ChatMessage
+  replayed: boolean
+  feedback?: string | null
+  bet?: BetView | null
+}
+
 export interface CreateTestPlayerRequest {
   userCode: string
   displayName: string

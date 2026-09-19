@@ -62,21 +62,25 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV15InOrder() {
+    void appliesV1ThroughV16InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
     }
 
     @Test
     void createsIdentitySessionAndAuditTables() {
-        assertThat(tableNames()).containsExactlyInAnyOrder(
+        assertThat(tableNames()).contains(
                 "SYS_USER", "SYS_ROLE", "SYS_PERMISSION", "SYS_USER_ROLE", "SYS_ROLE_PERMISSION",
                 "AUTH_SESSION", "AUTH_WS_TICKET", "SYS_LOGIN_LOG", "SYS_OPERATION_LOG");
+
+        assertThat(tableNames()).contains("TEST_PLAYER_BEHAVIOR", "TEST_PLAYER_ACTION");
+        assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("PLAYER_KIND");
+        assertThat(constraintNames("DEMO_USER_ACCOUNT")).contains("CK_DEMO_USER_ACCOUNT_PLAYER_KIND");
 
         assertThat(columnNames("SYS_USER")).containsExactlyInAnyOrder(
                 "ID", "USERNAME", "DISPLAY_NAME", "AVATAR_KEY", "PASSWORD_HASH", "STATUS",

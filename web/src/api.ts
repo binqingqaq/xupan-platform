@@ -3,6 +3,8 @@ import type {
   AdminRoleOption,
   AdminUserDetail,
   AdminUserPage,
+  CreateBotPlayerRequest,
+  CreateNormalPlayerRequest,
   ChangeTestPlayerStatusRequest,
   ChangeAdminUserStatusRequest,
   CreateTestPlayerRequest,
@@ -29,6 +31,18 @@ import type {
   TestPlayerBetRequest,
   TestPlayerPage,
   TestPlayerView,
+  PlayerActionSummary,
+  PlayerBalanceAdjustmentRequest,
+  PlayerDeskBehavior,
+  PlayerDeskDetail,
+  PlayerDeskPage,
+  PlayerDeskSummary,
+  PlayerDeskItem,
+  PlayerDeskStatus,
+  PlayerMessageOutcome,
+  PlayerDeskWalletStatistics,
+  TestPlayerBehaviorRequest,
+  TestPlayerMessageRequest,
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
@@ -132,6 +146,14 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'TEST_PLAYER_QUERY_INVALID') return '测试玩家筛选或分页参数不合法'
   if (error.code === 'TEST_PLAYER_BALANCE_INVALID') return '测试玩家余额操作金额或原因不合法'
   if (error.code === 'TEST_PLAYER_BALANCE_RESET_CONFLICT') return '测试玩家余额已变化，请刷新后重试'
+  if (error.code === 'PLAYER_DESK_NOT_FOUND') return '玩家不存在，请刷新列表后重试'
+  if (error.code === 'PLAYER_DESK_QUERY_INVALID') return '玩家筛选或分页参数不合法'
+  if (error.code === 'PLAYER_DESK_OPERATION_FORBIDDEN') return '当前账号没有玩家工作台权限'
+  if (error.code === 'PLAYER_DESK_PLAYER_KIND_INVALID') return '玩家分类数据无效，请联系管理员处理'
+  if (error.code === 'PLAYER_DESK_BEHAVIOR_INVALID') return '托行为配置不合法，请检查每期单数和积分范围'
+  if (error.code === 'PLAYER_DESK_BEHAVIOR_NOT_APPLICABLE') return '只有托可以配置自动行为'
+  if (error.code === 'PLAYER_DESK_ACTION_NOT_READY') return '当前没有可立即执行的托动作'
+  if (error.code === 'PLAYER_DESK_MESSAGE_INVALID') return '消息不能为空且不能超过限制'
   if (error.code === 'ROBOT_NOT_FOUND') return '机器人不存在，请刷新后重试'
   if (error.code === 'ROBOT_CODE_EXISTS') return '机器人编码已存在，请换一个编码'
   if (error.code === 'ROBOT_CODE_INVALID') return '机器人编码格式不合法'
@@ -333,6 +355,51 @@ export const api = {
     request<void>(`/api/admin/users/${userId}/password`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUserRoles: (userId: number, payload: UpdateAdminUserRolesRequest) =>
     request<AdminUserDetail>(`/api/admin/users/${userId}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
+  getPlayerDeskSummary: () => request<PlayerDeskSummary>('/api/admin/player-desk/summary'),
+  getPlayerDeskPlayers: (params: { kind?: string; status?: string; keyword?: string; page?: number; pageSize?: number } = {}) => {
+    const query = new URLSearchParams()
+    query.set('kind', params.kind ?? '')
+    query.set('status', params.status ?? '')
+    query.set('keyword', params.keyword ?? '')
+    query.set('page', String(params.page ?? 1))
+    query.set('pageSize', String(params.pageSize ?? 20))
+    return request<PlayerDeskPage>(`/api/admin/player-desk/players?${query.toString()}`)
+  },
+  getPlayerDeskPlayer: (userId: number) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}`),
+  createNormalPlayer: (payload: CreateNormalPlayerRequest) =>
+    request<PlayerDeskDetail>('/api/admin/player-desk/players/normal', { method: 'POST', body: JSON.stringify(payload) }),
+  createBotPlayer: (payload: CreateBotPlayerRequest) =>
+    request<PlayerDeskDetail>('/api/admin/player-desk/players/bot', { method: 'POST', body: JSON.stringify(payload) }),
+  changePlayerDeskStatus: (userId: number, status: PlayerDeskStatus) =>
+    request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+  grantPlayerDeskPoints: (userId: number, payload: PlayerBalanceAdjustmentRequest) =>
+    request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/balance/grants`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  adjustPlayerDeskPoints: (userId: number, payload: PlayerBalanceAdjustmentRequest) =>
+    request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/balance/adjustments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getPlayerBehavior: (userId: number) => request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`),
+  updatePlayerBehavior: (userId: number, payload: TestPlayerBehaviorRequest) =>
+    request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  runPlayerBehaviorNow: (userId: number) =>
+    request<PlayerActionSummary[]>(`/api/admin/player-desk/players/${userId}/behavior/run-now`, { method: 'POST' }),
+  sendPlayerMessage: (userId: number, payload: TestPlayerMessageRequest) =>
+    request<PlayerMessageOutcome>(`/api/admin/player-desk/players/${userId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getPlayerActions: (userId: number, limit = 20) =>
+    request<PlayerActionSummary[]>(`/api/admin/player-desk/players/${userId}/actions?limit=${limit}`),
   getTestPlayers: (params: { status?: string; keyword?: string; page?: number; pageSize?: number } = {}) => {
     const query = new URLSearchParams()
     query.set('status', params.status ?? '')

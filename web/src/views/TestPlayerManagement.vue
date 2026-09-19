@@ -1,440 +1,133 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
-import { api, apiErrorMessage } from '../api'
-import { parseBetText } from '../betText'
-import {
-  createTestPlayerIdempotencyKey,
-  testPlayerStatusClass,
-  testPlayerStatusLabel,
-  validateTestPlayerDraft,
-  validateTestPlayerGrant,
-} from '../testPlayerAdmin'
-import type { CurrentUserView, TestPlayerStatus, TestPlayerView } from '../types'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { api } from '../api'
+import { createPlayerIdempotencyKey, formatPoints, playerActionStatusLabel, playerActionTypeLabel, playerDisplayCode, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation, validatePlayerMessage } from '../playerDesk'
+import type { PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskSummary } from '../types'
 
-type StatusFilter = '' | TestPlayerStatus
-type StatusAction = 'ACTIVE' | 'DISABLED'
-type ConfirmAction =
-  | { kind: 'status'; player: TestPlayerView; nextStatus: StatusAction }
-  | { kind: 'reset'; player: TestPlayerView }
+const summary = ref<PlayerDeskSummary>({ totalPoints: 0, normalCount: 0, botCount: 0 })
+const page = ref<PlayerDeskPage>({ items: [], page: 1, pageSize: 20, total: 0 })
+const selected = ref<PlayerDeskDetail | null>(null)
+const loading = ref(false); const detailLoading = ref(false); const saving = ref(false); const sending = ref(false)
+const error = ref(''); const actionMessage = ref(''); const createError = ref(''); const behaviorError = ref('')
+const createMode = ref<'normal' | 'bot' | null>(null)
+const filter = reactive({ kind: '', status: '', keyword: '' })
+const normalDraft = reactive({ username: '', displayName: '', rawPassword: '', passwordConfirmation: '' })
+const botDraft = reactive({ userCode: '', displayName: '', avatarKey: '' })
+const pointDraft = reactive({ amount: 100, reason: '', direction: 'grant' as 'grant' | 'adjust' })
+const messageDraft = reactive({ content: '', clientMessageId: '' })
+const behaviorDraft = reactive({ enabled: false, betsPerIssue: 0, stakeMin: 100, stakeMax: 100, chatEnabled: false, messagesPerIssue: 0 })
+const selectedIsBot = computed(() => selected.value?.playerKind === 'BOT')
+const canSubmitPoints = computed(() => validatePointOperation(pointDraft.amount, pointDraft.reason, 'local', pointDraft.direction).length === 0)
 
-const router = useRouter()
-const currentUser = ref<CurrentUserView | null>(null)
-const players = ref<TestPlayerView[]>([])
-const selectedPlayer = ref<TestPlayerView | null>(null)
-const keyword = ref('')
-const status = ref<StatusFilter>('')
-const page = ref(1)
-const pageSize = ref(20)
-const total = ref(0)
-const loading = ref(false)
-const detailLoading = ref(false)
-const detailOpen = ref(false)
-const createOpen = ref(false)
-const confirmOpen = ref(false)
-const confirmAction = ref<ConfirmAction | null>(null)
-const action = ref('')
-const listError = ref('')
-const detailError = ref('')
-const feedback = ref('')
-const feedbackKind = ref<'success' | 'error'>('success')
-const avatarFile = ref<File | null>(null)
-const createAvatarFile = ref<File | null>(null)
-
-const newUserCode = ref('')
-const newDisplayName = ref('')
-const newAvatarKey = ref('')
-const balanceAmount = ref(100)
-const balanceReason = ref('测试玩家场景上分')
-const balanceIdempotencyKey = ref(createTestPlayerIdempotencyKey())
-const betText = ref('')
-
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
-const canWrite = computed(() => currentUser.value?.permissions.includes('USER_MANAGE') === true)
-const activeCount = computed(() => players.value.filter(player => player.status === 'ACTIVE').length)
-const disabledCount = computed(() => players.value.filter(player => player.status !== 'ACTIVE').length)
-const pageBalance = computed(() => players.value.reduce((sum, player) => sum + Number(player.balance || 0), 0))
-
-function isBusy(name?: string) {
-  return Boolean(action.value) && (!name || action.value === name)
-}
-
-function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
-  feedback.value = message
-  feedbackKind.value = kind
-  window.setTimeout(() => {
-    if (feedback.value === message) feedback.value = ''
-  }, 4000)
-}
-
-function money(value: number | null | undefined) {
-  return `¥${Number(value || 0).toFixed(2)}`
-}
-
-function dateTime(value?: string | null) {
-  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--'
-}
-
-function initials(player: TestPlayerView) {
-  return player.displayName.trim().slice(0, 1) || '测'
-}
-
-function resetCreateForm() {
-  newUserCode.value = ''
-  newDisplayName.value = ''
-  newAvatarKey.value = ''
-  createAvatarFile.value = null
-}
-
-function playerCode(player: TestPlayerView) {
-  return player.userCode || player.username
-}
-
-function closeCreateModal() {
-  createOpen.value = false
-  resetCreateForm()
-}
-
-function closeDetail() {
-  detailOpen.value = false
-  selectedPlayer.value = null
-  avatarFile.value = null
-  detailError.value = ''
-}
-
-function closeConfirmation() {
-  if (action.value) return
-  confirmOpen.value = false
-  confirmAction.value = null
-}
-
-async function loadPage() {
-  loading.value = true
-  listError.value = ''
+async function refresh(selectUserId?: number) {
+  loading.value = true; error.value = ''
   try {
-    const result = await api.getTestPlayers({
-      status: status.value,
-      keyword: keyword.value.trim(),
-      page: page.value,
-      pageSize: pageSize.value,
-    })
-    players.value = result.items
-    total.value = result.total
-    page.value = result.page
-    pageSize.value = result.pageSize
-    if (selectedPlayer.value && !players.value.some(player => player.id === selectedPlayer.value?.id)) closeDetail()
-  } catch (error) {
-    listError.value = apiErrorMessage(error, '测试玩家列表加载失败')
-  } finally {
-    loading.value = false
-  }
+    const [nextSummary, nextPage] = await Promise.all([api.getPlayerDeskSummary(), api.getPlayerDeskPlayers({ ...filter, page: 1, pageSize: 20 })])
+    summary.value = nextSummary; page.value = nextPage
+    const id = selectUserId ?? selected.value?.userId ?? nextPage.items[0]?.userId
+    if (id) await selectPlayer(id); else selected.value = null
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : '玩家工作台加载失败' }
+  finally { loading.value = false }
 }
-
-async function refresh() {
-  try {
-    currentUser.value = await api.me()
-    await loadPage()
-  } catch (error) {
-    listError.value = apiErrorMessage(error, '测试玩家管理页面加载失败')
-  }
+async function selectPlayer(userId: number) {
+  detailLoading.value = true; error.value = ''
+  try { selected.value = await api.getPlayerDeskPlayer(userId); syncBehavior(selected.value.behavior) }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : '玩家详情加载失败' }
+  finally { detailLoading.value = false }
 }
-
-function search() {
-  page.value = 1
-  void loadPage()
+function syncBehavior(behavior: PlayerDeskBehavior | null) { Object.assign(behaviorDraft, behavior ?? { enabled: false, betsPerIssue: 0, stakeMin: 100, stakeMax: 100, chatEnabled: false, messagesPerIssue: 0 }) }
+async function createNormal() {
+  createError.value = ''; const errors = validateNormalPlayerDraft(normalDraft); if (errors.length) { createError.value = errors[0]; return }
+  saving.value = true
+  try { const created = await api.createNormalPlayer({ username: normalDraft.username.trim(), displayName: normalDraft.displayName.trim(), rawPassword: normalDraft.rawPassword }); const id = created.userId; Object.assign(normalDraft, { username: '', displayName: '', rawPassword: '', passwordConfirmation: '' }); createMode.value = null; await refresh(id); actionMessage.value = '普通玩家已创建' }
+  catch (cause) { createError.value = cause instanceof Error ? cause.message : '普通玩家创建失败' } finally { saving.value = false }
 }
-
-function changeStatusFilter() {
-  page.value = 1
-  void loadPage()
+async function createBot() {
+  createError.value = ''; const errors = validateBotPlayerDraft(botDraft); if (errors.length) { createError.value = errors[0]; return }
+  saving.value = true
+  try { const created = await api.createBotPlayer({ userCode: botDraft.userCode.trim(), displayName: botDraft.displayName.trim(), avatarKey: botDraft.avatarKey.trim() || undefined }); const id = created.userId; Object.assign(botDraft, { userCode: '', displayName: '', avatarKey: '' }); createMode.value = null; await refresh(id); actionMessage.value = '托已创建，默认未启用自动行为' }
+  catch (cause) { createError.value = cause instanceof Error ? cause.message : '托创建失败' } finally { saving.value = false }
 }
-
-function movePage(nextPage: number) {
-  if (nextPage < 1 || nextPage > pageCount.value || nextPage === page.value || loading.value) return
-  page.value = nextPage
-  void loadPage()
+async function operatePoints() {
+  if (!selected.value) return
+  const errors = validatePointOperation(pointDraft.amount, pointDraft.reason, createPlayerIdempotencyKey(), pointDraft.direction); if (errors.length) { actionMessage.value = errors[0]; return }
+  saving.value = true
+  try { const payload = { amount: pointDraft.direction === 'adjust' ? -Math.abs(pointDraft.amount) : Math.abs(pointDraft.amount), reason: pointDraft.reason.trim(), idempotencyKey: createPlayerIdempotencyKey() }; await (pointDraft.direction === 'grant' ? api.grantPlayerDeskPoints(selected.value.userId, payload) : api.adjustPlayerDeskPoints(selected.value.userId, payload)); pointDraft.reason = ''; await refresh(selected.value.userId); actionMessage.value = pointDraft.direction === 'grant' ? '积分已增加' : '积分已扣减' }
+  catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '积分操作失败' } finally { saving.value = false }
 }
-
-async function openDetail(player: TestPlayerView) {
-  detailOpen.value = true
-  detailLoading.value = true
-  detailError.value = ''
-  selectedPlayer.value = null
-  try {
-    selectedPlayer.value = await api.getTestPlayer(playerCode(player))
-  } catch (error) {
-    detailError.value = apiErrorMessage(error, '测试玩家详情加载失败')
-  } finally {
-    detailLoading.value = false
-  }
+async function toggleStatus() {
+  if (!selected.value) return
+  const next = selected.value.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'; if (!window.confirm(`${next === 'ACTIVE' ? '启用' : '停用'}该玩家？`)) return
+  saving.value = true
+  try { await api.changePlayerDeskStatus(selected.value.userId, next); await refresh(selected.value.userId); actionMessage.value = next === 'ACTIVE' ? '玩家已启用' : '玩家已停用' }
+  catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '状态更新失败' } finally { saving.value = false }
 }
-
-function selectCreateAvatar(event: Event) {
-  createAvatarFile.value = (event.target as HTMLInputElement).files?.[0] || null
+async function saveBehavior() {
+  if (!selected.value) return
+  behaviorError.value = ''; const errors = validateBehaviorDraft(behaviorDraft); if (errors.length) { behaviorError.value = errors[0]; return }
+  saving.value = true
+  try { const behavior = await api.updatePlayerBehavior(selected.value.userId, behaviorDraft); syncBehavior(behavior); await refresh(selected.value.userId); actionMessage.value = '托行为配置已保存' }
+  catch (cause) { behaviorError.value = cause instanceof Error ? cause.message : '托行为配置保存失败' } finally { saving.value = false }
 }
-
-function selectAvatar(event: Event) {
-  avatarFile.value = (event.target as HTMLInputElement).files?.[0] || null
+async function runNow() { if (!selected.value) return; saving.value = true; try { await api.runPlayerBehaviorNow(selected.value.userId); await refresh(selected.value.userId); actionMessage.value = '已执行一批托动作' } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '立即执行失败' } finally { saving.value = false } }
+async function sendMessage() {
+  if (!selected.value) return
+  messageDraft.clientMessageId = messageDraft.clientMessageId || createPlayerIdempotencyKey('player-message'); const errors = validatePlayerMessage(messageDraft.content, messageDraft.clientMessageId); if (errors.length) { actionMessage.value = errors[0]; return }
+  sending.value = true
+  try { await api.sendPlayerMessage(selected.value.userId, { content: messageDraft.content.trim(), clientMessageId: messageDraft.clientMessageId }); messageDraft.content = ''; messageDraft.clientMessageId = ''; await refresh(selected.value.userId); actionMessage.value = '托消息已发送' } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '托消息发送失败' } finally { sending.value = false }
 }
-
-async function createPlayer() {
-  const errors = validateTestPlayerDraft({
-    userCode: newUserCode.value,
-    displayName: newDisplayName.value,
-    avatarKey: newAvatarKey.value,
-  })
-  if (errors.length) {
-    showFeedback(errors[0], 'error')
-    return
-  }
-  action.value = 'create'
-  try {
-    let created = await api.createTestPlayer({
-      userCode: newUserCode.value.trim(),
-      displayName: newDisplayName.value.trim(),
-      ...(newAvatarKey.value.trim() ? { avatarKey: newAvatarKey.value.trim() } : {}),
-    })
-    if (createAvatarFile.value) {
-      action.value = 'create-avatar'
-      await api.uploadTestPlayerAvatar(playerCode(created), createAvatarFile.value)
-      created = await api.getTestPlayer(playerCode(created))
-    }
-    closeCreateModal()
-    await loadPage()
-    await openDetail(created)
-    showFeedback('测试玩家已创建，并已明确标记为测试玩家')
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, '测试玩家创建失败'), 'error')
-  } finally {
-    action.value = ''
-  }
-}
-
-function requestStatusChange(player: TestPlayerView) {
-  if (!canWrite.value || isBusy()) return
-  const nextStatus: StatusAction = player.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'
-  confirmAction.value = { kind: 'status', player, nextStatus }
-  confirmOpen.value = true
-}
-
-function requestBalanceReset(player: TestPlayerView) {
-  if (!canWrite.value || isBusy()) return
-  confirmAction.value = { kind: 'reset', player }
-  confirmOpen.value = true
-}
-
-async function applyConfirmation() {
-  const pending = confirmAction.value
-  if (!pending) return
-  action.value = pending.kind === 'reset' ? 'reset' : `status-${playerCode(pending.player)}`
-  try {
-    if (pending.kind === 'reset') {
-      await api.resetTestPlayerBalance(playerCode(pending.player), {
-        reason: '后台重置测试玩家余额',
-        idempotencyKey: createTestPlayerIdempotencyKey(),
-      })
-      showFeedback('测试玩家余额已重置为 ¥0.00，并已记录流水')
-    } else {
-      await api.changeTestPlayerStatus(playerCode(pending.player), { status: pending.nextStatus })
-      showFeedback(`测试玩家已${pending.nextStatus === 'ACTIVE' ? '启用' : '停用'}`)
-    }
-    confirmOpen.value = false
-    confirmAction.value = null
-    await refreshAfterMutation(playerCode(pending.player))
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, pending.kind === 'reset' ? '余额重置失败' : '状态更新失败'), 'error')
-  } finally {
-    action.value = ''
-  }
-}
-
-async function grantBalance() {
-  if (!selectedPlayer.value) return
-  const errors = validateTestPlayerGrant(balanceAmount.value, balanceReason.value, balanceIdempotencyKey.value)
-  if (errors.length) {
-    showFeedback(errors[0], 'error')
-    return
-  }
-  action.value = 'grant'
-  try {
-    await api.grantTestPlayerBalance(playerCode(selectedPlayer.value), {
-      amount: balanceAmount.value,
-      reason: balanceReason.value.trim(),
-      idempotencyKey: balanceIdempotencyKey.value.trim(),
-    })
-    balanceIdempotencyKey.value = createTestPlayerIdempotencyKey()
-    await refreshAfterMutation(playerCode(selectedPlayer.value))
-    showFeedback('测试玩家已上分，并已记录余额流水')
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, '测试玩家上分失败'), 'error')
-  } finally {
-    action.value = ''
-  }
-}
-
-async function uploadSelectedAvatar() {
-  if (!selectedPlayer.value || !avatarFile.value) return
-  action.value = 'avatar'
-  try {
-    await api.uploadTestPlayerAvatar(playerCode(selectedPlayer.value), avatarFile.value)
-    avatarFile.value = null
-    await refreshAfterMutation(playerCode(selectedPlayer.value))
-    showFeedback('测试玩家头像已更新')
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, '测试玩家头像上传失败'), 'error')
-  } finally {
-    action.value = ''
-  }
-}
-
-async function refreshAfterMutation(userCode: string) {
-  await loadPage()
-  if (detailOpen.value) {
-    try {
-      selectedPlayer.value = await api.getTestPlayer(userCode)
-    } catch (error) {
-      detailError.value = apiErrorMessage(error, '测试玩家详情刷新失败')
-    }
-  }
-}
-
-async function placeBet() {
-  if (!selectedPlayer.value) return
-  const parsed = parseBetText(betText.value)
-  if (parsed.kind !== 'BET') {
-    showFeedback(parsed.kind === 'INVALID' ? parsed.message : '请输入已确认的下注格式，例如：1番100', 'error')
-    return
-  }
-  action.value = 'bet'
-  try {
-    await api.placeTestPlayerBet(playerCode(selectedPlayer.value), {
-      ...parsed.payload,
-      idempotencyKey: createTestPlayerIdempotencyKey(),
-    })
-    betText.value = ''
-    await refreshAfterMutation(playerCode(selectedPlayer.value))
-    showFeedback('测试玩家下注成功，已扣除积分并进入当前期注单')
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, '测试玩家下注失败'), 'error')
-  } finally {
-    action.value = ''
-  }
-}
-
-async function logout() {
-  try {
-    await api.logout()
-  } finally {
-    await router.replace({ path: '/login', query: { reason: 'logged-out' } })
-  }
-}
-
-onMounted(() => { void refresh() })
-
-onBeforeUnmount(() => {
-  resetCreateForm()
-  selectedPlayer.value = null
-})
+function avatar(player: PlayerDeskItem) { return player.avatarKey ? api.avatarUrl(player.avatarKey) : '' }
+function money(value: number) { return formatPoints(value) }
+function dateTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '暂无' }
+onMounted(() => refresh())
 </script>
 
 <template>
-  <div class="admin-page test-player-page">
-    <header class="admin-header">
-      <div>
-        <p class="eyebrow">XUPAN / TEST PLAYER OPERATIONS</p>
-        <h1>透明测试玩家</h1>
-      </div>
-      <nav class="admin-header-actions" aria-label="后台导航">
-        <RouterLink class="header-link" to="/admin">运营后台</RouterLink>
-        <RouterLink class="header-link" to="/admin/users">用户管理</RouterLink>
-        <RouterLink v-if="currentUser?.permissions.includes('ROBOT_READ')" class="header-link" to="/admin/robots">机器人管理</RouterLink>
-        <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
-        <button class="header-link" type="button" @click="logout">退出登录</button>
-      </nav>
-    </header>
-
-    <main class="admin-main">
-      <section class="admin-summary test-player-summary" aria-label="测试玩家概览">
-        <div class="summary-item"><span>测试玩家总数</span><strong>{{ total }}</strong></div>
-        <div class="summary-item"><span>当前页启用</span><strong>{{ activeCount }}</strong></div>
-        <div class="summary-item"><span>当前页停用/锁定</span><strong>{{ disabledCount }}</strong></div>
-        <div class="summary-item"><span>当前页余额合计</span><strong>{{ money(pageBalance) }}</strong></div>
-      </section>
-
-      <section class="admin-section test-player-list-section">
-        <div class="section-title">
-          <div><span class="eyebrow">VISIBLE TEST ACCOUNTS</span><h2>测试玩家列表</h2></div>
-          <button type="button" class="primary-button" :disabled="!canWrite || isBusy()" @click="createOpen = true">创建测试玩家</button>
-        </div>
-        <p class="test-player-notice">测试玩家用于联调和验收，所有身份、头像、状态和余额操作都会在后台明确标记并留下服务端流水。</p>
-        <p v-if="!canWrite" class="permission-note">当前账号仅有查看权限，创建、启停和余额操作已禁用。</p>
-        <div class="user-filter-bar test-player-filter-bar">
-          <label>关键字<input v-model="keyword" type="search" maxlength="64" placeholder="登录名或昵称" @keyup.enter="search" /></label>
-          <label class="user-status-field">状态<select v-model="status" @change="changeStatusFilter"><option value="">全部状态</option><option value="ACTIVE">启用中</option><option value="DISABLED">已停用</option></select></label>
-          <button type="button" class="secondary-button" :disabled="loading" @click="search">查询</button>
-          <button type="button" class="secondary-button" :disabled="loading" @click="refresh">刷新</button>
-        </div>
-        <p v-if="listError" class="inline-error" role="alert">{{ listError }}</p>
-        <div v-if="loading && !players.length" class="user-empty-state">正在加载测试玩家列表...</div>
-        <div v-else-if="!players.length" class="user-empty-state">
-          <strong>暂无测试玩家</strong>
-          <span>{{ keyword || status ? '没有符合当前筛选条件的测试玩家' : '创建后会在列表、详情和余额操作中持续显示测试标记。' }}</span>
-          <button v-if="canWrite" type="button" class="secondary-button" @click="createOpen = true">创建第一个测试玩家</button>
-        </div>
-        <div v-else class="user-table-wrap">
-          <table class="user-table test-player-table">
-            <thead><tr><th>ID</th><th>玩家</th><th>透明标记</th><th>状态</th><th>余额</th><th>创建时间</th><th>最后登录</th><th>操作</th></tr></thead>
-            <tbody>
-              <tr v-for="player in players" :key="player.id">
-                <td>{{ player.id }}</td>
-                <td><div class="test-player-person"><div class="test-player-avatar"><img v-if="player.avatarKey" :src="api.avatarUrl(player.avatarKey)" alt="测试玩家头像" /><span v-else>{{ initials(player) }}</span></div><span><strong>{{ player.displayName }}</strong><small>{{ player.username }}</small></span></div></td>
-                <td><span class="test-player-badge">测试玩家</span></td>
-                <td><span class="user-status" :class="testPlayerStatusClass(player.status)">{{ testPlayerStatusLabel(player.status) }}</span></td>
-                <td class="numeric-cell">{{ money(player.balance) }}</td>
-                <td>{{ dateTime(player.createdAt) }}</td>
-                <td>{{ dateTime(player.lastLoginAt) }}</td>
-                <td><div class="test-player-row-actions"><button type="button" class="table-action" @click="openDetail(player)">详情</button><button type="button" class="table-action warning-button" :disabled="!canWrite || isBusy()" @click="requestStatusChange(player)">{{ player.status === 'ACTIVE' ? '停用' : '启用' }}</button></div></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <footer v-if="total > 0" class="user-pagination"><span>共 {{ total }} 条</span><div class="pagination-actions"><button type="button" class="secondary-button" :disabled="page <= 1 || loading" @click="movePage(page - 1)">上一页</button><span>第 {{ page }} / {{ pageCount }} 页</span><button type="button" class="secondary-button" :disabled="page >= pageCount || loading" @click="movePage(page + 1)">下一页</button></div></footer>
-      </section>
-    </main>
-
-    <div v-if="createOpen" class="user-modal-layer" role="presentation" @click.self="closeCreateModal">
-      <section class="user-modal test-player-modal" role="dialog" aria-modal="true" aria-labelledby="create-test-player-title">
-        <header><div><span class="eyebrow">CREATE TEST PLAYER</span><h2 id="create-test-player-title">创建测试玩家</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="closeCreateModal">×</button></header>
-        <p class="modal-note">这是透明测试身份：创建后会在列表、详情和所有余额操作中显示“测试玩家”，不会伪装成普通用户或机器人。</p>
-        <form class="user-form" @submit.prevent="createPlayer">
-          <label>用户编码<input v-model="newUserCode" autocomplete="off" maxlength="64" required /></label>
-          <label>昵称<input v-model="newDisplayName" maxlength="64" required /></label>
-          <label>头像标识（可选）<input v-model="newAvatarKey" maxlength="64" placeholder="例如 test-player-blue" /></label>
-          <label>上传头像（可选）<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="isBusy()" @change="selectCreateAvatar" /><small class="field-hint">支持 JPG、PNG、GIF、WebP；选择后会在创建完成后上传。</small></label>
-          <div class="modal-actions"><button type="button" class="secondary-button" :disabled="isBusy()" @click="closeCreateModal">取消</button><button type="submit" class="primary-button" :disabled="isBusy()">{{ action === 'create-avatar' ? '上传头像中...' : action === 'create' ? '创建中...' : '创建测试玩家' }}</button></div>
-        </form>
-      </section>
-    </div>
-
-    <div v-if="detailOpen" class="user-modal-layer" role="presentation" @click.self="closeDetail">
-      <section class="user-modal user-detail-modal test-player-detail-modal" role="dialog" aria-modal="true" aria-labelledby="test-player-detail-title">
-        <header><div><span class="eyebrow">TEST PLAYER DETAIL</span><h2 id="test-player-detail-title">测试玩家详情</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="closeDetail">×</button></header>
-        <p v-if="detailError" class="inline-error" role="alert">{{ detailError }}</p>
-        <div v-else-if="detailLoading" class="user-empty-state">正在加载测试玩家详情...</div>
-        <template v-else-if="selectedPlayer">
-          <div class="test-player-detail-identity"><div class="test-player-avatar test-player-avatar-large"><img v-if="selectedPlayer.avatarKey" :src="api.avatarUrl(selectedPlayer.avatarKey)" alt="测试玩家头像" /><span v-else>{{ initials(selectedPlayer) }}</span></div><div><span class="test-player-badge">测试玩家</span><strong>{{ selectedPlayer.displayName }}</strong><small>{{ selectedPlayer.username }}</small></div></div>
-          <dl class="user-detail-grid"><div><dt>身份</dt><dd><span class="test-player-badge">透明测试玩家</span></dd></div><div><dt>ID</dt><dd>{{ selectedPlayer.id }}</dd></div><div><dt>昵称</dt><dd>{{ selectedPlayer.displayName }}</dd></div><div><dt>状态</dt><dd><span class="user-status" :class="testPlayerStatusClass(selectedPlayer.status)">{{ testPlayerStatusLabel(selectedPlayer.status) }}</span></dd></div><div><dt>当前余额</dt><dd class="detail-money">{{ money(selectedPlayer.balance) }}</dd></div><div><dt>登录名</dt><dd>{{ selectedPlayer.username }}</dd></div><div><dt>创建时间</dt><dd>{{ dateTime(selectedPlayer.createdAt) }}</dd></div><div><dt>最后登录</dt><dd>{{ dateTime(selectedPlayer.lastLoginAt) }}</dd></div></dl>
-          <section class="test-player-balance-section" aria-labelledby="test-player-balance-title"><div class="section-title"><div><span class="eyebrow">VISIBLE WALLET</span><h3 id="test-player-balance-title">余额操作</h3></div><strong class="detail-money">{{ money(selectedPlayer.balance) }}</strong></div><p class="modal-note">上分和重置都必须带原因与幂等记录；重置会把当前余额归零，是危险操作。</p><div class="test-player-balance-form"><label>上分金额<input v-model.number="balanceAmount" type="number" min="0.01" step="0.01" /></label><label>操作原因<input v-model="balanceReason" type="text" maxlength="255" /></label><label>幂等键<input v-model="balanceIdempotencyKey" type="text" maxlength="128" /></label><button type="button" class="primary-button" :disabled="!canWrite || isBusy()" @click="grantBalance">{{ action === 'grant' ? '上分中...' : '上分并记录流水' }}</button></div><div class="detail-actions"><button type="button" class="secondary-button warning-button" :disabled="!canWrite || isBusy()" @click="requestBalanceReset(selectedPlayer)">重置余额</button><button type="button" class="secondary-button" :disabled="!canWrite || isBusy()" @click="requestStatusChange(selectedPlayer)">{{ selectedPlayer.status === 'ACTIVE' ? '停用测试玩家' : '启用测试玩家' }}</button><span class="action-helper">仅作用于此测试玩家，不改变正式用户或机器人。</span></div></section>
-          <section class="test-player-balance-section" aria-labelledby="test-player-bet-title"><div class="section-title"><div><span class="eyebrow">MANUAL TEST BET</span><h3 id="test-player-bet-title">测试下注</h3></div><span class="test-player-badge">固定第 1 球</span></div><p class="modal-note">下注沿用正式下注、扣分和开奖结算链路，只允许使用积分。示例：<code>1番100</code>、<code>12角100</code>、<code>单100</code>。</p><div class="test-player-balance-form"><label>下注格式<input v-model="betText" type="text" maxlength="128" placeholder="例如 1番100" @keyup.enter="placeBet" /></label><button type="button" class="primary-button" :disabled="!canWrite || isBusy() || selectedPlayer.status !== 'ACTIVE'" @click="placeBet">{{ action === 'bet' ? '下注中...' : '提交测试下注' }}</button></div></section>
-          <section class="test-player-avatar-section" aria-labelledby="test-player-avatar-title"><div class="section-title"><div><span class="eyebrow">AVATAR</span><h3 id="test-player-avatar-title">头像</h3></div></div><div class="test-player-avatar-upload"><label>选择新头像<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="isBusy()" @change="selectAvatar" /></label><button type="button" class="secondary-button" :disabled="!avatarFile || isBusy()" @click="uploadSelectedAvatar">{{ action === 'avatar' ? '上传中...' : '上传头像' }}</button></div></section>
+  <main class="player-desk-page">
+    <header class="player-desk-header"><div><p class="eyebrow">ADMIN / PLAYER DESK</p><h1>玩家工作台</h1><p class="subline">普通玩家与托统一管理，托的行为只使用虚拟积分并留下动作记录。</p></div><div class="header-actions"><RouterLink class="desk-link" to="/admin">返回管理台</RouterLink><button class="outline-button" type="button" @click="refresh()">刷新</button></div></header>
+    <p v-if="error" class="desk-alert error" role="alert">{{ error }}</p><p v-if="actionMessage" class="desk-alert success" aria-live="polite">{{ actionMessage }}</p>
+    <section class="desk-summary" aria-label="玩家统计"><div><span>总积分</span><strong>{{ money(summary.totalPoints) }}</strong><small>服务端全量统计</small></div><div><span>普</span><strong>{{ summary.normalCount }}</strong><small>普通玩家</small></div><div><span>托</span><strong>{{ summary.botCount }}</strong><small>测试玩家</small></div></section>
+    <section class="player-desk-body">
+      <aside class="player-list-pane" aria-label="玩家列表">
+        <div class="pane-heading"><div><h2>玩家列表</h2><span>{{ page.total }} 位玩家</span></div><div class="create-actions"><button class="primary-button" type="button" @click="createMode = createMode === 'normal' ? null : 'normal'">创建普通玩家</button><button class="secondary-button" type="button" @click="createMode = createMode === 'bot' ? null : 'bot'">创建托</button></div></div>
+        <form class="filter-row" @submit.prevent="refresh()"><label class="sr-only" for="player-keyword">搜索玩家</label><input id="player-keyword" v-model="filter.keyword" placeholder="昵称、用户名或编码" /><select v-model="filter.kind" aria-label="玩家类型"><option value="">全部类型</option><option value="NORMAL">普通玩家</option><option value="BOT">托</option></select><select v-model="filter.status" aria-label="玩家状态"><option value="">全部状态</option><option value="ACTIVE">启用中</option><option value="DISABLED">已停用</option></select><button class="icon-button" type="submit" aria-label="搜索">⌕</button></form>
+        <form v-if="createMode === 'normal'" class="create-form" @submit.prevent="createNormal"><h3>创建普通玩家</h3><label>登录名<input v-model="normalDraft.username" autocomplete="username" /></label><label>昵称<input v-model="normalDraft.displayName" /></label><label>密码<input v-model="normalDraft.rawPassword" type="password" autocomplete="new-password" /></label><label>确认密码<input v-model="normalDraft.passwordConfirmation" type="password" autocomplete="new-password" /></label><p v-if="createError" class="field-error">{{ createError }}</p><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确认创建' }}</button></form>
+        <form v-if="createMode === 'bot'" class="create-form" @submit.prevent="createBot"><h3>创建托 / 测试玩家</h3><label>玩家编码<input v-model="botDraft.userCode" /></label><label>昵称<input v-model="botDraft.displayName" /></label><label>头像标识<input v-model="botDraft.avatarKey" placeholder="可选" /></label><p v-if="createError" class="field-error">{{ createError }}</p><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确认创建' }}</button></form>
+        <div v-if="loading" class="empty-state">正在加载玩家...</div><div v-else-if="!page.items.length" class="empty-state">暂无符合条件的玩家</div>
+        <button v-for="player in page.items" :key="player.userId" class="player-row" :class="{ selected: selected?.userId === player.userId }" type="button" @click="selectPlayer(player.userId)"><span class="desk-avatar"><img v-if="avatar(player)" :src="avatar(player)" alt="" /><b v-else>{{ playerInitial(player) }}</b></span><span class="player-row-main"><strong>{{ player.displayName }}</strong><small>{{ playerDisplayCode(player) }}</small></span><span class="player-row-side"><em :class="playerKindClass(player.playerKind)">{{ playerKindLabel(player.playerKind) }}</em><strong>{{ money(player.balance) }}</strong><small :class="playerStatusClass(player.status)">{{ playerStatusLabel(player.status) }}</small></span></button>
+      </aside>
+      <section class="player-detail-pane" aria-label="玩家详情">
+        <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
+        <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ selected.displayName }}</h2><p>{{ selected.username }} · {{ selected.userCode }}</p></div></div><button class="outline-button" type="button" :disabled="saving" @click="toggleStatus">{{ selected.status === 'ACTIVE' ? '停用玩家' : '启用玩家' }}</button></div>
+          <div class="detail-grid"><div><span>当前积分</span><strong class="points">{{ money(selected.balance) }}</strong></div><div><span>状态</span><strong>{{ playerStatusLabel(selected.status) }}</strong></div><div><span>创建时间</span><strong>{{ dateTime(selected.createdAt) }}</strong></div><div><span>最后登录</span><strong>{{ dateTime(selected.lastLoginAt) }}</strong></div></div>
+          <section class="detail-section"><div class="section-title"><h3>积分操作</h3><span>所有变更都会写入虚拟积分流水</span></div><div class="point-form"><label>操作<select v-model="pointDraft.direction"><option value="grant">增加积分</option><option value="adjust">扣减积分</option></select></label><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><label class="wide">原因<input v-model="pointDraft.reason" placeholder="请输入操作原因" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints">确认操作</button></div></section>
+          <section v-if="selectedIsBot" class="detail-section bot-section"><div class="section-title"><div><h3>托自动行为</h3><span>以普通玩家身份发送消息并走正式下注结算链路</span></div><button class="primary-button" :disabled="saving" type="button" @click="runNow">立即执行</button></div><form class="behavior-form" @submit.prevent="saveBehavior"><label class="switch-label"><input v-model="behaviorDraft.enabled" type="checkbox" /><span>启用自动行为</span></label><label>每期下注单数<input v-model.number="behaviorDraft.betsPerIssue" type="number" min="0" max="20" /></label><label>最低积分<input v-model.number="behaviorDraft.stakeMin" type="number" min="0.01" step="0.01" /></label><label>最高积分<input v-model.number="behaviorDraft.stakeMax" type="number" min="0.01" step="0.01" /></label><label class="switch-label"><input v-model="behaviorDraft.chatEnabled" type="checkbox" /><span>发送聊天消息</span></label><label>每期消息数<input v-model.number="behaviorDraft.messagesPerIssue" type="number" min="0" max="20" /></label><p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p><button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button></form><form class="message-form" @submit.prevent="sendMessage"><label>手动发送测试消息<input v-model="messageDraft.content" placeholder="例如：大家好，或 1番100" /></label><button class="outline-button" :disabled="sending" type="submit">{{ sending ? '发送中...' : '发送' }}</button></form></section>
+          <section class="detail-section"><div class="section-title"><h3>最近动作</h3><span>显示持久化动作和正式链路结果</span></div><div v-if="!selected.recentActions.length" class="muted">暂无动作记录</div><div v-for="action in selected.recentActions" :key="action.id" class="action-row"><span>{{ playerActionTypeLabel(action.actionType) }}</span><strong>{{ action.sourceText }}</strong><em :class="`action-${action.status.toLowerCase()}`">{{ playerActionStatusLabel(action.status) }}</em><small>{{ action.errorMessage || dateTime(action.updatedAt) }}</small></div></section>
+          <section class="detail-section"><div class="section-title"><h3>最近注单</h3><span>正式注单、结算状态和净盈亏</span></div><div v-if="!selected.bets.length" class="muted">暂无下注记录</div><div v-for="bet in selected.bets" :key="bet.id" class="bet-row"><strong>{{ bet.issueNumber }}</strong><span>{{ bet.playType }} · {{ money(bet.stake) }}</span><em>{{ bet.settlementStatus }}</em><b>{{ bet.netProfit == null ? '--' : money(bet.netProfit) }}</b></div></section>
         </template>
       </section>
-    </div>
-
-    <div v-if="confirmOpen && confirmAction" class="user-modal-layer nested-modal" role="presentation" @click.self="closeConfirmation">
-      <section class="user-modal compact-modal" role="dialog" aria-modal="true" aria-labelledby="test-player-confirm-title"><header><div><span class="eyebrow">CONFIRM ACTION</span><h2 id="test-player-confirm-title">确认{{ confirmAction.kind === 'reset' ? '重置余额' : confirmAction.nextStatus === 'ACTIVE' ? '启用' : '停用' }}</h2></div><button type="button" class="modal-close" aria-label="关闭" :disabled="isBusy()" @click="closeConfirmation">×</button></header><p class="modal-note">目标身份：<strong>{{ confirmAction.player.displayName }}</strong>（{{ confirmAction.player.username }}）。<template v-if="confirmAction.kind === 'reset'">当前余额 {{ money(confirmAction.player.balance) }} 将被重置为 ¥0.00，并写入不可变流水。</template><template v-else>状态变更后会影响该测试玩家是否可以继续登录和参与联调。</template></p><div class="modal-actions"><button type="button" class="secondary-button" :disabled="isBusy()" @click="closeConfirmation">取消</button><button type="button" class="primary-button warning-primary" :disabled="isBusy()" @click="applyConfirmation">{{ action ? '执行中...' : '确认执行' }}</button></div></section>
-    </div>
-
-    <p v-if="feedback" class="toast" :class="`toast-${feedbackKind}`" role="status" aria-live="polite">{{ feedback }}</p>
-  </div>
+    </section>
+  </main>
 </template>
+
+<style scoped>
+:global(body) { background: #f4f7fb; }
+.player-desk-page { max-width: 1220px; margin: 0 auto; padding: 28px 24px 48px; color: #1f2937; }
+.player-desk-header, .detail-heading, .pane-heading, .section-title, .message-form { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.eyebrow { color: #1677c8; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; margin: 0 0 6px; } h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 6px; font-size: 28px; } h2 { margin-bottom: 4px; font-size: 18px; } h3 { margin-bottom: 2px; font-size: 15px; }
+.subline, .section-title span, .pane-heading span, .detail-identity p, .muted { color: #64748b; font-size: 13px; } .header-actions, .create-actions, .badges { display: flex; align-items: center; gap: 8px; }
+button, input, select { font: inherit; } button { cursor: pointer; } button:disabled { opacity: .55; cursor: not-allowed; } .primary-button, .secondary-button, .outline-button, .icon-button { min-height: 42px; border-radius: 4px; padding: 0 14px; border: 1px solid #187dcc; font-weight: 700; } .primary-button { background: #187dcc; color: #fff; } .secondary-button { background: #e8f3fc; color: #1265a5; } .outline-button { background: #fff; color: #1265a5; } .icon-button { width: 44px; padding: 0; background: #187dcc; color: white; font-size: 20px; } .desk-link { color: #1265a5; text-decoration: none; font-size: 13px; }
+.desk-alert { border: 1px solid; padding: 10px 14px; margin: 18px 0 0; font-size: 13px; } .desk-alert.error { color: #9f1239; border-color: #fda4af; background: #fff1f2; } .desk-alert.success { color: #166534; border-color: #86efac; background: #f0fdf4; }
+.desk-summary { display: grid; grid-template-columns: 2fr 1fr 1fr; margin: 24px 0 16px; border: 1px solid #b7d7f2; background: #fff; } .desk-summary > div { min-height: 92px; padding: 16px 20px; border-right: 1px solid #dbeafe; display: flex; flex-direction: column; justify-content: center; } .desk-summary > div:last-child { border-right: 0; } .desk-summary span, .desk-summary small { color: #64748b; font-size: 12px; } .desk-summary strong { color: #0f4c81; font-size: 24px; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.player-desk-body { display: grid; grid-template-columns: minmax(360px, 38%) 1fr; min-height: 690px; border: 1px solid #84bff0; background: #fff; } .player-list-pane { border-right: 1px solid #b7d7f2; min-width: 0; } .player-list-pane, .player-detail-pane { padding: 18px; } .pane-heading { align-items: flex-start; } .create-actions { flex-wrap: wrap; justify-content: flex-end; } .create-actions button { min-height: 36px; padding: 0 10px; font-size: 12px; }
+.filter-row { display: grid; grid-template-columns: 1fr 112px 100px 44px; gap: 6px; padding: 16px 0 10px; border-bottom: 1px solid #e2e8f0; } input, select { width: 100%; min-height: 42px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 3px; color: #1e293b; background: #fff; box-sizing: border-box; } input:focus, select:focus, button:focus-visible { outline: 3px solid #bfdbfe; outline-offset: 1px; }
+.create-form { display: grid; gap: 9px; padding: 14px; margin: 12px 0; background: #f8fbff; border: 1px solid #b7d7f2; } label { display: grid; gap: 5px; color: #475569; font-size: 12px; font-weight: 700; } .player-row { width: 100%; display: grid; grid-template-columns: 42px 1fr auto; gap: 10px; align-items: center; text-align: left; padding: 11px 8px; min-height: 70px; border: 0; border-bottom: 1px solid #edf2f7; border-left: 3px solid transparent; background: #fff; } .player-row:hover, .player-row.selected { background: #eef7ff; border-left-color: #1682d4; } .player-row-main, .player-row-side { min-width: 0; display: flex; flex-direction: column; gap: 3px; } .player-row-main strong, .player-row-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .player-row-main small, .player-row-side small { color: #64748b; font-size: 11px; } .player-row-side { align-items: flex-end; } .player-row-side strong { color: #0f4c81; font-variant-numeric: tabular-nums; }
+.desk-avatar { width: 40px; height: 40px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; color: #fff; background: #1976b9; font-weight: 800; } .desk-avatar.large { width: 56px; height: 56px; font-size: 22px; } .desk-avatar img { width: 100%; height: 100%; object-fit: cover; } em { font-style: normal; } .player-kind-normal, .player-kind-bot, .test-badge { padding: 3px 7px; border-radius: 3px; font-size: 11px; font-weight: 700; } .player-kind-normal { color: #155e75; background: #cffafe; } .player-kind-bot { color: #92400e; background: #fef3c7; } .test-badge { color: #6b21a8; background: #f3e8ff; } .player-status-active { color: #15803d; } .player-status-disabled, .player-status-locked { color: #b91c1c; }
+.detail-heading { align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid #dbeafe; } .detail-identity { display: flex; align-items: center; gap: 12px; min-width: 0; } .detail-identity h2 { font-size: 21px; } .detail-identity p { margin: 0; } .detail-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin: 16px 0; border: 1px solid #e2e8f0; background: #e2e8f0; } .detail-grid > div { min-height: 72px; padding: 12px; background: #fff; } .detail-grid span { display: block; color: #64748b; font-size: 12px; margin-bottom: 8px; } .detail-grid strong { font-size: 13px; } .detail-grid .points { color: #0f6eaa; font-size: 20px; font-variant-numeric: tabular-nums; }
+.detail-section { padding: 16px 0; border-top: 1px solid #e2e8f0; } .section-title { align-items: flex-start; margin-bottom: 12px; } .point-form, .behavior-form { display: grid; grid-template-columns: 130px 130px 1fr auto; gap: 10px; align-items: end; } .point-form .wide, .behavior-form .wide { grid-column: span 2; } .switch-label { display: flex; align-items: center; gap: 8px; min-height: 42px; } .switch-label input { width: 18px; min-height: 18px; } .message-form { align-items: end; margin-top: 14px; } .message-form label { flex: 1; }
+.action-row { display: grid; grid-template-columns: 70px 1fr 70px 150px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .action-row strong, .action-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .action-row strong { font-weight: 500; } .action-row small { color: #64748b; } .action-succeeded { color: #15803d; } .action-failed { color: #b91c1c; } .action-pending, .action-processing { color: #a16207; } .field-error { color: #b91c1c; margin: 0; font-size: 12px; } .empty-state, .detail-empty { color: #64748b; text-align: center; padding: 46px 20px; } .detail-empty { display: grid; place-items: center; min-height: 500px; } .detail-empty span { color: #54a2d7; font-size: 42px; } .detail-empty p { font-size: 13px; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.bet-row { display: grid; grid-template-columns: 120px 1fr 90px 90px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .bet-row span { color: #475569; } .bet-row em { color: #1265a5; } .bet-row b { text-align: right; color: #15803d; font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) { .player-desk-page { padding: 20px 14px 40px; } .player-desk-body { grid-template-columns: 1fr; } .player-list-pane { border-right: 0; border-bottom: 1px solid #b7d7f2; } .player-detail-pane { min-height: 500px; } }
+@media (max-width: 620px) { .player-desk-page { padding: 18px 12px 32px; } .player-desk-header { align-items: flex-start; flex-direction: column; } .desk-summary { grid-template-columns: 1fr 1fr; } .desk-summary > div:first-child { grid-column: span 2; } .filter-row { grid-template-columns: 1fr 44px; } .filter-row select { grid-column: span 1; } .pane-heading { flex-direction: column; } .create-actions { justify-content: flex-start; } .detail-grid { grid-template-columns: 1fr 1fr; } .point-form, .behavior-form { grid-template-columns: 1fr 1fr; } .point-form .wide, .behavior-form .wide { grid-column: span 2; } .point-form button, .behavior-form button { grid-column: span 2; } .detail-heading { flex-direction: column; } .message-form { align-items: stretch; flex-direction: column; } .action-row { grid-template-columns: 64px 1fr 64px; } .action-row small { grid-column: span 3; } }
+@media (max-width: 375px) { .player-desk-page { padding-left: 10px; padding-right: 10px; } h1 { font-size: 24px; } .player-row { grid-template-columns: 36px 1fr auto; gap: 7px; padding-left: 4px; padding-right: 4px; } .desk-avatar { width: 34px; height: 34px; } .primary-button, .secondary-button, .outline-button { padding: 0 10px; } }
+</style>
