@@ -196,7 +196,8 @@ export interface PlayerDeskWalletStatistics {
 export interface PlayerDeskBehavior {
   id?: number
   accountId?: number
-  enabled: boolean
+  mode: 'AUTOMATIC' | 'MANUAL'
+  enabled?: boolean
   betsPerIssue: number
   stakeMin: number
   stakeMax: number
@@ -261,7 +262,7 @@ export interface PlayerBalanceAdjustmentRequest {
 }
 
 export interface TestPlayerBehaviorRequest {
-  enabled: boolean
+  mode: 'AUTOMATIC' | 'MANUAL'
   betsPerIssue: number
   stakeMin: number
   stakeMax: number

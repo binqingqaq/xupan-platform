@@ -4,6 +4,7 @@ import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.自动轮期服务;
 import com.xupan.server.system.repository.PlayerDeskRepository;
+import com.xupan.server.system.domain.TestPlayerBehaviorMode;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -35,6 +36,11 @@ public class TestPlayerBehaviorService {
 
     @Transactional
     public List<PlayerDeskRepository.ActionRow> dispatch(long userId) {
+        return dispatch(userId, false);
+    }
+
+    @Transactional
+    public List<PlayerDeskRepository.ActionRow> dispatch(long userId, boolean force) {
         PlayerDeskRepository.PlayerRow player = repository.findByUserId(userId)
                 .orElseThrow(() -> BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在"));
         if (!"BOT".equals(player.playerKind())) {
@@ -42,7 +48,7 @@ public class TestPlayerBehaviorService {
         }
         PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId)
                 .orElseThrow(() -> BusinessException.notFound("PLAYER_BEHAVIOR_NOT_FOUND", "托行为配置不存在"));
-        if (!behavior.enabled()) return List.of();
+        if (!force && !TestPlayerBehaviorMode.AUTOMATIC.name().equals(behavior.mode())) return List.of();
         var issue = gameRepository.findCurrentIssue().orElse(null);
         if (issue == null || !自动轮期服务.BETTING.equals(issue.phase())) return List.of();
 

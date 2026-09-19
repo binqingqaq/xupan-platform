@@ -79,7 +79,7 @@ public class PlayerDeskAdminController {
 
     @PutMapping("/players/{userId}/behavior")
     public Behavior updateBehavior(Authentication auth, @PathVariable long userId, @Valid @RequestBody BehaviorRequest request) {
-        return Behavior.from(service.updateBehavior(userId, request.enabled(), request.betsPerIssue(), request.stakeMin(), request.stakeMax(), request.chatEnabled(), request.messagesPerIssue(), user(auth)));
+        return Behavior.from(service.updateBehavior(userId, request.mode(), request.betsPerIssue(), request.stakeMin(), request.stakeMax(), request.chatEnabled(), request.messagesPerIssue(), user(auth)));
     }
 
     @PostMapping("/players/{userId}/behavior/run-now")
@@ -129,8 +129,8 @@ public class PlayerDeskAdminController {
     public record Ledger(long id, long accountId, long userId, String operationType, BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter, Long operatorUserId, String operatorName, String idempotencyKey, Long relatedBetId, String issueNumber, String reason, Instant createdAt) {
         static Ledger from(WalletLedgerEntry x) { return new Ledger(x.id(), x.accountId(), x.userId(), x.operationType().name(), x.amount(), x.balanceBefore(), x.balanceAfter(), x.operatorUserId(), x.operatorName(), x.idempotencyKey(), x.relatedBetId(), x.issueNumber(), x.reason(), x.createdAt()); }
     }
-    public record Behavior(Long id, Long accountId, boolean enabled, int betsPerIssue, BigDecimal stakeMin, BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt, String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt) {
-        static Behavior from(PlayerDeskRepository.Behavior x) { return x == null ? null : new Behavior(x.id(), x.accountId(), x.enabled(), x.betsPerIssue(), x.stakeMin(), x.stakeMax(), x.chatEnabled(), x.messagesPerIssue(), x.nextRunAt(), x.lastIssueNumber(), x.lastErrorCode(), x.lastErrorMessage(), x.version(), x.updatedAt()); }
+    public record Behavior(Long id, Long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin, BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt, String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt) {
+        static Behavior from(PlayerDeskRepository.Behavior x) { return x == null ? null : new Behavior(x.id(), x.accountId(), x.mode(), x.enabled(), x.betsPerIssue(), x.stakeMin(), x.stakeMax(), x.chatEnabled(), x.messagesPerIssue(), x.nextRunAt(), x.lastIssueNumber(), x.lastErrorCode(), x.lastErrorMessage(), x.version(), x.updatedAt()); }
     }
     public record Action(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status, int attempts, String errorCode, String errorMessage, Long messageId, Long betId, Instant createdAt, Instant updatedAt) {
         static Action from(PlayerDeskRepository.ActionRow x) { return new Action(x.id(), x.issueNumber(), x.actionNo(), x.actionType(), x.sourceText(), x.status(), x.attempts(), x.errorCode(), x.errorMessage(), x.messageId(), x.betId(), x.createdAt(), x.updatedAt()); }
@@ -147,7 +147,7 @@ public class PlayerDeskAdminController {
     public record CreateBot(@NotBlank String userCode, @NotBlank String displayName, String avatarKey) {}
     public record StatusRequest(@NotBlank String status) {}
     public record BalanceRequest(@NotNull BigDecimal amount, @NotBlank String reason, @NotBlank String idempotencyKey) {}
-    public record BehaviorRequest(boolean enabled, @Min(0) @Max(20) int betsPerIssue, @NotNull @DecimalMin("0.01") BigDecimal stakeMin, @NotNull @DecimalMin("0.01") BigDecimal stakeMax, boolean chatEnabled, @Min(0) @Max(20) int messagesPerIssue) {}
+    public record BehaviorRequest(@NotBlank String mode, @Min(0) @Max(20) int betsPerIssue, @NotNull @DecimalMin("0.01") BigDecimal stakeMin, @NotNull @DecimalMin("0.01") BigDecimal stakeMax, boolean chatEnabled, @Min(0) @Max(20) int messagesPerIssue) {}
     public record MessageRequest(@NotBlank String content, @NotBlank String clientMessageId) {}
     public record MessageOutcome(ChatMessage message, boolean replayed, String feedback, Object bet) {
         static MessageOutcome from(ChatMessageService.ChatMessageSendOutcome x) { return new MessageOutcome(x.message(), x.deduplicated(), null, null); }

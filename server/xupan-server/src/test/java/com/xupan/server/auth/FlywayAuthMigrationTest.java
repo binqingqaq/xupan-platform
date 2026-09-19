@@ -62,14 +62,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV16InOrder() {
+    void appliesV1ThroughV17InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17");
     }
 
     @Test
@@ -80,6 +80,7 @@ class FlywayAuthMigrationTest {
 
         assertThat(tableNames()).contains("TEST_PLAYER_BEHAVIOR", "TEST_PLAYER_ACTION");
         assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("PLAYER_KIND");
+        assertThat(columnNames("TEST_PLAYER_BEHAVIOR")).contains("RUN_MODE");
         assertThat(constraintNames("DEMO_USER_ACCOUNT")).contains("CK_DEMO_USER_ACCOUNT_PLAYER_KIND");
 
         assertThat(columnNames("SYS_USER")).containsExactlyInAnyOrder(

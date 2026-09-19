@@ -9,6 +9,7 @@ import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
+import com.xupan.server.system.domain.TestPlayerBehaviorMode;
 import com.xupan.server.web.BusinessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -126,23 +127,23 @@ public class PlayerDeskAdminService {
     }
 
     @Transactional
-    public PlayerDeskRepository.Behavior updateBehavior(long userId, boolean enabled, int bets, BigDecimal min,
+    public PlayerDeskRepository.Behavior updateBehavior(long userId, String mode, int bets, BigDecimal min,
                                                          BigDecimal max, boolean chat, int messages, long operator) {
         requireAdmin(operator);
         PlayerDeskRepository.PlayerRow player = row(userId);
         if (!"BOT".equals(player.playerKind())) throw BusinessException.badRequest("PLAYER_BEHAVIOR_NOT_APPLICABLE", "普通玩家不支持托行为配置");
-        if (bets < 0 || bets > 20 || messages < 0 || messages > 20 || min == null || max == null || min.signum() <= 0 || max.compareTo(min) < 0) {
+        if (!isMode(mode) || bets < 0 || bets > 20 || messages < 0 || messages > 20 || min == null || max == null || min.signum() <= 0 || max.compareTo(min) < 0) {
             throw BusinessException.badRequest("PLAYER_BEHAVIOR_INVALID", "托行为配置无效");
         }
-        PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, enabled, bets, min, max, chat, messages);
-        audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/behavior", Long.toString(userId), "enabled=" + enabled);
+        PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, mode, bets, min, max, chat, messages);
+        audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/behavior", Long.toString(userId), "mode=" + mode);
         return result;
     }
 
     @Transactional
     public List<PlayerDeskRepository.ActionRow> runNow(long userId, long operator) {
         requireAdmin(operator);
-        List<PlayerDeskRepository.ActionRow> result = behaviorService.dispatch(userId);
+        List<PlayerDeskRepository.ActionRow> result = behaviorService.dispatch(userId, true);
         audit(operator, "POST", "/api/admin/player-desk/players/" + userId + "/behavior/run-now", Long.toString(userId), "actions=" + result.size());
         return result;
     }
@@ -172,6 +173,15 @@ public class PlayerDeskAdminService {
     }
 
     private static String normalize(String value) { return value == null || value.isBlank() ? null : value.trim(); }
+
+    private static boolean isMode(String mode) {
+        try {
+            TestPlayerBehaviorMode.valueOf(mode);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
 
     public record Page(List<PlayerDeskRepository.PlayerRow> items, int page, int pageSize, long total) {}
     public record Detail(PlayerDeskRepository.PlayerRow player, PlayerDeskRepository.Behavior behavior,

@@ -86,8 +86,9 @@ export function validatePointOperation(amount: number, reason: string, idempoten
   return errors
 }
 
-export function validateBehaviorDraft(draft: Pick<PlayerDeskBehavior, 'betsPerIssue' | 'stakeMin' | 'stakeMax' | 'messagesPerIssue'>): string[] {
+export function validateBehaviorDraft(draft: Pick<PlayerDeskBehavior, 'mode' | 'betsPerIssue' | 'stakeMin' | 'stakeMax' | 'messagesPerIssue'>): string[] {
   const errors: string[] = []
+  if (draft.mode !== 'AUTOMATIC' && draft.mode !== 'MANUAL') errors.push('行为模式必须选择自动或手动')
   if (!Number.isInteger(draft.betsPerIssue) || draft.betsPerIssue < 0 || draft.betsPerIssue > 20) errors.push('每期下注单数必须是 0 到 20 的整数')
   if (!Number.isFinite(draft.stakeMin) || draft.stakeMin <= 0 || Math.round(draft.stakeMin * 100) !== draft.stakeMin * 100) errors.push('最低积分必须大于 0，最多保留两位小数')
   if (!Number.isFinite(draft.stakeMax) || draft.stakeMax < draft.stakeMin || Math.round(draft.stakeMax * 100) !== draft.stakeMax * 100) errors.push('最高积分不能低于最低积分，最多保留两位小数')

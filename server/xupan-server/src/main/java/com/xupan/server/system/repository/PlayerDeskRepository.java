@@ -57,7 +57,8 @@ public class PlayerDeskRepository {
 
     public Optional<Behavior> findBehavior(long userId) {
         return jdbc.query("SELECT b.* FROM test_player_behavior b JOIN demo_user_account a ON a.id=b.account_id WHERE a.sys_user_id=?",
-                (rs, n) -> new Behavior(rs.getLong("id"), rs.getLong("account_id"), rs.getBoolean("enabled"),
+                (rs, n) -> new Behavior(rs.getLong("id"), rs.getLong("account_id"), rs.getString("run_mode"),
+                        rs.getBoolean("enabled"),
                         rs.getInt("bets_per_issue"), rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"),
                         rs.getBoolean("chat_enabled"), rs.getInt("messages_per_issue"), instant(rs.getTimestamp("next_run_at")),
                         rs.getString("last_issue_number"), rs.getString("last_error_code"), rs.getString("last_error_message"),
@@ -71,19 +72,19 @@ public class PlayerDeskRepository {
             // The behavior row is created lazily and the unique account_id makes this idempotent.
         }
         return jdbc.queryForObject("SELECT * FROM test_player_behavior WHERE account_id=?", (rs, n) -> new Behavior(
-                rs.getLong("id"), rs.getLong("account_id"), rs.getBoolean("enabled"), rs.getInt("bets_per_issue"),
+                rs.getLong("id"), rs.getLong("account_id"), rs.getString("run_mode"), rs.getBoolean("enabled"), rs.getInt("bets_per_issue"),
                 rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"), rs.getBoolean("chat_enabled"),
                 rs.getInt("messages_per_issue"), instant(rs.getTimestamp("next_run_at")), rs.getString("last_issue_number"),
                 rs.getString("last_error_code"), rs.getString("last_error_message"), rs.getLong("version"), instant(rs.getTimestamp("updated_at"))), accountId);
     }
 
-    public Behavior updateBehavior(long userId, boolean enabled, int bets, BigDecimal min, BigDecimal max,
+    public Behavior updateBehavior(long userId, String mode, int bets, BigDecimal min, BigDecimal max,
                                    boolean chat, int messages) {
         PlayerRow row = findByUserId(userId).orElseThrow();
         ensureBehavior(row.accountId());
-        jdbc.update("UPDATE test_player_behavior SET enabled=?, bets_per_issue=?, stake_min=?, stake_max=?, "
+        jdbc.update("UPDATE test_player_behavior SET run_mode=?, enabled=?, bets_per_issue=?, stake_min=?, stake_max=?, "
                         + "chat_enabled=?, messages_per_issue=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE account_id=?",
-                enabled, bets, min, max, chat, messages, row.accountId());
+                mode, "AUTOMATIC".equals(mode), bets, min, max, chat, messages, row.accountId());
         return ensureBehavior(row.accountId());
     }
 
@@ -135,7 +136,7 @@ public class PlayerDeskRepository {
     public record PlayerRow(long userId, long accountId, String username, String userCode, String displayName,
                             String avatarKey, String userStatus, String accountStatus, String playerKind, String userType,
                             BigDecimal balance, Instant createdAt, Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt) {}
-    public record Behavior(long id, long accountId, boolean enabled, int betsPerIssue, BigDecimal stakeMin,
+    public record Behavior(long id, long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin,
                            BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt,
                            String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt) {}
     public record ActionRow(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status,
