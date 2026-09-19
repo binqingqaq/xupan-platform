@@ -17,6 +17,9 @@ xupan:
     dispatch-batch-size: ${XUPAN_ROBOT_DISPATCH_BATCH_SIZE:50}
     processing-lease-seconds: ${XUPAN_ROBOT_PROCESSING_LEASE_SECONDS:30}
     max-attempts: ${XUPAN_ROBOT_MAX_ATTEMPTS:8}
+  test-player:
+    behavior-enabled: ${XUPAN_TEST_PLAYER_BEHAVIOR_ENABLED:true}
+    dispatch-interval-ms: ${XUPAN_TEST_PLAYER_DISPATCH_INTERVAL_MS:1000}
   chat:
     message:
       max-robot-payload-bytes: ${XUPAN_CHAT_MAX_ROBOT_PAYLOAD_BYTES:65536}
