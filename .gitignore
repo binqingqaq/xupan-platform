@@ -48,6 +48,7 @@ docs/本地环境密钥.md
 **/uploads/
 **/tmp/
 **/data/
+var/
 
 # Database and container volumes
 **/mysql-data/

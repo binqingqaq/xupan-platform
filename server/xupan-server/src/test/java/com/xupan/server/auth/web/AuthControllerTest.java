@@ -230,7 +230,7 @@ class AuthControllerTest {
         jdbcTemplate.update("DELETE FROM sys_login_log");
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
-        jdbcTemplate.update("DELETE FROM demo_user_account");
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code <> 'DEMO-USER'");
         jdbcTemplate.update("DELETE FROM sys_user_role");
         jdbcTemplate.update("DELETE FROM sys_user");
     }

@@ -43,8 +43,20 @@ export function playerActionTypeLabel(type: PlayerActionType | string): string {
   return type === 'BET_TEXT' ? '下注动作' : type === 'CHAT_TEXT' ? '聊天动作' : `未知动作（${type || '未知值'}）`
 }
 
-export function playerDisplayCode(player: Pick<PlayerDeskItem, 'userCode' | 'username'>): string {
-  return player.userCode || player.username
+export function playerDisplayCode(player: { memberCode?: string | null; userCode?: string | null; username?: string | null }): string {
+  return player.memberCode || player.userCode || player.username || ''
+}
+
+export function playerDisplayName(player: { memberCode?: string | null; displayName: string }): string {
+  const memberCode = player.memberCode?.trim()
+  return memberCode ? `@${memberCode}.${player.displayName}` : player.displayName
+}
+
+export function playerIdentitySummary(player: { internalCode?: string | null; memberCode?: string | null; displayName: string }): string {
+  const identity = player.internalCode?.trim()
+  const member = player.memberCode?.trim()
+  const display = member ? `@${member}.${player.displayName}` : player.displayName
+  return identity ? `${identity}（${display}）` : display
 }
 
 export function playerInitial(player: Pick<PlayerDeskItem, 'displayName' | 'playerKind'>): string {

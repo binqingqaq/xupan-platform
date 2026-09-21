@@ -126,8 +126,8 @@ class GameDataRepositoryTest {
                 "SELECT COUNT(*) FROM demo_user_account WHERE user_code = 'DEMO-USER'", Integer.class);
         if (count != null && count == 0) {
             jdbcTemplate.update(
-                    "INSERT INTO demo_user_account (user_code, display_name, balance) VALUES (?, ?, ?)",
-                    "DEMO-USER", "演示用户", new BigDecimal("1000.00"));
+                    "INSERT INTO demo_user_account (user_code, member_code, display_name, balance) VALUES (?, ?, ?, ?)",
+                    "DEMO-USER", "v1", "演示用户", new BigDecimal("1000.00"));
         }
     }
 

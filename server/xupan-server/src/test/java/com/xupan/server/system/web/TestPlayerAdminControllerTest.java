@@ -22,6 +22,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.matchesPattern;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -74,6 +75,8 @@ class TestPlayerAdminControllerTest {
                         .content("{\"userCode\":\"TP-001\",\"displayName\":\"透明测试玩家\","
                                 + "\"avatarKey\":\"avatar-test-1\"}"))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.internalCode").value(matchesPattern("^wxid_[A-Za-z0-9]+$")))
+                .andExpect(jsonPath("$.memberCode").value(matchesPattern("^v[0-9]+$")))
                 .andExpect(jsonPath("$.userCode").value(PLAYER_CODE))
                 .andExpect(jsonPath("$.identityType").value("TEST"))
                 .andExpect(jsonPath("$.userStatus").value("ACTIVE"))
@@ -87,6 +90,8 @@ class TestPlayerAdminControllerTest {
         mockMvc.perform(get("/api/admin/test-players/" + PLAYER_CODE)
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.internalCode").value(matchesPattern("^wxid_[A-Za-z0-9]+$")))
+                .andExpect(jsonPath("$.memberCode").value(matchesPattern("^v[0-9]+$")))
                 .andExpect(jsonPath("$.avatarKey").value("avatar-test-1"))
                 .andExpect(jsonPath("$.ledger").isEmpty());
 

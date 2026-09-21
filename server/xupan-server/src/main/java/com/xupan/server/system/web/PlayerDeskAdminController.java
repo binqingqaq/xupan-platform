@@ -106,18 +106,20 @@ public class PlayerDeskAdminController {
     public record Page(List<Item> items, int page, int pageSize, long total) {
         static Page from(PlayerDeskAdminService.Page x) { return new Page(x.items().stream().map(Item::from).toList(), x.page(), x.pageSize(), x.total()); }
     }
-    public record Item(long userId, long accountId, String userCode, String username, String displayName, String avatarKey,
-                       String status, String playerKind, String userType, BigDecimal balance, Instant createdAt,
+    public record Item(long userId, long accountId, String internalCode, String memberCode, String userCode,
+                       String username, String displayName, String avatarKey, String authMode, String status,
+                       String playerKind, String userType, BigDecimal balance, Instant createdAt,
                        Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt) {
-        static Item from(PlayerDeskRepository.PlayerRow x) { return new Item(x.userId(), x.accountId(), x.userCode(), x.username(), x.displayName(), x.avatarKey(), x.userStatus(), x.playerKind(), x.userType(), x.balance(), x.createdAt(), x.lastLoginAt(), x.behaviorEnabled(), x.lastActionAt()); }
+        static Item from(PlayerDeskRepository.PlayerRow x) { return new Item(x.userId(), x.accountId(), x.internalCode(), x.memberCode(), x.userCode(), x.username(), x.displayName(), x.avatarKey(), x.authMode(), x.userStatus(), x.playerKind(), x.userType(), x.balance(), x.createdAt(), x.lastLoginAt(), x.behaviorEnabled(), x.lastActionAt()); }
     }
-    public record Detail(long userId, long accountId, String userCode, String username, String displayName, String avatarKey,
-                         String status, String playerKind, String userType, BigDecimal balance, Instant createdAt,
+    public record Detail(long userId, long accountId, String internalCode, String memberCode, String userCode,
+                         String username, String displayName, String avatarKey, String authMode, String status,
+                         String playerKind, String userType, BigDecimal balance, Instant createdAt,
                          Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, WalletStats walletStatistics,
                          List<Ledger> ledger, List<Action> recentActions, Behavior behavior, List<Bet> bets) {
         static Detail from(PlayerDeskAdminService.Detail x) {
             Item p = Item.from(x.player());
-            return new Detail(p.userId(), p.accountId(), p.userCode(), p.username(), p.displayName(), p.avatarKey(), p.status(),
+            return new Detail(p.userId(), p.accountId(), p.internalCode(), p.memberCode(), p.userCode(), p.username(), p.displayName(), p.avatarKey(), p.authMode(), p.status(),
                     p.playerKind(), p.userType(), p.balance(), p.createdAt(), p.lastLoginAt(), p.behaviorEnabled(), p.lastActionAt(),
                     WalletStats.from(x.walletStatistics()), x.ledger().stream().map(Ledger::from).toList(),
                     x.actions().stream().map(Action::from).toList(), Behavior.from(x.behavior()), x.bets().stream().map(Bet::from).toList());

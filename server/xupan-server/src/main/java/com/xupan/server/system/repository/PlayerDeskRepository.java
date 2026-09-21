@@ -30,8 +30,9 @@ public class PlayerDeskRepository {
 
     public List<PlayerRow> findPage(String kind, String status, String keyword, int page, int pageSize) {
         String where = where(kind, status, keyword);
-        String sql = "SELECT u.id user_id, u.username, u.display_name, u.avatar_key, u.status user_status, "
-                + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.display_name account_display_name, "
+        String sql = "SELECT u.id user_id, u.username, u.internal_code, u.display_name, u.avatar_key, u.status user_status, "
+                + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.member_code, a.display_name account_display_name, "
+                + "CASE WHEN a.player_kind='BOT' THEN 'BOT_SERVICE' ELSE 'PASSWORD' END auth_mode, "
                 + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
                 + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
                 + from() + where + " ORDER BY a.id DESC LIMIT ? OFFSET ?";
@@ -48,8 +49,9 @@ public class PlayerDeskRepository {
     }
 
     public Optional<PlayerRow> findByUserId(long userId) {
-        return jdbc.query("SELECT u.id user_id, u.username, u.display_name, u.avatar_key, u.status user_status, "
-                        + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.display_name account_display_name, "
+        return jdbc.query("SELECT u.id user_id, u.username, u.internal_code, u.display_name, u.avatar_key, u.status user_status, "
+                        + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.member_code, a.display_name account_display_name, "
+                        + "CASE WHEN a.player_kind='BOT' THEN 'BOT_SERVICE' ELSE 'PASSWORD' END auth_mode, "
                         + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
                         + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
                         + from() + " AND u.id=?", this::map, userId).stream().findFirst();
@@ -110,7 +112,7 @@ public class PlayerDeskRepository {
         StringBuilder sql = new StringBuilder();
         if (kind != null && !kind.isBlank()) sql.append(" AND a.player_kind=?");
         if (status != null && !status.isBlank()) sql.append(" AND u.status=? AND a.status=?");
-        if (keyword != null && !keyword.isBlank()) sql.append(" AND (u.username LIKE ? OR u.display_name LIKE ? OR a.user_code LIKE ?)");
+        if (keyword != null && !keyword.isBlank()) sql.append(" AND (u.username LIKE ? OR u.internal_code LIKE ? OR a.member_code LIKE ? OR u.display_name LIKE ? OR a.user_code LIKE ?)");
         return sql.toString();
     }
 
@@ -118,13 +120,17 @@ public class PlayerDeskRepository {
         java.util.ArrayList<Object> args = new java.util.ArrayList<>();
         if (kind != null && !kind.isBlank()) args.add(kind);
         if (status != null && !status.isBlank()) { args.add(status); args.add(status); }
-        if (keyword != null && !keyword.isBlank()) { String value = "%" + keyword.trim() + "%"; args.add(value); args.add(value); args.add(value); }
+        if (keyword != null && !keyword.isBlank()) {
+            String value = "%" + keyword.trim() + "%";
+            args.add(value); args.add(value); args.add(value); args.add(value); args.add(value);
+        }
         return args.toArray();
     }
 
     private PlayerRow map(java.sql.ResultSet rs, int n) throws java.sql.SQLException {
         return new PlayerRow(rs.getLong("user_id"), rs.getLong("account_id"), rs.getString("username"),
-                rs.getString("user_code"), rs.getString("display_name"), rs.getString("avatar_key"),
+                rs.getString("internal_code"), rs.getString("user_code"), rs.getString("member_code"),
+                rs.getString("display_name"), rs.getString("avatar_key"), rs.getString("auth_mode"),
                 rs.getString("user_status"), rs.getString("account_status"), rs.getString("player_kind"),
                 rs.getString("user_type"), rs.getBigDecimal("balance"), instant(rs.getTimestamp("created_at")),
                 instant(rs.getTimestamp("last_login_at")), rs.getBoolean("behavior_enabled"), instant(rs.getTimestamp("last_action_at")));
@@ -133,8 +139,9 @@ public class PlayerDeskRepository {
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
 
     public record Summary(BigDecimal totalPoints, long normalCount, long botCount) {}
-    public record PlayerRow(long userId, long accountId, String username, String userCode, String displayName,
-                            String avatarKey, String userStatus, String accountStatus, String playerKind, String userType,
+    public record PlayerRow(long userId, long accountId, String username, String internalCode, String userCode,
+                            String memberCode, String displayName, String avatarKey, String authMode,
+                            String userStatus, String accountStatus, String playerKind, String userType,
                             BigDecimal balance, Instant createdAt, Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt) {}
     public record Behavior(long id, long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin,
                            BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt,

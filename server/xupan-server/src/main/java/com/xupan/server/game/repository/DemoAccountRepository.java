@@ -58,7 +58,7 @@ public class DemoAccountRepository {
     public List<TestPlayerRecord> findTestPlayers(String status, String keyword,
                                                    int page, int pageSize) {
         StringBuilder sql = new StringBuilder("""
-                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                SELECT a.id, a.sys_user_id, u.internal_code, a.user_code, a.member_code, a.display_name, u.avatar_key,
                        a.balance, a.status, u.status AS user_status, a.identity_type,
                        a.created_at, a.updated_at
                   FROM demo_user_account a
@@ -88,7 +88,7 @@ public class DemoAccountRepository {
 
     public Optional<TestPlayerRecord> findTestPlayer(long accountId) {
         return jdbcTemplate.query("""
-                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                SELECT a.id, a.sys_user_id, u.internal_code, a.user_code, a.member_code, a.display_name, u.avatar_key,
                        a.balance, a.status, u.status AS user_status, a.identity_type,
                        a.created_at, a.updated_at
                   FROM demo_user_account a
@@ -99,7 +99,7 @@ public class DemoAccountRepository {
 
     public Optional<TestPlayerRecord> findTestPlayerByUserId(long userId) {
         return jdbcTemplate.query("""
-                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                SELECT a.id, a.sys_user_id, u.internal_code, a.user_code, a.member_code, a.display_name, u.avatar_key,
                        a.balance, a.status, u.status AS user_status, a.identity_type,
                        a.created_at, a.updated_at
                   FROM demo_user_account a
@@ -110,7 +110,7 @@ public class DemoAccountRepository {
 
     public Optional<TestPlayerRecord> findTestPlayerByCode(String userCode) {
         return jdbcTemplate.query("""
-                SELECT a.id, a.sys_user_id, a.user_code, a.display_name, u.avatar_key,
+                SELECT a.id, a.sys_user_id, u.internal_code, a.user_code, a.member_code, a.display_name, u.avatar_key,
                        a.balance, a.status, u.status AS user_status, a.identity_type,
                        a.created_at, a.updated_at
                   FROM demo_user_account a
@@ -150,8 +150,9 @@ public class DemoAccountRepository {
 
     private static org.springframework.jdbc.core.RowMapper<TestPlayerRecord> testPlayerMapper() {
         return (rs, rowNum) -> new TestPlayerRecord(
-                rs.getLong("id"), rs.getLong("sys_user_id"), rs.getString("user_code"),
-                rs.getString("display_name"), rs.getString("avatar_key"),
+                rs.getLong("id"), rs.getLong("sys_user_id"), rs.getString("internal_code"),
+                rs.getString("user_code"), rs.getString("member_code"), rs.getString("display_name"),
+                rs.getString("avatar_key"),
                 rs.getBigDecimal("balance"), rs.getString("status"),
                 rs.getString("user_status"), rs.getString("identity_type"),
                 rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
@@ -201,8 +202,8 @@ public class DemoAccountRepository {
                                 BigDecimal balance, String status) {
     }
 
-    public record TestPlayerRecord(long id, long userId, String userCode, String displayName,
-                                   String avatarKey, BigDecimal balance, String status,
+    public record TestPlayerRecord(long id, long userId, String internalCode, String userCode,
+                                   String memberCode, String displayName, String avatarKey, BigDecimal balance, String status,
                                    String userStatus, String identityType,
                                    Instant createdAt, Instant updatedAt) {
     }

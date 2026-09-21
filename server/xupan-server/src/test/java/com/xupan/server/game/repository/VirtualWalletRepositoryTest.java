@@ -41,8 +41,8 @@ class VirtualWalletRepositoryTest {
                 "SELECT COUNT(*) FROM demo_user_account WHERE user_code = 'DEMO-USER'", Integer.class);
         if (count != null && count == 0) {
             jdbcTemplate.update(
-                    "INSERT INTO demo_user_account (user_code, display_name, balance) VALUES (?, ?, ?)",
-                    "DEMO-USER", "演示用户", new BigDecimal("1000.00"));
+                    "INSERT INTO demo_user_account (user_code, member_code, display_name, balance) VALUES (?, ?, ?, ?)",
+                    "DEMO-USER", "v1", "演示用户", new BigDecimal("1000.00"));
         }
     }
 
@@ -232,8 +232,8 @@ class VirtualWalletRepositoryTest {
 
     private long insertUser(String username, String displayName) {
         jdbcTemplate.update(
-                "INSERT INTO sys_user (username, display_name, password_hash) VALUES (?, ?, ?)",
-                username, displayName, "test-password-hash");
+                "INSERT INTO sys_user (username, display_name, password_hash, internal_code) VALUES (?, ?, ?, ?)",
+                username, displayName, "test-password-hash", "wxid_" + username);
         return jdbcTemplate.queryForObject(
                 "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
     }

@@ -10,6 +10,8 @@ public record TestPlayerAdminResponse(
         long id,
         long accountId,
         long userId,
+        String internalCode,
+        String memberCode,
         String username,
         String userCode,
         String displayName,
@@ -26,7 +28,7 @@ public record TestPlayerAdminResponse(
 
     static TestPlayerAdminResponse from(DemoAccountRepository.TestPlayerRecord player,
                                         List<DemoAccountRepository.LedgerRecord> ledger) {
-        return new TestPlayerAdminResponse(player.id(), player.id(), player.userId(), player.userCode(), player.userCode(),
+        return new TestPlayerAdminResponse(player.id(), player.id(), player.userId(), player.internalCode(), player.memberCode(), player.userCode(), player.userCode(),
                 player.displayName(), player.avatarKey(), player.identityType(), player.status(),
                 player.userStatus(), true, player.balance(), player.createdAt(), player.updatedAt(),
                 ledger == null ? List.of() : ledger.stream().map(LedgerResponse::from).toList());

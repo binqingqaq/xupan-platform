@@ -152,6 +152,7 @@ export interface TestPlayerPage {
 
 export type PlayerKind = 'NORMAL' | 'BOT'
 export type PlayerDeskStatus = 'ACTIVE' | 'DISABLED' | 'LOCKED'
+export type PlayerAuthMode = 'PASSWORD' | 'BOT_SERVICE'
 
 export interface PlayerDeskSummary {
   totalPoints: number
@@ -162,10 +163,13 @@ export interface PlayerDeskSummary {
 export interface PlayerDeskItem {
   userId: number
   accountId: number
+  internalCode: string
+  memberCode: string
   userCode: string
   username: string
   displayName: string
   avatarKey: string | null
+  authMode: PlayerAuthMode
   status: PlayerDeskStatus
   playerKind: PlayerKind
   userType: 'REAL' | 'TEST'

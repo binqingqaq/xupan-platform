@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
+import java.util.UUID;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
@@ -17,7 +18,8 @@ public class UserRepository {
 
     private static final String USER_COLUMNS = """
             id, username, display_name, avatar_key, password_hash, status,
-            failed_login_count, locked_until, security_version, last_login_at, last_login_ip, user_type
+            failed_login_count, locked_until, security_version, last_login_at, last_login_ip, user_type,
+            internal_code
             """;
     private static final String ADMIN_USER_COLUMNS = """
             id, username, display_name, avatar_key, status, created_at, last_login_at
@@ -152,8 +154,8 @@ public class UserRepository {
     @Transactional
     public long insert(String username, String displayName, String passwordHash, String status) {
         jdbcTemplate.update(
-                "INSERT INTO sys_user (username, display_name, password_hash, status) VALUES (?, ?, ?, ?)",
-                username, displayName, passwordHash, status);
+                "INSERT INTO sys_user (username, display_name, password_hash, status, internal_code) VALUES (?, ?, ?, ?, ?)",
+                username, displayName, passwordHash, status, newInternalCode());
         Long key = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
         if (key == null) {
             throw new IllegalStateException("创建用户后未取得用户 ID");
@@ -166,9 +168,9 @@ public class UserRepository {
                                  String passwordHash) {
         jdbcTemplate.update("""
                 INSERT INTO sys_user
-                    (username, display_name, avatar_key, password_hash, status, user_type)
-                VALUES (?, ?, ?, ?, 'ACTIVE', 'TEST')
-                """, username, displayName, avatarKey, passwordHash);
+                    (username, display_name, avatar_key, password_hash, status, user_type, internal_code)
+                VALUES (?, ?, ?, ?, 'ACTIVE', 'TEST', ?)
+                """, username, displayName, avatarKey, passwordHash, newInternalCode());
         Long key = jdbcTemplate.queryForObject(
                 "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
         if (key == null) {
@@ -266,7 +268,7 @@ public class UserRepository {
                 rs.getString("avatar_key"), rs.getString("password_hash"), rs.getString("status"),
                 rs.getInt("failed_login_count"), instant(rs.getTimestamp("locked_until")),
                 rs.getLong("security_version"), instant(rs.getTimestamp("last_login_at")),
-                rs.getString("last_login_ip"), rs.getString("user_type"));
+                rs.getString("last_login_ip"), rs.getString("user_type"), rs.getString("internal_code"));
     }
 
     private UserManagementRow mapManagementRow(java.sql.ResultSet rs, int rowNum)
@@ -312,5 +314,9 @@ public class UserRepository {
 
     private static Instant instant(Timestamp value) {
         return value == null ? null : value.toInstant();
+    }
+
+    private static String newInternalCode() {
+        return "wxid_" + UUID.randomUUID().toString().replace("-", "");
     }
 }

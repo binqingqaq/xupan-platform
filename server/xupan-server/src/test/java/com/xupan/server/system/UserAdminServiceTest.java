@@ -68,6 +68,12 @@ class UserAdminServiceTest {
         assertThat(walletService.getForAdmin(userId))
                 .extracting(wallet -> wallet.userId(), wallet -> wallet.userCode(), wallet -> wallet.balance())
                 .containsExactly(userId, "USER-" + userId, new java.math.BigDecimal("0.00"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT internal_code FROM sys_user WHERE id = ?", String.class, userId))
+                .matches("^wxid_[A-Za-z0-9]+$");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT member_code FROM demo_user_account WHERE sys_user_id = ?", String.class, userId))
+                .matches("^v[0-9]+$");
         assertThat(walletService.ensureWalletForUser(userId, "其他显示名")).isEqualTo(
                 walletService.getForAdmin(userId).accountId());
         assertThat(jdbcTemplate.queryForObject(

@@ -62,14 +62,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV17InOrder() {
+    void appliesV1ThroughV18InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
     }
 
     @Test
@@ -86,7 +86,8 @@ class FlywayAuthMigrationTest {
         assertThat(columnNames("SYS_USER")).containsExactlyInAnyOrder(
                 "ID", "USERNAME", "DISPLAY_NAME", "AVATAR_KEY", "PASSWORD_HASH", "STATUS",
                 "FAILED_LOGIN_COUNT", "LOCKED_UNTIL", "SECURITY_VERSION", "LAST_LOGIN_AT",
-                "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT", "USER_TYPE");
+                "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT", "USER_TYPE", "INTERNAL_CODE");
+        assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("MEMBER_CODE");
         assertThat(columnNames("AUTH_SESSION")).containsExactlyInAnyOrder(
                 "ID", "SESSION_ID", "USER_ID", "ACCESS_TOKEN_HASH", "ACCESS_EXPIRES_AT",
                 "REFRESH_TOKEN_HASH", "REFRESH_EXPIRES_AT", "DEVICE_LABEL", "IP_DIGEST",
@@ -114,6 +115,8 @@ class FlywayAuthMigrationTest {
                 "FK_SYS_OPERATION_LOG_USER", "CK_SYS_OPERATION_LOG_RESULT");
 
         assertThat(indexNames("SYS_USER")).contains("IDX_SYS_USER_STATUS");
+        assertThat(indexNames("SYS_USER")).contains("UK_SYS_USER_INTERNAL_CODE");
+        assertThat(indexNames("DEMO_USER_ACCOUNT")).contains("UK_DEMO_USER_ACCOUNT_MEMBER_CODE");
         assertThat(indexNames("SYS_USER_ROLE")).contains("IDX_SYS_USER_ROLE_ROLE");
         assertThat(indexNames("SYS_ROLE_PERMISSION")).contains("IDX_SYS_ROLE_PERMISSION_PERMISSION");
         assertThat(indexNames("AUTH_SESSION")).contains(
@@ -246,6 +249,30 @@ class FlywayAuthMigrationTest {
     }
 
     @Test
+    void businessIdentityColumnsAreRequiredAndUnique() {
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE UPPER(TABLE_NAME) = 'SYS_USER' AND UPPER(COLUMN_NAME) = 'INTERNAL_CODE'",
+                String.class)).isEqualTo("NO");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT IS_NULLABLE FROM INFORMATION_SCHEMA.COLUMNS "
+                        + "WHERE UPPER(TABLE_NAME) = 'DEMO_USER_ACCOUNT' AND UPPER(COLUMN_NAME) = 'MEMBER_CODE'",
+                String.class)).isEqualTo("NO");
+
+        long userId = insertUser("migration-business-identity");
+        long duplicateUserId = insertUser("migration-business-identity-duplicate");
+        try {
+            jdbcTemplate.update("UPDATE sys_user SET internal_code = ? WHERE id = ?", "wxid_migration", userId);
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE sys_user SET internal_code = ? WHERE id = ?", "wxid_migration", duplicateUserId))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", userId);
+            jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", duplicateUserId);
+        }
+    }
+
+    @Test
     void replayingEquivalentSeedInsertsDoesNotIncreaseCounts() {
         Map<String, Integer> before = seedCounts();
 
@@ -293,8 +320,8 @@ class FlywayAuthMigrationTest {
 
     private long insertUser(String username) {
         jdbcTemplate.update(
-                "INSERT INTO sys_user (username, display_name, password_hash) VALUES (?, ?, ?)",
-                username, "迁移测试用户", "test-password-hash");
+                "INSERT INTO sys_user (username, display_name, password_hash, internal_code) VALUES (?, ?, ?, ?)",
+                username, "迁移测试用户", "test-password-hash", "wxid_" + username);
         return jdbcTemplate.queryForObject(
                 "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
     }

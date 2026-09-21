@@ -48,8 +48,8 @@ class PermissionServiceTest {
     }
 
     private long insertUser(String username) {
-        jdbcTemplate.update("INSERT INTO sys_user (username, display_name, password_hash) VALUES (?, ?, ?)",
-                username, username, "hash");
+        jdbcTemplate.update("INSERT INTO sys_user (username, display_name, password_hash, internal_code) VALUES (?, ?, ?, ?)",
+                username, username, "hash", "wxid_" + username);
         return jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
     }
 

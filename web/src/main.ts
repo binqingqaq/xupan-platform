@@ -4,10 +4,7 @@ import App from './App.vue'
 import ForbiddenView from './views/ForbiddenView.vue'
 import LoginView from './views/LoginView.vue'
 import UserRoom from './views/UserRoom.vue'
-import AdminPanel from './views/AdminPanel.vue'
-import UserManagement from './views/UserManagement.vue'
-import RobotManagement from './views/RobotManagement.vue'
-import TestPlayerManagement from './views/TestPlayerManagement.vue'
+import { adminRoutes } from './adminRoutes'
 import { restoreSession, subscribeAuthState } from './api'
 import './styles.css'
 import './styles/display-home-static.css'
@@ -29,10 +26,7 @@ const router = createRouter({
     { path: '/login', component: LoginView },
     { path: '/forbidden', component: ForbiddenView },
     { path: '/room', component: UserRoom, meta: { requiresAuth: true } },
-    { path: '/admin', component: AdminPanel, meta: { requiresAuth: true, requiredPermission: 'USER_MANAGE' } },
-    { path: '/admin/users', component: UserManagement, meta: { requiresAuth: true, requiredPermission: 'USER_MANAGE' } },
-    { path: '/admin/test-players', component: TestPlayerManagement, meta: { requiresAuth: true, requiredPermission: 'USER_MANAGE' } },
-    { path: '/admin/robots', component: RobotManagement, meta: { requiresAuth: true, requiredPermission: 'ROBOT_READ' } },
+    ...adminRoutes,
   ],
 })
 

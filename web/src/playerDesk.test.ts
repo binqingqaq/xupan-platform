@@ -3,6 +3,8 @@ import {
   formatPoints,
   playerActionStatusLabel,
   playerDisplayCode,
+  playerDisplayName,
+  playerIdentitySummary,
   playerInitial,
   playerKindLabel,
   playerStatusClass,
@@ -19,6 +21,9 @@ describe('player desk helpers', () => {
     expect(playerActionStatusLabel('SUCCEEDED')).toBe('已完成')
     expect(playerStatusClass('ACTIVE')).toBe('player-status-active')
     expect(playerDisplayCode({ userCode: '', username: 'test1' })).toBe('test1')
+    expect(playerDisplayName({ memberCode: 'v1982', displayName: '拔胜侠454' })).toBe('@v1982.拔胜侠454')
+    expect(playerIdentitySummary({ internalCode: 'wxid_test', memberCode: 'v1982', displayName: '拔胜侠454' }))
+      .toBe('wxid_test（@v1982.拔胜侠454）')
     expect(playerInitial({ displayName: '', playerKind: 'BOT' })).toBe('托')
     expect(formatPoints(12)).toBe('12.00')
   })

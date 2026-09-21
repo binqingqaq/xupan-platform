@@ -8,6 +8,7 @@ import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationResult;
 import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.repository.VirtualWalletRepository;
+import com.xupan.server.identity.service.PlayerIdentityService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -25,13 +26,16 @@ public class VirtualWalletService {
     private final VirtualWalletRepository walletRepository;
     private final UserRepository userRepository;
     private final OperationAuditRepository auditRepository;
+    private final PlayerIdentityService playerIdentityService;
 
     public VirtualWalletService(VirtualWalletRepository walletRepository,
                                 UserRepository userRepository,
-                                OperationAuditRepository auditRepository) {
+                                OperationAuditRepository auditRepository,
+                                PlayerIdentityService playerIdentityService) {
         this.walletRepository = walletRepository;
         this.userRepository = userRepository;
         this.auditRepository = auditRepository;
+        this.playerIdentityService = playerIdentityService;
     }
 
     @Transactional(readOnly = true)
@@ -140,15 +144,23 @@ public class VirtualWalletService {
     public long ensureWalletForUser(long userId, String displayName) {
         UserAccount user = userRepository.findById(userId)
                 .orElseThrow(() -> BusinessException.notFound("USER_NOT_FOUND", "用户不存在"));
-        return walletRepository.findByUserId(userId).map(VirtualWallet::accountId).orElseGet(() -> {
+        return walletRepository.findByUserId(userId).map(wallet -> {
+            playerIdentityService.ensureForUser(userId, wallet.accountId());
+            return wallet.accountId();
+        }).orElseGet(() -> {
             String code = "USER-" + userId;
             try {
-                return walletRepository.createForUser(userId,
+                long accountId = walletRepository.createForUser(userId,
                         code, requiredText(displayName == null ? user.displayName() : displayName,
                                 "显示名称不能为空", 128));
+                playerIdentityService.ensureForUser(userId, accountId);
+                return accountId;
             } catch (DataIntegrityViolationException exception) {
                 return walletRepository.findByUserId(userId)
-                        .map(VirtualWallet::accountId)
+                        .map(wallet -> {
+                            playerIdentityService.ensureForUser(userId, wallet.accountId());
+                            return wallet.accountId();
+                        })
                         .orElseThrow(() -> exception);
             }
         });
@@ -161,15 +173,23 @@ public class VirtualWalletService {
         if (!"TEST".equals(user.userType())) {
             throw BusinessException.conflict("TEST_PLAYER_IDENTITY_INVALID", "目标身份不是测试玩家");
         }
-        return walletRepository.findByUserId(userId).map(VirtualWallet::accountId).orElseGet(() -> {
+        return walletRepository.findByUserId(userId).map(wallet -> {
+            playerIdentityService.ensureForUser(userId, wallet.accountId());
+            return wallet.accountId();
+        }).orElseGet(() -> {
             try {
-                return walletRepository.createForTestPlayer(userId,
+                long accountId = walletRepository.createForTestPlayer(userId,
                         requiredText(userCode, "用户编码不能为空", 64),
                         requiredText(displayName == null ? user.displayName() : displayName,
                                 "显示名称不能为空", 128));
+                playerIdentityService.ensureForUser(userId, accountId);
+                return accountId;
             } catch (DataIntegrityViolationException exception) {
                 return walletRepository.findByUserId(userId)
-                        .map(VirtualWallet::accountId)
+                        .map(wallet -> {
+                            playerIdentityService.ensureForUser(userId, wallet.accountId());
+                            return wallet.accountId();
+                        })
                         .orElseThrow(() -> exception);
             }
         });

@@ -190,7 +190,7 @@ class TestPlayerAdminControllerTest {
         jdbcTemplate.update("DELETE FROM game_bet");
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
         jdbcTemplate.update("DELETE FROM game_issue_event");
-        jdbcTemplate.update("DELETE FROM demo_user_account");
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code <> 'DEMO-USER'");
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM sys_login_log");
         jdbcTemplate.update("DELETE FROM sys_user_role");
