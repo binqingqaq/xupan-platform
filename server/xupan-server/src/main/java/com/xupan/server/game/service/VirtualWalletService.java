@@ -50,6 +50,12 @@ public class VirtualWalletService {
         return walletOrNotFound(walletRepository.findByUserId(targetUserId));
     }
 
+    /** Admin history views must remain available after a player is soft-deleted. */
+    @Transactional(readOnly = true)
+    public VirtualWallet getForAdminHistory(long targetUserId) {
+        return walletOrNotFound(walletRepository.findByUserId(targetUserId));
+    }
+
     /** Resolves the legacy game_bet.user_id account id back to the owning sys_user id. */
     @Transactional(readOnly = true)
     public VirtualWallet getByAccountId(long accountId) {
@@ -134,8 +140,23 @@ public class VirtualWalletService {
     }
 
     @Transactional(readOnly = true)
+    public List<WalletLedgerEntry> ledgerForAdminHistory(long targetUserId, int limit) {
+        if (limit < 1 || limit > 100) {
+            throw BusinessException.badRequest("REQUEST_INVALID", "流水条数必须在 1 至 100 之间");
+        }
+        requireWallet(targetUserId);
+        return walletRepository.findLedgerByUserId(targetUserId, limit);
+    }
+
+    @Transactional(readOnly = true)
     public WalletStatistics statistics(long targetUserId) {
         requireActiveUser(targetUserId);
+        VirtualWallet wallet = requireWallet(targetUserId);
+        return walletRepository.findStatisticsByAccountId(wallet.accountId());
+    }
+
+    @Transactional(readOnly = true)
+    public WalletStatistics statisticsForAdminHistory(long targetUserId) {
         VirtualWallet wallet = requireWallet(targetUserId);
         return walletRepository.findStatisticsByAccountId(wallet.accountId());
     }

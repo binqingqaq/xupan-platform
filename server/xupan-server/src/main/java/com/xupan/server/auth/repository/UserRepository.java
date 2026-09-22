@@ -1,6 +1,7 @@
 package com.xupan.server.auth.repository;
 
 import com.xupan.server.auth.domain.UserAccount;
+import com.xupan.server.playerauth.domain.PlayerLinkTarget;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,7 +20,7 @@ public class UserRepository {
     private static final String USER_COLUMNS = """
             id, username, display_name, avatar_key, password_hash, status,
             failed_login_count, locked_until, security_version, last_login_at, last_login_ip, user_type,
-            internal_code
+            internal_code, auth_mode
             """;
     private static final String ADMIN_USER_COLUMNS = """
             id, username, display_name, avatar_key, status, created_at, last_login_at
@@ -62,6 +63,19 @@ public class UserRepository {
     }
 
     @Transactional
+    public int softDelete(long userId) {
+        return jdbcTemplate.update("""
+                UPDATE sys_user
+                   SET status = 'DELETED',
+                       locked_until = NULL,
+                       failed_login_count = 0,
+                       security_version = security_version + 1,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND status <> 'DELETED'
+                """, userId);
+    }
+
+    @Transactional
     public int updatePasswordHash(long userId, String passwordHash) {
         return jdbcTemplate.update("""
                 UPDATE sys_user
@@ -72,6 +86,15 @@ public class UserRepository {
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
                 """, passwordHash, userId);
+    }
+
+    @Transactional
+    public int updateAuthMode(long userId, String authMode) {
+        return jdbcTemplate.update("""
+                UPDATE sys_user
+                   SET auth_mode = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, authMode, userId);
     }
 
     @Transactional
@@ -143,6 +166,23 @@ public class UserRepository {
         return queryOne("SELECT " + USER_COLUMNS + " FROM sys_user WHERE id = ? FOR UPDATE", userId);
     }
 
+    public Optional<PlayerLinkTarget> findPlayerLinkTargetForUpdate(long userId) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("findPlayerLinkTargetForUpdate 必须在外层事务中调用");
+        }
+        return jdbcTemplate.query("""
+                SELECT u.id, u.status user_status, u.auth_mode, a.status account_status, a.player_kind
+                  FROM sys_user u
+                  JOIN demo_user_account a ON a.sys_user_id = u.id
+                 WHERE u.id = ?
+                   AND a.identity_type IN ('REAL', 'TEST')
+                   AND a.player_kind IN ('NORMAL', 'BOT')
+                FOR UPDATE
+                """, (rs, rowNum) -> new PlayerLinkTarget(
+                rs.getLong("id"), rs.getString("user_status"), rs.getString("account_status"),
+                rs.getString("player_kind"), rs.getString("auth_mode")), userId).stream().findFirst();
+    }
+
     /** Runs the user validation/update workflow while the row lock remains held. */
     @Transactional
     public <T> T executeInLockedUserTransaction(long userId, Function<UserAccount, T> workflow) {
@@ -159,6 +199,18 @@ public class UserRepository {
         Long key = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
         if (key == null) {
             throw new IllegalStateException("创建用户后未取得用户 ID");
+        }
+        return key;
+    }
+
+    @Transactional
+    public long insertPlayerLinkUser(String username, String displayName, String passwordHash, String status) {
+        jdbcTemplate.update(
+                "INSERT INTO sys_user (username, display_name, password_hash, status, user_type, auth_mode, internal_code) VALUES (?, ?, ?, ?, 'REAL', 'PLAYER_LINK', ?)",
+                username, displayName, passwordHash, status, newInternalCode());
+        Long key = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
+        if (key == null) {
+            throw new IllegalStateException("创建链接玩家后未取得用户 ID");
         }
         return key;
     }
@@ -268,7 +320,8 @@ public class UserRepository {
                 rs.getString("avatar_key"), rs.getString("password_hash"), rs.getString("status"),
                 rs.getInt("failed_login_count"), instant(rs.getTimestamp("locked_until")),
                 rs.getLong("security_version"), instant(rs.getTimestamp("last_login_at")),
-                rs.getString("last_login_ip"), rs.getString("user_type"), rs.getString("internal_code"));
+                rs.getString("last_login_ip"), rs.getString("user_type"), rs.getString("internal_code"),
+                rs.getString("auth_mode"));
     }
 
     private UserManagementRow mapManagementRow(java.sql.ResultSet rs, int rowNum)

@@ -62,21 +62,21 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV18InOrder() {
+    void appliesV1ThroughV21InOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21");
     }
 
     @Test
     void createsIdentitySessionAndAuditTables() {
         assertThat(tableNames()).contains(
                 "SYS_USER", "SYS_ROLE", "SYS_PERMISSION", "SYS_USER_ROLE", "SYS_ROLE_PERMISSION",
-                "AUTH_SESSION", "AUTH_WS_TICKET", "SYS_LOGIN_LOG", "SYS_OPERATION_LOG");
+                "AUTH_SESSION", "AUTH_WS_TICKET", "SYS_LOGIN_LOG", "SYS_OPERATION_LOG", "PLAYER_ACCESS_LINK");
 
         assertThat(tableNames()).contains("TEST_PLAYER_BEHAVIOR", "TEST_PLAYER_ACTION");
         assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("PLAYER_KIND");
@@ -86,12 +86,16 @@ class FlywayAuthMigrationTest {
         assertThat(columnNames("SYS_USER")).containsExactlyInAnyOrder(
                 "ID", "USERNAME", "DISPLAY_NAME", "AVATAR_KEY", "PASSWORD_HASH", "STATUS",
                 "FAILED_LOGIN_COUNT", "LOCKED_UNTIL", "SECURITY_VERSION", "LAST_LOGIN_AT",
-                "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT", "USER_TYPE", "INTERNAL_CODE");
+                "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT", "USER_TYPE", "INTERNAL_CODE", "AUTH_MODE");
         assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("MEMBER_CODE");
         assertThat(columnNames("AUTH_SESSION")).containsExactlyInAnyOrder(
                 "ID", "SESSION_ID", "USER_ID", "ACCESS_TOKEN_HASH", "ACCESS_EXPIRES_AT",
                 "REFRESH_TOKEN_HASH", "REFRESH_EXPIRES_AT", "DEVICE_LABEL", "IP_DIGEST",
-                "USER_AGENT_DIGEST", "LAST_SEEN_AT", "REVOKED_AT", "CREATED_AT", "SECURITY_VERSION");
+                "USER_AGENT_DIGEST", "LAST_SEEN_AT", "REVOKED_AT", "CREATED_AT", "SECURITY_VERSION", "AUTH_MODE", "SCOPE");
+        assertThat(columnNames("AUTH_WS_TICKET")).contains("SCOPE");
+        assertThat(columnNames("PLAYER_ACCESS_LINK")).containsExactlyInAnyOrder(
+                "ID", "USER_ID", "TOKEN_HASH", "SCOPE", "EXPIRES_AT", "REVOKED_AT",
+                "LAST_USED_AT", "CREATED_BY", "CREATED_AT");
         assertThat(columnNames("SYS_OPERATION_LOG")).containsExactlyInAnyOrder(
                 "ID", "OPERATOR_USER_ID", "PERMISSION_CODE", "HTTP_METHOD", "REQUEST_PATH",
                 "RESOURCE_ID", "RESULT", "ERROR_CODE", "REQUEST_SUMMARY", "IP_DIGEST", "CREATED_AT");
@@ -100,15 +104,19 @@ class FlywayAuthMigrationTest {
     @Test
     void createsExpectedKeysForeignKeysAndIndexes() {
         assertThat(constraintNames("SYS_USER")).contains(
-                "UK_SYS_USER_USERNAME", "CK_SYS_USER_STATUS", "CK_SYS_USER_FAILED_LOGIN_COUNT");
+                "UK_SYS_USER_USERNAME", "CK_SYS_USER_STATUS", "CK_SYS_USER_FAILED_LOGIN_COUNT", "CK_SYS_USER_AUTH_MODE");
         assertThat(constraintNames("SYS_ROLE")).contains("UK_SYS_ROLE_CODE", "CK_SYS_ROLE_STATUS");
         assertThat(constraintNames("SYS_PERMISSION")).contains(
                 "UK_SYS_PERMISSION_CODE", "CK_SYS_PERMISSION_TYPE", "CK_SYS_PERMISSION_STATUS");
         assertThat(constraintNames("AUTH_SESSION")).contains(
                 "UK_AUTH_SESSION_ID", "UK_AUTH_SESSION_ACCESS_HASH", "UK_AUTH_SESSION_REFRESH_HASH",
                 "FK_AUTH_SESSION_USER", "CK_AUTH_SESSION_SECURITY_VERSION");
+        assertThat(constraintNames("AUTH_SESSION")).contains("CK_AUTH_SESSION_AUTH_MODE", "CK_AUTH_SESSION_SCOPE");
         assertThat(constraintNames("AUTH_WS_TICKET")).contains(
-                "UK_AUTH_WS_TICKET_HASH", "FK_AUTH_WS_TICKET_USER", "FK_AUTH_WS_TICKET_SESSION");
+                "UK_AUTH_WS_TICKET_HASH", "FK_AUTH_WS_TICKET_USER", "FK_AUTH_WS_TICKET_SESSION", "CK_AUTH_WS_TICKET_SCOPE");
+        assertThat(constraintNames("PLAYER_ACCESS_LINK")).contains(
+                "UK_PLAYER_ACCESS_LINK_HASH", "FK_PLAYER_ACCESS_LINK_USER", "FK_PLAYER_ACCESS_LINK_CREATOR",
+                "CK_PLAYER_ACCESS_LINK_SCOPE");
         assertThat(constraintNames("SYS_LOGIN_LOG")).contains(
                 "FK_SYS_LOGIN_LOG_USER", "CK_SYS_LOGIN_LOG_RESULT");
         assertThat(constraintNames("SYS_OPERATION_LOG")).contains(
@@ -121,8 +129,9 @@ class FlywayAuthMigrationTest {
         assertThat(indexNames("SYS_ROLE_PERMISSION")).contains("IDX_SYS_ROLE_PERMISSION_PERMISSION");
         assertThat(indexNames("AUTH_SESSION")).contains(
                 "IDX_AUTH_SESSION_USER", "IDX_AUTH_SESSION_ACCESS_EXPIRY",
-                "IDX_AUTH_SESSION_SECURITY_VERSION");
-        assertThat(indexNames("AUTH_WS_TICKET")).contains("IDX_AUTH_WS_TICKET_EXPIRY");
+                "IDX_AUTH_SESSION_SECURITY_VERSION", "IDX_AUTH_SESSION_SCOPE");
+        assertThat(indexNames("AUTH_WS_TICKET")).contains("IDX_AUTH_WS_TICKET_EXPIRY", "IDX_AUTH_WS_TICKET_SCOPE");
+        assertThat(indexNames("PLAYER_ACCESS_LINK")).contains("IDX_PLAYER_ACCESS_LINK_USER");
         assertThat(indexNames("SYS_LOGIN_LOG")).contains(
                 "IDX_SYS_LOGIN_LOG_USER", "IDX_SYS_LOGIN_LOG_CREATED");
         assertThat(indexNames("SYS_OPERATION_LOG")).contains(

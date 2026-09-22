@@ -36,6 +36,9 @@ public class ChatConnectionAccessService {
                     || !session.get().isAccessTokenValid(now, user.getSecurityVersion())) {
                 return AccessCheck.unauthenticated();
             }
+            if (session.get().isChatOnly()) {
+                user = user.asChatOnly();
+            }
             if (!user.isEnabled() || !user.isAccountNonLocked()) {
                 return AccessCheck.forbidden();
             }

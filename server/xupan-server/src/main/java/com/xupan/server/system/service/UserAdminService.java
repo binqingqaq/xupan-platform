@@ -84,6 +84,32 @@ public class UserAdminService {
     }
 
     @Transactional
+    public long createPlayerLinkUser(String displayName, long operatorUserId) {
+        requireAdmin(operatorUserId);
+        String normalizedDisplayName = required(displayName, "REQUEST_INVALID", "显示名称不能为空");
+        String normalizedUsername = normalizedDisplayName;
+        if (userRepository.findByUsername(normalizedUsername).isPresent()) {
+            throw BusinessException.conflict("PLAYER_NICKNAME_EXISTS", "昵称已存在");
+        }
+        if (roleRepository.findActiveByCodes(Set.of("USER")).size() != 1) {
+            throw BusinessException.badRequest("USER_ROLE_INVALID", "用户角色不存在或已停用");
+        }
+        try {
+            long userId = userRepository.insertPlayerLinkUser(normalizedUsername, normalizedDisplayName,
+                    passwordPolicy.encodeUnusableCredential(), "ACTIVE");
+            if (userRepository.assignRole(userId, "USER") != 1) {
+                throw BusinessException.badRequest("USER_ROLE_INVALID", "用户角色不可用");
+            }
+            walletService.ensureWalletForUser(userId, normalizedDisplayName);
+            audit(operatorUserId, "POST", "/api/admin/player-desk/players/normal", Long.toString(userId),
+                    "username=" + normalizedUsername + ",displayName=" + normalizedDisplayName + ",authMode=PLAYER_LINK");
+            return userId;
+        } catch (DataIntegrityViolationException exception) {
+            throw BusinessException.conflict("PLAYER_NICKNAME_EXISTS", "昵称已存在");
+        }
+    }
+
+    @Transactional
     public long bootstrapAdmin(String username, String rawPassword) {
         return createUserInternal(username, username, rawPassword, "ADMIN", 0L);
     }

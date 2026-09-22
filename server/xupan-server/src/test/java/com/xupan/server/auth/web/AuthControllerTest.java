@@ -129,6 +129,20 @@ class AuthControllerTest {
     }
 
     @Test
+    void playerLinkModeCannotFallBackToPasswordLogin() throws Exception {
+        jdbcTemplate.update("UPDATE sys_user SET auth_mode = 'PLAYER_LINK' WHERE username = ?", USERNAME);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + USERNAME + "\",\"password\":\"" + USER_PASSWORD + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_INVALID_CREDENTIALS"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM auth_session WHERE user_id = (SELECT id FROM sys_user WHERE username = ?)",
+                Integer.class, USERNAME)).isZero();
+    }
+
+    @Test
     void refreshRotatesCookieAndOldCookieCannotBeReplayed() throws Exception {
         MvcResult login = loginResult(USERNAME, USER_PASSWORD);
         Cookie originalCookie = login.getResponse().getCookie(AuthController.REFRESH_COOKIE);

@@ -12,8 +12,10 @@ public class SpaController {
             "/display", "/display/",
             "/display/mobile", "/display/mobile/",
             "/room", "/room/",
+            "/player-login", "/player-login/",
             "/admin", "/admin/",
             "/admin/users", "/admin/users/",
+            "/admin/test-players", "/admin/test-players/",
             "/admin/robots", "/admin/robots/"
     })
     public String forwardToFrontend() {

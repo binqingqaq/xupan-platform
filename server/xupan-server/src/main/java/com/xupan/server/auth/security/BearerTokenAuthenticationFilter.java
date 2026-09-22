@@ -14,6 +14,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Objects;
 import java.util.Optional;
 
 /** Converts a valid opaque Bearer token into a server-loaded authenticated principal. */
@@ -52,6 +53,13 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
     private Optional<AuthenticatedUser> loadEnabledUser(SessionRecord session) {
         try {
             AuthenticatedUser user = userDetailsService.loadUserById(session.userId());
+            if (session.isChatOnly()) {
+                user = user.asChatOnly();
+            } else if (!Objects.equals(session.authMode(), user.authMode())
+                    || !Objects.equals(session.scope(), user.scope())) {
+                user = new AuthenticatedUser(user.account(), user.getAuthorities(),
+                        session.authMode(), session.scope());
+            }
             return user.isEnabled() && user.isAccountNonLocked() ? Optional.of(user) : Optional.empty();
         } catch (RuntimeException ignored) {
             return Optional.empty();

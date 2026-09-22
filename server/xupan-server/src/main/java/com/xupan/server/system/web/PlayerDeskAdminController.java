@@ -33,23 +33,26 @@ public class PlayerDeskAdminController {
 
     @GetMapping("/summary")
     public Summary summary(Authentication auth, @RequestParam(required = false) String kind,
-                           @RequestParam(required = false) String status, @RequestParam(required = false) String keyword) {
-        return Summary.from(service.summary(kind, status, keyword, user(auth)));
+                           @RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
+                           @RequestParam(defaultValue = "false") boolean includeDeleted) {
+        return Summary.from(service.summary(kind, status, keyword, includeDeleted, user(auth)));
     }
 
     @GetMapping("/players")
     public Page players(Authentication auth, @RequestParam(required = false) String kind,
                         @RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
-                        @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-        return Page.from(service.page(kind, status, keyword, page, pageSize, user(auth)));
+                        @RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+                        @RequestParam(defaultValue = "false") boolean includeDeleted) {
+        return Page.from(service.page(kind, status, keyword, page, pageSize, includeDeleted, user(auth)));
     }
 
     @GetMapping("/players/{userId}")
-    public Detail detail(Authentication auth, @PathVariable long userId) { return Detail.from(service.detail(userId, user(auth))); }
+    public Detail detail(Authentication auth, @PathVariable long userId,
+                         @RequestParam(defaultValue = "false") boolean includeDeleted) { return Detail.from(service.detail(userId, includeDeleted, user(auth))); }
 
     @PostMapping("/players/normal")
     public Detail createNormal(Authentication auth, @Valid @RequestBody CreateNormal request) {
-        long id = service.createNormal(request.username(), request.displayName(), request.rawPassword(), user(auth));
+        long id = service.createNormal(request.displayName(), user(auth));
         return Detail.from(service.detail(id, user(auth)));
     }
 
@@ -62,6 +65,11 @@ public class PlayerDeskAdminController {
     @PatchMapping("/players/{userId}/status")
     public Detail status(Authentication auth, @PathVariable long userId, @Valid @RequestBody StatusRequest request) {
         return Detail.from(service.status(userId, request.status(), user(auth)));
+    }
+
+    @DeleteMapping("/players/{userId}")
+    public Detail delete(Authentication auth, @PathVariable long userId) {
+        return Detail.from(service.delete(userId, user(auth)));
     }
 
     @PostMapping("/players/{userId}/balance/grants")
@@ -115,15 +123,19 @@ public class PlayerDeskAdminController {
     public record Detail(long userId, long accountId, String internalCode, String memberCode, String userCode,
                          String username, String displayName, String avatarKey, String authMode, String status,
                          String playerKind, String userType, BigDecimal balance, Instant createdAt,
-                         Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, WalletStats walletStatistics,
+                         Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, LinkStatus linkStatus, WalletStats walletStatistics,
                          List<Ledger> ledger, List<Action> recentActions, Behavior behavior, List<Bet> bets) {
         static Detail from(PlayerDeskAdminService.Detail x) {
             Item p = Item.from(x.player());
+            LinkStatus link = x.linkStatus() == null ? null : LinkStatus.from(x.linkStatus());
             return new Detail(p.userId(), p.accountId(), p.internalCode(), p.memberCode(), p.userCode(), p.username(), p.displayName(), p.avatarKey(), p.authMode(), p.status(),
                     p.playerKind(), p.userType(), p.balance(), p.createdAt(), p.lastLoginAt(), p.behaviorEnabled(), p.lastActionAt(),
-                    WalletStats.from(x.walletStatistics()), x.ledger().stream().map(Ledger::from).toList(),
+                    link, WalletStats.from(x.walletStatistics()), x.ledger().stream().map(Ledger::from).toList(),
                     x.actions().stream().map(Action::from).toList(), Behavior.from(x.behavior()), x.bets().stream().map(Bet::from).toList());
         }
+    }
+    public record LinkStatus(long linkId, String scope, Instant expiresAt, Instant revokedAt, Instant lastUsedAt, boolean active) {
+        static LinkStatus from(PlayerDeskAdminService.LinkStatus x) { return new LinkStatus(x.linkId(), x.scope(), x.expiresAt(), x.revokedAt(), x.lastUsedAt(), x.active()); }
     }
     public record WalletStats(long totalBetCount, long settledBetCount, long pendingBetCount, BigDecimal totalStake, BigDecimal settledStake, BigDecimal pendingStake, BigDecimal netProfit) {
         static WalletStats from(WalletStatistics x) { return x == null ? new WalletStats(0,0,0,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO) : new WalletStats(x.totalBetCount(), x.settledBetCount(), x.pendingBetCount(), x.totalStake(), x.settledStake(), x.pendingStake(), x.netProfit()); }
@@ -145,7 +157,7 @@ public class PlayerDeskAdminController {
                     x.odds(), x.settlementStatus(), x.netProfit(), x.explanation());
         }
     }
-    public record CreateNormal(@NotBlank String username, @NotBlank String displayName, @NotBlank String rawPassword) {}
+    public record CreateNormal(@NotBlank String displayName) {}
     public record CreateBot(@NotBlank String userCode, @NotBlank String displayName, String avatarKey) {}
     public record StatusRequest(@NotBlank String status) {}
     public record BalanceRequest(@NotNull BigDecimal amount, @NotBlank String reason, @NotBlank String idempotencyKey) {}

@@ -55,10 +55,10 @@ public class AuthController {
         String rawRefreshToken = refreshCookie(request);
         try {
             TokenService.IssuedTokens tokens = authenticationService.refresh(rawRefreshToken, metadata(request));
+            var session = tokenService.validateAccessToken(tokens.accessToken())
+                    .orElseThrow(() -> new TokenService.InvalidTokenException("刷新状态无效"));
             AuthenticationService.CurrentUser user = authenticationService.currentUser(
-                    tokenService.validateAccessToken(tokens.accessToken())
-                            .orElseThrow(() -> new TokenService.InvalidTokenException("刷新状态无效"))
-                            .userId());
+                    session.userId(), session.authMode(), session.scope());
             writeRefreshCookie(response, tokens.refreshToken());
             return new AuthResponse(tokens.accessToken(), expiresIn(tokens), CurrentUserResponse.from(user));
         } catch (TokenService.InvalidTokenException exception) {
@@ -79,7 +79,7 @@ public class AuthController {
     @GetMapping("/me")
     public CurrentUserResponse me(Authentication authentication) {
         AuthenticatedUser user = principal(authentication);
-        return CurrentUserResponse.from(authenticationService.currentUser(user.getUserId()));
+        return CurrentUserResponse.from(authenticationService.currentUser(user.getUserId(), user.authMode(), user.scope()));
     }
 
     @PostMapping("/ws-ticket")
@@ -115,10 +115,14 @@ public class AuthController {
         return null;
     }
 
-    private void writeRefreshCookie(HttpServletResponse response, String value) {
+    public static void writeRefreshCookie(HttpServletResponse response, String value, boolean secure) {
         response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(REFRESH_COOKIE, value)
-                .httpOnly(true).secure(refreshCookieSecure).sameSite("Strict").path(COOKIE_PATH)
+                .httpOnly(true).secure(secure).sameSite("Strict").path(COOKIE_PATH)
                 .maxAge(TokenService.REFRESH_TOKEN_LIFETIME).build().toString());
+    }
+
+    private void writeRefreshCookie(HttpServletResponse response, String value) {
+        writeRefreshCookie(response, value, refreshCookieSecure);
     }
 
     private void clearRefreshCookie(HttpServletResponse response) {

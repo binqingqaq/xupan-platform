@@ -48,6 +48,9 @@ public class ChatWebSocketHandshakeInterceptor implements HandshakeInterceptor {
         try {
             WsTicket ticket = tokenService.consumeWsTicket(rawTicket, roomCode);
             AuthenticatedUser user = userDetailsService.loadUserById(ticket.userId());
+            if ("CHAT_ONLY".equals(ticket.scope())) {
+                user = user.asChatOnly();
+            }
             if (!user.isEnabled() || !user.getAuthorities().stream()
                     .anyMatch(authority -> "PERM_CHAT_ROOM_READ".equals(authority.getAuthority()))) {
                 response.setStatusCode(HttpStatus.FORBIDDEN);

@@ -27,7 +27,7 @@ public record WalletLedgerEntry(
             throw new IllegalArgumentException("流水身份必须为正数");
         }
         operationType = Objects.requireNonNull(operationType, "operationType");
-        amount = money(amount, "amount"); 
+        amount = money(amount, "amount");
         if (amount.signum() == 0) {
             throw new IllegalArgumentException("流水金额不能为零");
         }

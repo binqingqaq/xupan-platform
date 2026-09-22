@@ -79,6 +79,10 @@ public class TestPlayerBehaviorService {
         if (claimed == 0) return loadAction(actionId);
         try {
             long userId = jdbc.queryForObject("SELECT user_id FROM test_player_action WHERE id=?", Long.class, actionId);
+            if (!isActiveBot(userId)) {
+                jdbc.update("UPDATE test_player_action SET status='SKIPPED', error_code='PLAYER_NOT_ACTIVE', error_message='玩家已停用或删除', lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?", actionId);
+                return loadAction(actionId);
+            }
             String idempotencyKey = jdbc.queryForObject("SELECT idempotency_key FROM test_player_action WHERE id=?", String.class, actionId);
             ChatMessageService.ChatMessageSendOutcome outcome = chatMessageService.sendUserMessageWithOutcome(
                     userId, "main", idempotencyKey, action.sourceText(), Instant.now());
@@ -91,6 +95,12 @@ public class TestPlayerBehaviorService {
                     "ACTION_EXECUTION_FAILED", safe(exception.getMessage()), actionId);
         }
         return loadAction(actionId);
+    }
+
+    private boolean isActiveBot(long userId) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM sys_user u JOIN demo_user_account a ON a.sys_user_id=u.id "
+                + "WHERE u.id=? AND u.status='ACTIVE' AND a.status='ACTIVE' AND a.player_kind='BOT'", Integer.class, userId);
+        return count != null && count == 1;
     }
 
     @Transactional

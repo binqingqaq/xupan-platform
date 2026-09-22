@@ -32,6 +32,11 @@ public class PasswordPolicyService {
         return passwordEncoder.encode(rawPassword);
     }
 
+    /** Creates a credential hash that is intentionally never disclosed or used for player login. */
+    public String encodeUnusableCredential() {
+        return passwordEncoder.encode(UUID.randomUUID().toString() + UUID.randomUUID());
+    }
+
     public boolean matches(String rawPassword, String encodedPassword) {
         return rawPassword != null && encodedPassword != null
                 && passwordEncoder.matches(rawPassword, encodedPassword);

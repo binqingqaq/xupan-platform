@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../../api'
 import { createPlayerIdempotencyKey, formatPoints, playerActionStatusLabel, playerActionTypeLabel, playerDisplayName, playerIdentitySummary, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation, validatePlayerMessage } from '../../playerDesk'
-import type { PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskSummary } from '../../types'
+import type { PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskSummary } from '../../types'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 
@@ -11,9 +11,10 @@ const page = ref<PlayerDeskPage>({ items: [], page: 1, pageSize: 20, total: 0 })
 const selected = ref<PlayerDeskDetail | null>(null)
 const loading = ref(false); const detailLoading = ref(false); const saving = ref(false); const sending = ref(false)
 const error = ref(''); const actionMessage = ref(''); const createError = ref(''); const behaviorError = ref('')
+const accessLink = ref<PlayerAccessLinkView | null>(null); const accessLinkBusy = ref(false)
 const createMode = ref<'normal' | 'bot' | null>(null)
 const filter = reactive({ kind: '', status: '', keyword: '' })
-const normalDraft = reactive({ username: '', displayName: '', rawPassword: '', passwordConfirmation: '' })
+const normalDraft = reactive({ displayName: '' })
 const botDraft = reactive({ userCode: '', displayName: '', avatarKey: '' })
 const pointDraft = reactive({ amount: 100, reason: '', direction: 'grant' as 'grant' | 'adjust' })
 const messageDraft = reactive({ content: '', clientMessageId: '' })
@@ -24,7 +25,8 @@ const canSubmitPoints = computed(() => validatePointOperation(pointDraft.amount,
 async function refresh(selectUserId?: number) {
   loading.value = true; error.value = ''
   try {
-    const [nextSummary, nextPage] = await Promise.all([api.getPlayerDeskSummary(), api.getPlayerDeskPlayers({ ...filter, page: 1, pageSize: 20 })])
+    const includeDeleted = filter.status === 'DELETED'
+    const [nextSummary, nextPage] = await Promise.all([api.getPlayerDeskSummary({ ...filter, includeDeleted }), api.getPlayerDeskPlayers({ ...filter, includeDeleted, page: 1, pageSize: 20 })])
     summary.value = nextSummary; page.value = nextPage
     const id = selectUserId ?? selected.value?.userId ?? nextPage.items[0]?.userId
     if (id) await selectPlayer(id); else selected.value = null
@@ -33,7 +35,7 @@ async function refresh(selectUserId?: number) {
 }
 async function selectPlayer(userId: number) {
   detailLoading.value = true; error.value = ''
-  try { selected.value = await api.getPlayerDeskPlayer(userId); syncBehavior(selected.value.behavior) }
+  try { selected.value = await api.getPlayerDeskPlayer(userId, filter.status === 'DELETED' || selected.value?.status === 'DELETED'); accessLink.value = null; syncBehavior(selected.value.behavior) }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '玩家详情加载失败' }
   finally { detailLoading.value = false }
 }
@@ -41,7 +43,7 @@ function syncBehavior(behavior: PlayerDeskBehavior | null) { Object.assign(behav
 async function createNormal() {
   createError.value = ''; const errors = validateNormalPlayerDraft(normalDraft); if (errors.length) { createError.value = errors[0]; return }
   saving.value = true
-  try { const created = await api.createNormalPlayer({ username: normalDraft.username.trim(), displayName: normalDraft.displayName.trim(), rawPassword: normalDraft.rawPassword }); const id = created.userId; Object.assign(normalDraft, { username: '', displayName: '', rawPassword: '', passwordConfirmation: '' }); createMode.value = null; await refresh(id); actionMessage.value = '普通玩家已创建' }
+  try { const created = await api.createNormalPlayer({ displayName: normalDraft.displayName.trim() }); const id = created.userId; Object.assign(normalDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '普通玩家已创建，可在右侧生成前台登录链接' }
   catch (cause) { createError.value = cause instanceof Error ? cause.message : '普通玩家创建失败' } finally { saving.value = false }
 }
 async function createBot() {
@@ -64,6 +66,20 @@ async function toggleStatus() {
   try { await api.changePlayerDeskStatus(selected.value.userId, next); await refresh(selected.value.userId); actionMessage.value = next === 'ACTIVE' ? '玩家已启用' : '玩家已停用' }
   catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '状态更新失败' } finally { saving.value = false }
 }
+
+async function deletePlayer() {
+  if (!selected.value) return
+  const identity = `${selected.value.internalCode}（@${selected.value.memberCode}.${selected.value.displayName}）`
+  if (!window.confirm(`是否删除 ${identity} 数据？\n删除后将撤销登录链接并停止托行为，历史积分流水、下注、中奖流水和聊天记录保留。`)) return
+  saving.value = true
+  try {
+    await api.deletePlayerDeskPlayer(selected.value.userId)
+    selected.value = null
+    accessLink.value = null
+    await refresh()
+    actionMessage.value = '玩家已删除，历史数据已保留'
+  } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家删除失败' } finally { saving.value = false }
+}
 async function saveBehavior() {
   if (!selected.value) return
   behaviorError.value = ''; const errors = validateBehaviorDraft(behaviorDraft); if (errors.length) { behaviorError.value = errors[0]; return }
@@ -81,6 +97,31 @@ async function sendMessage() {
 function avatar(player: PlayerDeskItem) { return player.avatarKey ? api.avatarUrl(player.avatarKey) : '' }
 function money(value: number) { return formatPoints(value) }
 function dateTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '暂无' }
+async function issueAccessLink(rotate = false) {
+  if (!selected.value || selected.value.playerKind !== 'NORMAL') return
+  accessLinkBusy.value = true
+  try {
+    const issuedLink = rotate
+      ? await api.rotatePlayerAccessLink(selected.value.userId)
+      : await api.issuePlayerAccessLink(selected.value.userId)
+    await refresh(selected.value.userId)
+    accessLink.value = issuedLink
+    actionMessage.value = rotate ? '玩家链接已轮换，旧链接已失效' : '玩家链接已生成，请只复制并发送给玩家'
+  } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家链接操作失败' }
+  finally { accessLinkBusy.value = false }
+}
+async function revokeAccessLink() {
+  if (!selected.value || !accessLink.value || !window.confirm('撤销当前玩家链接并使该玩家已有聊天室会话失效？')) return
+  accessLinkBusy.value = true
+  try { await api.revokePlayerAccessLink(selected.value.userId, accessLink.value.linkId); accessLink.value = null; await refresh(selected.value.userId); actionMessage.value = '玩家链接已撤销' }
+  catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家链接撤销失败' }
+  finally { accessLinkBusy.value = false }
+}
+async function copyAccessLink() {
+  if (!accessLink.value) return
+  try { await navigator.clipboard.writeText(accessLink.value.accessUrl); actionMessage.value = '玩家链接已复制' }
+  catch { actionMessage.value = '复制失败，请手动复制链接' }
+}
 onMounted(() => refresh())
 </script>
 
@@ -92,19 +133,20 @@ onMounted(() => refresh())
     <section class="player-desk-body">
       <aside class="player-list-pane" aria-label="玩家列表">
         <div class="pane-heading"><div><h2>玩家列表</h2><span>{{ page.total }} 位玩家</span></div><div class="create-actions"><button class="primary-button" type="button" @click="createMode = createMode === 'normal' ? null : 'normal'">创建普通玩家</button><button class="secondary-button" type="button" @click="createMode = createMode === 'bot' ? null : 'bot'">创建托</button></div></div>
-        <form class="filter-row" @submit.prevent="refresh()"><label class="sr-only" for="player-keyword">搜索玩家</label><input id="player-keyword" v-model="filter.keyword" placeholder="昵称、用户名或编码" /><select v-model="filter.kind" aria-label="玩家类型"><option value="">全部类型</option><option value="NORMAL">普通玩家</option><option value="BOT">托</option></select><select v-model="filter.status" aria-label="玩家状态"><option value="">全部状态</option><option value="ACTIVE">启用中</option><option value="DISABLED">已停用</option></select><button class="icon-button" type="submit" aria-label="搜索">⌕</button></form>
-        <form v-if="createMode === 'normal'" class="create-form" @submit.prevent="createNormal"><h3>创建普通玩家</h3><label>登录名<input v-model="normalDraft.username" autocomplete="username" /></label><label>昵称<input v-model="normalDraft.displayName" /></label><label>密码<input v-model="normalDraft.rawPassword" type="password" autocomplete="new-password" /></label><label>确认密码<input v-model="normalDraft.passwordConfirmation" type="password" autocomplete="new-password" /></label><p v-if="createError" class="field-error">{{ createError }}</p><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确认创建' }}</button></form>
+        <form class="filter-row" @submit.prevent="refresh()"><label class="sr-only" for="player-keyword">搜索玩家</label><input id="player-keyword" v-model="filter.keyword" placeholder="昵称、用户名或编码" /><select v-model="filter.kind" aria-label="玩家类型"><option value="">全部类型</option><option value="NORMAL">普通玩家</option><option value="BOT">托</option></select><select v-model="filter.status" aria-label="玩家状态"><option value="">启用中及已停用</option><option value="ACTIVE">启用中</option><option value="DISABLED">已停用</option><option value="DELETED">已删除历史</option></select><button class="icon-button" type="submit" aria-label="搜索">⌕</button></form>
+        <form v-if="createMode === 'normal'" class="create-form" @submit.prevent="createNormal"><h3>创建普通玩家</h3><p class="form-hint">普通玩家使用专属链接免密进入完整前台，创建后在右侧生成链接。</p><label>昵称<input v-model="normalDraft.displayName" /></label><p v-if="createError" class="field-error">{{ createError }}</p><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确认创建' }}</button></form>
         <form v-if="createMode === 'bot'" class="create-form" @submit.prevent="createBot"><h3>创建托 / 测试玩家</h3><label>玩家编码<input v-model="botDraft.userCode" /></label><label>昵称<input v-model="botDraft.displayName" /></label><label>头像标识<input v-model="botDraft.avatarKey" placeholder="可选" /></label><p v-if="createError" class="field-error">{{ createError }}</p><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确认创建' }}</button></form>
         <div v-if="loading" class="empty-state">正在加载玩家...</div><div v-else-if="!page.items.length" class="empty-state">暂无符合条件的玩家</div>
         <button v-for="player in page.items" :key="player.userId" class="player-row" :class="{ selected: selected?.userId === player.userId }" type="button" @click="selectPlayer(player.userId)"><span class="desk-avatar"><img v-if="avatar(player)" :src="avatar(player)" alt="" /><b v-else>{{ playerInitial(player) }}</b></span><span class="player-row-main"><strong>{{ playerDisplayName(player) }}</strong><small>{{ player.internalCode }}</small></span><span class="player-row-side"><em :class="playerKindClass(player.playerKind)">{{ playerKindLabel(player.playerKind) }}</em><strong>{{ money(player.balance) }}</strong><small :class="playerStatusClass(player.status)">{{ playerStatusLabel(player.status) }}</small></span></button>
       </aside>
       <section class="player-detail-pane" aria-label="玩家详情">
         <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
-        <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2><p>{{ playerIdentitySummary(selected) }}</p></div></div><button class="outline-button" type="button" :disabled="saving" @click="toggleStatus">{{ selected.status === 'ACTIVE' ? '停用玩家' : '启用玩家' }}</button></div>
+        <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2><p>{{ playerIdentitySummary(selected) }}</p></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button" type="button" :disabled="saving" @click="toggleStatus">{{ selected.status === 'ACTIVE' ? '停用玩家' : '启用玩家' }}</button><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="deletePlayer">删除玩家</button></div></div>
           <div class="identity-grid"><div><span>内部编号</span><strong>{{ selected.internalCode }}</strong></div><div><span>会员 ID</span><strong>{{ selected.memberCode }}</strong></div><div><span>昵称</span><strong>{{ selected.displayName }}</strong></div></div>
+          <section v-if="selected.playerKind === 'NORMAL'" class="detail-section access-link-section"><div class="section-title"><div><h3>玩家前台链接登录</h3><span>免密进入完整前台，可下注、查看虚拟积分和使用聊天室；不能访问后台，刷新链接会使旧链接失效。</span></div><strong>{{ selected.linkStatus?.active ? '链接有效' : '暂无有效链接' }}</strong></div><div v-if="selected.status !== 'DELETED'" class="link-actions"><button v-if="!accessLink" class="primary-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(Boolean(selected.linkStatus?.active))">{{ accessLinkBusy ? '处理中...' : selected.linkStatus?.active ? '刷新链接' : '生成链接' }}</button><template v-else><button class="secondary-button" type="button" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button><button class="outline-button" type="button" disabled title="二维码功能待接入">链接二维码</button><button class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="revokeAccessLink">撤销链接</button></template></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">最近链接：{{ selected.linkStatus.active ? '有效' : selected.linkStatus.revokedAt ? '已撤销' : '已过期' }}，原始地址不会再次显示。</small></section>
           <div class="detail-grid"><div><span>当前积分</span><strong class="points">{{ money(selected.balance) }}</strong></div><div><span>状态</span><strong>{{ playerStatusLabel(selected.status) }}</strong></div><div><span>创建时间</span><strong>{{ dateTime(selected.createdAt) }}</strong></div><div><span>最后登录</span><strong>{{ dateTime(selected.lastLoginAt) }}</strong></div></div>
-          <section class="detail-section"><div class="section-title"><h3>积分操作</h3><span>所有变更都会写入虚拟积分流水</span></div><div class="point-form"><label>操作<select v-model="pointDraft.direction"><option value="grant">增加积分</option><option value="adjust">扣减积分</option></select></label><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><label class="wide">原因<input v-model="pointDraft.reason" placeholder="请输入操作原因" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints">确认操作</button></div></section>
-          <section v-if="selectedIsBot" class="detail-section bot-section"><div class="section-title"><div><h3>托行为模式</h3><span>自动模式每期执行，手动模式只在点击立即执行时执行</span></div><button class="primary-button" :disabled="saving" type="button" @click="runNow">立即执行</button></div><form class="behavior-form" @submit.prevent="saveBehavior"><fieldset class="mode-field wide"><legend>执行模式</legend><label><input v-model="behaviorDraft.mode" type="radio" value="AUTOMATIC" /> 自动：每期下注</label><label><input v-model="behaviorDraft.mode" type="radio" value="MANUAL" /> 手动：点击执行</label></fieldset><label>每期下注单数<input v-model.number="behaviorDraft.betsPerIssue" type="number" min="0" max="20" /></label><label>最低积分<input v-model.number="behaviorDraft.stakeMin" type="number" min="0.01" step="0.01" /></label><label>最高积分<input v-model.number="behaviorDraft.stakeMax" type="number" min="0.01" step="0.01" /></label><label class="switch-label"><input v-model="behaviorDraft.chatEnabled" type="checkbox" /><span>发送聊天消息</span></label><label>每期消息数<input v-model.number="behaviorDraft.messagesPerIssue" type="number" min="0" max="20" /></label><p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p><button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button></form><form class="message-form" @submit.prevent="sendMessage"><label>手动发送测试消息<input v-model="messageDraft.content" placeholder="例如：大家好，或 1番100" /></label><button class="outline-button" :disabled="sending" type="submit">{{ sending ? '发送中...' : '发送' }}</button></form></section>
+          <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="section-title"><h3>积分操作</h3><span>所有变更都会写入虚拟积分流水</span></div><div class="point-form"><label>操作<select v-model="pointDraft.direction"><option value="grant">增加积分</option><option value="adjust">扣减积分</option></select></label><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><label class="wide">原因<input v-model="pointDraft.reason" placeholder="请输入操作原因" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints">确认操作</button></div></section>
+          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><div><h3>托行为模式</h3><span>自动模式每期执行，手动模式只在点击立即执行时执行</span></div><button class="primary-button" :disabled="saving" type="button" @click="runNow">立即执行</button></div><form class="behavior-form" @submit.prevent="saveBehavior"><fieldset class="mode-field wide"><legend>执行模式</legend><label><input v-model="behaviorDraft.mode" type="radio" value="AUTOMATIC" /> 自动：每期下注</label><label><input v-model="behaviorDraft.mode" type="radio" value="MANUAL" /> 手动：点击执行</label></fieldset><label>每期下注单数<input v-model.number="behaviorDraft.betsPerIssue" type="number" min="0" max="20" /></label><label>最低积分<input v-model.number="behaviorDraft.stakeMin" type="number" min="0.01" step="0.01" /></label><label>最高积分<input v-model.number="behaviorDraft.stakeMax" type="number" min="0.01" step="0.01" /></label><label class="switch-label"><input v-model="behaviorDraft.chatEnabled" type="checkbox" /><span>发送聊天消息</span></label><label>每期消息数<input v-model.number="behaviorDraft.messagesPerIssue" type="number" min="0" max="20" /></label><p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p><button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button></form><form class="message-form" @submit.prevent="sendMessage"><label>手动发送测试消息<input v-model="messageDraft.content" placeholder="例如：大家好，或 1番100" /></label><button class="outline-button" :disabled="sending" type="submit">{{ sending ? '发送中...' : '发送' }}</button></form></section>
           <section class="detail-section"><div class="section-title"><h3>最近动作</h3><span>显示持久化动作和正式链路结果</span></div><div v-if="!selected.recentActions.length" class="muted">暂无动作记录</div><div v-for="action in selected.recentActions" :key="action.id" class="action-row"><span>{{ playerActionTypeLabel(action.actionType) }}</span><strong>{{ action.sourceText }}</strong><em :class="`action-${action.status.toLowerCase()}`">{{ playerActionStatusLabel(action.status) }}</em><small>{{ action.errorMessage || dateTime(action.updatedAt) }}</small></div></section>
           <section class="detail-section"><div class="section-title"><h3>最近注单</h3><span>正式注单、结算状态和净盈亏</span></div><div v-if="!selected.bets.length" class="muted">暂无下注记录</div><div v-for="bet in selected.bets" :key="bet.id" class="bet-row"><strong>{{ bet.issueNumber }}</strong><span>{{ bet.playType }} · {{ money(bet.stake) }}</span><em>{{ bet.settlementStatus }}</em><b>{{ bet.netProfit == null ? '--' : money(bet.netProfit) }}</b></div></section>
         </template>
@@ -129,6 +171,7 @@ button, input, select { font: inherit; } button { cursor: pointer; } button:disa
 .desk-avatar { width: 40px; height: 40px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; color: #fff; background: #1976b9; font-weight: 800; } .desk-avatar.large { width: 56px; height: 56px; font-size: 22px; } .desk-avatar img { width: 100%; height: 100%; object-fit: cover; } em { font-style: normal; } .player-kind-normal, .player-kind-bot, .test-badge { padding: 3px 7px; border-radius: 3px; font-size: 11px; font-weight: 700; } .player-kind-normal { color: #155e75; background: #cffafe; } .player-kind-bot { color: #92400e; background: #fef3c7; } .test-badge { color: #6b21a8; background: #f3e8ff; } .player-status-active { color: #15803d; } .player-status-disabled, .player-status-locked { color: #b91c1c; }
 .detail-heading { align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid #dbeafe; } .detail-identity { display: flex; align-items: center; gap: 12px; min-width: 0; } .detail-identity h2 { font-size: 21px; } .detail-identity p { margin: 0; overflow-wrap: anywhere; } .identity-grid, .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 16px 0; border: 1px solid #e2e8f0; background: #e2e8f0; } .detail-grid { grid-template-columns: repeat(4, 1fr); margin-top: 0; } .identity-grid > div, .detail-grid > div { min-height: 72px; padding: 12px; background: #fff; min-width: 0; } .identity-grid span, .detail-grid span { display: block; color: #64748b; font-size: 12px; margin-bottom: 8px; } .identity-grid strong, .detail-grid strong { font-size: 13px; overflow-wrap: anywhere; } .detail-grid .points { color: #0f6eaa; font-size: 20px; font-variant-numeric: tabular-nums; }
 .detail-section { padding: 16px 0; border-top: 1px solid #e2e8f0; } .section-title { align-items: flex-start; margin-bottom: 12px; } .point-form, .behavior-form { display: grid; grid-template-columns: 130px 130px 1fr auto; gap: 10px; align-items: end; } .point-form .wide, .behavior-form .wide { grid-column: span 2; } .switch-label { display: flex; align-items: center; gap: 8px; min-height: 42px; } .switch-label input { width: 18px; min-height: 18px; } .mode-field { display: flex; flex-wrap: wrap; gap: 14px; border: 1px solid #dbeafe; padding: 10px; margin: 0; } .mode-field legend { color: #475569; font-size: 12px; font-weight: 700; padding: 0 4px; } .mode-field label { display: flex; align-items: center; gap: 6px; } .mode-field input { width: 18px; min-height: 18px; } .message-form { align-items: end; margin-top: 14px; } .message-form label { flex: 1; }
+.link-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .issued-link { display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; background: #f8fbff; border: 1px solid #b7d7f2; } .issued-link-url { color: #1265a5; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; text-decoration: none; } .issued-link-url:hover { text-decoration: underline; } .issued-link small { color: #64748b; } .danger-button { color: #b42318; border-color: #fda4af; }
 .action-row { display: grid; grid-template-columns: 70px 1fr 70px 150px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .action-row strong, .action-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .action-row strong { font-weight: 500; } .action-row small { color: #64748b; } .action-succeeded { color: #15803d; } .action-failed { color: #b91c1c; } .action-pending, .action-processing { color: #a16207; } .field-error { color: #b91c1c; margin: 0; font-size: 12px; } .empty-state, .detail-empty { color: #64748b; text-align: center; padding: 46px 20px; } .detail-empty { display: grid; place-items: center; min-height: 500px; } .detail-empty span { color: #54a2d7; font-size: 42px; } .detail-empty p { font-size: 13px; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .bet-row { display: grid; grid-template-columns: 120px 1fr 90px 90px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .bet-row span { color: #475569; } .bet-row em { color: #1265a5; } .bet-row b { text-align: right; color: #15803d; font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .player-desk-page { padding: 20px 14px 40px; } .player-desk-body { grid-template-columns: 1fr; } .player-list-pane { border-right: 0; border-bottom: 1px solid #b7d7f2; } .player-detail-pane { min-height: 500px; } }

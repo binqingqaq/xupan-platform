@@ -37,6 +37,7 @@ xupan:
       message-rate-window: ${XUPAN_CHAT_WS_MESSAGE_RATE_WINDOW:10s}
   auth:
     refresh-cookie-secure: ${XUPAN_AUTH_REFRESH_COOKIE_SECURE:true}
+    player-link-lifetime: ${XUPAN_AUTH_PLAYER_LINK_LIFETIME:168h}
     bootstrap-admin:
       enabled: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_ENABLED:false}
       username: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_USERNAME:}

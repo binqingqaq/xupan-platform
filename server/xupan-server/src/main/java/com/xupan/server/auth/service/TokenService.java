@@ -50,6 +50,19 @@ public class TokenService {
     }
 
     public IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata) {
+        return issue(userId, deviceLabel, metadata, "PASSWORD", null);
+    }
+
+    public IssuedTokens issueChatOnly(long userId, String deviceLabel, RequestMetadata metadata) {
+        return issue(userId, deviceLabel, metadata, "PLAYER_LINK", "CHAT_ONLY");
+    }
+
+    public IssuedTokens issuePlayerLink(long userId, String deviceLabel, RequestMetadata metadata) {
+        return issue(userId, deviceLabel, metadata, "PLAYER_LINK", "PLAYER_FULL");
+    }
+
+    private IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata,
+                               String authMode, String scope) {
         Instant now = clock.instant();
         UserAccount user = activeUser(userId, now);
         String accessToken = randomToken(ACCESS_TOKEN_BYTES);
@@ -72,7 +85,9 @@ public class TokenService {
                 now,
                 null,
                 now,
-                user.securityVersion()));
+                user.securityVersion(),
+                authMode,
+                scope));
         return new IssuedTokens(accessToken, refreshToken, sessionId, accessExpiresAt, refreshExpiresAt);
     }
 
@@ -117,6 +132,7 @@ public class TokenService {
             Optional<UserAccount> user = userRepository.findById(session.userId());
             return user.isPresent()
                     && isActive(user.get(), now)
+                    && (!session.isChatOnly() || "PLAYER_LINK".equals(session.authMode()))
                     && session.isAccessTokenValid(now, user.get().securityVersion());
         });
     }
@@ -134,9 +150,13 @@ public class TokenService {
                 .filter(value -> value.userId() == user.id())
                 .filter(value -> value.isAccessTokenValid(now, user.securityVersion()))
                 .orElseThrow(() -> new InvalidTokenException("会话无效"));
+        String normalizedRoomCode = normalizeRoomCode(roomCode);
+        if (session.isChatOnly() && normalizedRoomCode == null) {
+            throw new InvalidTokenException("聊天室范围无效");
+        }
         String rawTicket = randomToken(WS_TICKET_BYTES);
         WsTicket persisted = new WsTicket(
-                sha256(rawTicket), user.id(), session.sessionId(), normalizeRoomCode(roomCode),
+                0L, sha256(rawTicket), user.id(), session.sessionId(), normalizedRoomCode, session.scope(),
                 now.plus(WS_TICKET_LIFETIME), null, now);
         sessionRepository.insertWsTicket(persisted);
         return new IssuedWsTicket(rawTicket, persisted);

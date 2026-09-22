@@ -1,6 +1,8 @@
 package com.xupan.server.system.service;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
+import com.xupan.server.auth.repository.SessionRepository;
+import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.domain.VirtualWallet;
@@ -9,6 +11,8 @@ import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
+import com.xupan.server.playerauth.domain.PlayerAccessLink;
+import com.xupan.server.playerauth.repository.PlayerAccessLinkRepository;
 import com.xupan.server.system.domain.TestPlayerBehaviorMode;
 import com.xupan.server.web.BusinessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,12 +35,17 @@ public class PlayerDeskAdminService {
     private final ChatMessageService chatMessageService;
     private final JdbcTemplate jdbc;
     private final GameDataRepository gameDataRepository;
+    private final UserRepository userRepository;
+    private final SessionRepository sessionRepository;
+    private final PlayerAccessLinkRepository accessLinkRepository;
 
     public PlayerDeskAdminService(PlayerDeskRepository repository, PermissionService permissionService,
                                   UserAdminService userAdminService, TestPlayerAdminService testPlayerAdminService,
                                   VirtualWalletService walletService, OperationAuditRepository auditRepository,
                                   TestPlayerBehaviorService behaviorService, ChatMessageService chatMessageService,
-                                  JdbcTemplate jdbc, GameDataRepository gameDataRepository) {
+                                  JdbcTemplate jdbc, GameDataRepository gameDataRepository,
+                                  UserRepository userRepository, SessionRepository sessionRepository,
+                                  PlayerAccessLinkRepository accessLinkRepository) {
         this.repository = repository;
         this.permissionService = permissionService;
         this.userAdminService = userAdminService;
@@ -47,37 +56,62 @@ public class PlayerDeskAdminService {
         this.chatMessageService = chatMessageService;
         this.jdbc = jdbc;
         this.gameDataRepository = gameDataRepository;
+        this.userRepository = userRepository;
+        this.sessionRepository = sessionRepository;
+        this.accessLinkRepository = accessLinkRepository;
     }
 
     @Transactional(readOnly = true)
     public Page page(String kind, String status, String keyword, int page, int pageSize, long operator) {
+        return page(kind, status, keyword, page, pageSize, false, operator);
+    }
+
+    @Transactional(readOnly = true)
+    public Page page(String kind, String status, String keyword, int page, int pageSize,
+                     boolean includeDeleted, long operator) {
         requireAdmin(operator);
         if (page < 1 || pageSize < 1 || pageSize > 100) throw BusinessException.badRequest("PLAYER_QUERY_INVALID", "分页参数无效");
-        return new Page(repository.findPage(normalize(kind), normalize(status), normalize(keyword), page, pageSize), page, pageSize,
-                repository.count(normalize(kind), normalize(status), normalize(keyword)));
+        validateDeletedQuery(status, includeDeleted);
+        return new Page(repository.findPage(normalize(kind), normalize(status), normalize(keyword), page, pageSize, includeDeleted), page, pageSize,
+                repository.count(normalize(kind), normalize(status), normalize(keyword), includeDeleted));
     }
 
     @Transactional(readOnly = true)
     public PlayerDeskRepository.Summary summary(String kind, String status, String keyword, long operator) {
+        return summary(kind, status, keyword, false, operator);
+    }
+
+    @Transactional(readOnly = true)
+    public PlayerDeskRepository.Summary summary(String kind, String status, String keyword,
+                                                boolean includeDeleted, long operator) {
         requireAdmin(operator);
-        return repository.summary(normalize(kind), normalize(status), normalize(keyword));
+        validateDeletedQuery(status, includeDeleted);
+        return repository.summary(normalize(kind), normalize(status), normalize(keyword), includeDeleted);
     }
 
     @Transactional(readOnly = true)
     public Detail detail(long userId, long operator) {
+        return detail(userId, false, operator);
+    }
+
+    @Transactional(readOnly = true)
+    public Detail detail(long userId, boolean includeDeleted, long operator) {
         requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId);
-        VirtualWallet wallet = walletService.getForAdmin(userId);
-        WalletStatistics statistics = walletService.statistics(userId);
-        List<WalletLedgerEntry> ledger = walletService.ledger(userId, 20);
-        return new Detail(player, repository.findBehavior(userId).orElse(null),
+        PlayerDeskRepository.PlayerRow player = row(userId, includeDeleted);
+        VirtualWallet wallet = walletService.getForAdminHistory(userId);
+        WalletStatistics statistics = walletService.statisticsForAdminHistory(userId);
+        List<WalletLedgerEntry> ledger = walletService.ledgerForAdminHistory(userId, 20);
+        PlayerAccessLink link = accessLinkRepository.findLatestByUserId(userId).orElse(null);
+        LinkStatus linkStatus = link == null ? null : new LinkStatus(link.id(), link.scope(), link.expiresAt(), link.revokedAt(), link.lastUsedAt(),
+                link.revokedAt() == null && link.expiresAt().isAfter(Instant.now()));
+        return new Detail(player, linkStatus, repository.findBehavior(userId).orElse(null),
                 statistics, ledger, repository.actions(userId, 20), gameDataRepository.findBetsByAccountId(wallet.accountId(), null, 20));
     }
 
     @Transactional
-    public long createNormal(String username, String displayName, String password, long operator) {
+    public long createNormal(String displayName, long operator) {
         requireAdmin(operator);
-        long id = userAdminService.createUser(username, displayName, password, operator);
+        long id = userAdminService.createPlayerLinkUser(displayName, operator);
         audit(operator, "POST", "/api/admin/player-desk/players/normal", Long.toString(id), "playerKind=NORMAL");
         return id;
     }
@@ -87,6 +121,7 @@ public class PlayerDeskAdminService {
         requireAdmin(operator);
         TestPlayerAdminService.TestPlayerAdminView view = testPlayerAdminService.create(userCode, displayName, avatarKey, operator);
         jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE sys_user_id=?", view.player().userId());
+        jdbc.update("UPDATE sys_user SET auth_mode='BOT_SERVICE' WHERE id=?", view.player().userId());
         repository.ensureBehavior(view.player().id());
         audit(operator, "POST", "/api/admin/player-desk/players/bot", Long.toString(view.player().userId()), "playerKind=BOT");
         return view.player().userId();
@@ -102,6 +137,31 @@ public class PlayerDeskAdminService {
             userAdminService.changeStatus(userId, status, operator);
         }
         return detail(userId, operator);
+    }
+
+    @Transactional
+    public Detail delete(long userId, long operator) {
+        requireAdmin(operator);
+        if (userId == operator) {
+            throw BusinessException.conflict("PLAYER_SELF_OPERATION_FORBIDDEN", "不能删除当前登录管理员");
+        }
+        PlayerDeskRepository.PlayerRow player = row(userId, true);
+        if (permissionService.hasPermission(userId, "USER_MANAGE")) {
+            throw BusinessException.forbidden("PLAYER_DELETE_FORBIDDEN", "不能通过玩家工作台删除管理员");
+        }
+        if ("DELETED".equals(player.userStatus()) && "DELETED".equals(player.accountStatus())) {
+            return detail(userId, true, operator);
+        }
+        userRepository.softDelete(userId);
+        repository.softDelete(userId);
+        repository.disableBehavior(userId);
+        Instant now = Instant.now();
+        sessionRepository.revokeAllActiveByUserId(userId, now);
+        accessLinkRepository.revokeAllByUserId(userId, now);
+        audit(operator, "DELETE", "/api/admin/player-desk/players/" + userId,
+                player.internalCode(), "userId=" + userId + ",internalCode=" + player.internalCode()
+                        + ",memberCode=" + player.memberCode() + ",displayName=" + player.displayName() + ",status=DELETED");
+        return detail(userId, true, operator);
     }
 
     @Transactional
@@ -161,7 +221,11 @@ public class PlayerDeskAdminService {
     }
 
     private PlayerDeskRepository.PlayerRow row(long id) {
-        return repository.findByUserId(id).orElseThrow(() -> BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在"));
+        return row(id, false);
+    }
+
+    private PlayerDeskRepository.PlayerRow row(long id, boolean includeDeleted) {
+        return repository.findByUserId(id, includeDeleted).orElseThrow(() -> BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在"));
     }
 
     private void requireAdmin(long userId) {
@@ -174,6 +238,12 @@ public class PlayerDeskAdminService {
 
     private static String normalize(String value) { return value == null || value.isBlank() ? null : value.trim(); }
 
+    private static void validateDeletedQuery(String status, boolean includeDeleted) {
+        if ("DELETED".equalsIgnoreCase(normalize(status)) && !includeDeleted) {
+            throw BusinessException.badRequest("PLAYER_QUERY_INVALID", "查询已删除玩家必须显式开启历史查询");
+        }
+    }
+
     private static boolean isMode(String mode) {
         try {
             TestPlayerBehaviorMode.valueOf(mode);
@@ -184,7 +254,9 @@ public class PlayerDeskAdminService {
     }
 
     public record Page(List<PlayerDeskRepository.PlayerRow> items, int page, int pageSize, long total) {}
-    public record Detail(PlayerDeskRepository.PlayerRow player, PlayerDeskRepository.Behavior behavior,
+    public record Detail(PlayerDeskRepository.PlayerRow player, LinkStatus linkStatus, PlayerDeskRepository.Behavior behavior,
                          WalletStatistics walletStatistics, List<WalletLedgerEntry> ledger,
                          List<PlayerDeskRepository.ActionRow> actions, List<GameDataRepository.BetRecord> bets) {}
+    public record LinkStatus(long linkId, String scope, Instant expiresAt, Instant revokedAt,
+                             Instant lastUsedAt, boolean active) {}
 }

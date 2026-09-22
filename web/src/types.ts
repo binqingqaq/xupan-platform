@@ -65,8 +65,18 @@ export interface CurrentUserView {
   username: string
   displayName: string
   avatarKey: string | null
+  authMode: 'PASSWORD' | 'PLAYER_LINK' | 'BOT_SERVICE' | string
+  scope: 'PLAYER_FULL' | 'CHAT_ONLY' | null | string
   roles: string[]
   permissions: string[]
+}
+
+export interface PlayerAccessLinkView {
+  linkId: number
+  userId: number
+  scope: 'PLAYER_FULL' | 'CHAT_ONLY' | string
+  expiresAt: string
+  accessUrl: string
 }
 
 export type ChatMessageType = 'USER_CHAT' | 'USER_BET' | 'ROBOT' | 'SYSTEM' | 'RESULT' | 'ADMIN'
@@ -151,8 +161,8 @@ export interface TestPlayerPage {
 }
 
 export type PlayerKind = 'NORMAL' | 'BOT'
-export type PlayerDeskStatus = 'ACTIVE' | 'DISABLED' | 'LOCKED'
-export type PlayerAuthMode = 'PASSWORD' | 'BOT_SERVICE'
+export type PlayerDeskStatus = 'ACTIVE' | 'DISABLED' | 'LOCKED' | 'DELETED'
+export type PlayerAuthMode = 'PASSWORD' | 'PLAYER_LINK' | 'BOT_SERVICE'
 
 export interface PlayerDeskSummary {
   totalPoints: number
@@ -244,13 +254,21 @@ export interface PlayerDeskDetail extends PlayerDeskItem {
   ledger: PlayerDeskLedgerEntry[]
   bets: BetView[]
   behavior: PlayerDeskBehavior | null
+  linkStatus: PlayerAccessLinkStatusView | null
   recentActions: PlayerActionSummary[]
 }
 
+export interface PlayerAccessLinkStatusView {
+  linkId: number
+  scope: 'PLAYER_FULL' | 'CHAT_ONLY' | string
+  expiresAt: string
+  revokedAt: string | null
+  lastUsedAt: string | null
+  active: boolean
+}
+
 export interface CreateNormalPlayerRequest {
-  username: string
   displayName: string
-  rawPassword: string
 }
 
 export interface CreateBotPlayerRequest {

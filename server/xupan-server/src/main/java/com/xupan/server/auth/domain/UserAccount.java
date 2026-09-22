@@ -16,7 +16,8 @@ public record UserAccount(
         Instant lastLoginAt,
         String lastLoginIp,
         String userType,
-        String internalCode) {
+        String internalCode,
+        String authMode) {
 
     /** Compatibility constructor for domain-focused tests and legacy callers. */
     public UserAccount(long id, String username, String displayName, String avatarKey,
@@ -24,7 +25,7 @@ public record UserAccount(
                        Instant lockedUntil, long securityVersion, Instant lastLoginAt,
                        String lastLoginIp) {
         this(id, username, displayName, avatarKey, passwordHash, status, failedLoginCount,
-                lockedUntil, securityVersion, lastLoginAt, lastLoginIp, "REAL", null);
+                lockedUntil, securityVersion, lastLoginAt, lastLoginIp, "REAL", null, "PASSWORD");
     }
 
     /** Compatibility constructor for callers that provide the user type but not business identity. */
@@ -33,7 +34,7 @@ public record UserAccount(
                        Instant lockedUntil, long securityVersion, Instant lastLoginAt,
                        String lastLoginIp, String userType) {
         this(id, username, displayName, avatarKey, passwordHash, status, failedLoginCount,
-                lockedUntil, securityVersion, lastLoginAt, lastLoginIp, userType, null);
+                lockedUntil, securityVersion, lastLoginAt, lastLoginIp, userType, null, "PASSWORD");
     }
 
     public boolean canLogin(Instant now) {

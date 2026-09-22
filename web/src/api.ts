@@ -43,6 +43,7 @@ import type {
   PlayerDeskWalletStatistics,
   TestPlayerBehaviorRequest,
   TestPlayerMessageRequest,
+  PlayerAccessLinkView,
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
@@ -122,6 +123,12 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AUTH_INVALID_CREDENTIALS') return '用户名或密码错误'
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
+  if (error.code === 'PLAYER_LINK_INVALID') return '玩家链接无效、已过期或已撤销'
+  if (error.code === 'PLAYER_LINK_NOT_ALLOWED') return '托不支持玩家链接'
+  if (error.code === 'PLAYER_LINK_STATUS_INVALID') return '当前玩家状态不允许链接登录'
+  if (error.code === 'PLAYER_LINK_NOT_FOUND') return '玩家链接不存在或已失效'
+  if (error.code === 'PLAYER_LINK_OPERATION_FORBIDDEN') return '当前账号没有玩家链接管理权限'
+  if (error.code === 'PLAYER_NICKNAME_EXISTS') return '昵称已存在，请换一个昵称'
   if (error.status === 401) return '登录状态已失效，请重新登录'
   if (error.code === 'TEST_PLAYER_OPERATION_FORBIDDEN') return '当前账号没有测试玩家管理权限'
   if (error.status === 403 || error.code === 'AUTH_PERMISSION_DENIED') return '当前账号没有执行此操作的权限'
@@ -275,6 +282,13 @@ export const api = {
     setAccessToken(result.accessToken)
     return result
   }),
+  exchangePlayerLink: (token: string) => request<{ accessToken: string; expiresIn: number; user: CurrentUserView }>('/api/player-auth/exchange', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  }, false).then(result => {
+    setAccessToken(result.accessToken)
+    return result
+  }),
   logout: async () => {
     try {
       await request<void>('/api/auth/logout', { method: 'POST' }, false)
@@ -355,17 +369,29 @@ export const api = {
     request<void>(`/api/admin/users/${userId}/password`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUserRoles: (userId: number, payload: UpdateAdminUserRolesRequest) =>
     request<AdminUserDetail>(`/api/admin/users/${userId}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
-  getPlayerDeskSummary: () => request<PlayerDeskSummary>('/api/admin/player-desk/summary'),
-  getPlayerDeskPlayers: (params: { kind?: string; status?: string; keyword?: string; page?: number; pageSize?: number } = {}) => {
+  getPlayerDeskSummary: (params: { kind?: string; status?: string; keyword?: string; includeDeleted?: boolean } = {}) => {
+    const query = new URLSearchParams()
+    query.set('kind', params.kind ?? '')
+    query.set('status', params.status ?? '')
+    query.set('keyword', params.keyword ?? '')
+    query.set('includeDeleted', String(params.includeDeleted ?? false))
+    return request<PlayerDeskSummary>(`/api/admin/player-desk/summary?${query.toString()}`)
+  },
+  getPlayerDeskPlayers: (params: { kind?: string; status?: string; keyword?: string; page?: number; pageSize?: number; includeDeleted?: boolean } = {}) => {
     const query = new URLSearchParams()
     query.set('kind', params.kind ?? '')
     query.set('status', params.status ?? '')
     query.set('keyword', params.keyword ?? '')
     query.set('page', String(params.page ?? 1))
     query.set('pageSize', String(params.pageSize ?? 20))
+    query.set('includeDeleted', String(params.includeDeleted ?? false))
     return request<PlayerDeskPage>(`/api/admin/player-desk/players?${query.toString()}`)
   },
-  getPlayerDeskPlayer: (userId: number) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}`),
+  getPlayerDeskPlayer: (userId: number, includeDeleted = false) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}?includeDeleted=${includeDeleted}`),
+  deletePlayerDeskPlayer: (userId: number) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}`, { method: 'DELETE' }),
+  issuePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links`, { method: 'POST' }),
+  rotatePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/rotate`, { method: 'POST' }),
+  revokePlayerAccessLink: (userId: number, linkId: number) => request<void>(`/api/admin/player-desk/players/${userId}/access-links/${linkId}/revoke`, { method: 'POST' }),
   createNormalPlayer: (payload: CreateNormalPlayerRequest) =>
     request<PlayerDeskDetail>('/api/admin/player-desk/players/normal', { method: 'POST', body: JSON.stringify(payload) }),
   createBotPlayer: (payload: CreateBotPlayerRequest) =>

@@ -9,6 +9,7 @@ export const PLAYER_STATUS_LABELS: Record<PlayerDeskStatus, string> = {
   ACTIVE: '启用中',
   DISABLED: '已停用',
   LOCKED: '已锁定',
+  DELETED: '已删除',
 }
 
 export const PLAYER_ACTION_STATUS_LABELS: Record<PlayerActionStatus, string> = {
@@ -72,12 +73,9 @@ export function createPlayerIdempotencyKey(prefix = 'player-desk'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-export function validateNormalPlayerDraft(draft: { username: string; displayName: string; rawPassword: string; passwordConfirmation: string }): string[] {
+export function validateNormalPlayerDraft(draft: { displayName: string }): string[] {
   const errors: string[] = []
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(draft.username.trim())) errors.push('登录名只能使用字母、数字、点、下划线和连字符，长度为 1 到 64 个字符')
   if (!draft.displayName.trim() || draft.displayName.trim().length > 64) errors.push('昵称不能为空且不能超过 64 个字符')
-  if (!draft.rawPassword || draft.rawPassword.length < 8) errors.push('密码至少需要 8 个字符')
-  if (draft.rawPassword !== draft.passwordConfirmation) errors.push('两次输入的密码不一致')
   return errors
 }
 

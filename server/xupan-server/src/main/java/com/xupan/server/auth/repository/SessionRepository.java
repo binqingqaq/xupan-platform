@@ -17,11 +17,11 @@ public class SessionRepository {
             s.id, s.session_id, s.user_id, s.access_token_hash, s.access_expires_at,
             s.refresh_token_hash, s.refresh_expires_at, s.device_label, s.ip_digest,
             s.user_agent_digest, s.last_seen_at, s.revoked_at, s.created_at,
-            s.security_version
+            s.security_version, s.auth_mode, s.scope
             """;
     private static final String WS_TICKET_COLUMNS = """
             t.id, t.ticket_hash, t.user_id, t.session_id, t.room_code,
-            t.expires_at, t.used_at, t.created_at
+            t.scope, t.expires_at, t.used_at, t.created_at
             """;
 
     private final JdbcTemplate jdbcTemplate;
@@ -36,12 +36,14 @@ public class SessionRepository {
                 INSERT INTO auth_session
                     (session_id, user_id, access_token_hash, access_expires_at,
                      refresh_token_hash, refresh_expires_at, device_label, ip_digest,
-                     user_agent_digest, last_seen_at, revoked_at, created_at, security_version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     user_agent_digest, last_seen_at, revoked_at, created_at, security_version,
+                     auth_mode, scope)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, session.sessionId(), session.userId(), session.accessTokenHash(),
                 timestamp(session.accessExpiresAt()), session.refreshTokenHash(), timestamp(session.refreshExpiresAt()),
                 session.deviceLabel(), session.ipDigest(), session.userAgentDigest(), timestamp(session.lastSeenAt()),
-                timestamp(session.revokedAt()), timestamp(session.createdAt()), session.securityVersion());
+                timestamp(session.revokedAt()), timestamp(session.createdAt()), session.securityVersion(),
+                session.authMode(), session.scope());
     }
 
     public Optional<SessionRecord> findByAccessTokenHash(String tokenHash) {
@@ -63,10 +65,10 @@ public class SessionRepository {
         }
         jdbcTemplate.update("""
                 INSERT INTO auth_ws_ticket
-                    (ticket_hash, user_id, session_id, room_code, expires_at, used_at, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (ticket_hash, user_id, session_id, room_code, scope, expires_at, used_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, ticket.ticketHash(), ticket.userId(), ticket.sessionId(), normalizeRoomCode(ticket.roomCode()),
-                timestamp(ticket.expiresAt()), timestamp(ticket.usedAt()), timestamp(ticket.createdAt()));
+                ticket.scope(), timestamp(ticket.expiresAt()), timestamp(ticket.usedAt()), timestamp(ticket.createdAt()));
     }
 
     public void saveWsTicket(WsTicket ticket) {
@@ -263,7 +265,7 @@ public class SessionRepository {
                         rs.getString("device_label"), rs.getString("ip_digest"),
                         rs.getString("user_agent_digest"), instant(rs.getTimestamp("last_seen_at")),
                         instant(rs.getTimestamp("revoked_at")), instant(rs.getTimestamp("created_at")),
-                        rs.getLong("security_version")), args).stream().findFirst();
+                        rs.getLong("security_version"), rs.getString("auth_mode"), rs.getString("scope")), args).stream().findFirst();
     }
 
     private static WsTicket mapWsTicket(java.sql.ResultSet resultSet)
@@ -271,6 +273,7 @@ public class SessionRepository {
         return new WsTicket(
                 resultSet.getLong("id"), resultSet.getString("ticket_hash"), resultSet.getLong("user_id"),
                 resultSet.getString("session_id"), resultSet.getString("room_code"),
+                resultSet.getString("scope"),
                 instant(resultSet.getTimestamp("expires_at")), instant(resultSet.getTimestamp("used_at")),
                 instant(resultSet.getTimestamp("created_at")));
     }

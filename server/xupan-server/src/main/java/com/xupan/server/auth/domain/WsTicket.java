@@ -10,13 +10,14 @@ public record WsTicket(
         long userId,
         String sessionId,
         String roomCode,
+        String scope,
         Instant expiresAt,
         Instant usedAt,
         Instant createdAt) {
 
     public WsTicket(String ticketHash, long userId, String sessionId, String roomCode,
                     Instant expiresAt, Instant usedAt, Instant createdAt) {
-        this(0L, ticketHash, userId, sessionId, roomCode, expiresAt, usedAt, createdAt);
+        this(0L, ticketHash, userId, sessionId, roomCode, null, expiresAt, usedAt, createdAt);
     }
 
     public boolean belongsTo(long expectedUserId, String expectedSessionId, String expectedRoomCode) {
@@ -30,7 +31,7 @@ public record WsTicket(
     }
 
     public WsTicket withUsedAt(Instant value) {
-        return new WsTicket(id, ticketHash, userId, sessionId, roomCode, expiresAt, value, createdAt);
+        return new WsTicket(id, ticketHash, userId, sessionId, roomCode, scope, expiresAt, value, createdAt);
     }
 
     private static String normalizeRoomCode(String value) {

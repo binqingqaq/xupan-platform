@@ -63,6 +63,11 @@ public class AuthenticationService {
                         ip(metadata), userAgent(metadata), now);
                 return LoginAttempt.failure("AUTH_INVALID_CREDENTIALS");
             }
+            if ("PLAYER_LINK".equals(user.authMode())) {
+                loginAuditRepository.recordFailure(user.username(), user.id(), "AUTH_INVALID_CREDENTIALS",
+                        ip(metadata), userAgent(metadata), now);
+                return LoginAttempt.failure("AUTH_INVALID_CREDENTIALS");
+            }
             boolean matches;
             try {
                 matches = passwordPolicy.matches(rawPassword, user.passwordHash());
@@ -121,7 +126,25 @@ public class AuthenticationService {
     }
 
     private CurrentUser currentUser(UserAccount user) {
+        return currentUser(user, user.authMode(), null);
+    }
+
+    public CurrentUser currentUser(long userId, String authMode, String scope) {
+        UserAccount user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthenticationFailure("AUTH_UNAUTHENTICATED"));
+        if (!"ACTIVE".equals(user.status())) {
+            throw new AuthenticationFailure("AUTH_UNAUTHENTICATED");
+        }
+        return currentUser(user, authMode, scope);
+    }
+
+    private CurrentUser currentUser(UserAccount user, String authMode, String scope) {
+        if ("CHAT_ONLY".equals(scope)) {
+            return new CurrentUser(user.id(), user.username(), user.displayName(), user.avatarKey(),
+                    "PLAYER_LINK", "CHAT_ONLY", List.of(), List.of("CHAT_ROOM_READ", "CHAT_MESSAGE_SEND"));
+        }
         return new CurrentUser(user.id(), user.username(), user.displayName(), user.avatarKey(),
+                authMode == null || authMode.isBlank() ? "PASSWORD" : authMode, scope,
                 permissionService.findRoleCodes(user.id()),
                 permissionService.findPermissionCodes(user.id()).stream().sorted().toList());
     }
@@ -159,7 +182,7 @@ public class AuthenticationService {
     }
 
     public record CurrentUser(long id, String username, String displayName, String avatarKey,
-                              List<String> roles, List<String> permissions) {
+                              String authMode, String scope, List<String> roles, List<String> permissions) {
     }
 
     public static class AuthenticationFailure extends RuntimeException {
