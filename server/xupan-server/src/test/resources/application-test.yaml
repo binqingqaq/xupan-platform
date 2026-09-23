@@ -7,6 +7,8 @@ spring:
   flyway:
     enabled: true
 xupan:
+  avatar:
+    auto-generate: false
   robot:
     dispatch-interval-ms: 60000
     dispatch-batch-size: 50
@@ -31,5 +33,6 @@ xupan:
       message-rate-window: 10s
   auth:
     refresh-cookie-secure: false
+    player-link-display-key: ji1NJ14TxQuQAVVDdo4a0ssVNRpQESqcT+wpCRjJRJc=
     bootstrap-admin:
       enabled: false

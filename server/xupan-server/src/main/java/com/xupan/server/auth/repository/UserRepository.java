@@ -7,15 +7,18 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
-import java.util.UUID;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 public class UserRepository {
+
+    private static final char[] INTERNAL_CODE_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toCharArray();
+    private static final SecureRandom INTERNAL_CODE_RANDOM = new SecureRandom();
 
     private static final String USER_COLUMNS = """
             id, username, display_name, avatar_key, password_hash, status,
@@ -204,10 +207,11 @@ public class UserRepository {
     }
 
     @Transactional
-    public long insertPlayerLinkUser(String username, String displayName, String passwordHash, String status) {
+    public long insertPlayerLinkUser(String username, String displayName, String avatarKey,
+                                     String passwordHash, String status) {
         jdbcTemplate.update(
-                "INSERT INTO sys_user (username, display_name, password_hash, status, user_type, auth_mode, internal_code) VALUES (?, ?, ?, ?, 'REAL', 'PLAYER_LINK', ?)",
-                username, displayName, passwordHash, status, newInternalCode());
+                "INSERT INTO sys_user (username, display_name, avatar_key, password_hash, status, user_type, auth_mode, internal_code) VALUES (?, ?, ?, ?, ?, 'REAL', 'PLAYER_LINK', ?)",
+                username, displayName, avatarKey, passwordHash, status, newInternalCode());
         Long key = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
         if (key == null) {
             throw new IllegalStateException("创建链接玩家后未取得用户 ID");
@@ -370,6 +374,10 @@ public class UserRepository {
     }
 
     private static String newInternalCode() {
-        return "wxid_" + UUID.randomUUID().toString().replace("-", "");
+        StringBuilder suffix = new StringBuilder(16);
+        for (int i = 0; i < 16; i++) {
+            suffix.append(INTERNAL_CODE_ALPHABET[INTERNAL_CODE_RANDOM.nextInt(INTERNAL_CODE_ALPHABET.length)]);
+        }
+        return "wxid_" + suffix;
     }
 }

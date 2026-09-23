@@ -35,7 +35,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint(exceptionHandler)
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/forbidden", "/room", "/admin", "/admin/users", "/admin/test-players", "/admin/robots",
+                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/admin", "/admin/users", "/admin/test-players", "/admin/robots",
                                 "/display", "/display/", "/display/**", "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/player-auth/exchange", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/media/avatars/**").permitAll()

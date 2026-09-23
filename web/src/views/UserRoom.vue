@@ -6,6 +6,7 @@ import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { ChatSocket } from '../services/chatSocket'
 import { mayAffectBetAccount } from '../chatSubmission'
+import PlayerLinkExpiredView from './PlayerLinkExpiredView.vue'
 import type {
   BallView,
   ChatMessage,
@@ -107,6 +108,10 @@ let gameRefreshTimer: number | undefined
 let chatRefreshTimer: number | undefined
 let countdownTimer: number | undefined
 const chatSocket = new ChatSocket()
+
+const props = defineProps<{
+  playerLinkOnly?: boolean
+}>()
 
 const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单', '双', '大', '小', '特', '查', '上', '下', '流水', '历史', '♫', '取消', '说明', '⇅']
 const playMainTokens = playTokens.slice(0, -3)
@@ -814,7 +819,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2' }">
+  <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" />
+  <div v-else class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2' }">
     <header class="reference-header">
       <div class="reference-toolbar">
         <strong class="balance-text">虚拟余额:{{ balance }}</strong>
@@ -1063,7 +1069,7 @@ onUnmounted(() => {
 
     <p v-if="feedback" class="reference-toast" :class="`toast-${feedbackKind}`" role="status">{{ feedback }}</p>
 
-    <div v-if="!authenticated" class="reference-overlay light-overlay">
+    <div v-if="!authenticated && !props.playerLinkOnly" class="reference-overlay light-overlay">
       <section class="notice-panel" role="dialog" aria-modal="true" aria-labelledby="login-title">
         <h2 id="login-title">登录 XUPAN</h2>
         <form class="settings-body" @submit.prevent="login">

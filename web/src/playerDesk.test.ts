@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatPoints,
+  businessDateAt0600,
   playerActionStatusLabel,
   playerDisplayCode,
   playerDisplayName,
@@ -28,10 +29,15 @@ describe('player desk helpers', () => {
     expect(formatPoints(12)).toBe('12.00')
   })
 
+  it('uses 06:00 as the business-day boundary', () => {
+    expect(businessDateAt0600(new Date(2026, 8, 22, 5, 59, 59))).toBe('2026-09-21')
+    expect(businessDateAt0600(new Date(2026, 8, 22, 6, 0, 0))).toBe('2026-09-22')
+  })
+
   it('validates normal and bot player creation fields', () => {
     expect(validateNormalPlayerDraft({ displayName: '' })).toHaveLength(1)
     expect(validateNormalPlayerDraft({ displayName: '普通玩家' })).toEqual([])
-    expect(validateBotPlayerDraft({ userCode: 'bot 1', displayName: '', avatarKey: 'x'.repeat(65) })).toHaveLength(3)
+    expect(validateBotPlayerDraft({ userCode: 'bot 1', displayName: '', avatarKey: 'x'.repeat(65) })).toHaveLength(1)
     expect(validateBotPlayerDraft({ userCode: 'bot_1', displayName: '托1', avatarKey: '' })).toEqual([])
   })
 

@@ -93,6 +93,33 @@ class VirtualWalletRepositoryTest {
     }
 
     @Test
+    void assignsSeparateMonotonicMemberCodeSequencesForPlayersAndBots() {
+        long normalOne = insertUser("wallet-repo-test-normal-1", "普通玩家一");
+        long normalTwo = insertUser("wallet-repo-test-normal-2", "普通玩家二");
+        long botOne = insertUser("wallet-repo-test-bot-1", "托一");
+        long botTwo = insertUser("wallet-repo-test-bot-2", "托二");
+
+        repository.createForUser(normalOne, "WALLET-REPO-NORMAL-1", "普通玩家一");
+        repository.createForUser(normalTwo, "WALLET-REPO-NORMAL-2", "普通玩家二");
+        repository.createForTestPlayer(botOne, "WALLET-REPO-BOT-1", "托一");
+        repository.createForTestPlayer(botTwo, "WALLET-REPO-BOT-2", "托二");
+
+        String normalOneCode = memberCode(normalOne);
+        String normalTwoCode = memberCode(normalTwo);
+        String botOneCode = memberCode(botOne);
+        String botTwoCode = memberCode(botTwo);
+
+        assertThat(normalOneCode).matches("^v[1-9][0-9]{3}$");
+        assertThat(normalTwoCode).matches("^v[1-9][0-9]{3}$");
+        assertThat(botOneCode).matches("^v[1-9][0-9]{2}$");
+        assertThat(botTwoCode).matches("^v[1-9][0-9]{2}$");
+        assertThat(Long.parseLong(normalTwoCode.substring(1)))
+                .isEqualTo(Long.parseLong(normalOneCode.substring(1)) + 1);
+        assertThat(Long.parseLong(botTwoCode.substring(1)))
+                .isEqualTo(Long.parseLong(botOneCode.substring(1)) + 1);
+    }
+
+    @Test
     @Transactional
     void appendsMoneyWithLockAndReplaysEquivalentAdminRequest() {
         long operatorId = insertUser("wallet-repo-test-admin", "测试管理员");
@@ -236,6 +263,11 @@ class VirtualWalletRepositoryTest {
                 username, displayName, "test-password-hash", "wxid_" + username);
         return jdbcTemplate.queryForObject(
                 "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
+    }
+
+    private String memberCode(long userId) {
+        return jdbcTemplate.queryForObject(
+                "SELECT member_code FROM demo_user_account WHERE sys_user_id = ?", String.class, userId);
     }
 
     private void insertBet(long accountId, String betCode, String issueNumber,

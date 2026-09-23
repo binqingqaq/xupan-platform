@@ -12,6 +12,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -22,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 
 @RestController
 public class PlayerLinkAuthController {
+
+    private static final String PLAYER_ROOM_CODE = "33";
 
     private final PlayerLinkAuthenticationService service;
     private final boolean refreshCookieSecure;
@@ -46,14 +50,31 @@ public class PlayerLinkAuthController {
         return LinkResponse.from(service.issue(userId, userId(authentication)), origin(request));
     }
 
+    @GetMapping("/api/admin/player-desk/players/{userId}/access-links/current")
+    public LinkResponse current(Authentication authentication, @PathVariable long userId, HttpServletRequest request) {
+        return LinkResponse.from(service.current(userId, userId(authentication)), origin(request));
+    }
+
     @PostMapping("/api/admin/player-desk/players/{userId}/access-links/{linkId}/revoke")
     public void revoke(Authentication authentication, @PathVariable long userId, @PathVariable long linkId) {
         service.revoke(userId, linkId, userId(authentication));
     }
 
+    @PostMapping("/api/admin/player-desk/players/{userId}/access-links/{linkId}/restore")
+    public void restore(Authentication authentication, @PathVariable long userId, @PathVariable long linkId) {
+        service.restore(userId, linkId, userId(authentication));
+    }
+
     @PostMapping("/api/admin/player-desk/players/{userId}/access-links/rotate")
     public LinkResponse rotate(Authentication authentication, @PathVariable long userId, HttpServletRequest request) {
         return LinkResponse.from(service.rotate(userId, userId(authentication)), origin(request));
+    }
+
+    @PatchMapping("/api/admin/player-desk/players/{userId}/access-links/expiration")
+    public ExpirationResponse updateExpiration(Authentication authentication, @PathVariable long userId,
+                                               @Valid @RequestBody ExpirationRequest request) {
+        PlayerLinkAuthenticationService.Expiration result = service.updateExpiration(userId, request.days(), userId(authentication));
+        return new ExpirationResponse(result.linkId(), result.expiresAt(), result.days());
     }
 
     private static long userId(Authentication authentication) {
@@ -75,6 +96,8 @@ public class PlayerLinkAuthController {
     }
 
     public record ExchangeRequest(@NotBlank String token) {}
+    public record ExpirationRequest(@jakarta.validation.constraints.Min(1) @jakarta.validation.constraints.Max(3650) int days) {}
+    public record ExpirationResponse(long linkId, java.time.Instant expiresAt, int days) {}
 
     public record ExchangeResponse(String accessToken, long expiresIn, CurrentUserResponse user) {
         static ExchangeResponse from(PlayerLinkAuthenticationService.ExchangeResult result) {
@@ -86,9 +109,9 @@ public class PlayerLinkAuthController {
 
     public record LinkResponse(long linkId, long userId, String scope, java.time.Instant expiresAt, String accessUrl) {
         static LinkResponse from(PlayerLinkAuthenticationService.IssuedLink link, String origin) {
-            String query = URLEncoder.encode(link.rawToken(), StandardCharsets.UTF_8);
+            String token = URLEncoder.encode(link.rawToken(), StandardCharsets.UTF_8);
             return new LinkResponse(link.linkId(), link.userId(), link.scope(), link.expiresAt(),
-                    origin + "/player-login?token=" + query);
+                    origin + "/" + PLAYER_ROOM_CODE + "/" + token);
         }
     }
 }

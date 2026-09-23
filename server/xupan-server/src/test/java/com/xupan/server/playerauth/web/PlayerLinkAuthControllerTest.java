@@ -82,12 +82,11 @@ class PlayerLinkAuthControllerTest {
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.scope").value("PLAYER_FULL"))
-                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/player-login?token=")))
+                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/33/")))
+                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("?token="))))
                 .andExpect(jsonPath("$.rawToken").doesNotExist())
                 .andReturn();
-        String accessUrl = JsonPath.read(issued.getResponse().getContentAsString(), "$.accessUrl");
-        String rawToken = URLDecoder.decode(URI.create(accessUrl).getQuery().substring("token=".length()),
-                StandardCharsets.UTF_8);
+        String rawToken = pathToken(JsonPath.read(issued.getResponse().getContentAsString(), "$.accessUrl"));
 
         MvcResult exchanged = mockMvc.perform(post("/api/player-auth/exchange")
                         .contentType("application/json")
@@ -128,6 +127,32 @@ class PlayerLinkAuthControllerTest {
     }
 
     @Test
+    void playerLinkCanBeExchangedMoreThanOnceBeforeExpiry() throws Exception {
+        String adminToken = login(ADMIN, ADMIN_PASSWORD);
+        long playerId = createNormal(adminToken);
+        String rawToken = issueRawToken(adminToken, playerId);
+
+        String firstAccessToken = exchange(rawToken);
+        String secondAccessToken = exchange(rawToken);
+
+        assertThat(firstAccessToken).isNotBlank().isNotEqualTo(secondAccessToken);
+    }
+
+    @Test
+    void currentLinkCanBeDisplayedAfterPlayerCreation() throws Exception {
+        String adminToken = login(ADMIN, ADMIN_PASSWORD);
+        long playerId = createNormal(adminToken);
+
+        mockMvc.perform(get("/api/admin/player-desk/players/" + playerId + "/access-links/current")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.userId").value(playerId))
+                .andExpect(jsonPath("$.scope").value("PLAYER_FULL"))
+                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/33/")))
+                .andExpect(jsonPath("$.expiresAt").isNotEmpty());
+    }
+
+    @Test
     void revokeRotateAndExpiryInvalidatePlayerLinksAndSessions() throws Exception {
         String adminToken = login(ADMIN, ADMIN_PASSWORD);
         long playerId = createNormal(adminToken);
@@ -146,6 +171,16 @@ class PlayerLinkAuthControllerTest {
                         .content("{\"token\":\"" + firstToken + "\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("PLAYER_LINK_INVALID"));
+
+        mockMvc.perform(get("/api/admin/player-desk/players/" + playerId + "/access-links/current")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkId").value(linkId))
+                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/33/")));
+        mockMvc.perform(post("/api/admin/player-desk/players/" + playerId + "/access-links/" + linkId + "/restore")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk());
+        exchange(firstToken);
 
         String secondToken = issueRawToken(adminToken, playerId);
         jdbcTemplate.update("UPDATE player_access_link SET expires_at = CURRENT_TIMESTAMP WHERE token_hash = ?",
@@ -177,7 +212,7 @@ class PlayerLinkAuthControllerTest {
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DELETED"))
-                .andExpect(jsonPath("$.internalCode").value(org.hamcrest.Matchers.startsWith("wxid_")))
+                .andExpect(jsonPath("$.internalCode").value(org.hamcrest.Matchers.matchesPattern("^wxid_[A-Za-z0-9]{16}$")))
                 .andExpect(jsonPath("$.memberCode").value(org.hamcrest.Matchers.startsWith("v")))
                 .andExpect(jsonPath("$.displayName").value(PLAYER));
 
@@ -230,7 +265,7 @@ class PlayerLinkAuthControllerTest {
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk()).andReturn();
         String url = JsonPath.read(result.getResponse().getContentAsString(), "$.accessUrl");
-        return URLDecoder.decode(URI.create(url).getQuery().substring("token=".length()), StandardCharsets.UTF_8);
+        return pathToken(url);
     }
 
     private String rotateRawToken(String adminToken, long playerId) throws Exception {
@@ -238,7 +273,7 @@ class PlayerLinkAuthControllerTest {
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk()).andReturn();
         String url = JsonPath.read(result.getResponse().getContentAsString(), "$.accessUrl");
-        return URLDecoder.decode(URI.create(url).getQuery().substring("token=".length()), StandardCharsets.UTF_8);
+        return pathToken(url);
     }
 
     private String exchange(String rawToken) throws Exception {
@@ -246,6 +281,14 @@ class PlayerLinkAuthControllerTest {
                         .content("{\"token\":\"" + rawToken + "\"}"))
                 .andExpect(status().isOk()).andReturn();
         return JsonPath.read(result.getResponse().getContentAsString(), "$.accessToken");
+    }
+
+    private static String pathToken(String url) {
+        String path = URI.create(url).getPath();
+        if (!path.startsWith("/33/") || path.length() <= "/33/".length()) {
+            throw new IllegalArgumentException("链接不是固定 33 房间格式: " + url);
+        }
+        return URLDecoder.decode(path.substring("/33/".length()), StandardCharsets.UTF_8);
     }
 
     private String login(String username, String password) throws Exception {

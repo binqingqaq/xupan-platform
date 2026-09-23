@@ -44,6 +44,8 @@ import type {
   TestPlayerBehaviorRequest,
   TestPlayerMessageRequest,
   PlayerAccessLinkView,
+  PlayerNameHistory,
+  PlayerDeskPointRecords,
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
@@ -390,8 +392,11 @@ export const api = {
   getPlayerDeskPlayer: (userId: number, includeDeleted = false) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}?includeDeleted=${includeDeleted}`),
   deletePlayerDeskPlayer: (userId: number) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}`, { method: 'DELETE' }),
   issuePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links`, { method: 'POST' }),
+  getCurrentPlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/current`),
   rotatePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/rotate`, { method: 'POST' }),
   revokePlayerAccessLink: (userId: number, linkId: number) => request<void>(`/api/admin/player-desk/players/${userId}/access-links/${linkId}/revoke`, { method: 'POST' }),
+  restorePlayerAccessLink: (userId: number, linkId: number) => request<void>(`/api/admin/player-desk/players/${userId}/access-links/${linkId}/restore`, { method: 'POST' }),
+  updatePlayerLinkExpiration: (userId: number, days: number) => request<{ linkId: number; expiresAt: string }>(`/api/admin/player-desk/players/${userId}/access-links/expiration`, { method: 'PATCH', body: JSON.stringify({ days }) }),
   createNormalPlayer: (payload: CreateNormalPlayerRequest) =>
     request<PlayerDeskDetail>('/api/admin/player-desk/players/normal', { method: 'POST', body: JSON.stringify(payload) }),
   createBotPlayer: (payload: CreateBotPlayerRequest) =>
@@ -411,6 +416,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+  updatePlayerNickname: (userId: number, displayName: string) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/nickname`, { method: 'PUT', body: JSON.stringify({ displayName }) }),
+  getPlayerNameHistory: (userId: number) => request<PlayerNameHistory>(`/api/admin/player-desk/players/${userId}/name-history`),
+  getPlayerDeskPointRecords: (kind: 'NORMAL' | 'BOT', businessDate: string) => {
+    const query = new URLSearchParams({ kind, date: businessDate })
+    return request<PlayerDeskPointRecords>(`/api/admin/player-desk/points-records?${query.toString()}`)
+  },
   getPlayerBehavior: (userId: number) => request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`),
   updatePlayerBehavior: (userId: number, payload: TestPlayerBehaviorRequest) =>
     request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`, {

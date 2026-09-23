@@ -44,7 +44,7 @@ public class PlayerDeskRepository {
                 + "u.auth_mode, "
                 + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
                 + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
-                + from() + where + " ORDER BY a.id DESC LIMIT ? OFFSET ?";
+                + from() + where + " ORDER BY a.balance DESC, a.id DESC LIMIT ? OFFSET ?";
         Object[] base = args(kind, status, keyword, includeDeleted);
         Object[] all = java.util.Arrays.copyOf(base, base.length + 2);
         all[base.length] = pageSize;

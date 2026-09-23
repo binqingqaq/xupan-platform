@@ -26,6 +26,7 @@ const router = createRouter({
     { path: '/display/mobile', component: () => import('./views/DisplayMobileHomeStatic.vue') },
     { path: '/login', component: LoginView },
     { path: '/player-login', component: PlayerLinkLoginView },
+    { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView },
     { path: '/forbidden', component: ForbiddenView },
     { path: '/room', component: UserRoom, meta: { requiresAuth: true } },
     ...adminRoutes,

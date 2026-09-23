@@ -9,6 +9,8 @@ import com.xupan.server.game.repository.DemoAccountRepository;
 import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
+import com.xupan.server.media.AvatarProperties;
+import com.xupan.server.media.AvatarStorageService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -31,6 +33,8 @@ public class TestPlayerAdminService {
     private final SessionRepository sessionRepository;
     private final OperationAuditRepository auditRepository;
     private final DemoGameService gameService;
+    private final AvatarStorageService avatarStorageService;
+    private final AvatarProperties avatarProperties;
 
     public TestPlayerAdminService(DemoAccountRepository accountRepository,
                                   UserRepository userRepository,
@@ -39,7 +43,9 @@ public class TestPlayerAdminService {
                                   PermissionService permissionService,
                                   SessionRepository sessionRepository,
                                   OperationAuditRepository auditRepository,
-                                  DemoGameService gameService) {
+                                  DemoGameService gameService,
+                                  AvatarStorageService avatarStorageService,
+                                  AvatarProperties avatarProperties) {
         this.accountRepository = accountRepository;
         this.userRepository = userRepository;
         this.walletService = walletService;
@@ -48,6 +54,8 @@ public class TestPlayerAdminService {
         this.sessionRepository = sessionRepository;
         this.auditRepository = auditRepository;
         this.gameService = gameService;
+        this.avatarStorageService = avatarStorageService;
+        this.avatarProperties = avatarProperties;
     }
 
     @Transactional(readOnly = true)
@@ -71,9 +79,15 @@ public class TestPlayerAdminService {
     public TestPlayerAdminView create(String userCode, String displayName, String avatarKey,
                                       long operatorUserId) {
         requireAdmin(operatorUserId);
-        String code = required(userCode, "TEST_PLAYER_CODE_INVALID", "用户编码不能为空", 64);
+        String code = optional(userCode, 64);
+        if (code == null) {
+            code = generatedUserCode();
+        }
         String name = required(displayName, "REQUEST_INVALID", "显示名称不能为空", 128);
         String avatar = optional(avatarKey, 255);
+        if (avatar == null && avatarProperties.isAutoGenerate()) {
+            avatar = avatarStorageService.storeGenerated(code).avatarKey();
+        }
         if (accountRepository.existsByUserCode(code) || userRepository.findByUsername(code).isPresent()) {
             throw BusinessException.conflict("TEST_PLAYER_EXISTS", "测试玩家编码已存在");
         }
@@ -230,6 +244,16 @@ public class TestPlayerAdminService {
             throw BusinessException.badRequest("REQUEST_INVALID", "头像标识长度无效");
         }
         return value.trim();
+    }
+
+    private String generatedUserCode() {
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String candidate = "BOT-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+            if (!accountRepository.existsByUserCode(candidate) && userRepository.findByUsername(candidate).isEmpty()) {
+                return candidate;
+            }
+        }
+        throw BusinessException.conflict("TEST_PLAYER_EXISTS", "托编码生成失败，请重试");
     }
 
     public record TestPlayerPage(List<DemoAccountRepository.TestPlayerRecord> items,

@@ -12,6 +12,7 @@ xupan:
   avatar:
     storage-dir: ${XUPAN_AVATAR_STORAGE_DIR:${user.dir}/var/uploads/avatars}
     max-size-bytes: ${XUPAN_AVATAR_MAX_SIZE_BYTES:5242880}
+    auto-generate: ${XUPAN_AVATAR_AUTO_GENERATE:true}
   robot:
     dispatch-interval-ms: ${XUPAN_ROBOT_DISPATCH_INTERVAL_MS:1000}
     dispatch-batch-size: ${XUPAN_ROBOT_DISPATCH_BATCH_SIZE:50}
@@ -38,6 +39,7 @@ xupan:
   auth:
     refresh-cookie-secure: ${XUPAN_AUTH_REFRESH_COOKIE_SECURE:true}
     player-link-lifetime: ${XUPAN_AUTH_PLAYER_LINK_LIFETIME:168h}
+    player-link-display-key: ${XUPAN_AUTH_PLAYER_LINK_DISPLAY_KEY:}
     bootstrap-admin:
       enabled: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_ENABLED:false}
       username: ${XUPAN_AUTH_BOOTSTRAP_ADMIN_USERNAME:}

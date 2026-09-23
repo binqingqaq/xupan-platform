@@ -9,6 +9,8 @@ import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.repository.VirtualWalletRepository;
 import com.xupan.server.game.service.VirtualWalletService;
+import com.xupan.server.media.AvatarStorageService;
+import com.xupan.server.media.AvatarProperties;
 import com.xupan.server.system.repository.RoleRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,11 +38,14 @@ public class UserAdminService {
     private final VirtualWalletService walletService;
     private final VirtualWalletRepository walletRepository;
     private final OperationAuditRepository auditRepository;
+    private final AvatarStorageService avatarStorageService;
+    private final AvatarProperties avatarProperties;
 
     public UserAdminService(UserRepository userRepository, RoleRepository roleRepository,
                             SessionRepository sessionRepository, PasswordPolicyService passwordPolicy,
                             VirtualWalletService walletService, VirtualWalletRepository walletRepository,
-                            OperationAuditRepository auditRepository, PermissionService permissionService) {
+                            OperationAuditRepository auditRepository, PermissionService permissionService,
+                            AvatarStorageService avatarStorageService, AvatarProperties avatarProperties) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.permissionService = permissionService;
@@ -49,6 +54,8 @@ public class UserAdminService {
         this.walletService = walletService;
         this.walletRepository = walletRepository;
         this.auditRepository = auditRepository;
+        this.avatarStorageService = avatarStorageService;
+        this.avatarProperties = avatarProperties;
     }
 
     @Transactional(readOnly = true)
@@ -95,8 +102,10 @@ public class UserAdminService {
             throw BusinessException.badRequest("USER_ROLE_INVALID", "用户角色不存在或已停用");
         }
         try {
+            String avatarKey = avatarProperties.isAutoGenerate()
+                    ? avatarStorageService.storeGenerated(normalizedUsername).avatarKey() : null;
             long userId = userRepository.insertPlayerLinkUser(normalizedUsername, normalizedDisplayName,
-                    passwordPolicy.encodeUnusableCredential(), "ACTIVE");
+                    avatarKey, passwordPolicy.encodeUnusableCredential(), "ACTIVE");
             if (userRepository.assignRole(userId, "USER") != 1) {
                 throw BusinessException.badRequest("USER_ROLE_INVALID", "用户角色不可用");
             }

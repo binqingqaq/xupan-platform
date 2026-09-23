@@ -4,6 +4,7 @@ import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationType;
 import com.xupan.server.game.domain.WalletStatistics;
+import com.xupan.server.identity.service.PlayerIdentityService;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -37,9 +38,11 @@ public class VirtualWalletRepository {
             """;
 
     private final JdbcTemplate jdbcTemplate;
+    private final PlayerIdentityService playerIdentityService;
 
-    public VirtualWalletRepository(JdbcTemplate jdbcTemplate) {
+    public VirtualWalletRepository(JdbcTemplate jdbcTemplate, PlayerIdentityService playerIdentityService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.playerIdentityService = playerIdentityService;
     }
 
     public Optional<VirtualWallet> findByUserId(long userId) {
@@ -82,7 +85,8 @@ public class VirtualWalletRepository {
                     INSERT INTO demo_user_account
                             (sys_user_id, user_code, member_code, display_name, balance, status, identity_type)
                         VALUES (?, ?, ?, ?, 0.00, 'ACTIVE', ?)
-                        """, userId, code, nextMemberCodeCandidate(), name, identityType);
+                        """, userId, code, playerIdentityService.nextMemberCode(
+                        "TEST".equals(identityType) ? "BOT" : "NORMAL"), name, identityType);
                 break;
             } catch (DuplicateKeyException exception) {
                 if (attempt == 2) {
@@ -96,27 +100,6 @@ public class VirtualWalletRepository {
             throw new IllegalStateException("创建钱包后未取得账户 ID");
         }
         return accountId;
-    }
-
-    private String nextMemberCodeCandidate() {
-        List<String> existingCodes = jdbcTemplate.query(
-                "SELECT member_code FROM demo_user_account WHERE member_code LIKE 'v%'",
-                (rs, rowNum) -> rs.getString("member_code"));
-        long max = 0;
-        for (String code : existingCodes) {
-            try {
-                long value = Long.parseLong(code.substring(1));
-                if (value > max) {
-                    max = value;
-                }
-            } catch (RuntimeException ignored) {
-                // Historical invalid values do not participate in the numeric sequence.
-            }
-        }
-        if (max == Long.MAX_VALUE) {
-            throw new IllegalStateException("无法生成会员 ID");
-        }
-        return "v" + (max + 1);
     }
 
     public Optional<WalletLedgerEntry> findLedgerByIdempotencyKey(String idempotencyKey) {

@@ -68,6 +68,15 @@ export function formatPoints(value: number | null | undefined): string {
   return Number(value || 0).toFixed(2)
 }
 
+export function businessDateAt0600(date = new Date()): string {
+  const effective = new Date(date)
+  if (effective.getHours() < 6) effective.setDate(effective.getDate() - 1)
+  const year = effective.getFullYear()
+  const month = String(effective.getMonth() + 1).padStart(2, '0')
+  const day = String(effective.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export function createPlayerIdempotencyKey(prefix = 'player-desk'): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `${prefix}-${crypto.randomUUID()}`
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -79,11 +88,9 @@ export function validateNormalPlayerDraft(draft: { displayName: string }): strin
   return errors
 }
 
-export function validateBotPlayerDraft(draft: { userCode: string; displayName: string; avatarKey: string }): string[] {
+export function validateBotPlayerDraft(draft: { displayName: string; userCode?: string; avatarKey?: string }): string[] {
   const errors: string[] = []
-  if (!/^[a-zA-Z0-9._-]{1,64}$/.test(draft.userCode.trim())) errors.push('玩家编码只能使用字母、数字、点、下划线和连字符，长度为 1 到 64 个字符')
   if (!draft.displayName.trim() || draft.displayName.trim().length > 64) errors.push('昵称不能为空且不能超过 64 个字符')
-  if (draft.avatarKey.trim().length > 64) errors.push('头像标识不能超过 64 个字符')
   return errors
 }
 

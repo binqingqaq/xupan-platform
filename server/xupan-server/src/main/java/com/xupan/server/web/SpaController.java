@@ -21,4 +21,9 @@ public class SpaController {
     public String forwardToFrontend() {
         return "forward:/index.html";
     }
+
+    @GetMapping({"/33/{linkPath}", "/33/{linkPath}/"})
+    public String forwardPlayerLink() {
+        return "forward:/index.html";
+    }
 }

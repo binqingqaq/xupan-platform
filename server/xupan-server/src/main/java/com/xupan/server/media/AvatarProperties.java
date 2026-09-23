@@ -11,6 +11,7 @@ public class AvatarProperties {
 
     private Path storageDir = Path.of("var/uploads/avatars");
     private long maxSizeBytes = 5 * 1024 * 1024;
+    private boolean autoGenerate = true;
 
     public Path getStorageDir() {
         return storageDir;
@@ -26,5 +27,13 @@ public class AvatarProperties {
 
     public void setMaxSizeBytes(long maxSizeBytes) {
         this.maxSizeBytes = maxSizeBytes;
+    }
+
+    public boolean isAutoGenerate() {
+        return autoGenerate;
+    }
+
+    public void setAutoGenerate(boolean autoGenerate) {
+        this.autoGenerate = autoGenerate;
     }
 }

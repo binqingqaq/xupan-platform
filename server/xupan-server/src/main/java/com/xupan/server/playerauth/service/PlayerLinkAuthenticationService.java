@@ -38,9 +38,11 @@ public class PlayerLinkAuthenticationService {
     private final AuthenticationService authenticationService;
     private final LoginAuditRepository loginAuditRepository;
     private final OperationAuditRepository operationAuditRepository;
+    private final PlayerLinkTokenCipher tokenCipher;
     private final SecureRandom secureRandom;
     private final Clock clock;
     private final Duration linkLifetime;
+    private final int defaultLinkDays;
 
     @Autowired
     public PlayerLinkAuthenticationService(PlayerAccessLinkRepository linkRepository,
@@ -51,9 +53,10 @@ public class PlayerLinkAuthenticationService {
                                            AuthenticationService authenticationService,
                                            LoginAuditRepository loginAuditRepository,
                                            OperationAuditRepository operationAuditRepository,
+                                           PlayerLinkTokenCipher tokenCipher,
                                            @Value("${xupan.auth.player-link-lifetime:168h}") Duration linkLifetime) {
         this(linkRepository, userRepository, sessionRepository, permissionService, tokenService,
-                authenticationService, loginAuditRepository, operationAuditRepository, linkLifetime,
+                authenticationService, loginAuditRepository, operationAuditRepository, tokenCipher, linkLifetime,
                 new SecureRandom(), Clock.systemUTC());
     }
 
@@ -65,6 +68,7 @@ public class PlayerLinkAuthenticationService {
                                     AuthenticationService authenticationService,
                                     LoginAuditRepository loginAuditRepository,
                                     OperationAuditRepository operationAuditRepository,
+                                    PlayerLinkTokenCipher tokenCipher,
                                     Duration linkLifetime, SecureRandom secureRandom, Clock clock) {
         this.linkRepository = linkRepository;
         this.userRepository = userRepository;
@@ -74,7 +78,9 @@ public class PlayerLinkAuthenticationService {
         this.authenticationService = authenticationService;
         this.loginAuditRepository = loginAuditRepository;
         this.operationAuditRepository = operationAuditRepository;
+        this.tokenCipher = tokenCipher;
         this.linkLifetime = linkLifetime;
+        this.defaultLinkDays = Math.max(1, Math.toIntExact(linkLifetime.toDays()));
         this.secureRandom = secureRandom;
         this.clock = clock;
     }
@@ -85,9 +91,15 @@ public class PlayerLinkAuthenticationService {
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         Instant now = clock.instant();
+        PlayerAccessLink current = linkRepository.findLatestByUserId(userId)
+                .filter(link -> link.usableAt(now))
+                .orElse(null);
+        if (current != null && current.tokenCiphertext() != null) {
+            return issuedFromStored(current);
+        }
         String rawToken = randomToken();
         PlayerAccessLink link = new PlayerAccessLink(0L, userId, TokenService.sha256(rawToken),
-                SCOPE_PLAYER_FULL, now.plus(linkLifetime), null, null, operatorUserId, now);
+                tokenCipher.encrypt(rawToken), SCOPE_PLAYER_FULL, now.plus(Duration.ofDays(configuredDays(userId))), null, null, operatorUserId, now);
         linkRepository.insert(link);
         userRepository.updateAuthMode(userId, PLAYER_LINK_AUTH_MODE);
         sessionRepository.revokeAllActiveByUserId(userId, now);
@@ -95,6 +107,19 @@ public class PlayerLinkAuthenticationService {
                 Long.toString(userId), "scope=" + SCOPE_PLAYER_FULL);
         long linkId = jdbcLinkId(link.tokenHash());
         return new IssuedLink(linkId, userId, SCOPE_PLAYER_FULL, link.expiresAt(), rawToken);
+    }
+
+    @Transactional
+    public IssuedLink current(long userId, long operatorUserId) {
+        requireAdmin(operatorUserId);
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        PlayerAccessLink link = linkRepository.findLatestByUserId(userId)
+                .orElseThrow(() -> BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "当前没有玩家链接"));
+        if (link.tokenCiphertext() == null) {
+            throw BusinessException.notFound("PLAYER_LINK_DISPLAY_UNAVAILABLE", "当前链接需要刷新后才能展示");
+        }
+        return issuedFromStored(link);
     }
 
     @Transactional
@@ -123,6 +148,35 @@ public class PlayerLinkAuthenticationService {
     }
 
     @Transactional
+    public void restore(long userId, long linkId, long operatorUserId) {
+        requireAdmin(operatorUserId);
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        linkRepository.findByIdAndUserId(linkId, userId)
+                .orElseThrow(() -> BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在"));
+        if (linkRepository.restore(linkId, userId) != 1) {
+            throw BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在");
+        }
+        audit(operatorUserId, "POST", "/api/admin/player-desk/players/" + userId + "/access-links/" + linkId + "/restore",
+                Long.toString(linkId), "revoked=false");
+    }
+
+    @Transactional
+    public Expiration updateExpiration(long userId, int days, long operatorUserId) {
+        requireAdmin(operatorUserId);
+        if (days < 1 || days > 3650) {
+            throw BusinessException.badRequest("PLAYER_LINK_EXPIRATION_INVALID", "链接有效期必须为 1 到 3650 天");
+        }
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        PlayerAccessLink link = linkRepository.findLatestByUserId(userId).orElse(null);
+        linkRepository.saveConfiguredDays(userId, days);
+        audit(operatorUserId, "PATCH", "/api/admin/player-desk/players/" + userId + "/access-links/expiration",
+                Long.toString(userId), "nextRefreshDays=" + days);
+        return new Expiration(link == null ? 0 : link.id(), link == null ? null : link.expiresAt(), days);
+    }
+
+    @Transactional
     public ExchangeResult exchange(String rawToken, TokenService.RequestMetadata metadata) {
         if (rawToken == null || rawToken.isBlank() || rawToken.codePoints().anyMatch(Character::isWhitespace)) {
             throw invalidLink();
@@ -130,7 +184,7 @@ public class PlayerLinkAuthenticationService {
         Instant now = clock.instant();
         PlayerAccessLink link = linkRepository.findUsableByHashForUpdate(TokenService.sha256(rawToken), now)
                 .orElseThrow(PlayerLinkAuthenticationService::invalidLink);
-        if (!link.usableAt(now) || linkRepository.markUsed(link.id(), now) != 1) {
+        if (!link.usableAt(now) || linkRepository.touchUsed(link.id(), now) != 1) {
             throw invalidLink();
         }
         TokenService.IssuedTokens tokens = tokenService.issuePlayerLink(link.userId(), "player-link", metadata);
@@ -144,7 +198,7 @@ public class PlayerLinkAuthenticationService {
     private IssuedLink issueInternal(long userId, long operatorUserId, Instant now) {
         String rawToken = randomToken();
         PlayerAccessLink link = new PlayerAccessLink(0L, userId, TokenService.sha256(rawToken),
-                SCOPE_PLAYER_FULL, now.plus(linkLifetime), null, null, operatorUserId, now);
+                tokenCipher.encrypt(rawToken), SCOPE_PLAYER_FULL, now.plus(Duration.ofDays(configuredDays(userId))), null, null, operatorUserId, now);
         linkRepository.insert(link);
         userRepository.updateAuthMode(userId, PLAYER_LINK_AUTH_MODE);
         audit(operatorUserId, "POST", "/api/admin/player-desk/players/" + userId + "/access-links/rotate",
@@ -155,6 +209,15 @@ public class PlayerLinkAuthenticationService {
     private long jdbcLinkId(String tokenHash) {
         return linkRepository.findByHash(tokenHash).map(PlayerAccessLink::id)
                 .orElseThrow(() -> new IllegalStateException("创建玩家链接后未取得 ID"));
+    }
+
+    private int configuredDays(long userId) {
+        int days = linkRepository.findConfiguredDays(userId, defaultLinkDays);
+        return days > 0 ? days : defaultLinkDays;
+    }
+
+    private IssuedLink issuedFromStored(PlayerAccessLink link) {
+        return new IssuedLink(link.id(), link.userId(), link.scope(), link.expiresAt(), tokenCipher.decrypt(link.tokenCiphertext()));
     }
 
     private PlayerLinkTarget target(long userId) {
@@ -193,6 +256,7 @@ public class PlayerLinkAuthenticationService {
     }
 
     public record IssuedLink(long linkId, long userId, String scope, Instant expiresAt, String rawToken) {}
+    public record Expiration(long linkId, Instant expiresAt, int days) {}
 
     public record ExchangeResult(TokenService.IssuedTokens tokens, AuthenticationService.CurrentUser user) {}
 

@@ -13,6 +13,7 @@ import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.playerauth.domain.PlayerAccessLink;
 import com.xupan.server.playerauth.repository.PlayerAccessLinkRepository;
+import com.xupan.server.playerauth.service.PlayerLinkAuthenticationService;
 import com.xupan.server.system.domain.TestPlayerBehaviorMode;
 import com.xupan.server.web.BusinessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -38,6 +39,7 @@ public class PlayerDeskAdminService {
     private final UserRepository userRepository;
     private final SessionRepository sessionRepository;
     private final PlayerAccessLinkRepository accessLinkRepository;
+    private final PlayerLinkAuthenticationService playerLinkAuthenticationService;
 
     public PlayerDeskAdminService(PlayerDeskRepository repository, PermissionService permissionService,
                                   UserAdminService userAdminService, TestPlayerAdminService testPlayerAdminService,
@@ -45,7 +47,8 @@ public class PlayerDeskAdminService {
                                   TestPlayerBehaviorService behaviorService, ChatMessageService chatMessageService,
                                   JdbcTemplate jdbc, GameDataRepository gameDataRepository,
                                   UserRepository userRepository, SessionRepository sessionRepository,
-                                  PlayerAccessLinkRepository accessLinkRepository) {
+                                  PlayerAccessLinkRepository accessLinkRepository,
+                                  PlayerLinkAuthenticationService playerLinkAuthenticationService) {
         this.repository = repository;
         this.permissionService = permissionService;
         this.userAdminService = userAdminService;
@@ -59,6 +62,7 @@ public class PlayerDeskAdminService {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.accessLinkRepository = accessLinkRepository;
+        this.playerLinkAuthenticationService = playerLinkAuthenticationService;
     }
 
     @Transactional(readOnly = true)
@@ -103,7 +107,7 @@ public class PlayerDeskAdminService {
         List<WalletLedgerEntry> ledger = walletService.ledgerForAdminHistory(userId, 20);
         PlayerAccessLink link = accessLinkRepository.findLatestByUserId(userId).orElse(null);
         LinkStatus linkStatus = link == null ? null : new LinkStatus(link.id(), link.scope(), link.expiresAt(), link.revokedAt(), link.lastUsedAt(),
-                link.revokedAt() == null && link.expiresAt().isAfter(Instant.now()));
+                link.revokedAt() == null && link.expiresAt().isAfter(Instant.now()), accessLinkRepository.findConfiguredDays(userId, 7));
         return new Detail(player, linkStatus, repository.findBehavior(userId).orElse(null),
                 statistics, ledger, repository.actions(userId, 20), gameDataRepository.findBetsByAccountId(wallet.accountId(), null, 20));
     }
@@ -112,6 +116,7 @@ public class PlayerDeskAdminService {
     public long createNormal(String displayName, long operator) {
         requireAdmin(operator);
         long id = userAdminService.createPlayerLinkUser(displayName, operator);
+        playerLinkAuthenticationService.issue(id, operator);
         audit(operator, "POST", "/api/admin/player-desk/players/normal", Long.toString(id), "playerKind=NORMAL");
         return id;
     }
@@ -176,6 +181,41 @@ public class PlayerDeskAdminService {
         requireAdmin(operator);
         walletService.adjust(operator, userId, amount, reason, key);
         return detail(userId, operator);
+    }
+
+    @Transactional
+    public Detail updateNickname(long userId, String displayName, long operator) {
+        requireAdmin(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId);
+        String nextName = displayName == null ? "" : displayName.trim();
+        if (nextName.isBlank() || nextName.length() > 128) {
+            throw BusinessException.badRequest("PLAYER_NICKNAME_INVALID", "昵称不能为空且不能超过128个字符");
+        }
+        if (nextName.equals(player.displayName())) return detail(userId, operator);
+        long changesToday = jdbc.queryForObject("SELECT COUNT(*) FROM player_name_change_record WHERE user_id=? AND changed_at >= CURRENT_DATE", Long.class, userId);
+        if (changesToday >= 3) {
+            throw BusinessException.badRequest("PLAYER_NICKNAME_DAILY_LIMIT", "今日换名次数已用完");
+        }
+        if (jdbc.queryForObject("SELECT COUNT(*) FROM sys_user WHERE (display_name=? OR username=?) AND id<>? AND status<>'DELETED'", Integer.class, nextName, nextName, userId) > 0) {
+            throw BusinessException.conflict("PLAYER_NICKNAME_EXISTS", "昵称已存在");
+        }
+        jdbc.update("UPDATE sys_user SET display_name=?, username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", nextName, nextName, userId);
+        jdbc.update("UPDATE demo_user_account SET display_name=?, updated_at=CURRENT_TIMESTAMP WHERE sys_user_id=?", nextName, userId);
+        jdbc.update("INSERT INTO player_name_change_record(user_id, old_display_name, new_display_name) VALUES (?, ?, ?)",
+                userId, player.displayName(), nextName);
+        audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/nickname", Long.toString(userId),
+                "oldName=" + player.displayName() + ",newName=" + nextName);
+        return detail(userId, operator);
+    }
+
+    @Transactional(readOnly = true)
+    public NameHistory nameHistory(long userId, long operator) {
+        requireAdmin(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, true);
+        long changesToday = jdbc.queryForObject("SELECT COUNT(*) FROM player_name_change_record WHERE user_id=? AND changed_at >= CURRENT_DATE", Long.class, userId);
+        List<NameChange> records = jdbc.query("SELECT id, old_display_name, new_display_name, changed_at FROM player_name_change_record WHERE user_id=? ORDER BY id DESC LIMIT 30",
+                (rs, n) -> new NameChange(rs.getLong("id"), rs.getString("old_display_name"), rs.getString("new_display_name"), rs.getTimestamp("changed_at").toInstant()), userId);
+        return new NameHistory(player.displayName(), Math.max(0, 3 - changesToday), records);
     }
 
     @Transactional(readOnly = true)
@@ -258,5 +298,7 @@ public class PlayerDeskAdminService {
                          WalletStatistics walletStatistics, List<WalletLedgerEntry> ledger,
                          List<PlayerDeskRepository.ActionRow> actions, List<GameDataRepository.BetRecord> bets) {}
     public record LinkStatus(long linkId, String scope, Instant expiresAt, Instant revokedAt,
-                             Instant lastUsedAt, boolean active) {}
+                             Instant lastUsedAt, boolean active, int configuredDays) {}
+    public record NameHistory(String currentName, long remainingToday, List<NameChange> records) {}
+    public record NameChange(long id, String oldName, String newName, Instant changedAt) {}
 }

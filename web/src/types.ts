@@ -79,6 +79,19 @@ export interface PlayerAccessLinkView {
   accessUrl: string
 }
 
+export interface PlayerNameChange {
+  id: number
+  oldName: string
+  newName: string
+  changedAt: string
+}
+
+export interface PlayerNameHistory {
+  currentName: string
+  remainingToday: number
+  records: PlayerNameChange[]
+}
+
 export type ChatMessageType = 'USER_CHAT' | 'USER_BET' | 'ROBOT' | 'SYSTEM' | 'RESULT' | 'ADMIN'
 export type ChatSenderType = 'USER' | 'ROBOT' | 'SYSTEM' | 'ADMIN'
 export type ChatMessageStatus = 'ACTIVE' | 'RECALLED' | 'DELETED'
@@ -258,6 +271,70 @@ export interface PlayerDeskDetail extends PlayerDeskItem {
   recentActions: PlayerActionSummary[]
 }
 
+export interface PlayerDeskPointRecordBet {
+  id: string
+  issueNumber: string
+  ballNumber: number
+  playType: string
+  parameters: number[]
+  stake: number
+  settlementStatus: string
+  netProfit: number | null
+  explanation?: string | null
+  createdAt: string
+  settledAt?: string | null
+}
+
+export interface PlayerDeskPointOperation {
+  id: number
+  operationType: string
+  amount: number
+  balanceBefore: number
+  balanceAfter: number
+  operatorName: string | null
+  relatedBetId: number | null
+  issueNumber: string | null
+  reason: string | null
+  createdAt: string
+}
+
+export interface PlayerDeskPointRecordPlayer {
+  userId: number
+  memberCode: string
+  displayName: string
+  playerKind: PlayerKind
+  openingBalance: number
+  betCount: number
+  settledBetCount: number
+  turnover: number
+  netProfit: number
+  topUp: number
+  down: number
+  closingBalance: number
+  bets: PlayerDeskPointRecordBet[]
+  pointOperations: PlayerDeskPointOperation[]
+}
+
+export interface PlayerDeskPointRecordSummary {
+  playerCount: number
+  betCount: number
+  settledBetCount: number
+  turnover: number
+  netProfit: number
+  topUp: number
+  down: number
+  openingBalance: number
+  closingBalance: number
+}
+
+export interface PlayerDeskPointRecords {
+  kind: PlayerKind
+  businessDate: string
+  availableDates: string[]
+  summary: PlayerDeskPointRecordSummary
+  players: PlayerDeskPointRecordPlayer[]
+}
+
 export interface PlayerAccessLinkStatusView {
   linkId: number
   scope: 'PLAYER_FULL' | 'CHAT_ONLY' | string
@@ -265,6 +342,7 @@ export interface PlayerAccessLinkStatusView {
   revokedAt: string | null
   lastUsedAt: string | null
   active: boolean
+  configuredDays: number
 }
 
 export interface CreateNormalPlayerRequest {
@@ -272,9 +350,7 @@ export interface CreateNormalPlayerRequest {
 }
 
 export interface CreateBotPlayerRequest {
-  userCode: string
   displayName: string
-  avatarKey?: string
 }
 
 export interface PlayerBalanceAdjustmentRequest {
