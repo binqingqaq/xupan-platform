@@ -108,7 +108,9 @@ public class PlayerDeskAdminService {
         PlayerAccessLink link = accessLinkRepository.findLatestByUserId(userId).orElse(null);
         LinkStatus linkStatus = link == null ? null : new LinkStatus(link.id(), link.scope(), link.expiresAt(), link.revokedAt(), link.lastUsedAt(),
                 link.revokedAt() == null && link.expiresAt().isAfter(Instant.now()), accessLinkRepository.findConfiguredDays(userId, 7));
-        return new Detail(player, linkStatus, repository.findBehavior(userId).orElse(null),
+        PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId).orElse(null);
+        return new Detail(player, linkStatus,
+                behavior == null ? null : new BehaviorConfig(behavior, repository.findPlayTypes(behavior.id())),
                 statistics, ledger, repository.actions(userId, 20), gameDataRepository.findBetsByAccountId(wallet.accountId(), null, 20));
     }
 
@@ -220,25 +222,40 @@ public class PlayerDeskAdminService {
     }
 
     @Transactional(readOnly = true)
-    public PlayerDeskRepository.Behavior behavior(long userId, long operator) {
+    public BehaviorConfig behavior(long userId, long operator) {
         requireAdmin(operator);
         PlayerDeskRepository.PlayerRow player = row(userId);
         if (!"BOT".equals(player.playerKind())) return null;
-        return repository.findBehavior(userId).orElseGet(() -> repository.ensureBehavior(player.accountId()));
+        PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId)
+                .orElseGet(() -> repository.ensureBehavior(player.accountId()));
+        return new BehaviorConfig(behavior, repository.findPlayTypes(behavior.id()));
     }
 
     @Transactional
-    public PlayerDeskRepository.Behavior updateBehavior(long userId, String mode, int bets, BigDecimal min,
-                                                         BigDecimal max, boolean chat, int messages, long operator) {
+    public BehaviorConfig updateBehavior(long userId, String mode, int bets, String stakeRangeCode,
+                                         String stakeRoundTen, int activityPercent, boolean playRandom,
+                                         List<String> playTypes, int topupProbabilityPercent,
+                                         BigDecimal topupMin, BigDecimal topupMax, long operator) {
         requireAdmin(operator);
         PlayerDeskRepository.PlayerRow player = row(userId);
         if (!"BOT".equals(player.playerKind())) throw BusinessException.badRequest("PLAYER_BEHAVIOR_NOT_APPLICABLE", "普通玩家不支持托行为配置");
-        if (!isMode(mode) || bets < 0 || bets > 20 || messages < 0 || messages > 20 || min == null || max == null || min.signum() <= 0 || max.compareTo(min) < 0) {
+        BigDecimal[] bounds = stakeBounds(stakeRangeCode);
+        List<String> selected = playTypes == null ? List.of() : playTypes.stream().distinct().toList();
+        if (!isMode(mode) || bets < 0 || bets > 20 || bounds == null
+                || !isRoundTen(stakeRoundTen) || activityPercent < 0 || activityPercent > 100
+                || selected.isEmpty() && !playRandom
+                || selected.stream().anyMatch(playType -> !isPlayType(playType))
+                || topupProbabilityPercent < 0 || topupProbabilityPercent > 100
+                || topupMin == null || topupMax == null || topupMin.signum() <= 0
+                || topupMax.compareTo(topupMin) < 0) {
             throw BusinessException.badRequest("PLAYER_BEHAVIOR_INVALID", "托行为配置无效");
         }
-        PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, mode, bets, min, max, chat, messages);
+        PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, mode, bets, bounds[0], bounds[1],
+                false, 0, stakeRangeCode, stakeRoundTen, activityPercent, playRandom,
+                topupProbabilityPercent, topupMin, topupMax);
+        repository.replacePlayTypes(result.id(), selected);
         audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/behavior", Long.toString(userId), "mode=" + mode);
-        return result;
+        return new BehaviorConfig(result, repository.findPlayTypes(result.id()));
     }
 
     @Transactional
@@ -294,8 +311,36 @@ public class PlayerDeskAdminService {
         }
     }
 
+    /** 下注范围档位；RANDOM 表示在全局最小到最大之间随机。 */
+    private static BigDecimal[] stakeBounds(String code) {
+        if (code == null) return null;
+        return switch (code) {
+            case "RANDOM" -> new BigDecimal[]{new BigDecimal("30"), new BigDecimal("30000")};
+            case "30-300" -> new BigDecimal[]{new BigDecimal("30"), new BigDecimal("300")};
+            case "300-1000" -> new BigDecimal[]{new BigDecimal("300"), new BigDecimal("1000")};
+            case "1000-3000" -> new BigDecimal[]{new BigDecimal("1000"), new BigDecimal("3000")};
+            case "3000-10000" -> new BigDecimal[]{new BigDecimal("3000"), new BigDecimal("10000")};
+            case "10000-30000" -> new BigDecimal[]{new BigDecimal("10000"), new BigDecimal("30000")};
+            default -> null;
+        };
+    }
+
+    private static boolean isRoundTen(String value) {
+        return "RANDOM".equals(value) || "OFF".equals(value) || "ON".equals(value);
+    }
+
+    private static boolean isPlayType(String value) {
+        try {
+            com.xupan.server.game.domain.PlayType.valueOf(value);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     public record Page(List<PlayerDeskRepository.PlayerRow> items, int page, int pageSize, long total) {}
-    public record Detail(PlayerDeskRepository.PlayerRow player, LinkStatus linkStatus, PlayerDeskRepository.Behavior behavior,
+    public record BehaviorConfig(PlayerDeskRepository.Behavior behavior, List<String> playTypes) {}
+    public record Detail(PlayerDeskRepository.PlayerRow player, LinkStatus linkStatus, BehaviorConfig behavior,
                          WalletStatistics walletStatistics, List<WalletLedgerEntry> ledger,
                          List<PlayerDeskRepository.ActionRow> actions, List<GameDataRepository.BetRecord> bets) {}
     public record LinkStatus(long linkId, String scope, Instant expiresAt, Instant revokedAt,

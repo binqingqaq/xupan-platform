@@ -25,6 +25,9 @@ const config: BettingConfigView = {
   addLimit: 20000,
   playerMaxStake: 5001,
   playerMinStake: 1,
+  botIssueTotalBets: 20,
+  botIssueTotalStake: 5000,
+  botNightActivityOverridePercent: null,
 }
 
 describe('betting config drafts', () => {
@@ -36,7 +39,8 @@ describe('betting config drafts', () => {
     })
     expect(createDisplayDraft({ ...config, specialOdds: 19.5 }).specialOdds).toBe('19.5')
     expect(createLimitDraft(config).playerMinStake).toBe('1')
-    expect(Object.keys(createLimitDraft(config))).toHaveLength(13)
+    expect(Object.keys(createLimitDraft(config))).toHaveLength(16)
+    expect(createLimitDraft(config).botNightActivityOverridePercent).toBe('')
   })
 
   it('accepts only whole numbers for integer fields', () => {
@@ -73,5 +77,20 @@ describe('betting config drafts', () => {
     expect(validateLimitDraft({ ...draft, angleLimit: '10.5' }).ok).toBe(false)
     const inverted = validateLimitDraft({ ...draft, playerMaxStake: '1', playerMinStake: '10' })
     expect(inverted).toEqual({ ok: false, message: '玩家最小注额不能大于玩家最高注额' })
+  })
+
+  it('treats the night activity override as optional and range checked', () => {
+    const draft = createLimitDraft(config)
+    const empty = validateLimitDraft({ ...draft, botNightActivityOverridePercent: '' })
+    expect(empty.ok).toBe(true)
+    if (empty.ok) expect(empty.limits.botNightActivityOverridePercent).toBeNull()
+
+    const value = validateLimitDraft({ ...draft, botNightActivityOverridePercent: '50' })
+    expect(value.ok).toBe(true)
+    if (value.ok) expect(value.limits.botNightActivityOverridePercent).toBe(50)
+
+    expect(validateLimitDraft({ ...draft, botNightActivityOverridePercent: '101' }).ok).toBe(false)
+    expect(validateLimitDraft({ ...draft, botIssueTotalBets: '0' }).ok).toBe(false)
+    expect(validateLimitDraft({ ...draft, botIssueTotalStake: '' }).ok).toBe(false)
   })
 })

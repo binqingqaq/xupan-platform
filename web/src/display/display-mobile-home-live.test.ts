@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { MobileDisplayHomeResponse } from '../types'
 import { displayMobileLotteryCards } from './display-mobile-home-data'
 import {
@@ -61,5 +63,11 @@ describe('display mobile homepage live data', () => {
     expect(heroIndexAfterSwipe(0, -60, 42, 4)).toBe(1)
     expect(heroIndexAfterSwipe(0, 60, 42, 4)).toBe(3)
     expect(heroIndexAfterSwipe(2, 12, 42, 4)).toBe(2)
+  })
+
+  it('uses unique keys for repeated dragon and tiger summary values', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/views/DisplayMobileHome.vue'), 'utf8')
+    expect(source).not.toContain('v-for="item in card.summary" :key="item"')
+    expect(source).toContain('v-for="(item, index) in card.summary"')
   })
 })

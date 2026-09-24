@@ -21,7 +21,7 @@ public final class ChatCommandParser {
         }
         return switch (text.trim()) {
             case "查" -> Optional.of(new Command(Type.BALANCE, null));
-            case "玩法" -> Optional.of(new Command(Type.RULES, null));
+            case "玩法", "说明" -> Optional.of(new Command(Type.RULES, null));
             case "取消" -> Optional.of(new Command(Type.CANCEL, null));
             case "流水" -> Optional.of(new Command(Type.DAILY_SUMMARY, null));
             default -> parsePointRequest(text.trim());

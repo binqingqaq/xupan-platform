@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
               <span v-for="(number, index) in card.numbers" :key="`${card.key}-${number}-${index}`" class="display-mobile-number" :class="numberClass(card, index)">{{ number }}</span>
             </div>
             <div class="display-mobile-summary-row">
-              <span v-for="item in card.summary" :key="item">{{ item }}</span>
+              <span v-for="(item, index) in card.summary" :key="`${card.key}-summary-${index}`">{{ item }}</span>
             </div>
           </div>
 
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
               <span v-for="(number, index) in card.numbers" :key="`${card.key}-${number}-${index}`" class="display-mobile-number" :class="numberClass(card, index)">{{ number }}</span>
             </div>
             <div class="display-mobile-summary-row">
-              <span v-for="item in card.summary" :key="item">{{ item }}</span>
+              <span v-for="(item, index) in card.summary" :key="`${card.key}-summary-${index}`">{{ item }}</span>
             </div>
           </div>
 
@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
               <span v-for="(number, index) in card.numbers" :key="`${card.key}-${number}-${index}`" class="display-mobile-number" :class="numberClass(card, index)">{{ number }}</span>
             </div>
             <div class="display-mobile-summary-row">
-              <span v-for="item in card.summary" :key="item">{{ item }}</span>
+              <span v-for="(item, index) in card.summary" :key="`${card.key}-summary-${index}`">{{ item }}</span>
             </div>
           </div>
 
@@ -250,7 +250,7 @@ onBeforeUnmount(() => {
               <span v-for="(number, index) in card.numbers" :key="`${card.key}-${number}-${index}`" class="display-mobile-number" :class="numberClass(card, index)">{{ number }}</span>
             </div>
             <div class="display-mobile-summary-row">
-              <span v-for="item in card.summary" :key="item">{{ item }}</span>
+              <span v-for="(item, index) in card.summary" :key="`${card.key}-summary-${index}`">{{ item }}</span>
             </div>
           </div>
         </article>

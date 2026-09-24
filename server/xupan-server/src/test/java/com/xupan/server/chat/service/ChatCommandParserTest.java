@@ -14,6 +14,8 @@ class ChatCommandParserTest {
                 .isEqualTo(ChatCommandParser.Type.BALANCE);
         assertThat(ChatCommandParser.parse("玩法")).get().extracting(ChatCommandParser.Command::type)
                 .isEqualTo(ChatCommandParser.Type.RULES);
+        assertThat(ChatCommandParser.parse("说明")).get().extracting(ChatCommandParser.Command::type)
+                .isEqualTo(ChatCommandParser.Type.RULES);
         assertThat(ChatCommandParser.parse("取消")).get().extracting(ChatCommandParser.Command::type)
                 .isEqualTo(ChatCommandParser.Type.CANCEL);
         assertThat(ChatCommandParser.parse("流水")).get().extracting(ChatCommandParser.Command::type)

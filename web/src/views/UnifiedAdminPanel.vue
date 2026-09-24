@@ -7,6 +7,7 @@ import PlayerWorkbenchModule from '../components/admin/PlayerWorkbenchModule.vue
 import BetBoardPanel from '../components/admin/BetBoardPanel.vue'
 import AdminWelcomeControlPanel from '../components/admin/AdminWelcomeControlPanel.vue'
 import AdminDomainFooterPanel from '../components/admin/AdminDomainFooterPanel.vue'
+import AdminBottomControlPanel from '../components/admin/AdminBottomControlPanel.vue'
 import ReportControlPanel from '../components/admin/ReportControlPanel.vue'
 import PointsApprovalPanel from '../components/admin/PointsApprovalPanel.vue'
 import RecentPointsRecordsPanel from '../components/admin/RecentPointsRecordsPanel.vue'
@@ -17,6 +18,11 @@ const currentGame = ref<GameView | null>(null)
 const loading = ref(true)
 const error = ref('')
 const pointsRefreshToken = ref(0)
+const bottomControlRaised = ref(false)
+
+function toggleBottomControlPosition() {
+  bottomControlRaised.value = !bottomControlRaised.value
+}
 
 const systemStatus = computed(() => {
   if (loading.value) return '正在同步'
@@ -107,7 +113,14 @@ onMounted(() => { void loadState() })
         <section class="unified-player-workbench" aria-label="玩家工作台">
           <PlayerWorkbenchModule embedded @points-changed="refreshRecentPoints" />
         </section>
-        <AdminDomainFooterPanel />
+        <template v-if="bottomControlRaised">
+          <AdminBottomControlPanel @raise="toggleBottomControlPosition" />
+          <AdminDomainFooterPanel />
+        </template>
+        <template v-else>
+          <AdminDomainFooterPanel />
+          <AdminBottomControlPanel @raise="toggleBottomControlPosition" />
+        </template>
       </section>
     </div>
 

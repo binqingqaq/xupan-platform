@@ -150,7 +150,10 @@ public class PlayerDeskAdminController {
 
     @PutMapping("/players/{userId}/behavior")
     public Behavior updateBehavior(Authentication auth, @PathVariable long userId, @Valid @RequestBody BehaviorRequest request) {
-        return Behavior.from(service.updateBehavior(userId, request.mode(), request.betsPerIssue(), request.stakeMin(), request.stakeMax(), request.chatEnabled(), request.messagesPerIssue(), user(auth)));
+        return Behavior.from(service.updateBehavior(userId, request.mode(), request.betsPerIssue(),
+                request.stakeRangeCode(), request.stakeRoundTen(), request.activityPercent(),
+                request.playRandom(), request.playTypes(), request.topupProbabilityPercent(),
+                request.topupMin(), request.topupMax(), user(auth)));
     }
 
     @PostMapping("/players/{userId}/behavior/run-now")
@@ -260,8 +263,18 @@ public class PlayerDeskAdminController {
     public record Ledger(long id, long accountId, long userId, String operationType, BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter, Long operatorUserId, String operatorName, String idempotencyKey, Long relatedBetId, String issueNumber, String reason, Instant createdAt) {
         static Ledger from(WalletLedgerEntry x) { return new Ledger(x.id(), x.accountId(), x.userId(), x.operationType().name(), x.amount(), x.balanceBefore(), x.balanceAfter(), x.operatorUserId(), x.operatorName(), x.idempotencyKey(), x.relatedBetId(), x.issueNumber(), x.reason(), x.createdAt()); }
     }
-    public record Behavior(Long id, Long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin, BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt, String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt) {
-        static Behavior from(PlayerDeskRepository.Behavior x) { return x == null ? null : new Behavior(x.id(), x.accountId(), x.mode(), x.enabled(), x.betsPerIssue(), x.stakeMin(), x.stakeMax(), x.chatEnabled(), x.messagesPerIssue(), x.nextRunAt(), x.lastIssueNumber(), x.lastErrorCode(), x.lastErrorMessage(), x.version(), x.updatedAt()); }
+    public record Behavior(Long id, Long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin, BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt, String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt,
+                           String stakeRangeCode, String stakeRoundTen, int activityPercent, boolean playRandom, List<String> playTypes,
+                           int topupProbabilityPercent, BigDecimal topupMin, BigDecimal topupMax) {
+        static Behavior from(PlayerDeskAdminService.BehaviorConfig x) {
+            if (x == null) return null;
+            PlayerDeskRepository.Behavior b = x.behavior();
+            return new Behavior(b.id(), b.accountId(), b.mode(), b.enabled(), b.betsPerIssue(), b.stakeMin(),
+                    b.stakeMax(), b.chatEnabled(), b.messagesPerIssue(), b.nextRunAt(), b.lastIssueNumber(),
+                    b.lastErrorCode(), b.lastErrorMessage(), b.version(), b.updatedAt(), b.stakeRangeCode(),
+                    b.stakeRoundTen(), b.activityPercent(), b.playRandom(), x.playTypes(),
+                    b.topupProbabilityPercent(), b.topupMin(), b.topupMax());
+        }
     }
     public record Action(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status, int attempts, String errorCode, String errorMessage, Long messageId, Long betId, Instant createdAt, Instant updatedAt) {
         static Action from(PlayerDeskRepository.ActionRow x) { return new Action(x.id(), x.issueNumber(), x.actionNo(), x.actionType(), x.sourceText(), x.status(), x.attempts(), x.errorCode(), x.errorMessage(), x.messageId(), x.betId(), x.createdAt(), x.updatedAt()); }
@@ -289,7 +302,12 @@ public class PlayerDeskAdminController {
             return new NameChange(x.id(), x.oldName(), x.newName(), x.changedAt());
         }
     }
-    public record BehaviorRequest(@NotBlank String mode, @Min(0) @Max(20) int betsPerIssue, @NotNull @DecimalMin("0.01") BigDecimal stakeMin, @NotNull @DecimalMin("0.01") BigDecimal stakeMax, boolean chatEnabled, @Min(0) @Max(20) int messagesPerIssue) {}
+    public record BehaviorRequest(@NotBlank String mode, @Min(0) @Max(20) int betsPerIssue,
+                                  @NotBlank String stakeRangeCode, @NotBlank String stakeRoundTen,
+                                  @Min(0) @Max(100) int activityPercent, boolean playRandom,
+                                  List<String> playTypes, @Min(0) @Max(100) int topupProbabilityPercent,
+                                  @NotNull @DecimalMin("0.01") BigDecimal topupMin,
+                                  @NotNull @DecimalMin("0.01") BigDecimal topupMax) {}
     public record MessageRequest(@NotBlank String content, @NotBlank String clientMessageId) {}
     public record ReviewRequest(String reason) {}
     public record PointRequest(long id, long userId, String requestType, BigDecimal amount, String status,

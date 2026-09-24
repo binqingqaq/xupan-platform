@@ -596,11 +596,10 @@ function appendToken(token: string) {
     流水: '流水',
     历史: '历史',
     取消: '取消',
-    说明: '玩法',
   }
   if (token === '说明') {
-    noticeOpen.value = true
-    keyboardOpen.value = false
+    messageInput.value = '说明'
+    resizeMessageInput()
     return
   }
   const uniqueText = uniqueTokens[token]
@@ -824,7 +823,16 @@ async function submitMessage() {
   if (!text) return
   messageInput.value = ''
   resizeMessageInput()
-  await sendPlainTextMessage(text)
+  const sent = await sendPlainTextMessage(text)
+  if (sent && isRulesRequest(text)) {
+    keyboardOpen.value = false
+    noticeOpen.value = true
+  }
+}
+
+// 玩法说明按“发出去才弹”的规则处理：消息对所有人可见，弹层只在发送者本机打开。
+function isRulesRequest(text: string) {
+  return text === '说明' || text === '玩法'
 }
 
 async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()): Promise<boolean> {
@@ -1165,7 +1173,7 @@ onUnmounted(() => {
               </template>
             </div>
             <div v-if="!keyboardFlat" class="keyboard-second-row-buttons">
-              <button v-for="token in keyboardSecondRowActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === (token === '说明' ? '玩法' : token) }]" @click="appendToken(token)">{{ token }}</button>
+              <button v-for="token in keyboardSecondRowActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token }]" @click="appendToken(token)">{{ token }}</button>
             </div>
           </div>
           <div class="keyboard-panel keyboard-number-panel">
@@ -1175,7 +1183,7 @@ onUnmounted(() => {
           </div>
           <div v-if="keyboardFlat" class="keyboard-action-panel">
             <div class="keyboard-buttons">
-              <button v-for="token in keyboardActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === (token === '说明' ? '玩法' : token) }]" @click="appendToken(token)">{{ token }}</button>
+              <button v-for="token in keyboardActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token }]" @click="appendToken(token)">{{ token }}</button>
             </div>
           </div>
         </div>
@@ -1183,7 +1191,7 @@ onUnmounted(() => {
       <div v-if="keyboardOpen && interfaceMode === 'ui2'" class="reference-keyboard interface-two-keyboard">
         <div class="interface-two-keyboard-grid">
           <div v-for="(row, rowIndex) in interfaceTwoKeyboardRows" :key="`interface-two-row-${rowIndex}`" class="interface-two-keyboard-row">
-            <button v-for="token in row" :key="`interface-two-${rowIndex}-${token}`" type="button" :class="[keyboardKeyClass(token), { active: messageInput === (token === '说明' ? '玩法' : token), selected: token === '♫' && voiceEnabled }]" @click="appendToken(token)">{{ token }}</button>
+            <button v-for="token in row" :key="`interface-two-${rowIndex}-${token}`" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token, selected: token === '♫' && voiceEnabled }]" @click="appendToken(token)">{{ token }}</button>
           </div>
         </div>
       </div>

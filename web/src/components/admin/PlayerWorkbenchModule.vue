@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../../api'
-import { businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation, validatePlayerMessage } from '../../playerDesk'
+import { BOT_PLAY_TYPES, BOT_PLAY_TYPE_CODES, STAKE_RANGE_CODES, STAKE_RANGE_LABELS, STAKE_ROUND_TEN_LABELS, STAKE_ROUND_TEN_OPTIONS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation, validatePlayerMessage } from '../../playerDesk'
 import type { PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskPointRecords, PlayerDeskSummary, PlayerNameHistory } from '../../types'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -28,7 +28,42 @@ const normalDraft = reactive({ displayName: '' })
 const botDraft = reactive({ displayName: '' })
 const pointDraft = reactive({ amount: 100, reason: '', direction: 'grant' as 'grant' | 'adjust' })
 const messageDraft = reactive({ content: '', clientMessageId: '' })
-const behaviorDraft = reactive({ mode: 'MANUAL' as 'AUTOMATIC' | 'MANUAL', betsPerIssue: 0, stakeMin: 100, stakeMax: 100, chatEnabled: false, messagesPerIssue: 0 })
+const behaviorDraft = reactive({
+  mode: 'MANUAL' as 'AUTOMATIC' | 'MANUAL',
+  betsPerIssue: 0,
+  stakeRangeCode: '30-300',
+  stakeRoundTen: 'OFF' as 'RANDOM' | 'OFF' | 'ON',
+  activityPercent: 100,
+  playRandom: true,
+  playTypes: [] as string[],
+  topupProbabilityPercent: 0,
+  topupMin: 100,
+  topupMax: 1000,
+})
+const playModalOpen = ref(false)
+const playDraft = ref<string[]>([])
+const playSummary = computed(() => {
+  if (behaviorDraft.playRandom || behaviorDraft.playTypes.length >= BOT_PLAY_TYPE_CODES.length) return '全部玩法（随机）'
+  if (!behaviorDraft.playTypes.length) return '未选择'
+  return BOT_PLAY_TYPES.filter(play => behaviorDraft.playTypes.includes(play.code))
+    .map(play => play.label).join('、')
+})
+
+function openPlayModal() { playDraft.value = [...behaviorDraft.playTypes]; playModalOpen.value = true }
+function closePlayModal() { playModalOpen.value = false }
+function togglePlayDraft(code: string) {
+  playDraft.value = playDraft.value.includes(code)
+    ? playDraft.value.filter(item => item !== code)
+    : [...playDraft.value, code]
+}
+function selectAllPlays() { playDraft.value = [...BOT_PLAY_TYPE_CODES] }
+function selectRandomPlays() { selectAllPlays() }
+function clearPlays() { playDraft.value = [] }
+function confirmPlays() {
+  behaviorDraft.playTypes = [...playDraft.value]
+  behaviorDraft.playRandom = playDraft.value.length >= BOT_PLAY_TYPE_CODES.length
+  playModalOpen.value = false
+}
 const selectedIsBot = computed(() => selected.value?.playerKind === 'BOT')
 const canSubmitPoints = computed(() => validatePointOperation(pointDraft.amount, pointDraft.direction === 'grant' ? '管理员上分' : '管理员下分', 'local', pointDraft.direction).length === 0)
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -152,7 +187,13 @@ async function selectPlayer(userId: number) {
   catch (cause) { error.value = cause instanceof Error ? cause.message : '玩家详情加载失败' }
   finally { detailLoading.value = false }
 }
-function syncBehavior(behavior: PlayerDeskBehavior | null) { Object.assign(behaviorDraft, behavior ?? { mode: 'MANUAL', betsPerIssue: 0, stakeMin: 100, stakeMax: 100, chatEnabled: false, messagesPerIssue: 0 }) }
+function syncBehavior(behavior: PlayerDeskBehavior | null) {
+  Object.assign(behaviorDraft, behavior ?? {
+    mode: 'MANUAL', betsPerIssue: 0, stakeRangeCode: '30-300', stakeRoundTen: 'OFF',
+    activityPercent: 100, playRandom: true, playTypes: [], topupProbabilityPercent: 0,
+    topupMin: 100, topupMax: 1000,
+  })
+}
 async function createNormal() {
   createError.value = ''; const errors = validateNormalPlayerDraft(normalDraft); if (errors.length) { createError.value = errors[0]; return }
   saving.value = true
@@ -181,6 +222,8 @@ async function operatePoints(direction: 'grant' | 'adjust') {
   }
   catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '积分操作失败' } finally { saving.value = false }
 }
+// 工作台按运营要求不再展示「停用玩家/启用玩家」入口；后端状态接口保留，
+// 需要恢复时只需在详情操作区重新挂上这个处理函数。
 async function toggleStatus() {
   if (!selected.value) return
   const next = selected.value.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'; if (!window.confirm(`${next === 'ACTIVE' ? '启用' : '停用'}该玩家？`)) return
@@ -325,12 +368,28 @@ onBeforeUnmount(() => {
       </aside>
       <section class="player-detail-pane" aria-label="玩家详情">
         <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
-        <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button" type="button" :disabled="saving" @click="toggleStatus">{{ selected.status === 'ACTIVE' ? '停用玩家' : '启用玩家' }}</button><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
+        <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
           <div class="player-edit-rows"><div class="player-edit-row"><span>会员ID：<strong>{{ selected.memberCode }}</strong></span><div class="days-editor"><input v-model.number="linkDays" type="number" min="1" max="3650" aria-label="链接有效期天数" /><span>天</span><button class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="saveLinkDays">保存</button><small>剩余 {{ linkDays }} 天</small></div></div><div class="player-edit-row"><label>昵称<input v-model="nicknameDraft" maxlength="128" /></label><button class="outline-button" type="button" :disabled="saving || selected.status === 'DELETED'" @click="updateNickname">更新</button></div><div class="player-edit-actions"><template v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'"><button v-if="selected.linkStatus?.active" class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="revokeAccessLink">拉黑</button><button v-else class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="whitelistPlayer">拉白</button></template><button class="outline-button" type="button" @click="openRenameHistory">换名记录</button></div></div>
           <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div class="section-title"><div><h3>登录链接</h3><span>创建后自动生成；只有点击刷新链接才会更换。</span></div><strong>{{ selected.linkStatus?.active ? '链接有效' : selected.linkStatus?.revokedAt ? '已拉黑（链接保留）' : '链接已失效' }}</strong></div><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
           <div class="detail-grid"><div><span>当前积分</span><strong class="points">{{ money(selected.balance) }}</strong></div><div><span>状态</span><strong>{{ playerStatusLabel(selected.status) }}</strong></div><div><span>创建时间</span><strong>{{ dateTime(selected.createdAt) }}</strong></div><div><span>最后登录</span><strong>{{ dateTime(selected.lastLoginAt) }}</strong></div></div>
           <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="section-title"><h3>积分操作</h3><span>输入积分后直接上分或下分</span></div><div class="point-form"><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('grant')">上分</button><button class="outline-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('adjust')">下分</button></div></section>
-          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><div><h3>托行为模式</h3><span>自动模式每期执行，手动模式只在点击立即执行时执行</span></div><button class="primary-button" :disabled="saving" type="button" @click="runNow">立即执行</button></div><form class="behavior-form" @submit.prevent="saveBehavior"><fieldset class="mode-field wide"><legend>执行模式</legend><label><input v-model="behaviorDraft.mode" type="radio" value="AUTOMATIC" /> 自动：每期下注</label><label><input v-model="behaviorDraft.mode" type="radio" value="MANUAL" /> 手动：点击执行</label></fieldset><label>每期下注单数<input v-model.number="behaviorDraft.betsPerIssue" type="number" min="0" max="20" /></label><label>最低积分<input v-model.number="behaviorDraft.stakeMin" type="number" min="0.01" step="0.01" /></label><label>最高积分<input v-model.number="behaviorDraft.stakeMax" type="number" min="0.01" step="0.01" /></label><label class="switch-label"><input v-model="behaviorDraft.chatEnabled" type="checkbox" /><span>发送聊天消息</span></label><label>每期消息数<input v-model.number="behaviorDraft.messagesPerIssue" type="number" min="0" max="20" /></label><p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p><button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button></form><form class="message-form" @submit.prevent="sendMessage"><label>手动发送测试消息<input v-model="messageDraft.content" placeholder="例如：大家好，或 1番100" /></label><button class="outline-button" :disabled="sending" type="submit">{{ sending ? '发送中...' : '发送' }}</button></form></section>
+          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><div><h3>托行为模式</h3><span>自动模式每期下注且不发送聊天消息，手动模式只在点击立即执行时执行</span></div><button class="primary-button" :disabled="saving" type="button" @click="runNow">立即执行</button></div><form class="behavior-form" @submit.prevent="saveBehavior">
+            <fieldset class="mode-field wide">
+              <legend>执行模式</legend>
+              <label><input v-model="behaviorDraft.mode" type="radio" value="AUTOMATIC" /> 自动：按计划下注</label>
+              <label><input v-model="behaviorDraft.mode" type="radio" value="MANUAL" /> 手动：等同普通玩家</label>
+            </fieldset>
+            <label>下注范围<select v-model="behaviorDraft.stakeRangeCode"><option v-for="code in STAKE_RANGE_CODES" :key="code" :value="code">{{ STAKE_RANGE_LABELS[code] }}</option></select></label>
+            <label>下注金额整十<select v-model="behaviorDraft.stakeRoundTen"><option v-for="code in STAKE_ROUND_TEN_OPTIONS" :key="code" :value="code">{{ STAKE_ROUND_TEN_LABELS[code] }}</option></select></label>
+            <div class="behavior-play-field">下注指定玩法<button class="outline-button" type="button" @click="openPlayModal">选择玩法</button><small>{{ playSummary }}</small></div>
+            <label>活跃比例(%)<input v-model.number="behaviorDraft.activityPercent" type="number" min="0" max="100" /></label>
+            <label>每期注单<input v-model.number="behaviorDraft.betsPerIssue" type="number" min="0" max="20" /></label>
+            <label>随机上分概率(%)<input v-model.number="behaviorDraft.topupProbabilityPercent" type="number" min="0" max="100" /></label>
+            <label>上分金额下限<input v-model.number="behaviorDraft.topupMin" type="number" min="1" step="1" /></label>
+            <label>上分金额上限<input v-model.number="behaviorDraft.topupMax" type="number" min="1" step="1" /></label>
+            <p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p>
+            <button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button>
+          </form><form class="message-form" @submit.prevent="sendMessage"><label>手动发送测试消息<input v-model="messageDraft.content" placeholder="例如：大家好，或 1番100" /></label><button class="outline-button" :disabled="sending" type="submit">{{ sending ? '发送中...' : '发送' }}</button></form></section>
         </template>
       </section>
     </section>
@@ -377,7 +436,27 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
   </section>
-</template>
+
+  <Teleport to="body">
+    <div v-if="playModalOpen" class="play-modal-layer" @click.self="closePlayModal">
+      <section class="play-modal" role="dialog" aria-modal="true" aria-labelledby="play-modal-title">
+        <h3 id="play-modal-title">当前托允许下注的玩法</h3>
+        <div class="play-grid">
+          <label v-for="play in BOT_PLAY_TYPES" :key="play.code" class="play-option">
+            <input type="checkbox" :checked="playDraft.includes(play.code)" @change="togglePlayDraft(play.code)" />
+            <span>{{ play.label }}</span>
+          </label>
+        </div>
+        <div class="play-modal-actions">
+          <button class="outline-button" type="button" @click="selectRandomPlays">随机</button>
+          <button class="outline-button" type="button" @click="selectAllPlays">全选</button>
+          <button class="outline-button" type="button" @click="clearPlays">清空</button>
+          <button class="primary-button" type="button" @click="confirmPlays">确定</button>
+          <button class="outline-button" type="button" @click="closePlayModal">取消</button>
+        </div>
+      </section>
+    </div>
+  </Teleport></template>
 
 <style scoped>
 :global(body) { background: #f4f7fb; }
@@ -393,8 +472,8 @@ button, input, select { font: inherit; } button { cursor: pointer; } button:disa
 .desk-toast-icon { display: inline-grid; flex: 0 0 20px; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #fff; background: #22a05a; font-size: 12px; }
 .desk-toast.error .desk-toast-icon { background: #e11d48; }
 .desk-toast-enter-active, .desk-toast-leave-active { transition: opacity .2s ease, transform .2s ease; } .desk-toast-enter-from, .desk-toast-leave-to { opacity: 0; transform: translateY(-8px); }
-.player-desk-body { display: grid; grid-template-columns: minmax(360px, 38%) 1fr; min-width: 0; min-height: 690px; border: 1px solid #84bff0; background: #fff; } .player-list-pane { border-right: 1px solid #b7d7f2; min-width: 0; } .player-list-pane, .player-detail-pane { min-width: 0; padding: 18px; } .pane-heading { align-items: flex-start; } .create-actions { flex-wrap: wrap; justify-content: flex-end; } .create-actions button { min-height: 36px; padding: 0 10px; font-size: 12px; }
-.create-action-stack { display: grid; gap: 8px; justify-items: end; } .record-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; } .record-actions button { min-height: 34px; padding: 0 10px; font-size: 12px; }
+.player-desk-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: start; min-width: 0; min-height: 0; border: 1px solid #84bff0; background: #fff; } .player-list-pane { border-right: 1px solid #b7d7f2; min-width: 0; } .player-list-pane, .player-detail-pane { min-width: 0; padding: 18px; } .pane-heading { align-items: flex-start; } .create-actions { flex-wrap: wrap; justify-content: flex-end; } .create-actions button { min-height: 36px; padding: 0 10px; font-size: 12px; }
+.create-action-stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; justify-items: stretch; } .create-action-stack .create-actions button, .create-action-stack .record-actions button { flex: 1 1 0; } .record-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; } .record-actions button { min-height: 34px; padding: 0 10px; font-size: 12px; }
 .player-stats { display: flex; align-items: stretch; min-width: 0; border: 1px solid #b7d7f2; background: #fff; } .player-stat-total, .player-stat { min-height: 58px; padding: 8px 14px; display: flex; flex-direction: column; justify-content: center; gap: 2px; border: 0; border-right: 1px solid #dbeafe; background: #fff; color: #64748b; } .player-stat-total strong, .player-stat strong { color: #0f4c81; font-size: 17px; font-variant-numeric: tabular-nums; } .player-stat { cursor: pointer; } .player-stat:last-child { border-right: 0; } .player-stat.active { background: #eef7ff; box-shadow: inset 0 -3px #1682d4; } .player-stat span, .player-stat-total span { font-size: 12px; }
 .filter-row { display: grid; grid-template-columns: 1fr 104px 112px; gap: 6px; padding: 16px 0 10px; border-bottom: 1px solid #e2e8f0; } input, select { width: 100%; min-height: 42px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 3px; color: #1e293b; background: #fff; box-sizing: border-box; } input:focus, select:focus, button:focus-visible { outline: 3px solid #bfdbfe; outline-offset: 1px; } .refresh-rank-button { padding: 0 8px; white-space: nowrap; }
 label { display: grid; gap: 5px; color: #475569; font-size: 12px; font-weight: 700; } .player-row { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; text-align: left; padding: 11px 8px; min-height: 70px; border: 0; border-bottom: 1px solid #edf2f7; border-left: 3px solid transparent; background: #fff; } .player-row:hover, .player-row.selected { background: #eef7ff; border-left-color: #1682d4; } .player-row-main, .player-row-side { min-width: 0; display: flex; flex-direction: column; gap: 3px; } .player-row-main strong, .player-row-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .player-row-main small, .player-row-side small { color: #64748b; font-size: 11px; } .player-row-side { align-items: flex-end; } .player-row-side strong { color: #0f4c81; font-variant-numeric: tabular-nums; }
@@ -402,13 +481,22 @@ label { display: grid; gap: 5px; color: #475569; font-size: 12px; font-weight: 7
 .modal-subtitle { margin: 5px 0 0; color: #64748b; font-size: 12px; }
 .desk-avatar { width: 40px; height: 40px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; color: #fff; background: #1976b9; font-weight: 800; } .desk-avatar.large { width: 56px; height: 56px; font-size: 22px; } .desk-avatar img { width: 100%; height: 100%; object-fit: cover; } em { font-style: normal; } .player-kind-normal, .player-kind-bot, .test-badge { padding: 3px 7px; border-radius: 3px; font-size: 11px; font-weight: 700; } .player-kind-normal { color: #155e75; background: #cffafe; } .player-kind-bot { color: #92400e; background: #fef3c7; } .test-badge { color: #6b21a8; background: #f3e8ff; } .player-status-active { color: #15803d; } .player-status-disabled, .player-status-locked { color: #b91c1c; }
 .detail-heading { align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid #dbeafe; } .detail-identity { display: flex; align-items: center; gap: 12px; min-width: 0; } .detail-identity h2 { font-size: 21px; } .identity-grid, .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 16px 0; border: 1px solid #e2e8f0; background: #e2e8f0; } .detail-grid { grid-template-columns: repeat(4, 1fr); margin-top: 0; } .identity-grid > div, .detail-grid > div { min-height: 72px; padding: 12px; background: #fff; min-width: 0; } .identity-grid span, .detail-grid span { display: block; color: #64748b; font-size: 12px; margin-bottom: 8px; } .identity-grid strong, .detail-grid strong { font-size: 13px; overflow-wrap: anywhere; } .detail-grid .points { color: #0f6eaa; font-size: 20px; font-variant-numeric: tabular-nums; }
-.detail-section { padding: 16px 0; border-top: 1px solid #e2e8f0; } .section-title { align-items: flex-start; margin-bottom: 12px; } .point-form, .behavior-form { display: grid; grid-template-columns: 130px 130px 1fr auto; gap: 10px; align-items: end; } .point-form .wide, .behavior-form .wide { grid-column: span 2; } .switch-label { display: flex; align-items: center; gap: 8px; min-height: 42px; } .switch-label input { width: 18px; min-height: 18px; } .mode-field { display: flex; flex-wrap: wrap; gap: 14px; border: 1px solid #dbeafe; padding: 10px; margin: 0; } .mode-field legend { color: #475569; font-size: 12px; font-weight: 700; padding: 0 4px; } .mode-field label { display: flex; align-items: center; gap: 6px; } .mode-field input { width: 18px; min-height: 18px; } .message-form { align-items: end; margin-top: 14px; } .message-form label { flex: 1; }
+.detail-section { padding: 16px 0; border-top: 1px solid #e2e8f0; } .section-title { align-items: flex-start; margin-bottom: 12px; } .point-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; } .point-form label { flex: 0 1 150px; min-width: 120px; } .point-form button { flex: 0 0 96px; } .behavior-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 12px; align-items: end; } .behavior-form label { display: grid; gap: 4px; } .point-form .wide, .behavior-form .wide { grid-column: 1 / -1; } .switch-label { display: flex; align-items: center; gap: 8px; min-height: 42px; } .switch-label input { width: 18px; min-height: 18px; } .mode-field { display: flex; flex-wrap: wrap; gap: 14px; border: 1px solid #dbeafe; padding: 10px; margin: 0; } .mode-field legend { color: #475569; font-size: 12px; font-weight: 700; padding: 0 4px; } .mode-field label { display: flex; align-items: center; gap: 6px; } .mode-field input { width: 18px; min-height: 18px; } .message-form { align-items: end; margin-top: 14px; } .message-form label { flex: 1; }
 .link-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .issued-link { display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; background: #f8fbff; border: 1px solid #b7d7f2; } .issued-link-url { color: #1265a5; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; text-decoration: none; } .issued-link-url:hover { text-decoration: underline; } .issued-link small { color: #64748b; } .danger-button { color: #b42318; border-color: #fda4af; } .danger-fill-button { min-height: 42px; padding: 0 14px; border: 1px solid #b42318; border-radius: 4px; background: #b42318; color: #fff; font-weight: 700; } .delete-modal-content { padding: 18px 20px 20px; } .delete-modal-content p { margin-bottom: 10px; }
-.player-edit-rows { display: grid; gap: 10px; padding: 14px 0; border-bottom: 1px solid #e2e8f0; } .player-edit-row { display: flex; align-items: end; gap: 8px; min-height: 42px; } .player-edit-row > span { min-width: 116px; color: #475569; font-size: 13px; } .player-edit-row > span strong { color: #1e293b; } .player-edit-row label { flex: 1; display: flex; align-items: center; gap: 8px; } .player-edit-row label input { flex: 1; } .days-editor { display: flex; align-items: center; gap: 6px; } .days-editor input { width: 70px; } .days-editor small { color: #64748b; white-space: nowrap; } .player-edit-actions { display: flex; gap: 8px; } .rename-history-content { padding: 8px 20px 20px; } .rename-history-list { display: grid; gap: 10px; max-height: 280px; overflow: auto; } .rename-history-list > div { display: grid; gap: 3px; padding-bottom: 8px; border-bottom: 1px solid #edf2f7; } .rename-history-list small { color: #64748b; }
+.player-edit-rows { display: grid; gap: 10px; padding: 14px 0; border-bottom: 1px solid #e2e8f0; } .player-edit-row { display: flex; align-items: end; gap: 8px; min-height: 42px; } .player-edit-row > span { min-width: 116px; color: #475569; font-size: 13px; } .player-edit-row > span strong { color: #1e293b; } .player-edit-row label { flex: 0 1 320px; max-width: 340px; display: flex; align-items: center; gap: 8px; } .player-edit-row label input { flex: 1; min-width: 0; } .days-editor { display: flex; align-items: center; gap: 6px; } .days-editor input { width: 70px; } .days-editor small { color: #64748b; white-space: nowrap; } .player-edit-actions { display: flex; gap: 8px; } .rename-history-content { padding: 8px 20px 20px; } .rename-history-list { display: grid; gap: 10px; max-height: 280px; overflow: auto; } .rename-history-list > div { display: grid; gap: 3px; padding-bottom: 8px; border-bottom: 1px solid #edf2f7; } .rename-history-list small { color: #64748b; }
 .action-row { display: grid; grid-template-columns: 70px 1fr 70px 150px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .action-row strong, .action-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .action-row strong { font-weight: 500; } .action-row small { color: #64748b; } .action-succeeded { color: #15803d; } .action-failed { color: #b91c1c; } .action-pending, .action-processing { color: #a16207; } .field-error { color: #b91c1c; margin: 0; font-size: 12px; } .empty-state, .detail-empty { color: #64748b; text-align: center; padding: 46px 20px; } .detail-empty { display: grid; place-items: center; min-height: 500px; } .detail-empty span { color: #54a2d7; font-size: 42px; } .detail-empty p { font-size: 13px; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .records-modal { width: min(920px, 100%); max-height: min(820px, calc(100dvh - 40px)); display: flex; flex-direction: column; overflow: hidden; } .records-modal .create-modal-header { flex: 0 0 auto; } .record-modal-content { min-height: 0; overflow: auto; padding: 16px 20px 20px; } .record-date-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; } .record-date-tabs button { flex: 0 0 auto; min-height: 36px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: #fff; color: #64748b; font-size: 12px; cursor: pointer; } .record-date-tabs button.active { border-bottom-color: #ef4444; color: #0f4c81; font-weight: 700; } .record-state { display: grid; justify-items: center; gap: 12px; padding: 48px 16px; color: #64748b; font-size: 13px; } .record-state-error { color: #b42318; } .record-summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; margin: 14px 0; border: 1px solid #dbeafe; background: #dbeafe; } .record-summary-grid > div, .record-player-summary-grid > div { min-width: 0; padding: 10px; background: #fff; } .record-summary-grid span, .record-player-summary-grid span { display: block; margin-bottom: 5px; color: #64748b; font-size: 11px; } .record-summary-grid strong, .record-player-summary-grid strong { color: #0f4c81; font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; } .record-negative { color: #b42318 !important; } .record-player-list { display: grid; gap: 8px; } .record-player-card { border: 1px solid #8cc8ef; background: #f8fcff; } .record-player-card summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 12px; cursor: pointer; list-style-position: inside; } .record-player-card summary::marker { color: #1677c8; } .record-player-identity, .record-player-totals { min-width: 0; display: flex; gap: 4px; } .record-player-identity { flex-direction: column; } .record-player-identity strong { overflow-wrap: anywhere; } .record-player-identity small, .record-player-totals span { color: #64748b; font-size: 11px; } .record-player-totals { align-items: flex-end; flex-direction: column; white-space: nowrap; } .record-player-totals strong { color: #0f4c81; font-size: 13px; font-variant-numeric: tabular-nums; } .record-player-content { padding: 0 12px 12px; border-top: 1px solid #dbeafe; } .record-player-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 12px 0; border: 1px solid #dbeafe; background: #dbeafe; } .record-detail-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .record-detail-columns section { min-width: 0; } .record-detail-columns h4 { margin: 8px 0; color: #334155; font-size: 12px; } .record-event-row { display: grid; gap: 5px; padding: 8px 0; border-bottom: 1px solid #e2e8f0; font-size: 12px; } .record-event-row > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; } .record-event-row span, .record-event-row small { color: #64748b; } .record-event-row span { overflow-wrap: anywhere; } .record-event-row small { font-size: 11px; }
 .bet-row { display: grid; grid-template-columns: 120px 1fr 90px 90px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .bet-row span { color: #475569; } .bet-row em { color: #1265a5; } .bet-row b { text-align: right; color: #15803d; font-variant-numeric: tabular-nums; }
 @media (max-width: 900px) { .player-desk-page { padding: 20px 14px 40px; } .player-desk-body { grid-template-columns: 1fr; } .player-list-pane { border-right: 0; border-bottom: 1px solid #b7d7f2; } .player-detail-pane { min-height: 500px; } }
-@media (max-width: 620px) { .player-desk-page { padding: 18px 12px 32px; } .player-desk-header { align-items: flex-start; flex-direction: column; } .filter-row { grid-template-columns: 1fr 112px; } .filter-row input { grid-column: span 2; } .pane-heading { flex-direction: column; } .player-stats { width: 100%; } .player-stat-total, .player-stat { flex: 1; } .create-action-stack { width: 100%; justify-items: stretch; } .create-actions, .record-actions { justify-content: flex-start; } .create-actions button, .record-actions button { flex: 1; } .identity-grid, .detail-grid { grid-template-columns: 1fr 1fr; } .point-form, .behavior-form { grid-template-columns: 1fr 1fr; } .point-form .wide, .behavior-form .wide { grid-column: span 2; } .point-form button, .behavior-form button { grid-column: span 1; } .detail-heading { flex-direction: column; } .player-edit-row { align-items: stretch; flex-wrap: wrap; } .player-edit-row label { width: 100%; } .days-editor { width: 100%; } .days-editor input { flex: 1; } .message-form { align-items: stretch; flex-direction: column; } .action-row { grid-template-columns: 64px 1fr 64px; } .action-row small { grid-column: span 3; } .bet-row { grid-template-columns: minmax(0, 1fr) auto; } .bet-row > * { min-width: 0; } .records-modal { max-height: calc(100dvh - 20px); } .record-modal-content { padding-left: 12px; padding-right: 12px; } .record-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .record-player-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .record-detail-columns { grid-template-columns: 1fr; gap: 10px; } .record-player-card summary { align-items: flex-start; } .record-player-totals { text-align: right; } }
+@media (max-width: 620px) { .player-desk-page { padding: 18px 12px 32px; } .player-desk-header { align-items: flex-start; flex-direction: column; } .filter-row { grid-template-columns: 1fr 112px; } .filter-row input { grid-column: span 2; } .pane-heading { flex-direction: column; } .player-stats { width: 100%; } .player-stat-total, .player-stat { flex: 1; } .create-action-stack { width: 100%; justify-items: stretch; } .create-actions, .record-actions { justify-content: flex-start; } .create-actions button, .record-actions button { flex: 1; } .identity-grid, .detail-grid { grid-template-columns: 1fr 1fr; } .behavior-form { grid-template-columns: 1fr 1fr; } .behavior-form .wide { grid-column: span 2; } .behavior-form button { grid-column: span 1; } .detail-heading { flex-direction: column; } .player-edit-row { align-items: stretch; flex-wrap: wrap; } .player-edit-row label { width: 100%; } .days-editor { width: 100%; } .days-editor input { flex: 1; } .message-form { align-items: stretch; flex-direction: column; } .action-row { grid-template-columns: 64px 1fr 64px; } .action-row small { grid-column: span 3; } .bet-row { grid-template-columns: minmax(0, 1fr) auto; } .bet-row > * { min-width: 0; } .records-modal { max-height: calc(100dvh - 20px); } .record-modal-content { padding-left: 12px; padding-right: 12px; } .record-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .record-player-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .record-detail-columns { grid-template-columns: 1fr; gap: 10px; } .record-player-card summary { align-items: flex-start; } .record-player-totals { text-align: right; } }
 @media (max-width: 375px) { .player-desk-page { padding-left: 10px; padding-right: 10px; } h1 { font-size: 24px; } .player-row { grid-template-columns: 1fr auto; gap: 7px; padding-left: 4px; padding-right: 4px; } .desk-avatar { width: 34px; height: 34px; } .primary-button, .secondary-button, .outline-button { padding: 0 10px; } }
-</style>
+
+.behavior-play-field { display: flex; align-items: center; gap: 8px; color: #334155; font-size: 13px; }
+.behavior-play-field small { color: #64748b; }
+.play-modal-layer { position: fixed; inset: 0; z-index: 2600; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 45%); }
+.play-modal { width: min(460px, 100%); border: 1px solid #93c5fd; background: #fff; padding: 20px; box-shadow: 0 22px 60px rgb(15 23 42 / 28%); }
+.play-modal h3 { margin: 0 0 16px; color: #1e3a5f; font-size: 17px; }
+.play-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.play-option { display: flex; align-items: center; gap: 6px; color: #334155; font-size: 14px; }
+.play-option input { width: 16px; height: 16px; }
+.play-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }</style>

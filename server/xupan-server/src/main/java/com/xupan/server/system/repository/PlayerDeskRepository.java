@@ -81,7 +81,11 @@ public class PlayerDeskRepository {
                         rs.getInt("bets_per_issue"), rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"),
                         rs.getBoolean("chat_enabled"), rs.getInt("messages_per_issue"), instant(rs.getTimestamp("next_run_at")),
                         rs.getString("last_issue_number"), rs.getString("last_error_code"), rs.getString("last_error_message"),
-                        rs.getLong("version"), instant(rs.getTimestamp("updated_at"))), userId).stream().findFirst();
+                        rs.getLong("version"), instant(rs.getTimestamp("updated_at")),
+                        rs.getString("stake_range_code"), rs.getString("stake_round_ten"),
+                        rs.getInt("activity_percent"), rs.getBoolean("play_random"),
+                        rs.getInt("topup_probability_percent"), rs.getBigDecimal("topup_min"),
+                        rs.getBigDecimal("topup_max")), userId).stream().findFirst();
     }
 
     public Behavior ensureBehavior(long accountId) {
@@ -94,17 +98,39 @@ public class PlayerDeskRepository {
                 rs.getLong("id"), rs.getLong("account_id"), rs.getString("run_mode"), rs.getBoolean("enabled"), rs.getInt("bets_per_issue"),
                 rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"), rs.getBoolean("chat_enabled"),
                 rs.getInt("messages_per_issue"), instant(rs.getTimestamp("next_run_at")), rs.getString("last_issue_number"),
-                rs.getString("last_error_code"), rs.getString("last_error_message"), rs.getLong("version"), instant(rs.getTimestamp("updated_at"))), accountId);
+                rs.getString("last_error_code"), rs.getString("last_error_message"), rs.getLong("version"),
+                instant(rs.getTimestamp("updated_at")), rs.getString("stake_range_code"),
+                rs.getString("stake_round_ten"), rs.getInt("activity_percent"), rs.getBoolean("play_random"),
+                rs.getInt("topup_probability_percent"), rs.getBigDecimal("topup_min"),
+                rs.getBigDecimal("topup_max")), accountId);
     }
 
     public Behavior updateBehavior(long userId, String mode, int bets, BigDecimal min, BigDecimal max,
-                                   boolean chat, int messages) {
+                                   boolean chat, int messages, String stakeRangeCode, String stakeRoundTen,
+                                   int activityPercent, boolean playRandom, int topupProbabilityPercent,
+                                   BigDecimal topupMin, BigDecimal topupMax) {
         PlayerRow row = findByUserId(userId).orElseThrow();
         ensureBehavior(row.accountId());
         jdbc.update("UPDATE test_player_behavior SET run_mode=?, enabled=?, bets_per_issue=?, stake_min=?, stake_max=?, "
-                        + "chat_enabled=?, messages_per_issue=?, version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE account_id=?",
-                mode, "AUTOMATIC".equals(mode), bets, min, max, chat, messages, row.accountId());
+                        + "chat_enabled=?, messages_per_issue=?, stake_range_code=?, stake_round_ten=?, "
+                        + "activity_percent=?, play_random=?, topup_probability_percent=?, topup_min=?, topup_max=?, "
+                        + "version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE account_id=?",
+                mode, "AUTOMATIC".equals(mode), bets, min, max, chat, messages, stakeRangeCode, stakeRoundTen,
+                activityPercent, playRandom, topupProbabilityPercent, topupMin, topupMax, row.accountId());
         return ensureBehavior(row.accountId());
+    }
+
+    public List<String> findPlayTypes(long behaviorId) {
+        return jdbc.queryForList("SELECT play_type FROM test_player_behavior_play_type WHERE behavior_id=? ORDER BY play_type",
+                String.class, behaviorId);
+    }
+
+    public void replacePlayTypes(long behaviorId, List<String> playTypes) {
+        jdbc.update("DELETE FROM test_player_behavior_play_type WHERE behavior_id=?", behaviorId);
+        for (String playType : playTypes) {
+            jdbc.update("INSERT INTO test_player_behavior_play_type(behavior_id, play_type) VALUES (?, ?)",
+                    behaviorId, playType);
+        }
     }
 
     public int updateStatus(long userId, String status) {
@@ -180,7 +206,10 @@ public class PlayerDeskRepository {
                             BigDecimal balance, Instant createdAt, Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt) {}
     public record Behavior(long id, long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin,
                            BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt,
-                           String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt) {}
+                           String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version,
+                           Instant updatedAt, String stakeRangeCode, String stakeRoundTen, int activityPercent,
+                           boolean playRandom, int topupProbabilityPercent, BigDecimal topupMin,
+                           BigDecimal topupMax) {}
     public record ActionRow(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status,
                             int attempts, String errorCode, String errorMessage, Long messageId, Long betId,
                             Instant createdAt, Instant updatedAt) {}

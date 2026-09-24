@@ -108,11 +108,13 @@ class GameBettingConfigControllerTest {
                                 {"specialLimit":300,"issueTotalLimit":6000,"positiveLimit":21000,
                                  "angleLimit":1100,"strictLimit":21000,"tongLimit":21000,
                                  "carLimit":21000,"oddEvenLimit":21000,"bigSmallLimit":21000,
-                                 "fanLimit":21000,"addLimit":21000,"playerMaxStake":6001,
+                                 "fanLimit":21000,"addLimit":21000,"botIssueTotalBets":25,"botIssueTotalStake":6000,"botNightActivityOverridePercent":null,"playerMaxStake":6001,
                                  "playerMinStake":2}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.specialLimit").value(300))
+                .andExpect(jsonPath("$.botIssueTotalBets").value(25))
+                .andExpect(jsonPath("$.botIssueTotalStake").value(6000))
                 .andExpect(jsonPath("$.playerMaxStake").value(6001))
                 .andExpect(jsonPath("$.playerMinStake").value(2));
 
@@ -123,7 +125,7 @@ class GameBettingConfigControllerTest {
                                 {"specialLimit":300,"issueTotalLimit":6000,"positiveLimit":21000,
                                  "angleLimit":1100,"strictLimit":21000,"tongLimit":21000,
                                  "carLimit":21000,"oddEvenLimit":21000,"bigSmallLimit":21000,
-                                 "fanLimit":21000,"addLimit":21000,"playerMaxStake":1,
+                                 "fanLimit":21000,"addLimit":21000,"botIssueTotalBets":25,"botIssueTotalStake":6000,"botNightActivityOverridePercent":null,"playerMaxStake":1,
                                  "playerMinStake":10}
                                 """))
                 .andExpect(status().isBadRequest())
@@ -136,7 +138,7 @@ class GameBettingConfigControllerTest {
                                 {"specialLimit":0,"issueTotalLimit":6000,"positiveLimit":21000,
                                  "angleLimit":1100,"strictLimit":21000,"tongLimit":21000,
                                  "carLimit":21000,"oddEvenLimit":21000,"bigSmallLimit":21000,
-                                 "fanLimit":21000,"addLimit":21000,"playerMaxStake":6001,
+                                 "fanLimit":21000,"addLimit":21000,"botIssueTotalBets":25,"botIssueTotalStake":6000,"botNightActivityOverridePercent":null,"playerMaxStake":6001,
                                  "playerMinStake":1}
                                 """))
                 .andExpect(status().isBadRequest())

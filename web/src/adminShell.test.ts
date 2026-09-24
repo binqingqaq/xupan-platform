@@ -40,6 +40,7 @@ describe('unified admin routes', () => {
     const reportSource = readFileSync(resolve(process.cwd(), 'src/components/admin/ReportControlPanel.vue'), 'utf8')
     const welcomeSource = readFileSync(resolve(process.cwd(), 'src/components/admin/AdminWelcomeControlPanel.vue'), 'utf8')
     const footerSource = readFileSync(resolve(process.cwd(), 'src/components/admin/AdminDomainFooterPanel.vue'), 'utf8')
+    const bottomControlSource = readFileSync(resolve(process.cwd(), 'src/components/admin/AdminBottomControlPanel.vue'), 'utf8')
 
     expect(source).toContain('PointsApprovalPanel')
     expect(source).toContain('RecentPointsRecordsPanel')
@@ -47,6 +48,7 @@ describe('unified admin routes', () => {
     expect(source).toContain('ReportControlPanel')
     expect(source).toContain('AdminWelcomeControlPanel')
     expect(source).toContain('AdminDomainFooterPanel')
+    expect(source).toContain('AdminBottomControlPanel')
     expect(source).not.toContain('后台功能导航')
     expect(reportSource).toContain('报网类型:')
     expect(reportSource).toContain('设置账号')
@@ -59,6 +61,12 @@ describe('unified admin routes', () => {
     expect(footerSource).toContain('线路域名:')
     expect(footerSource).toContain('开放注册:')
     expect(footerSource).toContain('复制链接')
+    expect(bottomControlSource).toContain('预留封盘:')
+    expect(bottomControlSource).toContain('取消:')
+    expect(bottomControlSource).toContain('返水:')
+    expect(bottomControlSource).toContain('显示右角:')
+    expect(bottomControlSource).toContain('倒计时:')
+    expect(bottomControlSource).toContain('移上')
     expect(source).not.toContain('期号、封盘、开奖和结算将在后续模块中接入')
   })
 
@@ -70,6 +78,15 @@ describe('unified admin routes', () => {
     expect(html).toContain('href="/display/picture/favicon.ico"')
     expect(routerSource).toContain("title: 'AI模型房间管理'")
     expect(routerSource).toContain("title: '奥巴AI'")
+  })
+
+  it('hides the player status toggle while keeping the handler for later', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/components/admin/PlayerWorkbenchModule.vue'), 'utf8')
+
+    expect(source).not.toContain('@click="toggleStatus"')
+    expect(source).not.toContain('停用玩家</button>')
+    expect(source).toContain('async function toggleStatus()')
+    expect(source).toContain('删除玩家')
   })
 
   it('keeps the bet board tabs and disabled cancel control in the sidebar module', () => {

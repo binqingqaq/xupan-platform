@@ -66,7 +66,9 @@ public class GameBettingConfigService {
                 request.fanLimit(),
                 request.addLimit(),
                 request.playerMaxStake(),
-                request.playerMinStake()
+                request.playerMinStake(),
+                request.botIssueTotalBets(),
+                request.botIssueTotalStake()
         };
         for (int value : values) {
             if (value <= 0) {
@@ -76,13 +78,21 @@ public class GameBettingConfigService {
         if (request.playerMinStake() > request.playerMaxStake()) {
             throw BusinessError.invalid("玩家最小注额不能大于玩家最高注额");
         }
+        if (request.botIssueTotalBets() <= 0 || request.botIssueTotalStake() <= 0) {
+            throw BusinessError.invalid("托每期总注单和总积分上限必须是大于 0 的整数");
+        }
+        Integer nightOverride = request.botNightActivityOverridePercent();
+        if (nightOverride != null && (nightOverride < 0 || nightOverride > 100)) {
+            throw BusinessError.invalid("深夜活跃比例覆盖必须是 0 到 100 的整数或留空");
+        }
         GameBettingConfigRepository.ConfigRecord current = requireConfig();
         GameBettingConfigRepository.ConfigRecord updated = current.withLimits(
                 request.specialLimit(), request.issueTotalLimit(),
                 request.positiveLimit(), request.angleLimit(), request.strictLimit(),
                 request.tongLimit(), request.carLimit(), request.oddEvenLimit(),
                 request.bigSmallLimit(), request.fanLimit(), request.addLimit(),
-                request.playerMaxStake(), request.playerMinStake());
+                request.playerMaxStake(), request.playerMinStake(),
+                request.botIssueTotalBets(), request.botIssueTotalStake(), nightOverride);
         if (configRepository.updateLimits(updated) != 1) {
             throw new IllegalStateException("限额配置保存失败");
         }
@@ -248,7 +258,10 @@ public class GameBettingConfigService {
             int fanLimit,
             int addLimit,
             int playerMaxStake,
-            int playerMinStake
+            int playerMinStake,
+            int botIssueTotalBets,
+            int botIssueTotalStake,
+            Integer botNightActivityOverridePercent
     ) {
         static BettingConfigView from(GameBettingConfigRepository.ConfigRecord config, BigDecimal specialOdds) {
             return new BettingConfigView(config.displayOdds(), specialOdds, config.specialRebate(),
@@ -256,7 +269,8 @@ public class GameBettingConfigService {
                     config.angleLimit(), config.strictLimit(), config.tongLimit(),
                     config.carLimit(), config.oddEvenLimit(), config.bigSmallLimit(),
                     config.fanLimit(), config.addLimit(), config.playerMaxStake(),
-                    config.playerMinStake());
+                    config.playerMinStake(), config.botIssueTotalBets(),
+                    config.botIssueTotalStake(), config.botNightActivityOverridePercent());
         }
     }
 
@@ -273,7 +287,10 @@ public class GameBettingConfigService {
             int fanLimit,
             int addLimit,
             int playerMaxStake,
-            int playerMinStake
+            int playerMinStake,
+            int botIssueTotalBets,
+            int botIssueTotalStake,
+            Integer botNightActivityOverridePercent
     ) {
     }
 

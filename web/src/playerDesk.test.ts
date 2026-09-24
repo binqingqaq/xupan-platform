@@ -44,8 +44,16 @@ describe('player desk helpers', () => {
   it('validates points, behavior and manual message constraints', () => {
     expect(validatePointOperation(0, '', '', 'grant')).toHaveLength(3)
     expect(validatePointOperation(10.5, '测试上分', 'grant-1', 'grant')).toEqual([])
-    expect(validateBehaviorDraft({ mode: 'AUTOMATIC', betsPerIssue: 2, stakeMin: 1, stakeMax: 5, messagesPerIssue: 1 })).toEqual([])
-    expect(validateBehaviorDraft({ mode: 'MANUAL', betsPerIssue: 21, stakeMin: 5, stakeMax: 1, messagesPerIssue: -1 })).toHaveLength(3)
+    expect(validateBehaviorDraft({
+      mode: 'AUTOMATIC', betsPerIssue: 2, stakeRangeCode: '30-300', stakeRoundTen: 'ON',
+      activityPercent: 80, playRandom: true, playTypes: [], topupProbabilityPercent: 10,
+      topupMin: 100, topupMax: 1000,
+    })).toEqual([])
+    expect(validateBehaviorDraft({
+      mode: 'MANUAL', betsPerIssue: 21, stakeRangeCode: '999', stakeRoundTen: 'ON' as 'RANDOM',
+      activityPercent: 101, playRandom: false, playTypes: ['UNKNOWN'], topupProbabilityPercent: 101,
+      topupMin: 1000, topupMax: 100,
+    })).toHaveLength(6)
     expect(validatePlayerMessage('', '')).toHaveLength(2)
     expect(validatePlayerMessage('本期跟投', 'message-1')).toEqual([])
   })

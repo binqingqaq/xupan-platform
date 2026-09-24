@@ -20,7 +20,8 @@ public class GameBettingConfigRepository {
                        special_limit, issue_total_limit, positive_limit, angle_limit,
                        strict_limit, tong_limit, car_limit, odd_even_limit,
                        big_small_limit, fan_limit, add_limit,
-                       player_max_stake, player_min_stake
+                       player_max_stake, player_min_stake,
+                       bot_issue_total_bets, bot_issue_total_stake, bot_night_activity_override_percent
                   FROM game_betting_config
                  WHERE id = 1
                 """, (rs, rowNum) -> new ConfigRecord(
@@ -31,7 +32,9 @@ public class GameBettingConfigRepository {
                 rs.getInt("car_limit"), rs.getInt("odd_even_limit"),
                 rs.getInt("big_small_limit"), rs.getInt("fan_limit"),
                 rs.getInt("add_limit"), rs.getInt("player_max_stake"),
-                rs.getInt("player_min_stake")
+                rs.getInt("player_min_stake"),
+                rs.getInt("bot_issue_total_bets"), rs.getInt("bot_issue_total_stake"),
+                (Integer) rs.getObject("bot_night_activity_override_percent")
         )).stream().findFirst();
     }
 
@@ -59,13 +62,18 @@ public class GameBettingConfigRepository {
                        add_limit = ?,
                        player_max_stake = ?,
                        player_min_stake = ?,
+                       bot_issue_total_bets = ?,
+                       bot_issue_total_stake = ?,
+                       bot_night_activity_override_percent = ?,
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = 1
                 """, config.specialLimit(), config.issueTotalLimit(),
                 config.positiveLimit(), config.angleLimit(), config.strictLimit(),
                 config.tongLimit(), config.carLimit(), config.oddEvenLimit(),
                 config.bigSmallLimit(), config.fanLimit(), config.addLimit(),
-                config.playerMaxStake(), config.playerMinStake());
+                config.playerMaxStake(), config.playerMinStake(),
+                config.botIssueTotalBets(), config.botIssueTotalStake(),
+                config.botNightActivityOverridePercent());
     }
 
     public record ConfigRecord(
@@ -83,13 +91,17 @@ public class GameBettingConfigRepository {
             int fanLimit,
             int addLimit,
             int playerMaxStake,
-            int playerMinStake
+            int playerMinStake,
+            int botIssueTotalBets,
+            int botIssueTotalStake,
+            Integer botNightActivityOverridePercent
     ) {
         public ConfigRecord withDisplay(int nextDisplayOdds, int nextSpecialRebate) {
             return new ConfigRecord(nextDisplayOdds, nextSpecialRebate,
                     specialLimit, issueTotalLimit, positiveLimit, angleLimit,
                     strictLimit, tongLimit, carLimit, oddEvenLimit,
-                    bigSmallLimit, fanLimit, addLimit, playerMaxStake, playerMinStake);
+                    bigSmallLimit, fanLimit, addLimit, playerMaxStake, playerMinStake,
+                    botIssueTotalBets, botIssueTotalStake, botNightActivityOverridePercent);
         }
 
         public ConfigRecord withLimits(int nextSpecialLimit, int nextIssueTotalLimit,
@@ -98,12 +110,15 @@ public class GameBettingConfigRepository {
                                        int nextCarLimit, int nextOddEvenLimit,
                                        int nextBigSmallLimit, int nextFanLimit,
                                        int nextAddLimit, int nextPlayerMaxStake,
-                                       int nextPlayerMinStake) {
+                                       int nextPlayerMinStake, int nextBotIssueTotalBets,
+                                       int nextBotIssueTotalStake,
+                                       Integer nextBotNightActivityOverridePercent) {
             return new ConfigRecord(displayOdds, specialRebate,
                     nextSpecialLimit, nextIssueTotalLimit, nextPositiveLimit,
                     nextAngleLimit, nextStrictLimit, nextTongLimit, nextCarLimit,
                     nextOddEvenLimit, nextBigSmallLimit, nextFanLimit, nextAddLimit,
-                    nextPlayerMaxStake, nextPlayerMinStake);
+                    nextPlayerMaxStake, nextPlayerMinStake, nextBotIssueTotalBets,
+                    nextBotIssueTotalStake, nextBotNightActivityOverridePercent);
         }
     }
 }

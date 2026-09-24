@@ -27,6 +27,9 @@ export const LIMIT_FIELDS: LimitFieldDefinition[] = [
   { key: 'addLimit', label: '加限额' },
   { key: 'playerMaxStake', label: '玩家最高注额' },
   { key: 'playerMinStake', label: '玩家最小注额' },
+  { key: 'botIssueTotalBets', label: '所有托每期总注单' },
+  { key: 'botIssueTotalStake', label: '所有托每期总积分' },
+  { key: 'botNightActivityOverridePercent', label: '深夜活跃比例覆盖(%)' },
 ]
 
 export function createDisplayDraft(config: BettingConfigView): BettingDisplayDraft {
@@ -39,7 +42,8 @@ export function createDisplayDraft(config: BettingConfigView): BettingDisplayDra
 
 export function createLimitDraft(config: BettingConfigView): Record<keyof BettingLimits, string> {
   return LIMIT_FIELDS.reduce((draft, field) => {
-    draft[field.key] = String(config[field.key])
+    const value = config[field.key]
+    draft[field.key] = value === null || value === undefined ? '' : String(value)
     return draft
   }, {} as Record<keyof BettingLimits, string>)
 }
@@ -79,11 +83,24 @@ export function validateLimitDraft(
 ): { ok: true; limits: BettingLimits } | { ok: false; message: string } {
   const limits = {} as BettingLimits
   for (const field of LIMIT_FIELDS) {
-    const parsed = parseIntegerInput(draft[field.key] ?? '')
+    const raw = (draft[field.key] ?? '').trim()
+    if (field.key === 'botNightActivityOverridePercent') {
+      if (!raw) {
+        limits.botNightActivityOverridePercent = null
+        continue
+      }
+      const override = parseIntegerInput(raw)
+      if (override === null || override < 0 || override > 100) {
+        return { ok: false, message: `${field.label}必须是 0 到 100 的整数，留空表示不覆盖` }
+      }
+      limits.botNightActivityOverridePercent = override
+      continue
+    }
+    const parsed = parseIntegerInput(raw)
     if (parsed === null || parsed <= 0) {
       return { ok: false, message: `${field.label}必须是大于 0 的整数，且不能为空` }
     }
-    limits[field.key] = parsed
+    ;(limits as unknown as Record<string, number>)[field.key] = parsed
   }
   if (limits.playerMinStake > limits.playerMaxStake) {
     return { ok: false, message: '玩家最小注额不能大于玩家最高注额' }
