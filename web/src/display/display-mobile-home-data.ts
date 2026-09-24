@@ -13,6 +13,9 @@ export type DisplayMobileLotteryCard = {
   cardKind: MobileCardKind
   logo?: string
   numberTone?: string
+  numberColors?: string[]
+  nextDrawAt?: string | null
+  countdownFormat?: 'MM_SS' | 'HH_MM_SS' | 'DAY_HH_MM' | 'DAY_HH_MM_SS'
 }
 
 export const displayMobileLotteryCards: readonly DisplayMobileLotteryCard[] = [

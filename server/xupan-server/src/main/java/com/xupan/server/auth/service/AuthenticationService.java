@@ -106,8 +106,13 @@ public class AuthenticationService {
     }
 
     public TokenService.IssuedTokens refresh(String rawRefreshToken, TokenService.RequestMetadata metadata) {
+        return refresh(rawRefreshToken, metadata, null);
+    }
+
+    public TokenService.IssuedTokens refresh(String rawRefreshToken, TokenService.RequestMetadata metadata,
+                                              String requiredAuthMode) {
         try {
-            return tokenService.refresh(rawRefreshToken, metadata);
+            return tokenService.refresh(rawRefreshToken, metadata, requiredAuthMode);
         } catch (TokenService.InvalidTokenException exception) {
             loginAuditRepository.recordRevoked("anonymous-refresh", null, "AUTH_TOKEN_REVOKED",
                     ip(metadata), userAgent(metadata), clock.instant());

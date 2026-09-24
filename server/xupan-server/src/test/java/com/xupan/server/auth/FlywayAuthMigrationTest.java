@@ -62,14 +62,14 @@ class FlywayAuthMigrationTest {
     private JdbcTemplate jdbcTemplate;
 
     @Test
-    void appliesV1ThroughV22InOrder() {
+    void appliesAllMigrationsInOrder() {
         List<String> versions = jdbcTemplate.queryForList(
                 "SELECT \"version\" FROM \"flyway_schema_history\" "
                         + "WHERE \"success\" = TRUE AND \"version\" IS NOT NULL "
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30");
     }
 
     @Test
@@ -95,7 +95,7 @@ class FlywayAuthMigrationTest {
         assertThat(columnNames("AUTH_WS_TICKET")).contains("SCOPE");
         assertThat(columnNames("PLAYER_ACCESS_LINK")).containsExactlyInAnyOrder(
                 "ID", "USER_ID", "TOKEN_HASH", "SCOPE", "EXPIRES_AT", "REVOKED_AT",
-                "LAST_USED_AT", "CREATED_BY", "CREATED_AT");
+                "LAST_USED_AT", "CREATED_BY", "CREATED_AT", "TOKEN_CIPHERTEXT");
         assertThat(columnNames("SYS_OPERATION_LOG")).containsExactlyInAnyOrder(
                 "ID", "OPERATOR_USER_ID", "PERMISSION_CODE", "HTTP_METHOD", "REQUEST_PATH",
                 "RESOURCE_ID", "RESULT", "ERROR_CODE", "REQUEST_SUMMARY", "IP_DIGEST", "CREATED_AT");

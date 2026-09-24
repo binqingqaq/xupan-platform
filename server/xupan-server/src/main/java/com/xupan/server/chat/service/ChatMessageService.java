@@ -11,13 +11,17 @@ import com.xupan.server.chat.domain.ChatRoom;
 import com.xupan.server.chat.repository.ChatMessageRepository;
 import com.xupan.server.chat.repository.ChatMuteRepository;
 import com.xupan.server.chat.repository.ChatOutboxRepository;
+import com.xupan.server.chat.repository.PlayerPointRequestRepository;
 import com.xupan.server.chat.repository.ChatReadCursorRepository;
 import com.xupan.server.chat.repository.ChatRoomRepository;
 import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.chat.realtime.ChatProtocol;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.service.BetTextParser;
 import com.xupan.server.game.service.BetSettlementCompletedEvent;
+import com.xupan.server.game.service.BetLimitExceededException;
 import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
@@ -35,6 +39,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -60,6 +68,7 @@ public class ChatMessageService {
     private final RobotRepository robotRepository;
     private final VirtualWalletService walletService;
     private final TransactionTemplate transactionTemplate;
+    private PlayerPointRequestRepository pointRequestRepository;
 
     private static final String FEEDBACK_ROBOT_CODE = "issue-helper";
     private static final String ROOM_CODE = "main";
@@ -97,6 +106,11 @@ public class ChatMessageService {
         this.robotRepository = robotRepository;
         this.walletService = walletService;
         this.transactionTemplate = transactionTemplate;
+    }
+
+    @Autowired(required = false)
+    public void setPointRequestRepository(PlayerPointRequestRepository pointRequestRepository) {
+        this.pointRequestRepository = pointRequestRepository;
     }
 
     /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
@@ -217,6 +231,15 @@ public class ChatMessageService {
             }
             return new ChatMessageSendOutcome(existing.get(), true);
         }
+        Optional<ChatCommandParser.Command> command = ChatCommandParser.parse(normalizedContent);
+        if (command.isPresent()) {
+            ChatMessage message = messageRepository.insertUserMessage(room.id(),
+                    roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo()), userId,
+                    user.displayName(), clientId, normalizedContent, now);
+            publishUserMessage(message, now);
+            return processCommand(userId, roomCode, clientId, user, message, command.get(), now);
+        }
+
         BetTextParser.ParseResult parsedBet = BetTextParser.parse(normalizedContent);
         List<BetTextParser.ParsedBet> bets = parsedBet.bets();
         if (!bets.isEmpty()) {
@@ -224,6 +247,7 @@ public class ChatMessageService {
                 throw new IllegalStateException("下注服务未配置");
             }
             List<DemoGameService.BetView> placedBets = new ArrayList<>(bets.size());
+            List<BetLimitExceededException> rejectedBets = new ArrayList<>();
             for (int index = 0; index < bets.size(); index++) {
                 BetTextParser.ParsedBet bet = bets.get(index);
                 try {
@@ -232,12 +256,24 @@ public class ChatMessageService {
                             : "CHAT-" + clientId + "-" + (index + 1);
                     placedBets.add(gameService.placeBet(userId, new PlaceBetRequest(
                             1, bet.playType(), bet.parameters(), bet.stake(), idempotencyKey)));
+                } catch (BetLimitExceededException rejection) {
+                    // Only the offending item is dropped; the remaining items keep their normal path.
+                    rejectedBets.add(rejection);
                 } catch (BusinessException exception) {
                     throw new BetRejectedException(exception);
                 }
             }
-            DemoGameService.BetView firstBet = placedBets.get(0);
             long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+            if (placedBets.isEmpty()) {
+                ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
+                        user.displayName(), clientId, normalizedContent, now);
+                publishUserMessage(message, now);
+                publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
+                        "BET_LIMIT_REJECTED", "@" + user.displayName() + "  下注未成功"
+                                + limitRejectionLines(user.displayName(), rejectedBets), now);
+                return new ChatMessageSendOutcome(message, false);
+            }
+            DemoGameService.BetView firstBet = placedBets.get(0);
             String betPayload = betPayload(placedBets);
             ChatMessage message = messageRepository.insertUserBetMessage(room.id(), sequence, userId,
                     user.displayName(), clientId, firstBet.issueNumber(), normalizedContent, betPayload, now);
@@ -251,7 +287,8 @@ public class ChatMessageService {
             String remainingBalance = formatMoney(walletService.getForCurrentUser(userId).balance());
             publishFeedback(roomCode, firstBet.issueNumber(), clientId, message.id(),
                     "BET_ACCEPTED", "@" + user.displayName() + "  攻击成功，使用粮草"
-                            + formatMoney(totalStake) + ", 剩余粮草：" + remainingBalance, now);
+                            + formatMoney(totalStake) + ", 剩余粮草：" + remainingBalance
+                            + limitRejectionLines(user.displayName(), rejectedBets), now);
             return new ChatMessageSendOutcome(message, false);
         }
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
@@ -261,6 +298,87 @@ public class ChatMessageService {
         publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
                 "INVALID_COMMAND", "@" + user.displayName() + ", 指令格式不正确!", now);
         return new ChatMessageSendOutcome(message, false);
+    }
+
+    private ChatMessageSendOutcome processCommand(long userId, String roomCode, String clientId,
+                                                  UserAccount user, ChatMessage source,
+                                                  ChatCommandParser.Command command, Instant now) {
+        String issueNumber = feedbackIssueNumber();
+        switch (command.type()) {
+            case RULES -> {
+                return new ChatMessageSendOutcome(source, false);
+            }
+            case BALANCE -> {
+                VirtualWallet balance = currentBalance(userId);
+                publishFeedback(roomCode, issueNumber, clientId, source.id(), "BALANCE",
+                        "@" + user.displayName() + "   剩余粮草：" + formatMoney(balance.balance()), now);
+            }
+            case DAILY_SUMMARY -> {
+                VirtualWallet balance = currentBalance(userId);
+                DayRange range = currentBusinessDay(now);
+                GameDataRepository.BetDayStatistics statistics = gameDataRepository.findBetDayStatistics(
+                        balance.accountId(), range.fromInclusive(), range.toExclusive());
+                long issues = gameDataRepository.countBetIssues(balance.accountId(),
+                        range.fromInclusive(), range.toExclusive());
+                publishFeedback(roomCode, issueNumber, clientId, source.id(), "DAILY_SUMMARY",
+                        "@" + user.displayName() + " 累计今日流水：" + formatMoney(statistics.turnover())
+                                + "，盈亏：" + formatMoney(statistics.netProfit()) + "，期数：" + issues, now);
+            }
+            case TOP_UP, DOWN -> processPointRequest(userId, roomCode, clientId, user, source, command, now);
+            case CANCEL -> processCancellation(userId, roomCode, clientId, user, source, now);
+        }
+        return new ChatMessageSendOutcome(source, false);
+    }
+
+    private void processPointRequest(long userId, String roomCode, String clientId, UserAccount user,
+                                     ChatMessage source, ChatCommandParser.Command command, Instant now) {
+        if (pointRequestRepository == null) {
+            throw new IllegalStateException("上下分申请服务未配置");
+        }
+        VirtualWallet balance = currentBalance(userId);
+        if (command.type() == ChatCommandParser.Type.DOWN
+                && balance.balance().compareTo(command.amount()) < 0) {
+            publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "POINT_REQUEST_REJECTED",
+                    "@" + user.displayName() + " 您当前积分不足" + formatMoney(command.amount()), now);
+            return;
+        }
+        pointRequestRepository.insertPending(userId, command.type().name(), command.amount(),
+                clientId, source.id(), now);
+        String action = command.type() == ChatCommandParser.Type.TOP_UP ? "上分" : "下分";
+        String content = "@" + user.displayName() + " " + action + formatMoney(command.amount()) + "，待审批！";
+        if (command.type() == ChatCommandParser.Type.DOWN) {
+            content += "，剩余" + formatMoney(balance.balance());
+        }
+        publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "POINT_REQUEST_CREATED",
+                content, now);
+    }
+
+    private void processCancellation(long userId, String roomCode, String clientId, UserAccount user,
+                                     ChatMessage source, Instant now) {
+        if (gameService == null) {
+            throw new IllegalStateException("撤单服务未配置");
+        }
+        DemoGameService.CancellationResult result = gameService.cancelCurrentBets(userId, now);
+        String content = switch (result.status()) {
+            case STOPPED -> "@" + user.displayName() + " 本期已停止，禁止取消！";
+            case LAST_THIRTY_SECONDS -> "@" + user.displayName() + " 30秒以内禁止取消！";
+            case NO_ELIGIBLE_BETS -> "@" + user.displayName() + " 10秒内无有效指令！";
+            case CANCELED -> cancellationContent(user.displayName(), result);
+        };
+        publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "CANCEL_RESULT", content, now);
+    }
+
+    private static String cancellationContent(String displayName, DemoGameService.CancellationResult result) {
+        StringBuilder content = new StringBuilder("@").append(displayName)
+                .append(" 10秒内有效指令已全部取消");
+        for (DemoGameService.CancellationItem item : result.items()) {
+            GameDataRepository.BetRecord bet = item.bet();
+            content.append('\n').append('@').append(displayName).append(" 取消 ")
+                    .append(formatBetText(bet.playType(), bet.parameters(), bet.stake()))
+                    .append("，返回").append(formatMoney(bet.stake()))
+                    .append("，剩余粮草").append(formatMoney(item.balanceAfter()));
+        }
+        return content.toString();
     }
 
     private ChatMessageSendOutcome persistRejectedBet(long userId, String roomCode,
@@ -334,6 +452,58 @@ public class ChatMessageService {
                 .orElse("UNKNOWN");
     }
 
+    private VirtualWallet currentBalance(long userId) {
+        if (walletService == null) {
+            throw new IllegalStateException("钱包服务未配置");
+        }
+        return walletService.getForCurrentUser(userId);
+    }
+
+    private static DayRange currentBusinessDay(Instant now) {
+        ZoneId zone = ZoneId.of("Asia/Shanghai");
+        ZonedDateTime local = now.atZone(zone);
+        LocalDate date = local.toLocalTime().isBefore(LocalTime.of(6, 0))
+                ? local.toLocalDate().minusDays(1) : local.toLocalDate();
+        ZonedDateTime start = date.atTime(6, 0).atZone(zone);
+        return new DayRange(start.toInstant(), start.plusDays(1).toInstant());
+    }
+
+    private static String formatBetText(PlayType playType, List<Integer> parameters,
+                                        java.math.BigDecimal stake) {
+        String amount = formatMoney(stake);
+        String values = parameters.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining());
+        return switch (playType) {
+            case FAN -> values + "番" + amount;
+            case ANGLE -> values + "/" + amount;
+            case CAR -> formatCar(parameters, amount);
+            case STRICT -> values.charAt(0) + "念" + values.charAt(1) + "/" + amount;
+            case ADD -> values.charAt(0) + "加" + values.substring(1) + "/" + amount;
+            case POSITIVE -> values + "正" + amount;
+            case TONG -> values.substring(0, 1) + "通" + values.substring(1) + "/" + amount;
+            case NONE -> formatNone(parameters, amount);
+            case ODD_EVEN -> (parameters.get(0) == 1 ? "单" : "双") + amount;
+            case BIG_SMALL -> (parameters.get(0) == 1 ? "大" : "小") + amount;
+            case SPECIAL -> parameters.stream().map(value -> String.format("%02d", value))
+                    .collect(java.util.stream.Collectors.joining("/")) + "特" + amount;
+        };
+    }
+
+    private static String formatCar(List<Integer> parameters, String amount) {
+        int missingFan = java.util.stream.IntStream.rangeClosed(1, 4)
+                .filter(value -> !parameters.contains(value))
+                .findFirst()
+                .orElse(0);
+        return missingFan + "车" + amount;
+    }
+
+    private static String formatNone(List<Integer> parameters, String amount) {
+        if (parameters.size() == 2) {
+            return parameters.get(0) + "无" + parameters.get(1) + "/" + amount;
+        }
+        return parameters.get(0) + String.valueOf(parameters.get(1))
+                + "无" + parameters.get(2) + "/" + amount;
+    }
+
     private static String rejectedFeedback(String displayName, BusinessException exception) {
         String prefix = "@" + displayName + ", ";
         return switch (exception.code()) {
@@ -345,8 +515,22 @@ public class ChatMessageService {
         };
     }
 
+    private static String limitRejectionLines(String displayName,
+                                              List<BetLimitExceededException> rejections) {
+        StringBuilder content = new StringBuilder();
+        for (BetLimitExceededException rejection : rejections) {
+            content.append('\n').append('@').append(displayName).append("  下注 ")
+                    .append(formatBetText(rejection.playType(), rejection.parameters(), rejection.stake()))
+                    .append(" 已拒绝：").append(rejection.reason());
+        }
+        return content.toString();
+    }
+
     private static String formatMoney(java.math.BigDecimal value) {
         return value.stripTrailingZeros().toPlainString();
+    }
+
+    private record DayRange(Instant fromInclusive, Instant toExclusive) {
     }
 
     private static String settlementFeedback(String displayName,
@@ -362,6 +546,8 @@ public class ChatMessageService {
             case LOSE -> prefix + "第" + event.issueNumber() + "期未中奖，使用粮草"
                     + formatMoney(event.stake()) + ", 当前粮草：" + currentBalance;
             case PENDING -> prefix + "第" + event.issueNumber() + "期结算处理中!";
+            case CANCELED -> prefix + "第" + event.issueNumber() + "期注单已撤销，返还粮草"
+                    + formatMoney(event.returnAmount()) + ", 当前粮草：" + currentBalance;
         };
     }
 

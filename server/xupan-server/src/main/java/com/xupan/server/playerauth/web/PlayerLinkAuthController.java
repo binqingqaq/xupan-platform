@@ -40,7 +40,7 @@ public class PlayerLinkAuthController {
     public ExchangeResponse exchange(@Valid @RequestBody ExchangeRequest request, HttpServletRequest httpRequest,
                                      HttpServletResponse response) {
         PlayerLinkAuthenticationService.ExchangeResult result = service.exchange(request.token(), metadata(httpRequest));
-        com.xupan.server.auth.web.AuthController.writeRefreshCookie(
+        com.xupan.server.auth.web.AuthController.writePlayerRefreshCookie(
                 response, result.tokens().refreshToken(), refreshCookieSecure);
         return ExchangeResponse.from(result);
     }

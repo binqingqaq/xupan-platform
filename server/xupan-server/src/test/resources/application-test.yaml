@@ -7,6 +7,10 @@ spring:
   flyway:
     enabled: true
 xupan:
+  display:
+    mobile:
+      external:
+        enabled: false
   avatar:
     auto-generate: false
   robot:

@@ -2,10 +2,18 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError } from '../api'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
+import QuickBetPanel from '../components/QuickBetPanel.vue'
 import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { ChatSocket } from '../services/chatSocket'
 import { mayAffectBetAccount } from '../chatSubmission'
+import { DEFAULT_QUICK_BET_AMOUNTS } from '../quickBet'
+import {
+  chatHistoryCutoffMs,
+  isWithinChatHistoryWindow,
+  restoredScrollTop,
+  unreadMessageLabel,
+} from '../chatHistory'
 import PlayerLinkExpiredView from './PlayerLinkExpiredView.vue'
 import type {
   BallView,
@@ -60,9 +68,13 @@ const chatLoading = ref(false)
 const chatPolling = ref(false)
 const chatLastSequence = ref(0)
 const chatReadCursorSaved = ref(0)
+const chatLoadingOlder = ref(false)
+const chatHistoryExhausted = ref(false)
+const chatHistoryCutoff = ref(0)
 const chatConnectionState = ref<ChatSocketState>('DISCONNECTED')
 const messageInput = ref('')
 const quickOpen = ref(false)
+const quickBetOpen = ref(false)
 const interfaceOpen = ref(false)
 const menuOpen = ref(false)
 const betSummary = ref<MyBetSummaryResponse | null>(null)
@@ -99,7 +111,8 @@ const clockTick = ref(Date.now())
 const serverOffsetMs = ref(0)
 const selectedQuickNumber = ref('1')
 const selectedQuickAmount = ref(100)
-const settingAmounts = ref(['50', '100', '200', '500', '1000'])
+const settingAmounts = ref(DEFAULT_QUICK_BET_AMOUNTS.map(String))
+const quickBetScrollTop = ref(0)
 const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
 const keyboardFlat = ref(false)
@@ -194,6 +207,10 @@ function oddsFor(playType: PlayType) {
 
 const historyRows = computed(() => toHistoryRows(current.value?.history ?? []))
 const currentBets = computed(() => current.value?.bets ?? [])
+const quickPendingCount = computed(() => currentBets.value
+  .filter(bet => bet.settlementStatus === 'PENDING').length)
+const quickSettledCount = computed(() => currentBets.value
+  .filter(bet => bet.settlementStatus === 'WIN' || bet.settlementStatus === 'DRAW' || bet.settlementStatus === 'LOSE').length)
 const walletLedger = computed(() => wallet.value?.ledger ?? [])
 const accountPanelBets = computed(() => accountPanelTab.value === 'pending'
   ? (betSummary.value?.pending ?? [])
@@ -204,6 +221,7 @@ const settlementStatusLabels: Record<string, string> = {
   WIN: '中奖',
   DRAW: '和局',
   LOSE: '未中',
+  CANCELED: '已取消',
 }
 
 function settlementStatusLabel(status: string) {
@@ -238,6 +256,7 @@ function ledgerOperationLabel(operationType: string) {
 }
 
 const messages = computed<RoomMessage[]>(() => chatMessages.value.map(toRoomMessage))
+const chatOldestSequence = computed(() => chatMessages.value[0]?.sequenceNo ?? null)
 const displayMessages = computed<RoomMessage[]>(() => {
   const pending = pendingChatMessage.value
   if (!pending) return messages.value
@@ -331,6 +350,8 @@ function isNearChatBottom() {
 }
 
 function handleChatScroll() {
+  const element = messageScroll.value
+  if (element && element.scrollTop < 80) void loadOlderChatMessages()
   if (isNearChatBottom()) {
     chatUnread.value = 0
     if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
@@ -355,16 +376,68 @@ async function loadChatHistory() {
       api.getChatMessages(ROOM_CODE, { limit: 50 }),
     ])
     room.value = nextRoom
+    chatHistoryCutoff.value = chatHistoryCutoffMs(nextRoom.serverNow)
     chatMessages.value = []
     chatLastSequence.value = 0
     chatReadCursorSaved.value = 0
-    mergeChatMessages(page.items)
+    chatHistoryExhausted.value = false
+    const latestSequence = page.items.length ? page.items[page.items.length - 1].sequenceNo : 0
+    chatLastSequence.value = latestSequence
+    const visibleItems = page.items.filter(message =>
+      isWithinChatHistoryWindow(message.createdAt, chatHistoryCutoff.value))
+    mergeChatMessages(visibleItems)
+    chatHistoryExhausted.value = !page.hasMore
+      || visibleItems.length < page.items.length
+      || visibleItems.length === 0
     chatUnread.value = 0
     await nextTick()
     scrollToBottom()
     if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
   } finally {
     chatLoading.value = false
+  }
+}
+
+async function loadOlderChatMessages() {
+  const element = messageScroll.value
+  const oldestSequence = chatOldestSequence.value
+  if (!element || chatLoadingOlder.value || chatHistoryExhausted.value || !room.value) return
+  if (!oldestSequence || oldestSequence <= 1) {
+    chatHistoryExhausted.value = true
+    return
+  }
+
+  const previousScrollHeight = element.scrollHeight
+  const previousScrollTop = element.scrollTop
+  chatLoadingOlder.value = true
+  try {
+    const page = await api.getChatMessages(ROOM_CODE, {
+      beforeSequence: oldestSequence,
+      limit: 100,
+    })
+    if (!page.items.length) {
+      chatHistoryExhausted.value = true
+      return
+    }
+    const oldestFetched = page.items[0]
+    const visibleItems = page.items.filter(message =>
+      isWithinChatHistoryWindow(message.createdAt, chatHistoryCutoff.value))
+    const added = mergeChatMessages(visibleItems)
+    chatHistoryExhausted.value = !page.hasMore
+      || visibleItems.length < page.items.length
+      || !isWithinChatHistoryWindow(oldestFetched.createdAt, chatHistoryCutoff.value)
+    await nextTick()
+    if (added > 0) {
+      element.scrollTop = restoredScrollTop(
+        previousScrollHeight,
+        previousScrollTop,
+        element.scrollHeight,
+      )
+    }
+  } catch {
+    // Keep the current view; the next upward scroll can retry.
+  } finally {
+    chatLoadingOlder.value = false
   }
 }
 
@@ -476,6 +549,7 @@ async function load() {
     await loadGame()
     currentUser.value = user
     authenticated.value = true
+    await loadQuickBetPreferences()
     await loadChatHistory()
     connectChatSocket()
     scrollToBottom()
@@ -606,6 +680,11 @@ function toggleHistory() {
   menuOpen.value = false
   quickOpen.value = false
   interfaceOpen.value = false
+  quickBetOpen.value = false
+}
+
+function closeHistory() {
+  historyOpen.value = false
 }
 
 async function loadAccountPanel() {
@@ -621,16 +700,85 @@ async function loadAccountPanel() {
 }
 
 function toggleAccountPanel() {
-  menuOpen.value = !menuOpen.value
+  if (menuOpen.value) {
+    closeAccountPanel()
+    return
+  }
+  openAccountPanel()
+}
+
+function openAccountPanel() {
+  menuOpen.value = true
   quickOpen.value = false
   interfaceOpen.value = false
-  if (menuOpen.value) void loadAccountPanel()
+  quickBetOpen.value = false
+  historyOpen.value = false
+  void loadAccountPanel()
+}
+
+function closeAccountPanel() {
+  menuOpen.value = false
 }
 
 function openSettings() {
   settingsOpen.value = true
   menuOpen.value = false
   quickOpen.value = false
+}
+
+function openQuickBet() {
+  if (quickBetOpen.value) {
+    closeQuickBet()
+    return
+  }
+  quickBetOpen.value = true
+  quickOpen.value = false
+  interfaceOpen.value = false
+  menuOpen.value = false
+  historyOpen.value = false
+}
+
+function closeQuickBet() {
+  quickBetOpen.value = false
+}
+
+function handleQuickBetScroll(position: number) {
+  quickBetScrollTop.value = position
+}
+
+async function loadQuickBetPreferences() {
+  try {
+    const preference = await api.getMyQuickBetPreference()
+    if (preference.amounts.length === 5) {
+      settingAmounts.value = preference.amounts.map(quickAmountText)
+    }
+  } catch {
+    // UI preferences are optional; keep the safe defaults when they cannot be loaded.
+  }
+}
+
+async function saveQuickBetSettings() {
+  const amounts = settingAmounts.value.map(value => Number(value))
+  if (amounts.length !== 5 || amounts.some(value => !Number.isFinite(value) || value <= 0)) {
+    showFeedback('快捷金额必须是大于 0 的数字', 'error')
+    return
+  }
+  try {
+    const preference = await api.updateMyQuickBetPreference(amounts)
+    settingAmounts.value = preference.amounts.map(quickAmountText)
+    settingsOpen.value = false
+    showFeedback('设置已保存')
+  } catch (error) {
+    showFeedback(apiErrorMessage(error, '设置保存失败，请稍后重试'), 'error')
+  }
+}
+
+function resetQuickBetSettingsToDefault() {
+  settingAmounts.value = DEFAULT_QUICK_BET_AMOUNTS.map(String)
+}
+
+function quickAmountText(value: number) {
+  return Number(value).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 }
 
 async function uploadCurrentUserAvatar(event: Event) {
@@ -679,12 +827,12 @@ async function submitMessage() {
   await sendPlainTextMessage(text)
 }
 
-async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()) {
-  if (pendingChatMessage.value?.status === 'sending') return
+async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()): Promise<boolean> {
+  if (pendingChatMessage.value?.status === 'sending') return false
   const shouldRefreshAccount = mayAffectBetAccount(body)
   pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'sending' }
   scrollToBottom()
-  if (chatSocket.sendMessage(clientMessageId, body)) return
+  if (chatSocket.sendMessage(clientMessageId, body)) return true
   try {
     const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body })
     mergeChatMessages([sent])
@@ -695,6 +843,7 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
       scrollToBottom()
       void saveChatReadCursor(chatLastSequence.value)
     }
+    return true
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'failed' }
@@ -706,6 +855,15 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
     }
     if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
     void refreshChatMessagesAfterSubmission()
+    return false
+  }
+}
+
+async function submitQuickBet(message: string) {
+  const sent = await sendPlainTextMessage(message)
+  if (sent) {
+    closeQuickBet()
+    showFeedback('快速下注已提交')
   }
 }
 
@@ -826,24 +984,15 @@ onUnmounted(() => {
         <strong class="balance-text">虚拟余额:{{ balance }}</strong>
         <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
         <div class="header-actions">
-          <button class="quick-button" type="button" @click="quickOpen = !quickOpen">快捷</button>
+          <button class="quick-button" type="button" @click="openQuickBet">快捷</button>
           <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
-          <button class="menu-button" type="button" aria-label="打开账户流水" title="账户流水" :class="{ active: menuOpen }" @click="toggleAccountPanel">
+          <button class="menu-button" type="button" aria-label="打开账户流水" :class="{ active: menuOpen }" @click="toggleAccountPanel">
             <span></span><span></span><span></span>
           </button>
         </div>
-        <div v-if="quickOpen" class="header-menu quick-menu">
-          <div class="quick-menu-section-title">常用功能</div>
-          <button type="button" @click="noticeOpen = true; quickOpen = false">玩法说明</button>
-          <button type="button" @click="keyboardOpen = true; quickOpen = false">展开键盘</button>
-          <button type="button" @click="toggleHistory">历史记录</button>
-          <button type="button" @click="openSettings">设置</button>
-          <div class="quick-menu-section-title">快捷指令</div>
-          <button v-for="token in quickTokens" :key="token" type="button" @click="appendToken(token); quickOpen = false">{{ token }}</button>
-        </div>
         <div v-if="interfaceOpen" class="header-menu interface-menu">
-          <button type="button" :class="{ selected: interfaceMode === 'ui1' }" @click="setInterfaceMode('ui1')">界面1</button>
-          <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')">界面2</button>
+          <button type="button" :class="{ selected: interfaceMode === 'ui1' }" @click="setInterfaceMode('ui1')"><span class="interface-check">{{ interfaceMode === 'ui1' ? '✓' : '' }}</span>界面1</button>
+          <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')"><span class="interface-check">{{ interfaceMode === 'ui2' ? '✓' : '' }}</span>界面2</button>
         </div>
       </div>
       <div class="reference-issuebar">
@@ -860,11 +1009,25 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <div v-if="menuOpen" class="account-panel-layer" role="presentation" @click.self="menuOpen = false">
+    <QuickBetPanel
+      v-if="quickBetOpen"
+      :issue-number="current?.issueNumber || '--'"
+      :pending-count="quickPendingCount"
+      :settled-count="quickSettledCount"
+      :odds="oddsByType"
+      :quick-amounts="settingAmounts"
+      :initial-scroll-top="quickBetScrollTop"
+      @close="closeQuickBet"
+      @settings="openSettings"
+      @submit="submitQuickBet"
+      @scroll-position="handleQuickBetScroll"
+    />
+
+    <div v-if="menuOpen" class="account-panel-layer" role="presentation" @click.self="closeAccountPanel">
       <section class="account-panel" role="dialog" aria-modal="true" aria-label="账户流水">
         <header class="account-panel-toolbar">
           <strong>账户流水</strong>
-          <button type="button" aria-label="关闭账户流水" title="关闭" @click="menuOpen = false">×</button>
+          <button type="button" aria-label="关闭账户流水" title="关闭" @click="closeAccountPanel">×</button>
         </header>
         <div class="account-panel-summary">
           <div class="account-panel-avatar">
@@ -907,7 +1070,7 @@ onUnmounted(() => {
       </section>
     </div>
 
-    <div v-if="historyOpen" class="reference-history-scrim" aria-hidden="true" @click="historyOpen = false"></div>
+    <div v-if="historyOpen" class="reference-history-scrim" aria-hidden="true" @click="closeHistory"></div>
     <div v-if="historyOpen" class="reference-history-panel" role="dialog" aria-label="历史记录">
       <div class="history-panel-table">
         <div v-for="row in historyRows" :key="`panel-${row.issue}`" class="history-panel-row">
@@ -920,6 +1083,8 @@ onUnmounted(() => {
 
     <main ref="messageScroll" class="reference-message-scroll" :style="{ bottom: `${composerHeight}px` }" aria-label="聊天室消息" @scroll="handleChatScroll">
       <section class="reference-message-feed">
+        <div v-if="chatLoadingOlder" class="chat-history-state" role="status">正在加载更早消息...</div>
+        <div v-else-if="chatHistoryExhausted && displayMessages.length" class="chat-history-state">已显示最近4小时消息</div>
         <section v-if="wallet" class="account-summary" aria-label="我的下注与余额流水">
           <header class="account-summary-header">
             <strong>第{{ displayIssueNumber }}期 · 我的下注</strong>
@@ -969,9 +1134,16 @@ onUnmounted(() => {
             </div>
           </article>
         </template>
-        <button v-if="chatUnread > 0" class="chat-unread" type="button" @click="scrollToBottom">{{ chatUnread }} 条新消息</button>
       </section>
     </main>
+
+    <button
+      v-if="chatUnread > 0"
+      class="chat-unread"
+      type="button"
+      :style="{ bottom: `${composerHeight + 12}px` }"
+      @click="scrollToBottom"
+    >{{ unreadMessageLabel(chatUnread) }}</button>
 
     <button class="scratch-entry" type="button" @click="openScratch">搓牌开奖</button>
 
@@ -1052,17 +1224,18 @@ onUnmounted(() => {
     <div v-if="settingsOpen" class="reference-overlay light-overlay" @click.self="closeOverlays">
       <section class="settings-panel" role="dialog" aria-modal="true" aria-label="设置">
         <header><strong>设置</strong><button type="button" aria-label="关闭设置" @click="settingsOpen = false">×</button></header>
-        <div class="settings-body">
-          <div class="avatar-setting-row">
-            <div class="avatar-setting-preview">
-              <img v-if="isStoredAvatarKey(currentUser?.avatarKey)" :src="api.avatarUrl(currentUser.avatarKey)" alt="当前头像" />
-              <span v-else>{{ avatarText(currentUser?.displayName || '我') }}</span>
-            </div>
-            <div><strong>我的头像</strong><small>支持 JPG、PNG、GIF、WebP，最大 5 MB</small></div>
+        <div class="settings-body quick-amount-settings">
+          <input
+            v-for="(amount, index) in settingAmounts"
+            :key="index"
+            v-model="settingAmounts[index]"
+            inputmode="numeric"
+            :aria-label="`快捷金额 ${index + 1}`"
+          />
+          <div class="quick-amount-actions">
+            <button class="quick-amount-default" type="button" @click="resetQuickBetSettingsToDefault">默认</button>
+            <button class="settings-save quick-amount-save" type="button" @click="saveQuickBetSettings">保存</button>
           </div>
-          <label class="avatar-file-field">选择头像<input ref="avatarInput" type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="avatarUploading" @change="uploadCurrentUserAvatar" /></label>
-          <label v-for="(amount, index) in settingAmounts" :key="index">快捷金额 {{ index + 1 }}<input v-model="settingAmounts[index]" inputmode="numeric" aria-label="快捷金额"></label>
-          <button class="settings-save" type="button" @click="settingsOpen = false; showFeedback('设置已保存')">保存</button>
         </div>
       </section>
     </div>

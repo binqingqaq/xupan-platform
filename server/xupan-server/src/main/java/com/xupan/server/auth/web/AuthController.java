@@ -27,6 +27,8 @@ import java.time.Duration;
 public class AuthController {
 
     public static final String REFRESH_COOKIE = "xupan_refresh";
+    public static final String PLAYER_REFRESH_COOKIE = "xupan_player_refresh";
+    public static final String REFRESH_AUDIENCE_HEADER = "X-Xupan-Auth-Audience";
     private static final String COOKIE_PATH = "/api/auth";
 
     private final AuthenticationService authenticationService;
@@ -52,17 +54,19 @@ public class AuthController {
 
     @PostMapping("/refresh")
     public AuthResponse refresh(HttpServletRequest request, HttpServletResponse response) {
-        String rawRefreshToken = refreshCookie(request);
+        RefreshAudience audience = refreshAudience(request);
+        String rawRefreshToken = refreshCookie(request, audience.cookieName());
         try {
-            TokenService.IssuedTokens tokens = authenticationService.refresh(rawRefreshToken, metadata(request));
+            TokenService.IssuedTokens tokens = authenticationService.refresh(
+                    rawRefreshToken, metadata(request), audience.authMode());
             var session = tokenService.validateAccessToken(tokens.accessToken())
                     .orElseThrow(() -> new TokenService.InvalidTokenException("刷新状态无效"));
             AuthenticationService.CurrentUser user = authenticationService.currentUser(
                     session.userId(), session.authMode(), session.scope());
-            writeRefreshCookie(response, tokens.refreshToken());
+            writeRefreshCookie(response, audience, tokens.refreshToken(), refreshCookieSecure);
             return new AuthResponse(tokens.accessToken(), expiresIn(tokens), CurrentUserResponse.from(user));
         } catch (TokenService.InvalidTokenException exception) {
-            clearRefreshCookie(response);
+            clearRefreshCookie(response, audience);
             throw exception;
         }
     }
@@ -73,7 +77,8 @@ public class AuthController {
         AuthenticatedUser user = principal(authentication);
         authenticationService.logout(user.getUserId(),
                 (String) request.getAttribute(AuthenticationService.SESSION_ID_ATTRIBUTE), metadata(request));
-        clearRefreshCookie(response);
+        clearRefreshCookie(response, "PLAYER_LINK".equals(user.authMode())
+                ? RefreshAudience.PLAYER : RefreshAudience.ADMIN);
     }
 
     @GetMapping("/me")
@@ -103,12 +108,12 @@ public class AuthController {
         return new TokenService.RequestMetadata(request.getRemoteAddr(), request.getHeader("User-Agent"));
     }
 
-    private static String refreshCookie(HttpServletRequest request) {
+    private static String refreshCookie(HttpServletRequest request, String cookieName) {
         if (request.getCookies() == null) {
             return null;
         }
         for (Cookie cookie : request.getCookies()) {
-            if (REFRESH_COOKIE.equals(cookie.getName())) {
+            if (cookieName.equals(cookie.getName())) {
                 return cookie.getValue();
             }
         }
@@ -116,7 +121,16 @@ public class AuthController {
     }
 
     public static void writeRefreshCookie(HttpServletResponse response, String value, boolean secure) {
-        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(REFRESH_COOKIE, value)
+        writeRefreshCookie(response, RefreshAudience.ADMIN, value, secure);
+    }
+
+    public static void writePlayerRefreshCookie(HttpServletResponse response, String value, boolean secure) {
+        writeRefreshCookie(response, RefreshAudience.PLAYER, value, secure);
+    }
+
+    private static void writeRefreshCookie(HttpServletResponse response, RefreshAudience audience,
+                                           String value, boolean secure) {
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(audience.cookieName(), value)
                 .httpOnly(true).secure(secure).sameSite("Strict").path(COOKIE_PATH)
                 .maxAge(TokenService.REFRESH_TOKEN_LIFETIME).build().toString());
     }
@@ -125,10 +139,15 @@ public class AuthController {
         writeRefreshCookie(response, value, refreshCookieSecure);
     }
 
-    private void clearRefreshCookie(HttpServletResponse response) {
-        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(REFRESH_COOKIE, "")
+    private void clearRefreshCookie(HttpServletResponse response, RefreshAudience audience) {
+        response.addHeader(HttpHeaders.SET_COOKIE, ResponseCookie.from(audience.cookieName(), "")
                 .httpOnly(true).secure(refreshCookieSecure).sameSite("Strict").path(COOKIE_PATH)
                 .maxAge(Duration.ZERO).build().toString());
+    }
+
+    private static RefreshAudience refreshAudience(HttpServletRequest request) {
+        String value = request.getHeader(REFRESH_AUDIENCE_HEADER);
+        return "PLAYER".equalsIgnoreCase(value) ? RefreshAudience.PLAYER : RefreshAudience.ADMIN;
     }
 
     private static long expiresIn(TokenService.IssuedTokens tokens) {
@@ -136,5 +155,26 @@ public class AuthController {
     }
 
     public record WsTicketResponse(String ticket, long expiresIn) {
+    }
+
+    public enum RefreshAudience {
+        ADMIN(REFRESH_COOKIE, "PASSWORD"),
+        PLAYER(PLAYER_REFRESH_COOKIE, "PLAYER_LINK");
+
+        private final String cookieName;
+        private final String authMode;
+
+        RefreshAudience(String cookieName, String authMode) {
+            this.cookieName = cookieName;
+            this.authMode = authMode;
+        }
+
+        public String cookieName() {
+            return cookieName;
+        }
+
+        public String authMode() {
+            return authMode;
+        }
     }
 }

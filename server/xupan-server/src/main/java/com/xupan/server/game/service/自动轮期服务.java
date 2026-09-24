@@ -215,7 +215,7 @@ public class 自动轮期服务 {
         return switch (settlement.status()) {
             case WIN -> settlement.stake().add(settlement.netProfit());
             case DRAW -> settlement.stake();
-            case LOSE, PENDING -> BigDecimal.ZERO;
+            case LOSE, PENDING, CANCELED -> BigDecimal.ZERO;
         };
     }
 }

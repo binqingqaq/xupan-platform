@@ -278,6 +278,19 @@ class DemoGameControllerTest {
 
     @Test
     void betSummaryMovesBetFromPendingToSettledAndKeepsTodayTotals() throws Exception {
+        long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, testUserId);
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status,
+                     net_profit, explanation, created_at)
+                VALUES (?, 'BET-OLD-SETTLED', 'BET-OLD-SETTLED', 'OLD-ISSUE', 1,
+                        'FAN', '1', 10.00, 3.850, 'WIN', 28.50, '历史结算',
+                        ?)
+                """, accountId, java.sql.Timestamp.from(
+                java.time.Instant.now().minus(2, java.time.temporal.ChronoUnit.DAYS)));
+
         mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
                 .andExpect(status().isOk());
 

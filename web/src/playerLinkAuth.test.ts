@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, clearAccessToken, getAccessToken } from './api'
+import { api, clearAccessToken, getAccessToken, getAuthAudience } from './api'
 
 describe('player link authentication', () => {
   afterEach(() => {
     clearAccessToken()
     localStorage.clear()
+    sessionStorage.clear()
     vi.unstubAllGlobals()
   })
 
@@ -29,6 +30,8 @@ describe('player link authentication', () => {
 
     expect(result.user.scope).toBe('PLAYER_FULL')
     expect(getAccessToken()).toBe('player-token-test')
+    expect(getAuthAudience()).toBe('PLAYER')
+    expect(sessionStorage.getItem('xupan.auth.audience')).toBe('PLAYER')
     expect(localStorage.length).toBe(0)
     expect(fetchMock).toHaveBeenCalledWith('/api/player-auth/exchange', expect.objectContaining({
       method: 'POST',

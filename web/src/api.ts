@@ -46,6 +46,13 @@ import type {
   PlayerAccessLinkView,
   PlayerNameHistory,
   PlayerDeskPointRecords,
+  PendingPointRequest,
+  RecentPointOperations,
+  BetBoardView,
+  BettingConfigView,
+  BettingLimits,
+  QuickBetPreference,
+  MobileDisplayHomeResponse,
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
@@ -70,12 +77,38 @@ import type {
 import { buildDispatchQuery } from './robotAdmin'
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated'
+export type AuthAudience = 'ADMIN' | 'PLAYER'
+
+const AUTH_AUDIENCE_STORAGE_KEY = 'xupan.auth.audience'
+const AUTH_REFRESH_AUDIENCE_HEADER = 'X-Xupan-Auth-Audience'
 
 let accessToken: string | null = null
-let refreshPromise: Promise<string | null> | null = null
+let refreshPromise: { audience: AuthAudience; promise: Promise<string | null> } | null = null
 let sessionPromise: Promise<CurrentUserView | null> | null = null
 let authState: AuthState = 'unknown'
+let authAudience: AuthAudience = readStoredAuthAudience()
 const authStateListeners = new Set<(state: AuthState) => void>()
+
+function readStoredAuthAudience(): AuthAudience {
+  try {
+    return window.sessionStorage.getItem(AUTH_AUDIENCE_STORAGE_KEY) === 'PLAYER' ? 'PLAYER' : 'ADMIN'
+  } catch {
+    return 'ADMIN'
+  }
+}
+
+export function getAuthAudience(): AuthAudience {
+  return authAudience
+}
+
+export function setAuthAudience(audience: AuthAudience) {
+  authAudience = audience
+  try {
+    window.sessionStorage.setItem(AUTH_AUDIENCE_STORAGE_KEY, audience)
+  } catch {
+    // 无会话存储权限时仍保留当前标签页内存中的使用端。
+  }
+}
 
 export function getAccessToken() {
   return accessToken
@@ -126,7 +159,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
   if (error.code === 'PLAYER_LINK_INVALID') return '玩家链接无效、已过期或已撤销'
-  if (error.code === 'PLAYER_LINK_NOT_ALLOWED') return '托不支持玩家链接'
+    if (error.code === 'PLAYER_LINK_NOT_ALLOWED') return '当前玩家分类不支持玩家链接'
   if (error.code === 'PLAYER_LINK_STATUS_INVALID') return '当前玩家状态不允许链接登录'
   if (error.code === 'PLAYER_LINK_NOT_FOUND') return '玩家链接不存在或已失效'
   if (error.code === 'PLAYER_LINK_OPERATION_FORBIDDEN') return '当前账号没有玩家链接管理权限'
@@ -141,6 +174,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'GAME_BET_TEXT_INVALID') return '下注无效：下注格式暂不支持'
   if (error.code === 'GAME_BETTING_CLOSED') return '下注无效：本期已封盘'
   if (error.code === 'GAME_BALL_NOT_SUPPORTED') return '下注无效：当前只支持第1球'
+  if (error.code === 'BETTING_CONFIG_INVALID') return '配置未保存：请检查赔率、返水和限额是否为有效整数'
   if (error.code === 'USER_USERNAME_EXISTS') return '登录名已存在，请换一个登录名'
   if (error.code === 'USER_NOT_FOUND') return '用户不存在，请刷新列表后重试'
   if (error.code === 'USER_STATUS_INVALID') return '用户状态不合法'
@@ -187,33 +221,42 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
 }
 
 async function refreshAccessToken(): Promise<string | null> {
-  if (!refreshPromise) {
-    refreshPromise = fetch('/api/auth/refresh', {
+  const audience = authAudience
+  if (refreshPromise?.audience === audience) return refreshPromise.promise
+  const promise = fetch('/api/auth/refresh', {
       method: 'POST',
       credentials: 'include',
-      headers: { Accept: 'application/json' },
+      headers: {
+        Accept: 'application/json',
+        [AUTH_REFRESH_AUDIENCE_HEADER]: audience,
+      },
     })
       .then(async response => {
         const body = await response.json().catch(() => ({}))
         if (!response.ok || typeof body.accessToken !== 'string' || !body.accessToken) {
-          clearAccessToken()
+          if (authAudience === audience) clearAccessToken()
           return null
         }
-        setAccessToken(body.accessToken)
+        if (authAudience === audience) setAccessToken(body.accessToken)
         return body.accessToken
       })
       .catch(() => {
-        clearAccessToken()
+        if (authAudience === audience) clearAccessToken()
         return null
       })
       .finally(() => {
-        refreshPromise = null
+        if (refreshPromise?.promise === promise) refreshPromise = null
       })
-  }
-  return refreshPromise
+  refreshPromise = { audience, promise }
+  return promise
 }
 
-export async function restoreSession(): Promise<CurrentUserView | null> {
+export async function restoreSession(audience?: AuthAudience): Promise<CurrentUserView | null> {
+  if (audience && audience !== authAudience) {
+    setAuthAudience(audience)
+    if (accessToken) clearAccessToken()
+    sessionPromise = null
+  }
   if (authState === 'authenticated' && accessToken) {
     try {
       return await request<CurrentUserView>('/api/auth/me', {}, false)
@@ -281,6 +324,7 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ username, password, deviceLabel: 'xupan-web' }),
   }, false).then(result => {
+    setAuthAudience('ADMIN')
     setAccessToken(result.accessToken)
     return result
   }),
@@ -288,12 +332,16 @@ export const api = {
     method: 'POST',
     body: JSON.stringify({ token }),
   }, false).then(result => {
+    setAuthAudience('PLAYER')
     setAccessToken(result.accessToken)
     return result
   }),
   logout: async () => {
     try {
-      await request<void>('/api/auth/logout', { method: 'POST' }, false)
+      await request<void>('/api/auth/logout', {
+        method: 'POST',
+        headers: { [AUTH_REFRESH_AUDIENCE_HEADER]: authAudience },
+      }, false)
     } finally {
       clearAccessToken()
     }
@@ -321,6 +369,12 @@ export const api = {
     request<GameView>('/api/demo/game/admin/draw', { method: 'POST', body: JSON.stringify({ numbers }) }),
   resetIssue: () => request<GameView>('/api/demo/game/admin/reset', { method: 'POST' }),
   getMyWallet: () => request<WalletSummaryResponse>('/api/me/wallet'),
+  getMyQuickBetPreference: () => request<QuickBetPreference>('/api/me/quick-bet-preferences'),
+  updateMyQuickBetPreference: (amounts: number[]) =>
+    request<QuickBetPreference>('/api/me/quick-bet-preferences', {
+      method: 'PUT',
+      body: JSON.stringify({ amounts }),
+    }),
   getChatRoom: (roomCode: string) =>
     request<ChatRoomView>(`/api/chat/rooms/${encodeURIComponent(roomCode)}`),
   getChatMessages: (
@@ -396,7 +450,7 @@ export const api = {
   rotatePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/rotate`, { method: 'POST' }),
   revokePlayerAccessLink: (userId: number, linkId: number) => request<void>(`/api/admin/player-desk/players/${userId}/access-links/${linkId}/revoke`, { method: 'POST' }),
   restorePlayerAccessLink: (userId: number, linkId: number) => request<void>(`/api/admin/player-desk/players/${userId}/access-links/${linkId}/restore`, { method: 'POST' }),
-  updatePlayerLinkExpiration: (userId: number, days: number) => request<{ linkId: number; expiresAt: string }>(`/api/admin/player-desk/players/${userId}/access-links/expiration`, { method: 'PATCH', body: JSON.stringify({ days }) }),
+  updatePlayerLinkExpiration: (userId: number, days: number) => request<{ linkId: number; expiresAt: string | null; days: number }>(`/api/admin/player-desk/players/${userId}/access-links/expiration`, { method: 'PATCH', body: JSON.stringify({ days }) }),
   createNormalPlayer: (payload: CreateNormalPlayerRequest) =>
     request<PlayerDeskDetail>('/api/admin/player-desk/players/normal', { method: 'POST', body: JSON.stringify(payload) }),
   createBotPlayer: (payload: CreateBotPlayerRequest) =>
@@ -422,6 +476,40 @@ export const api = {
     const query = new URLSearchParams({ kind, date: businessDate })
     return request<PlayerDeskPointRecords>(`/api/admin/player-desk/points-records?${query.toString()}`)
   },
+  getPendingPointRequests: (limit = 100) =>
+    request<PendingPointRequest[]>(`/api/admin/player-desk/point-requests?limit=${limit}`),
+  approvePointRequest: (requestId: number, reason?: string) =>
+    request<PendingPointRequest>(`/api/admin/player-desk/point-requests/${requestId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? null }),
+    }),
+  rejectPointRequest: (requestId: number, reason?: string) =>
+    request<PendingPointRequest>(`/api/admin/player-desk/point-requests/${requestId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? null }),
+    }),
+  getRecentPointOperations: (params: { kind: 'NORMAL' | 'BOT'; beforeId?: number | null; limit?: number }) => {
+    const query = new URLSearchParams({ kind: params.kind })
+    if (params.beforeId) query.set('beforeId', String(params.beforeId))
+    query.set('limit', String(params.limit ?? 50))
+    return request<RecentPointOperations>(`/api/admin/player-desk/point-operations/recent?${query.toString()}`)
+  },
+  getBetBoard: (kind: 'NORMAL' | 'BOT', limit = 500) => {
+    const query = new URLSearchParams({ kind, limit: String(limit) })
+    return request<BetBoardView>(`/api/admin/player-desk/bet-board?${query.toString()}`)
+  },
+  getBettingConfig: () => request<BettingConfigView>('/api/admin/player-desk/betting-config'),
+  updateBettingDisplay: (payload: { displayOdds: number; specialOdds: number; specialRebate: number }) =>
+    request<BettingConfigView>('/api/admin/player-desk/betting-config/display', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  updateBettingLimits: (payload: BettingLimits) =>
+    request<BettingConfigView>('/api/admin/player-desk/betting-config/limits', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  getMobileDisplayHome: () => request<MobileDisplayHomeResponse>('/api/display/mobile/home'),
   getPlayerBehavior: (userId: number) => request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`),
   updatePlayerBehavior: (userId: number, payload: TestPlayerBehaviorRequest) =>
     request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`, {

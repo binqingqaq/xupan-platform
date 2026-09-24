@@ -11,7 +11,7 @@ export type PlayType =
   | 'BIG_SMALL'
   | 'SPECIAL'
 
-export type SettlementStatus = 'PENDING' | 'WIN' | 'DRAW' | 'LOSE'
+export type SettlementStatus = 'PENDING' | 'WIN' | 'DRAW' | 'LOSE' | 'CANCELED'
 
 export interface BallView {
   ballNumber: number
@@ -335,6 +335,111 @@ export interface PlayerDeskPointRecords {
   players: PlayerDeskPointRecordPlayer[]
 }
 
+export type PointRequestType = 'TOP_UP' | 'DOWN'
+export type PointRequestStatus = 'PENDING' | 'APPROVED' | 'REJECTED'
+
+export interface PendingPointRequest {
+  id: number
+  userId: number
+  requestType: PointRequestType
+  amount: number
+  status: PointRequestStatus
+  clientMessageId: string
+  sourceMessageId: number
+  requestedAt: string
+  displayName: string
+  memberCode: string
+  playerKind: PlayerKind
+}
+
+export type PointOperationDirection = 'TOP_UP' | 'DOWN'
+
+export interface RecentPointOperation {
+  ledgerId: number
+  userId: number
+  memberCode: string
+  displayName: string
+  playerKind: PlayerKind
+  operationType: 'ADMIN_GRANT' | 'ADMIN_ADJUST' | string
+  direction: PointOperationDirection
+  amount: number
+  balanceAfter: number
+  reason: string | null
+  createdAt: string
+}
+
+export interface RecentPointOperations {
+  kind: PlayerKind
+  businessDate: string
+  fromInclusive: string
+  toExclusive: string
+  items: RecentPointOperation[]
+  nextBeforeId: number | null
+  hasMore: boolean
+}
+
+export interface BetBoardBetItem {
+  id: number
+  displayName: string
+  playerKind: PlayerKind
+  betText: string
+  stake: number
+  settlementStatus: SettlementStatus
+  createdAt: string
+}
+
+export interface BetBoardDrawBall {
+  position: number
+  number: number
+  fan: number
+}
+
+export interface BetBoardDrawHistory {
+  issueNumber: string
+  status: string
+  settledAt: string
+  balls: BetBoardDrawBall[]
+}
+
+export interface BetBoardView {
+  issueNumber: string | null
+  phase: 'BETTING' | 'DRAWING' | 'SETTLED' | string | null
+  serverNow: string
+  phaseEndsAt: string | null
+  normalCount: number
+  botCount: number
+  normalStake: number
+  botStake: number
+  items: BetBoardBetItem[]
+  history: BetBoardDrawHistory[]
+}
+
+export interface QuickBetPreference {
+  amounts: number[]
+}
+
+export interface BettingLimits {
+  specialLimit: number
+  issueTotalLimit: number
+  positiveLimit: number
+  angleLimit: number
+  strictLimit: number
+  tongLimit: number
+  carLimit: number
+  oddEvenLimit: number
+  bigSmallLimit: number
+  fanLimit: number
+  addLimit: number
+  playerMaxStake: number
+  playerMinStake: number
+}
+
+export interface BettingConfigView extends BettingLimits {
+  displayOdds: number
+  specialOdds: number
+  specialRebate: number
+}
+
 export interface PlayerAccessLinkStatusView {
   linkId: number
   scope: 'PLAYER_FULL' | 'CHAT_ONLY' | string
@@ -546,4 +651,24 @@ export interface LedgerView {
   reason: string
   operatorName: string
   createdAt: string
+}
+
+export interface MobileDisplayHomeResponse {
+  source: string
+  serverTime: string
+  fetchedAt: string
+  stale: boolean
+  cards: MobileDisplayLotteryCardView[]
+}
+
+export interface MobileDisplayLotteryCardView {
+  key: string
+  lotCode: number
+  name: string
+  issue: string
+  nextDrawAt: string | null
+  countdownFormat: 'MM_SS' | 'HH_MM_SS' | 'DAY_HH_MM' | 'DAY_HH_MM_SS'
+  numbers: string[]
+  numberColors: string[]
+  summary: string[]
 }

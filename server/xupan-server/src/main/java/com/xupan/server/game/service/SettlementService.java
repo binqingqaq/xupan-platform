@@ -34,7 +34,7 @@ public class SettlementService {
         BigDecimal netProfit = switch (status) {
             case WIN -> stake.multiply(odds.subtract(ONE)).setScale(2, RoundingMode.HALF_UP);
             case LOSE -> stake.negate().setScale(2, RoundingMode.HALF_UP);
-            case DRAW, PENDING -> ZERO;
+            case DRAW, PENDING, CANCELED -> ZERO;
         };
         return new SettlementResult(status, money(stake), money(odds), netProfit,
                 playType + " 玩法，结果为 " + status);
@@ -75,8 +75,18 @@ public class SettlementService {
                 yield fan == main ? SettlementStatus.WIN
                         : fan == opposite ? SettlementStatus.LOSE : SettlementStatus.DRAW;
             }
-            case TONG, NONE -> {
+            case TONG -> {
                 requireSize(parameters, 3, playType);
+                yield parameters.subList(0, 2).contains(fan) ? SettlementStatus.WIN
+                        : fan == parameters.get(2) ? SettlementStatus.LOSE : SettlementStatus.DRAW;
+            }
+            case NONE -> {
+                if (parameters.size() == 2) {
+                    requireDistinctFans(parameters, 2, playType);
+                    yield fan == parameters.get(0) ? SettlementStatus.WIN
+                            : fan == parameters.get(1) ? SettlementStatus.LOSE : SettlementStatus.DRAW;
+                }
+                requireDistinctFans(parameters, 3, playType);
                 yield parameters.subList(0, 2).contains(fan) ? SettlementStatus.WIN
                         : fan == parameters.get(2) ? SettlementStatus.LOSE : SettlementStatus.DRAW;
             }
@@ -103,7 +113,13 @@ public class SettlementService {
             case ANGLE -> requireDistinctFans(parameters, 2, playType);
             case CAR -> requireDistinctFans(parameters, 3, playType);
             case STRICT -> requireSize(parameters, 2, playType);
-            case ADD, TONG, NONE -> requireDistinctFans(parameters, 3, playType);
+            case ADD, TONG -> requireDistinctFans(parameters, 3, playType);
+            case NONE -> {
+                if (parameters.size() != 2 && parameters.size() != 3) {
+                    throw new IllegalArgumentException(playType + " 需要 2 或 3 个参数");
+                }
+                requireDistinctFans(parameters, parameters.size(), playType);
+            }
             case ODD_EVEN, BIG_SMALL -> singleChoice(parameters, playType);
             case SPECIAL -> {
                 if (parameters.isEmpty() || new HashSet<>(parameters).size() != parameters.size()

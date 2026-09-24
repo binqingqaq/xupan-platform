@@ -29,6 +29,7 @@ public class PlayerLinkAuthenticationService {
     public static final String SCOPE_PLAYER_FULL = "PLAYER_FULL";
     private static final String PLAYER_LINK_AUTH_MODE = "PLAYER_LINK";
     private static final String NORMAL_PLAYER_KIND = "NORMAL";
+    private static final String BOT_PLAYER_KIND = "BOT";
 
     private final PlayerAccessLinkRepository linkRepository;
     private final UserRepository userRepository;
@@ -226,8 +227,8 @@ public class PlayerLinkAuthenticationService {
     }
 
     private static void ensureIssuable(PlayerLinkTarget target) {
-        if (!NORMAL_PLAYER_KIND.equals(target.playerKind())) {
-            throw BusinessException.badRequest("PLAYER_LINK_NOT_ALLOWED", "托不支持玩家链接");
+        if (!NORMAL_PLAYER_KIND.equals(target.playerKind()) && !BOT_PLAYER_KIND.equals(target.playerKind())) {
+            throw BusinessException.badRequest("PLAYER_LINK_NOT_ALLOWED", "当前玩家分类不支持玩家链接");
         }
         if (!"ACTIVE".equals(target.userStatus()) || !"ACTIVE".equals(target.accountStatus())) {
             throw BusinessException.badRequest("PLAYER_LINK_STATUS_INVALID", "当前玩家状态不允许链接登录");

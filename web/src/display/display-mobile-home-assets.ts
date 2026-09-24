@@ -5,7 +5,12 @@ export const displayMobileHomeAssets = {
     announce: '/display/reference/brand/announce.png',
   },
   promo: {
-    hero: '/display/mobile-reference/promo/hero-02.png',
+    heroes: [
+      '/display/mobile-reference/promo/hero-01.jpg',
+      '/display/mobile-reference/promo/hero-02.png',
+      '/display/mobile-reference/promo/hero-03.jpg',
+      '/display/mobile-reference/promo/hero-04.jpg',
+    ],
   },
   lottery: {
     sportFast: '/display/reference/lottery/recommend-sport-jsydh.png',

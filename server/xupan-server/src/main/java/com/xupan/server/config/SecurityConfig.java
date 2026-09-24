@@ -35,16 +35,18 @@ public class SecurityConfig {
                         .authenticationEntryPoint(exceptionHandler)
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/admin", "/admin/users", "/admin/test-players", "/admin/robots",
+                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/console", "/console/**", "/admin", "/admin/**",
                                 "/display", "/display/", "/display/**", "/assets/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/player-auth/exchange", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/media/avatars/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/display/mobile/home").permitAll()
                         .requestMatchers("/actuator/info", "/actuator/metrics", "/actuator/metrics/**")
                         .hasAuthority("PERM_SYSTEM_MONITOR_READ")
                         // WebSocket authentication is performed by the one-time ticket interceptor.
                         .requestMatchers("/ws/chat/**").permitAll()
                         .requestMatchers("/api/auth/logout", "/api/auth/me", "/api/auth/ws-ticket").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/me/avatar").access(nonChatOnly())
+                        .requestMatchers("/api/me/quick-bet-preferences").access(nonChatOnly())
                         .requestMatchers("/api/me/wallet").hasAuthority("PERM_WALLET_READ")
                         .requestMatchers("/api/admin/users/*/wallet/grants").hasAuthority("PERM_WALLET_GRANT")
                         .requestMatchers("/api/admin/users/*/wallet/adjustments").hasAuthority("PERM_WALLET_ADJUST")

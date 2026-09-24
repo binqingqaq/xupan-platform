@@ -47,7 +47,7 @@ public class PlayerAccessLinkRepository {
                    AND l.expires_at > ?
                    AND u.status = 'ACTIVE'
                    AND a.status = 'ACTIVE'
-                   AND a.player_kind = 'NORMAL'
+                   AND a.player_kind IN ('NORMAL', 'BOT')
                 FOR UPDATE
                 """.formatted(COLUMNS), this::map, tokenHash, timestamp(now)).stream().findFirst();
     }

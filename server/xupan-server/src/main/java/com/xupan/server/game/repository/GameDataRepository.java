@@ -299,6 +299,18 @@ public class GameDataRepository {
                 Timestamp.from(Instant.now()), betId) == 1;
     }
 
+    public boolean cancelBetOnce(long betId, Instant canceledAt) {
+        if (betId <= 0 || canceledAt == null) {
+            throw new IllegalArgumentException("撤单参数无效");
+        }
+        return jdbcTemplate.update("""
+                UPDATE game_bet
+                   SET settlement_status = 'CANCELED', net_profit = 0,
+                       explanation = '用户在有效时间内取消下注', canceled_at = ?, settled_at = ?
+                 WHERE id = ? AND settlement_status = 'PENDING' AND settled_at IS NULL
+                """, Timestamp.from(canceledAt), Timestamp.from(canceledAt), betId) == 1;
+    }
+
     private static void requireFirstBall(int ballNumber) {
         if (ballNumber != 1) {
             throw new IllegalArgumentException("下注无效：当前只支持第1球");
@@ -308,7 +320,7 @@ public class GameDataRepository {
     public List<BetRecord> findBetsByIssue(String issueNumber) {
         return jdbcTemplate.query("""
                 SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
-                       stake, odds_snapshot, settlement_status, net_profit, explanation
+                       stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
                   FROM game_bet
                  WHERE issue_number = ?
                  ORDER BY id
@@ -318,7 +330,24 @@ public class GameDataRepository {
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
-                rs.getBigDecimal("net_profit"), rs.getString("explanation")), issueNumber);
+                 rs.getBigDecimal("net_profit"), rs.getString("explanation"),
+                 rs.getTimestamp("created_at").toInstant()), issueNumber);
+    }
+
+    public List<BetUsage> findBetUsageByIssue(long accountId, String issueNumber) {
+        if (accountId <= 0 || issueNumber == null || issueNumber.isBlank()) {
+            throw new IllegalArgumentException("下注额度查询参数无效");
+        }
+        return jdbcTemplate.query("""
+                SELECT play_type, COALESCE(SUM(stake), 0) AS stake
+                  FROM game_bet
+                 WHERE user_id = ?
+                   AND issue_number = ?
+                   AND settlement_status <> 'CANCELED'
+                 GROUP BY play_type
+                """, (rs, rowNum) -> new BetUsage(
+                PlayType.valueOf(rs.getString("play_type")),
+                rs.getBigDecimal("stake")), accountId, issueNumber.trim());
     }
 
     public List<BetAuditRecord> findBetAuditByIssue(String issueNumber) {
@@ -342,7 +371,7 @@ public class GameDataRepository {
         if (status == null) {
             return jdbcTemplate.query("""
                     SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type,
-                           parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation
+                            parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
                       FROM game_bet
                      WHERE user_id = ?
                      ORDER BY id DESC
@@ -351,13 +380,35 @@ public class GameDataRepository {
         }
         return jdbcTemplate.query("""
                 SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type,
-                       parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation
+                        parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
                   FROM game_bet
                  WHERE user_id = ?
                 """ + statusClause + """
                  ORDER BY id DESC
                  LIMIT ?
                 """, betMapper(), accountId, status.name(), limit);
+    }
+
+    public List<BetRecord> findSettledBetsByAccountIdAndCreatedBetween(long accountId,
+                                                                       Instant fromInclusive,
+                                                                       Instant toExclusive,
+                                                                       int limit) {
+        if (accountId <= 0 || fromInclusive == null || toExclusive == null
+                || !fromInclusive.isBefore(toExclusive) || limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("已结算注单查询参数无效");
+        }
+        return jdbcTemplate.query("""
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                       play_type, parameters_text, stake, odds_snapshot, settlement_status,
+                       net_profit, explanation, created_at
+                  FROM game_bet
+                 WHERE user_id = ?
+                   AND settlement_status <> 'PENDING'
+                   AND created_at >= ?
+                   AND created_at < ?
+                 ORDER BY id DESC
+                 LIMIT ?
+                """, betMapper(), accountId, timestamp(fromInclusive), timestamp(toExclusive), limit);
     }
 
     public BetDayStatistics findBetDayStatistics(long accountId, Instant fromInclusive, Instant toExclusive) {
@@ -376,6 +427,34 @@ public class GameDataRepository {
                 accountId, timestamp(fromInclusive), timestamp(toExclusive));
     }
 
+    public long countBetIssues(long accountId, Instant fromInclusive, Instant toExclusive) {
+        if (accountId <= 0 || fromInclusive == null || toExclusive == null
+                || !fromInclusive.isBefore(toExclusive)) {
+            throw new IllegalArgumentException("下注期数查询参数无效");
+        }
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(DISTINCT issue_number)
+                  FROM game_bet
+                 WHERE user_id = ? AND created_at >= ? AND created_at < ?
+                """, Long.class, accountId, timestamp(fromInclusive), timestamp(toExclusive));
+        return count == null ? 0 : count;
+    }
+
+    public List<BetRecord> findCancelableBets(long accountId, String issueNumber, Instant createdAfter) {
+        if (accountId <= 0 || issueNumber == null || issueNumber.isBlank() || createdAfter == null) {
+            throw new IllegalArgumentException("可撤单查询参数无效");
+        }
+        return jdbcTemplate.query("""
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                       play_type, parameters_text, stake, odds_snapshot, settlement_status,
+                       net_profit, explanation, created_at
+                  FROM game_bet
+                 WHERE user_id = ? AND issue_number = ? AND settlement_status = 'PENDING'
+                   AND created_at >= ?
+                 ORDER BY id
+                """, betMapper(), accountId, issueNumber, timestamp(createdAfter));
+    }
+
     public Optional<BetRecord> findBetByCode(String betCode) {
         return findBetsByCode(betCode).stream().findFirst();
     }
@@ -383,7 +462,7 @@ public class GameDataRepository {
     public Optional<BetRecord> findBetByIdempotencyKey(long accountId, String idempotencyKey) {
         return jdbcTemplate.query("""
                 SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
-                       stake, odds_snapshot, settlement_status, net_profit, explanation
+                       stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
                   FROM game_bet
                  WHERE user_id = ? AND request_idempotency_key = ?
                 """, (rs, rowNum) -> new BetRecord(
@@ -392,7 +471,8 @@ public class GameDataRepository {
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
-                rs.getBigDecimal("net_profit"), rs.getString("explanation")), accountId, idempotencyKey)
+                 rs.getBigDecimal("net_profit"), rs.getString("explanation"),
+                 rs.getTimestamp("created_at").toInstant()), accountId, idempotencyKey)
                 .stream().findFirst();
     }
 
@@ -418,7 +498,7 @@ public class GameDataRepository {
     private List<BetRecord> findBetsByCode(String betCode) {
         return jdbcTemplate.query("""
                 SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
-                       stake, odds_snapshot, settlement_status, net_profit, explanation
+                       stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
                   FROM game_bet
                  WHERE bet_code = ?
                 """, (rs, rowNum) -> new BetRecord(
@@ -427,7 +507,8 @@ public class GameDataRepository {
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
-                rs.getBigDecimal("net_profit"), rs.getString("explanation")), betCode);
+                 rs.getBigDecimal("net_profit"), rs.getString("explanation"),
+                 rs.getTimestamp("created_at").toInstant()), betCode);
     }
 
     private static org.springframework.jdbc.core.RowMapper<BetRecord> betMapper() {
@@ -437,7 +518,8 @@ public class GameDataRepository {
                 rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
-                rs.getBigDecimal("net_profit"), rs.getString("explanation"));
+                 rs.getBigDecimal("net_profit"), rs.getString("explanation"),
+                 rs.getTimestamp("created_at").toInstant());
     }
 
     private Optional<IssueRecord> findIssue(String sql) {
@@ -491,11 +573,14 @@ public class GameDataRepository {
                             String issueNumber, int ballNumber,
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
-                            BigDecimal netProfit, String explanation) {
+                             BigDecimal netProfit, String explanation, Instant createdAt) {
     }
 
     public record BetAuditRecord(long id, String displayName, PlayType playType,
                                  List<Integer> parameters, BigDecimal stake) {
+    }
+
+    public record BetUsage(PlayType playType, BigDecimal stake) {
     }
 
     public record BetDayStatistics(BigDecimal turnover, BigDecimal netProfit) {

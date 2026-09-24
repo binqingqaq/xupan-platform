@@ -30,17 +30,17 @@
 .display-mobile-menu-button { justify-items: start; padding-left: 2px; }
 .display-mobile-menu-button span { display: block; width: 31px; height: 4px; margin: 3px 0; border-radius: 2px; background: #b1b1b1; }
 .display-mobile-logo { display: block; justify-self: center; width: 146px; height: 71px; object-fit: contain; }
-.display-mobile-desktop-button { justify-self: end; }
-.display-mobile-monitor { position: relative; display: block; width: 34px; height: 25px; border: 3px solid #a4a4a4; border-radius: 2px; }
-.display-mobile-monitor::before { position: absolute; right: 10px; bottom: -9px; left: 10px; height: 3px; background: #a4a4a4; content: ""; }
-.display-mobile-monitor::after { position: absolute; right: 5px; bottom: -5px; left: 5px; height: 3px; background: #a4a4a4; content: ""; }
 
 .display-mobile-notice { display: flex; align-items: center; min-height: 49px; padding: 0 22px; overflow: hidden; background: #24a3df; color: #fff; }
 .display-mobile-notice img { flex: 0 0 15px; width: 15px; height: 17px; margin-right: 9px; filter: brightness(0) invert(1); }
 .display-mobile-notice p { min-width: 0; margin: 0; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 
-.display-mobile-hero { width: 100%; overflow: hidden; background: #f04a37; }
-.display-mobile-hero img { display: block; width: 100%; height: auto; aspect-ratio: 1125 / 540; object-fit: cover; }
+.display-mobile-hero { position: relative; width: 100%; overflow: hidden; background: #f04a37; touch-action: pan-y; }
+.display-mobile-hero-track { display: flex; transition: transform .45s ease; will-change: transform; }
+.display-mobile-hero img { display: block; flex: 0 0 100%; width: 100%; height: auto; aspect-ratio: 1125 / 540; object-fit: cover; user-select: none; }
+.display-mobile-hero-dots { position: absolute; right: 0; bottom: 10px; left: 0; display: flex; justify-content: center; gap: 6px; pointer-events: none; }
+.display-mobile-hero-dots button { width: 7px; height: 7px; padding: 0; border-radius: 999px; background: rgba(255, 255, 255, .68); box-shadow: 0 1px 3px rgba(0, 0, 0, .28); pointer-events: auto; transition: width .2s ease, background-color .2s ease; }
+.display-mobile-hero-dots button.active { width: 18px; background: var(--display-mobile-orange); }
 .display-mobile-main { padding: 12px 10px 0; }
 .display-mobile-lottery-list { display: grid; gap: 12px; }
 .display-mobile-lottery-card { min-width: 0; overflow: hidden; border-radius: 7px; background: #fff; box-shadow: 0 1px 5px rgba(37, 37, 37, .05); }

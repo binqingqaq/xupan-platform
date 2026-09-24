@@ -3,6 +3,7 @@ package com.xupan.server.playerauth.web;
 import com.jayway.jsonpath.JsonPath;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
+import com.xupan.server.auth.service.TokenService;
 import com.xupan.server.game.service.VirtualWalletService;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
@@ -20,10 +21,12 @@ import org.springframework.test.web.servlet.MvcResult;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -69,7 +72,13 @@ class PlayerLinkAuthControllerTest {
 
     @Test
     void normalPlayerLinkExchangesToFullRoomAndCannotUseAdminApis() throws Exception {
-        String adminToken = login(ADMIN, ADMIN_PASSWORD);
+        MvcResult adminLogin = mockMvc.perform(post("/api/auth/login").contentType("application/json")
+                        .content("{\"username\":\"" + ADMIN + "\",\"password\":\"" + ADMIN_PASSWORD + "\"}"))
+                .andExpect(status().isOk()).andReturn();
+        String adminToken = JsonPath.read(adminLogin.getResponse().getContentAsString(), "$.accessToken");
+        Cookie adminRefreshCookie = adminLogin.getResponse().getCookie(
+                com.xupan.server.auth.web.AuthController.REFRESH_COOKIE);
+        assertThat(adminRefreshCookie).isNotNull();
         long playerId = createNormal(adminToken);
         long botId = createBot(adminToken);
 
@@ -99,14 +108,39 @@ class PlayerLinkAuthControllerTest {
                 .andExpect(jsonPath("$.user.permissions").value(org.hamcrest.Matchers.hasItem("WALLET_READ")))
                 .andReturn();
         String playerToken = JsonPath.read(exchanged.getResponse().getContentAsString(), "$.accessToken");
-        Cookie refreshCookie = exchanged.getResponse().getCookie(com.xupan.server.auth.web.AuthController.REFRESH_COOKIE);
-        assertThat(refreshCookie).isNotNull();
-        MvcResult refreshed = mockMvc.perform(post("/api/auth/refresh").cookie(refreshCookie))
+        Cookie playerRefreshCookie = exchanged.getResponse().getCookie(
+                com.xupan.server.auth.web.AuthController.PLAYER_REFRESH_COOKIE);
+        assertThat(playerRefreshCookie).isNotNull();
+        MvcResult refreshed = mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(playerRefreshCookie)
+                        .header(com.xupan.server.auth.web.AuthController.REFRESH_AUDIENCE_HEADER, "PLAYER"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.user.authMode").value("PLAYER_LINK"))
                 .andExpect(jsonPath("$.user.scope").value("PLAYER_FULL"))
                 .andReturn();
         playerToken = JsonPath.read(refreshed.getResponse().getContentAsString(), "$.accessToken");
+        Cookie currentPlayerRefreshCookie = refreshed.getResponse().getCookie(
+                com.xupan.server.auth.web.AuthController.PLAYER_REFRESH_COOKIE);
+        assertThat(currentPlayerRefreshCookie).isNotNull();
+
+        MvcResult adminRefreshed = mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(adminRefreshCookie)
+                        .header(com.xupan.server.auth.web.AuthController.REFRESH_AUDIENCE_HEADER, "ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.authMode").value("PASSWORD"))
+                .andExpect(jsonPath("$.user.username").value(ADMIN))
+                .andReturn();
+        adminToken = JsonPath.read(adminRefreshed.getResponse().getContentAsString(), "$.accessToken");
+
+        Cookie legacySharedCookie = new Cookie(
+                com.xupan.server.auth.web.AuthController.REFRESH_COOKIE, playerRefreshCookie.getValue());
+        mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(legacySharedCookie)
+                        .header(com.xupan.server.auth.web.AuthController.REFRESH_AUDIENCE_HEADER, "ADMIN"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_TOKEN_REVOKED"))
+                .andExpect(result -> assertThat(result.getResponse().getCookie(
+                        com.xupan.server.auth.web.AuthController.REFRESH_COOKIE).getMaxAge()).isZero());
 
         mockMvc.perform(get("/api/chat/rooms/main").header("Authorization", bearer(playerToken)))
                 .andExpect(status().isOk());
@@ -120,10 +154,30 @@ class PlayerLinkAuthControllerTest {
                 .andExpect(status().isOk());
         mockMvc.perform(get("/api/admin/player-desk/summary").header("Authorization", bearer(playerToken)))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(post("/api/admin/player-desk/players/" + botId + "/access-links")
+        MvcResult botIssued = mockMvc.perform(post("/api/admin/player-desk/players/" + botId + "/access-links")
                         .header("Authorization", bearer(adminToken)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_LINK_NOT_ALLOWED"));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.scope").value("PLAYER_FULL"))
+                .andReturn();
+        String botToken = pathToken(JsonPath.read(botIssued.getResponse().getContentAsString(), "$.accessUrl"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT token_hash FROM player_access_link WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                String.class, botId)).isEqualTo(TokenService.sha256(botToken));
+        String botAccessToken = exchange(botToken);
+        mockMvc.perform(get("/api/chat/rooms/main").header("Authorization", bearer(botAccessToken)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", bearer(adminToken)))
+                .andExpect(status().isNoContent())
+                .andExpect(result -> assertThat(result.getResponse().getCookie(
+                        com.xupan.server.auth.web.AuthController.REFRESH_COOKIE).getMaxAge()).isZero())
+                .andExpect(result -> assertThat(result.getResponse().getCookie(
+                        com.xupan.server.auth.web.AuthController.PLAYER_REFRESH_COOKIE)).isNull());
+        mockMvc.perform(post("/api/auth/refresh")
+                        .cookie(currentPlayerRefreshCookie)
+                        .header(com.xupan.server.auth.web.AuthController.REFRESH_AUDIENCE_HEADER, "PLAYER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.user.authMode").value("PLAYER_LINK"));
     }
 
     @Test
@@ -150,6 +204,44 @@ class PlayerLinkAuthControllerTest {
                 .andExpect(jsonPath("$.scope").value("PLAYER_FULL"))
                 .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/33/")))
                 .andExpect(jsonPath("$.expiresAt").isNotEmpty());
+    }
+
+    @Test
+    void savesConfiguredDaysForNextRotationAndUsesSevenDaysByDefault() throws Exception {
+        String adminToken = login(ADMIN, ADMIN_PASSWORD);
+        long playerId = createNormal(adminToken);
+        Instant initialExpiresAt = jdbcTemplate.queryForObject(
+                "SELECT expires_at FROM player_access_link WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                java.sql.Timestamp.class, playerId).toInstant();
+
+        mockMvc.perform(get("/api/admin/player-desk/players/" + playerId)
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkStatus.configuredDays").value(7));
+
+        mockMvc.perform(patch("/api/admin/player-desk/players/" + playerId + "/access-links/expiration")
+                        .header("Authorization", bearer(adminToken))
+                        .contentType("application/json")
+                        .content("{\"days\":30}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.days").value(30));
+
+        mockMvc.perform(get("/api/admin/player-desk/players/" + playerId)
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkStatus.configuredDays").value(30));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT expires_at FROM player_access_link WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                java.sql.Timestamp.class, playerId).toInstant()).isEqualTo(initialExpiresAt);
+
+        MvcResult rotated = mockMvc.perform(post("/api/admin/player-desk/players/" + playerId + "/access-links/rotate")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk())
+                .andReturn();
+        Instant rotatedExpiresAt = Instant.parse(JsonPath.read(rotated.getResponse().getContentAsString(), "$.expiresAt"));
+        Instant now = Instant.now();
+        assertThat(rotatedExpiresAt).isAfter(now.plusSeconds(29 * 86400L));
+        assertThat(rotatedExpiresAt).isBefore(now.plusSeconds(31 * 86400L));
     }
 
     @Test
@@ -300,6 +392,7 @@ class PlayerLinkAuthControllerTest {
 
     private void clean() {
         jdbcTemplate.update("DELETE FROM player_access_link");
+        jdbcTemplate.update("DELETE FROM player_link_expiration_config");
         jdbcTemplate.update("DELETE FROM auth_ws_ticket");
         jdbcTemplate.update("DELETE FROM auth_session");
         jdbcTemplate.update("DELETE FROM sys_login_log");

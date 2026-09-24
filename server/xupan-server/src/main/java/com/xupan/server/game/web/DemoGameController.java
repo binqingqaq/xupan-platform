@@ -3,6 +3,7 @@ package com.xupan.server.game.web;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.service.PlayerBetLock;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -23,9 +24,11 @@ import java.util.Map;
 public class DemoGameController {
 
     private final DemoGameService gameService;
+    private final PlayerBetLock playerBetLock;
 
-    public DemoGameController(DemoGameService gameService) {
+    public DemoGameController(DemoGameService gameService, PlayerBetLock playerBetLock) {
         this.gameService = gameService;
+        this.playerBetLock = playerBetLock;
     }
 
     @GetMapping("/current")
@@ -37,7 +40,9 @@ public class DemoGameController {
     @ResponseStatus(HttpStatus.CREATED)
     public DemoGameService.BetView placeBet(Authentication authentication,
                                             @Valid @RequestBody PlaceBetRequest request) {
-        return gameService.placeBet(authenticatedUser(authentication).getUserId(), request);
+        long userId = authenticatedUser(authentication).getUserId();
+        // Keep the per-player quota check serialized through the commit of this bet.
+        return playerBetLock.withPlayerLock(userId, () -> gameService.placeBet(userId, request));
     }
 
     @GetMapping("/bets/summary")

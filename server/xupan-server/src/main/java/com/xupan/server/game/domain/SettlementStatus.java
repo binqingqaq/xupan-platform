@@ -4,5 +4,6 @@ public enum SettlementStatus {
     PENDING,
     WIN,
     DRAW,
-    LOSE
+    LOSE,
+    CANCELED
 }

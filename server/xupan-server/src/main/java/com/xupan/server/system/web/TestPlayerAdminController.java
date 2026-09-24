@@ -3,6 +3,7 @@ package com.xupan.server.system.web;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.service.PlayerBetLock;
 import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.media.AvatarStorageService;
 import com.xupan.server.system.service.TestPlayerAdminService;
@@ -27,10 +28,13 @@ public class TestPlayerAdminController {
 
     private final TestPlayerAdminService service;
     private final AvatarStorageService avatarStorageService;
+    private final PlayerBetLock playerBetLock;
 
-    public TestPlayerAdminController(TestPlayerAdminService service, AvatarStorageService avatarStorageService) {
+    public TestPlayerAdminController(TestPlayerAdminService service, AvatarStorageService avatarStorageService,
+                                     PlayerBetLock playerBetLock) {
         this.service = service;
         this.avatarStorageService = avatarStorageService;
+        this.playerBetLock = playerBetLock;
     }
 
     @GetMapping
@@ -82,7 +86,11 @@ public class TestPlayerAdminController {
     @ResponseStatus(HttpStatus.CREATED)
     public DemoGameService.BetView placeBet(Authentication authentication, @PathVariable String userCode,
                                             @Valid @RequestBody PlaceBetRequest request) {
-        return service.placeBet(userCode, request, principal(authentication).getUserId());
+        long operatorUserId = principal(authentication).getUserId();
+        long targetUserId = service.betTargetUserId(userCode, operatorUserId);
+        // Keep the per-player quota check serialized through the commit of this bet.
+        return playerBetLock.withPlayerLock(targetUserId,
+                () -> service.placeBet(userCode, request, operatorUserId));
     }
 
     @org.springframework.web.bind.annotation.PutMapping("/{userCode}/avatar")

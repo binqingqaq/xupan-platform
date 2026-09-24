@@ -89,6 +89,10 @@ public final class AuthenticatedUser implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
+        if ("PLAYER_LINK".equals(authMode) && "TEST".equals(account.userType())) {
+            Instant now = Instant.now();
+            return account.lockedUntil() == null || !now.isBefore(account.lockedUntil());
+        }
         return account.canLogin(Instant.now());
     }
 

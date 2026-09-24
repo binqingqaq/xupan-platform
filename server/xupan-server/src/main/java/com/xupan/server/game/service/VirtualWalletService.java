@@ -129,6 +129,15 @@ public class VirtualWalletService {
         return resultFor(targetUserId, ledger);
     }
 
+    @Transactional
+    public WalletOperationResult refundForCancellation(long targetUserId, long betId,
+                                                       String issueNumber, BigDecimal amount) {
+        BigDecimal normalizedAmount = positiveAmount(amount);
+        WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendCancellationRefund(
+                targetUserId, betId, requiredText(issueNumber, "期号不能为空", 64), normalizedAmount));
+        return resultFor(targetUserId, ledger);
+    }
+
     @Transactional(readOnly = true)
     public List<WalletLedgerEntry> ledger(long targetUserId, int limit) {
         requireActiveUser(targetUserId);

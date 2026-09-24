@@ -14,12 +14,15 @@ class BetTextParserTest {
         assertBet("1番100", PlayType.FAN, List.of(1), "100.00");
         assertBet("12角100", PlayType.ANGLE, List.of(1, 2), "100.00");
         assertBet("124/100", PlayType.CAR, List.of(1, 2, 4), "100.00");
+        assertBet("1车100", PlayType.CAR, List.of(2, 3, 4), "100.00");
+        assertBet("3车151", PlayType.CAR, List.of(1, 2, 4), "151.00");
         assertBet("1严2/100", PlayType.STRICT, List.of(1, 2), "100.00");
         assertBet("1念2/100", PlayType.STRICT, List.of(1, 2), "100.00");
         assertBet("1加23/100", PlayType.ADD, List.of(1, 2, 3), "100.00");
         assertBet("1正100", PlayType.POSITIVE, List.of(1), "100.00");
         assertBet("3通12/100", PlayType.TONG, List.of(3, 1, 2), "100.00");
         assertBet("12无3/100", PlayType.NONE, List.of(1, 2, 3), "100.00");
+        assertBet("2无3/100", PlayType.NONE, List.of(2, 3), "100.00");
         assertBet("单100", PlayType.ODD_EVEN, List.of(1), "100.00");
         assertBet("双100", PlayType.ODD_EVEN, List.of(2), "100.00");
         assertBet("大100", PlayType.BIG_SMALL, List.of(1), "100.00");
@@ -36,11 +39,11 @@ class BetTextParserTest {
     }
 
     @Test
-    void marksUnconfirmedVariantsAsUnsupported() {
-        assertStatus("1无2", BetTextParser.Status.UNSUPPORTED);
-        assertStatus("1无2/100", BetTextParser.Status.UNSUPPORTED);
-        assertStatus("3车151", BetTextParser.Status.UNSUPPORTED);
-        assertStatus("1车100", BetTextParser.Status.UNSUPPORTED);
+    void acceptsConfirmedCarAndShortNoneVariants() {
+        assertStatus("1无2", BetTextParser.Status.INVALID);
+        assertStatus("1无2/100", BetTextParser.Status.ACCEPTED);
+        assertStatus("3车151", BetTextParser.Status.ACCEPTED);
+        assertStatus("1车100", BetTextParser.Status.ACCEPTED);
     }
 
     @Test

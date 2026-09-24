@@ -81,7 +81,7 @@ onUnmounted(() => socket.disconnect())
   <main class="chat-only-page">
     <header class="chat-only-header">
       <div>
-        <p class="chat-only-eyebrow">XUPAN CHAT</p>
+        <p class="chat-only-eyebrow">奥巴AI</p>
         <h1>{{ room?.displayName || '聊天室' }}</h1>
         <p>{{ currentUser?.displayName || '玩家' }} · 仅开放聊天室权限</p>
       </div>

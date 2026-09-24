@@ -14,7 +14,7 @@ export type BetTextResult =
   | { kind: 'CHAT' }
 
 const AMOUNT = '(\\d+(?:\\.\\d{1,2})?)'
-const COMMANDS = /^(?:玩法|查|流水|历史|上\d+(?:\.\d{1,2})?|下\d+(?:\.\d{1,2})?)$/
+const COMMANDS = /^(?:玩法|查|流水|历史|取消|上\d+(?:\.\d{1,2})?|下\d+(?:\.\d{1,2})?)$/
 const BET_LIKE_TEXT = /(?:\d.*[\/番角车严念加正通无单双大小特]|[\/番角车严念加正通无单双大小特].*\d)/
 
 function amountValue(value: string) {
@@ -66,6 +66,12 @@ export function parseBetText(input: string): BetTextResult {
   match = text.match(new RegExp(`^(\\d{1,4})角/?${AMOUNT}$`))
   if (match) return parseNumberBet(match[1], 'ANGLE', 2, match[2])
 
+  match = text.match(new RegExp(`^([1-4])车/?${AMOUNT}$`))
+  if (match) {
+    const excluded = Number(match[1])
+    return bet('CAR', [1, 2, 3, 4].filter(value => value !== excluded), match[2])
+  }
+
   match = text.match(new RegExp(`^(\\d)严(\\d)/?${AMOUNT}$`))
   if (match) {
     if (match[1] === match[2]) return { kind: 'INVALID', message: '严玩法的两个番值不能重复' }
@@ -87,7 +93,13 @@ export function parseBetText(input: string): BetTextResult {
   match = text.match(new RegExp(`^(\\d)通(\\d{2})/?${AMOUNT}$`))
   if (match) return parseNumberBet(`${match[1]}${match[2]}`, 'TONG', 3, match[3])
 
-  match = text.match(new RegExp(`^(\\d{2})无(\\d)/?${AMOUNT}$`))
+  match = text.match(new RegExp(`^([1-4])无([1-4])/?${AMOUNT}$`))
+  if (match) {
+    if (match[1] === match[2]) return { kind: 'INVALID', message: '无玩法的两个番值不能重复' }
+    return bet('NONE', [Number(match[1]), Number(match[2])], match[3])
+  }
+
+  match = text.match(new RegExp(`^(\\d{2})无([1-4])/?${AMOUNT}$`))
   if (match) return parseNumberBet(`${match[1]}${match[2]}`, 'NONE', 3, match[3])
 
   match = text.match(new RegExp(`^(单|双)${AMOUNT}$`))

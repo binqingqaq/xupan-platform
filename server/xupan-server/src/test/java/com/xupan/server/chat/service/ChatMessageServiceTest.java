@@ -19,6 +19,7 @@ import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.service.DemoGameService;
+import com.xupan.server.game.service.BetLimitExceededException;
 import com.xupan.server.game.service.BetSettlementCompletedEvent;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
@@ -131,6 +132,60 @@ class ChatMessageServiceTest {
     }
 
     @Test
+    void batchBetDropsOnlyLimitedItemsAndKeepsSuccessFeedback() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "bet-limit-1")).thenReturn(Optional.empty());
+        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class)))
+                .thenReturn(new DemoGameService.BetView("BET-1", "3000000", 1, PlayType.FAN,
+                        List.of(1), new java.math.BigDecimal("10.00"),
+                        new java.math.BigDecimal("3.850"), SettlementStatus.PENDING, null, null))
+                .thenThrow(new BetLimitExceededException(PlayType.ANGLE, List.of(2, 3),
+                        new java.math.BigDecimal("10.00"), "超过角限额1000，剩余可下0"));
+        when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
+        ChatMessage message = new ChatMessage(31L, 1L, "main", 1L, "bet-limit-1", null,
+                "3000000", ChatMessageType.USER_BET, ChatSenderType.USER, USER_ID,
+                "用户甲", "1番10,23角10", "{}", ChatMessageStatus.ACTIVE, NOW, NOW);
+        when(messageRepository.insertUserBetMessage(eq(1L), eq(1L), eq(USER_ID), eq("用户甲"),
+                eq("bet-limit-1"), eq("3000000"), eq("1番10,23角10"), anyString(), eq(NOW)))
+                .thenReturn(message);
+
+        ChatMessage result = service.sendUserMessage(USER_ID, "main", "bet-limit-1", "1番10,23角10", NOW);
+
+        assertThat(result.messageType()).isEqualTo(ChatMessageType.USER_BET);
+        verify(gameService, times(2)).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
+        ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(NOW));
+        assertThat(feedback.getValue()).isEqualTo("@用户甲  攻击成功，使用粮草10, 剩余粮草：990"
+                + "\n@用户甲  下注 23/10 已拒绝：超过角限额1000，剩余可下0");
+    }
+
+    @Test
+    void batchBetWithEveryItemLimitedKeepsInputAndReportsEachReason() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "bet-limit-2")).thenReturn(Optional.empty());
+        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class)))
+                .thenThrow(new BetLimitExceededException(PlayType.FAN, List.of(1),
+                        new java.math.BigDecimal("100.00"), "超过番限额20，剩余可下20"));
+        when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
+        ChatMessage message = message(32L, 1L, "1番100");
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "bet-limit-2",
+                "1番100", NOW)).thenReturn(message);
+
+        assertThat(service.sendUserMessage(USER_ID, "main", "bet-limit-2", "1番100", NOW))
+                .isEqualTo(message);
+
+        verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
+        ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(NOW));
+        assertThat(feedback.getValue()).isEqualTo("@用户甲  下注未成功"
+                + "\n@用户甲  下注 1番100 已拒绝：超过番限额20，剩余可下20");
+    }
+
+    @Test
     void recognizesConfirmedBetAndPersistsUserBetMessage() {
         when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
         when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
@@ -176,6 +231,34 @@ class ChatMessageServiceTest {
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
                 eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(NOW));
         assertThat(content.getValue()).isEqualTo("@用户甲, 指令格式不正确!");
+    }
+
+    @Test
+    void balanceCommandAlwaysPublishesCurrentBalanceAndRulesHaveNoRobotReply() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(roomRepository.allocateNextSequence(eq(1L), anyLong())).thenReturn(1L, 2L);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "balance-1"))
+                .thenReturn(Optional.empty());
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "balance-1", "查", NOW))
+                .thenReturn(message(21L, 1L, "查"));
+
+        service.sendUserMessage(USER_ID, "main", "balance-1", "查", NOW);
+
+        ArgumentCaptor<String> balance = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), balance.capture(), anyString(), eq(NOW));
+        assertThat(balance.getValue()).isEqualTo("@用户甲   剩余粮草：990");
+
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "rules-1"))
+                .thenReturn(Optional.empty());
+        when(messageRepository.insertUserMessage(1L, 2L, USER_ID, "用户甲", "rules-1", "玩法", NOW))
+                .thenReturn(message(22L, 2L, "玩法"));
+
+        service.sendUserMessage(USER_ID, "main", "rules-1", "玩法", NOW);
+
+        verify(messageRepository, times(1)).insertRobotMessage(anyLong(), anyLong(), anyLong(),
+                anyString(), anyString(), anyString(), anyString(), anyString(), any());
     }
 
     @Test

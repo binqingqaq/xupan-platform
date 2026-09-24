@@ -171,6 +171,12 @@ public class TestPlayerAdminService {
         }
     }
 
+    /** Resolves the target player so a caller can serialize that player's bet flow. */
+    public long betTargetUserId(String userCode, long operatorUserId) {
+        requireAdmin(operatorUserId);
+        return requirePlayer(userCode).userId();
+    }
+
     @Transactional
     public TestPlayerAdminView updateAvatar(String userCode, String avatarKey, long operatorUserId) {
         requireAdmin(operatorUserId);

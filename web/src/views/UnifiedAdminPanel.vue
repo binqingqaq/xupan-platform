@@ -3,14 +3,20 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
 import type { CurrentUserView, GameView } from '../types'
-import AdminPlaceholderPanel from '../components/admin/AdminPlaceholderPanel.vue'
 import PlayerWorkbenchModule from '../components/admin/PlayerWorkbenchModule.vue'
+import BetBoardPanel from '../components/admin/BetBoardPanel.vue'
+import AdminWelcomeControlPanel from '../components/admin/AdminWelcomeControlPanel.vue'
+import AdminDomainFooterPanel from '../components/admin/AdminDomainFooterPanel.vue'
+import ReportControlPanel from '../components/admin/ReportControlPanel.vue'
+import PointsApprovalPanel from '../components/admin/PointsApprovalPanel.vue'
+import RecentPointsRecordsPanel from '../components/admin/RecentPointsRecordsPanel.vue'
 
 const router = useRouter()
 const currentUser = ref<CurrentUserView | null>(null)
 const currentGame = ref<GameView | null>(null)
 const loading = ref(true)
 const error = ref('')
+const pointsRefreshToken = ref(0)
 
 const systemStatus = computed(() => {
   if (loading.value) return '正在同步'
@@ -52,43 +58,37 @@ async function logout() {
   }
 }
 
+function refreshRecentPoints() {
+  pointsRefreshToken.value++
+}
+
 onMounted(() => { void loadState() })
 </script>
 
 <template>
   <main class="unified-admin-page">
     <header class="unified-admin-topbar">
-      <div class="unified-brand"><span class="brand-mark" aria-hidden="true">星</span><div><strong>星海AI</strong><span>统一管理后台</span></div></div>
+      <div class="unified-brand"><span class="brand-mark" aria-hidden="true">AI</span><div><strong>AI模型房间管理</strong><span>运营控制台</span></div></div>
       <div class="unified-topbar-status"><span>管理员：{{ currentUser?.displayName || currentUser?.username || '当前账号' }}</span><span class="system-status"><i :class="{ danger: Boolean(error) }" aria-hidden="true"></i>{{ systemStatus }}</span><button type="button" @click="logout">退出登录</button></div>
     </header>
 
     <div class="unified-admin-layout">
-      <aside class="unified-admin-sidebar" aria-label="后台功能导航">
-        <section class="unified-nav-block">
-          <div class="unified-nav-heading"><strong>后台功能导航</strong><span>分区管理</span></div>
-          <nav class="unified-nav-links">
-            <RouterLink class="is-active" to="/admin" aria-current="page">玩家工作台</RouterLink>
-          </nav>
-          <div class="unified-nav-reserved">
-            <span>期号与开奖</span>
-            <span>注单与结算</span>
-            <span>聊天与上下分</span>
-            <span>系统参数</span>
-          </div>
-        </section>
+      <aside class="unified-admin-sidebar" aria-label="后台辅助信息">
+        <BetBoardPanel />
         <section class="unified-sidebar-note">
           <div class="unified-nav-heading"><strong>模块预留</strong><span>未接入</span></div>
           <p>其他后台区域保留位置，后续按独立计划逐块接入。</p>
         </section>
         <section class="unified-compat-links" aria-label="兼容入口">
           <span>现有兼容入口</span>
-          <RouterLink to="/admin/operations">旧运营页</RouterLink>
-          <RouterLink to="/admin/users">用户管理</RouterLink>
-          <RouterLink to="/admin/robots">服务端机器人</RouterLink>
+          <RouterLink to="/console/operations">旧运营页</RouterLink>
+          <RouterLink to="/console/users">用户管理</RouterLink>
+          <RouterLink to="/console/robots">服务端机器人</RouterLink>
         </section>
       </aside>
 
       <section class="unified-admin-content">
+        <AdminWelcomeControlPanel />
         <div v-if="error" class="unified-alert" role="alert"><span>{{ error }}</span><button type="button" @click="loadState">重试</button></div>
         <section class="unified-status-grid" aria-label="当前运行状态">
           <div><span>当前期号</span><strong>{{ currentGame?.issueNumber || '暂无数据' }}</strong><small>{{ phaseLabel }}</small></div>
@@ -97,23 +97,26 @@ onMounted(() => { void loadState() })
           <div><span>运行监控</span><strong class="placeholder-value">后续接入</strong><small>暂不提供操作</small></div>
         </section>
 
+        <ReportControlPanel />
+
         <section class="unified-reserved-grid" aria-label="后续功能预留">
-          <AdminPlaceholderPanel title="期号与开奖区域" description="期号、封盘、开奖和结算将在后续模块中接入。" />
-          <AdminPlaceholderPanel title="聊天与上下分记录" description="聊天运营、上下分记录和流水查询将在后续模块中接入。" />
+          <PointsApprovalPanel @points-changed="refreshRecentPoints" />
+          <RecentPointsRecordsPanel :refresh-token="pointsRefreshToken" />
         </section>
 
         <section class="unified-player-workbench" aria-label="玩家工作台">
-          <PlayerWorkbenchModule embedded />
+          <PlayerWorkbenchModule embedded @points-changed="refreshRecentPoints" />
         </section>
+        <AdminDomainFooterPanel />
       </section>
     </div>
 
-    <footer class="unified-admin-footer">统一管理后台 · 当前仅接入玩家工作台，所有余额与下注均为虚拟积分。</footer>
+    <footer class="unified-admin-footer">AI模型房间管理 · 所有余额、上下分与下注均为虚拟积分。</footer>
   </main>
 </template>
 
 <style scoped>
-.unified-admin-page { min-height: 100vh; color: #263746; background: #f4f7fa; }
+.unified-admin-page { min-height: 100vh; overflow-x: clip; color: #263746; background: #f4f7fa; }
 .unified-admin-topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 52px; border-bottom: 1px solid #b9d8ec; background: #e9f5fc; padding: 0 28px; }
 .unified-brand, .unified-topbar-status, .system-status { display: flex; align-items: center; gap: 10px; }
 .unified-brand { color: #17324d; }

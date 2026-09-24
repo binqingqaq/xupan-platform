@@ -54,17 +54,29 @@ public class TokenService {
     }
 
     public IssuedTokens issueChatOnly(long userId, String deviceLabel, RequestMetadata metadata) {
-        return issue(userId, deviceLabel, metadata, "PLAYER_LINK", "CHAT_ONLY");
+        return issuePlayerLinkSession(userId, deviceLabel, metadata, "CHAT_ONLY");
     }
 
     public IssuedTokens issuePlayerLink(long userId, String deviceLabel, RequestMetadata metadata) {
-        return issue(userId, deviceLabel, metadata, "PLAYER_LINK", "PLAYER_FULL");
+        return issuePlayerLinkSession(userId, deviceLabel, metadata, "PLAYER_FULL");
     }
 
     private IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata,
                                String authMode, String scope) {
         Instant now = clock.instant();
         UserAccount user = activeUser(userId, now);
+        return issueSession(user, deviceLabel, metadata, authMode, scope, now);
+    }
+
+    private IssuedTokens issuePlayerLinkSession(long userId, String deviceLabel,
+                                                RequestMetadata metadata, String scope) {
+        Instant now = clock.instant();
+        UserAccount user = activeUserForSession(userId, "PLAYER_LINK", now);
+        return issueSession(user, deviceLabel, metadata, "PLAYER_LINK", scope, now);
+    }
+
+    private IssuedTokens issueSession(UserAccount user, String deviceLabel, RequestMetadata metadata,
+                                      String authMode, String scope, Instant now) {
         String accessToken = randomToken(ACCESS_TOKEN_BYTES);
         String refreshToken = randomToken(REFRESH_TOKEN_BYTES);
         Instant accessExpiresAt = now.plus(ACCESS_TOKEN_LIFETIME);
@@ -92,12 +104,19 @@ public class TokenService {
     }
 
     public IssuedTokens refresh(String rawRefreshToken, RequestMetadata metadata) {
+        return refresh(rawRefreshToken, metadata, null);
+    }
+
+    public IssuedTokens refresh(String rawRefreshToken, RequestMetadata metadata, String requiredAuthMode) {
         String refreshHash = sha256Required(rawRefreshToken);
         Instant now = clock.instant();
         SessionRecord current = sessionRepository.findByRefreshTokenHash(refreshHash)
                 .filter(session -> session.isRefreshTokenValid(now))
                 .orElseThrow(() -> new InvalidTokenException("刷新令牌无效"));
-        UserAccount user = activeUser(current.userId(), now);
+        if (requiredAuthMode != null && !requiredAuthMode.equals(current.authMode())) {
+            throw new InvalidTokenException("刷新身份不匹配");
+        }
+        UserAccount user = activeUserForSession(current.userId(), current.authMode(), now);
         if (current.securityVersion() != user.securityVersion()) {
             throw new InvalidTokenException("刷新令牌版本无效");
         }
@@ -131,7 +150,7 @@ public class TokenService {
         return sessionRepository.findByAccessTokenHash(accessHash).filter(session -> {
             Optional<UserAccount> user = userRepository.findById(session.userId());
             return user.isPresent()
-                    && isActive(user.get(), now)
+                    && isActiveForSession(user.get(), session.authMode(), now)
                     && (!session.isChatOnly() || "PLAYER_LINK".equals(session.authMode()))
                     && session.isAccessTokenValid(now, user.get().securityVersion());
         });
@@ -145,11 +164,13 @@ public class TokenService {
 
     public IssuedWsTicket issueWsTicket(long userId, String sessionId, String roomCode) {
         Instant now = clock.instant();
-        UserAccount user = activeUser(userId, now);
         SessionRecord session = sessionRepository.findBySessionId(sessionId)
-                .filter(value -> value.userId() == user.id())
-                .filter(value -> value.isAccessTokenValid(now, user.securityVersion()))
+                .filter(value -> value.userId() == userId)
                 .orElseThrow(() -> new InvalidTokenException("会话无效"));
+        UserAccount user = activeUserForSession(userId, session.authMode(), now);
+        if (!session.isAccessTokenValid(now, user.securityVersion())) {
+            throw new InvalidTokenException("会话无效");
+        }
         String normalizedRoomCode = normalizeRoomCode(roomCode);
         if (session.isChatOnly() && normalizedRoomCode == null) {
             throw new InvalidTokenException("聊天室范围无效");
@@ -203,8 +224,27 @@ public class TokenService {
         return user;
     }
 
+    private UserAccount activeUserForSession(long userId, String authMode, Instant now) {
+        UserAccount user = userRepository.findById(userId)
+                .orElseThrow(() -> new InvalidTokenException("用户无效"));
+        if (!isActiveForSession(user, authMode, now)) {
+            throw new InvalidTokenException("用户状态无效");
+        }
+        return user;
+    }
+
     private static boolean isActive(UserAccount user, Instant now) {
         return "ACTIVE".equals(user.status()) && user.canLogin(now);
+    }
+
+    private static boolean isActiveForSession(UserAccount user, String authMode, Instant now) {
+        if (!"ACTIVE".equals(user.status()) || now == null) {
+            return false;
+        }
+        if ("PLAYER_LINK".equals(authMode) && "TEST".equals(user.userType())) {
+            return user.lockedUntil() == null || !now.isBefore(user.lockedUntil());
+        }
+        return user.canLogin(now);
     }
 
     private String randomToken(int byteLength) {

@@ -23,11 +23,13 @@ public final class BetTextParser {
     private static final String AMOUNT = "([0-9]{1,12}(?:\\.[0-9]{1,2})?)";
     private static final Pattern FAN = Pattern.compile("^([0-9]+)番/?" + AMOUNT + "$");
     private static final Pattern ANGLE = Pattern.compile("^([0-9]+)/?角/?" + AMOUNT + "$");
+    private static final Pattern CAR = Pattern.compile("^([1-4])车/?" + AMOUNT + "$");
     private static final Pattern STRICT = Pattern.compile("^([0-9])(?:严|念)([0-9])/" + AMOUNT + "$");
     private static final Pattern ADD = Pattern.compile("^([0-9])加([0-9]{2})/" + AMOUNT + "$");
     private static final Pattern POSITIVE = Pattern.compile("^([0-9])正/?" + AMOUNT + "$");
     private static final Pattern TONG = Pattern.compile("^([0-9])通([0-9]{2})/" + AMOUNT + "$");
-    private static final Pattern NONE = Pattern.compile("^([0-9]{2})无([0-9])/" + AMOUNT + "$");
+    private static final Pattern NONE_SHORT = Pattern.compile("^([1-4])无([1-4])/?" + AMOUNT + "$");
+    private static final Pattern NONE = Pattern.compile("^([0-9]{2})无([1-4])/" + AMOUNT + "$");
     private static final Pattern ODD_EVEN = Pattern.compile("^(单|双)/?" + AMOUNT + "$");
     private static final Pattern BIG_SMALL = Pattern.compile("^(大|小)/?" + AMOUNT + "$");
     private static final Pattern SPECIAL = Pattern.compile("^([0-9]{1,2}(?:/[0-9]{1,2})*)特/?" + AMOUNT + "$");
@@ -70,10 +72,6 @@ public final class BetTextParser {
         }
 
         String source = text.trim();
-        if (source.contains("车")) {
-            return unsupported("车玩法暂未确认，当前不支持下注");
-        }
-
         ParseResult result = parseWithAmount(source, FAN, PlayType.FAN, 1, false);
         if (result != null) {
             return result;
@@ -81,6 +79,15 @@ public final class BetTextParser {
         result = parseWithAmount(source, ANGLE, PlayType.ANGLE, 2, true);
         if (result != null) {
             return result;
+        }
+        Matcher car = CAR.matcher(source);
+        if (car.matches()) {
+            int excludedFan = Integer.parseInt(car.group(1));
+            List<Integer> coveredFans = java.util.stream.IntStream.rangeClosed(1, 4)
+                    .filter(value -> value != excludedFan)
+                    .boxed()
+                    .toList();
+            return accepted(source, PlayType.CAR, coveredFans, car.group(2));
         }
         result = parseWithAmount(source, STRICT, PlayType.STRICT, 2, true);
         if (result != null) {
@@ -95,6 +102,10 @@ public final class BetTextParser {
             return result;
         }
         result = parseWithAmount(source, TONG, PlayType.TONG, 3, true);
+        if (result != null) {
+            return result;
+        }
+        result = parseWithAmount(source, NONE_SHORT, PlayType.NONE, 2, true);
         if (result != null) {
             return result;
         }
@@ -133,10 +144,6 @@ public final class BetTextParser {
                 return invalid("番值必须是 1 至 4 且不能重复");
             }
             return accepted(source, playType, parameters, shortForm.group(2));
-        }
-
-        if (source.contains("无")) {
-            return unsupported("单数字无玩法未确认，当前仅支持“两赢一输一和”的 12无3 格式");
         }
 
         return invalid("无法识别的下注格式");

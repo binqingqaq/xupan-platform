@@ -238,6 +238,22 @@ public class VirtualWalletRepository {
                 betId, issue, safeReason);
     }
 
+    public WalletLedgerEntry appendCancellationRefund(long targetUserId, long betId,
+                                                       String issueNumber, BigDecimal amount) {
+        BigDecimal value = positiveMoney(amount, "WALLET_AMOUNT_INVALID");
+        String issue = requiredText(issueNumber, "issueNumber", 64);
+        String key = "CANCEL_REFUND:" + betId;
+        VirtualWallet wallet = lockWallet(targetUserId);
+        requireBet(betId, wallet.accountId(), null, issue, value);
+        Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
+        if (replay.isPresent()) {
+            return replayOrConflict(replay.get(), WalletOperationType.SETTLEMENT_REVERSAL, value,
+                    targetUserId, "撤单返还:" + betId, betId);
+        }
+        return append(wallet, WalletOperationType.SETTLEMENT_REVERSAL, value, null, "SYSTEM", key,
+                betId, issue, "撤单返还:" + betId);
+    }
+
     public List<WalletLedgerEntry> findLedgerByUserId(long userId, int limit) {
         if (userId <= 0 || limit < 1 || limit > 100) {
             throw new IllegalArgumentException("钱包流水查询参数无效");
@@ -346,7 +362,7 @@ public class VirtualWalletRepository {
                 rs.getString("bet_code"), rs.getString("issue_number"), rs.getBigDecimal("stake")), betId)
                 .stream().findFirst()
                 .orElseThrow(() -> new IllegalStateException("WALLET_BET_NOT_FOUND: 注单不存在"));
-        if (bet.accountId() != accountId || !betCode.equals(bet.betCode())
+        if (bet.accountId() != accountId || (betCode != null && !betCode.equals(bet.betCode()))
                 || !issueNumber.equals(bet.issueNumber()) || money(bet.stake()).compareTo(stake) != 0) {
             throw new IllegalStateException("WALLET_BET_MISMATCH: 注单与钱包操作不匹配");
         }

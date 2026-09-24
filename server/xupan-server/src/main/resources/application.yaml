@@ -9,6 +9,16 @@ spring:
   flyway:
     enabled: true
 xupan:
+  display:
+    mobile:
+      external:
+        enabled: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_ENABLED:true}
+        base-url: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_BASE_URL:https://m.16894913.com}
+        hot-lottery-path: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_HOT_PATH:/api/lottery/getLotteryListByHot.do}
+        referer: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_REFERER:https://m.16894913.com/html/public/home.html}
+        connect-timeout: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_CONNECT_TIMEOUT:3s}
+        request-timeout: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_REQUEST_TIMEOUT:8s}
+        cache-ttl: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_CACHE_TTL:2s}
   avatar:
     storage-dir: ${XUPAN_AVATAR_STORAGE_DIR:${user.dir}/var/uploads/avatars}
     max-size-bytes: ${XUPAN_AVATAR_MAX_SIZE_BYTES:5242880}

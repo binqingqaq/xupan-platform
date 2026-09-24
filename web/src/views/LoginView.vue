@@ -11,8 +11,8 @@ const busy = ref(false)
 const error = ref('')
 
 const redirectPath = computed(() => {
-  const value = typeof route.query.redirect === 'string' ? route.query.redirect : '/room'
-  return value.startsWith('/') && !value.startsWith('//') ? value : '/room'
+  const value = typeof route.query.redirect === 'string' ? route.query.redirect : '/console'
+  return value.startsWith('/') && !value.startsWith('//') ? value : '/console'
 })
 
 const pageMessage = computed(() => route.query.reason === 'expired'
@@ -42,7 +42,7 @@ async function submit() {
 }
 
 onMounted(async () => {
-  if (api.hasAccessToken() || await restoreSession()) {
+  if (await restoreSession('ADMIN')) {
     await router.replace(redirectPath.value)
   }
 })
@@ -51,7 +51,7 @@ onMounted(async () => {
 <template>
   <main class="auth-page">
     <section class="auth-panel" aria-labelledby="login-title">
-      <p class="auth-eyebrow">XUPAN PLATFORM</p>
+      <p class="auth-eyebrow">AI模型房间管理</p>
       <h1 id="login-title">登录</h1>
       <p class="auth-message">{{ pageMessage }}</p>
       <form class="auth-form" @submit.prevent="submit">

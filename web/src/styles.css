@@ -35,7 +35,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .auth-error { margin: 0; border: 1px solid #efc5c2; background: #fff5f4; color: #be4b43; font-size: 13px; line-height: 1.5; padding: 9px 10px; }
 
 .reference-room { position: fixed; inset: 0; overflow: hidden; background: var(--reference-bg); color: #4a4a4a; font-size: 14px; }
-.reference-header { position: absolute; inset: 0 0 auto; z-index: 10; height: 65px; background: var(--reference-bg); }
+.reference-header { position: absolute; inset: 0 0 auto; z-index: 90; height: 65px; background: var(--reference-bg); }
 .reference-toolbar { position: relative; display: flex; align-items: center; height: 30px; border-bottom: 1px solid #e6e6e6; }
 .balance-text { margin-left: 10px; color: #1679c7; font-size: 14px; line-height: 30px; white-space: nowrap; }
 .reference-user { position: absolute; left: 50%; transform: translateX(-50%); color: #de506a; font-size: 14px; line-height: 30px; }
@@ -51,9 +51,11 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .quick-menu { right: 66px; grid-template-columns: repeat(2, minmax(88px, auto)); }
 .quick-menu-section-title { grid-column: 1 / -1; min-height: 25px; border-bottom: 1px solid #e8edf1; background: #f7fafc; color: #7b8994; font-size: 11px; line-height: 25px; padding: 0 10px; }
 .interface-menu { right: 60px; }
+.interface-menu button { display: flex; align-items: center; gap: 6px; min-width: 92px; }
+.interface-check { width: 14px; color: #0876d8; font-weight: 800; text-align: center; }
 .menu-button.active span { background: #1577c7; }
 
-.account-panel-layer { position: fixed; inset: 30px 0 0; z-index: 60; display: flex; justify-content: flex-end; background: rgba(0, 0, 0, .34); }
+.account-panel-layer { position: fixed; inset: 30px 0 0; z-index: 95; display: flex; justify-content: flex-end; background: rgba(0, 0, 0, .34); }
 .account-panel { display: flex; width: min(86vw, 1640px); height: 100%; flex-direction: column; overflow: hidden; border-left: 1px solid #c9d0d6; background: #fff; color: #29343d; }
 .account-panel-toolbar { display: flex; align-items: center; justify-content: space-between; flex: 0 0 48px; padding: 0 18px; background: #167ac5; color: #fff; }
 .account-panel-toolbar strong { font-size: 16px; font-weight: 700; }
@@ -134,11 +136,12 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-time { position: relative; z-index: 1; width: 100%; height: 0; margin: 0; line-height: 16px; text-align: center; }
 .reference-time span { position: relative; top: 4px; display: inline-block; border-radius: 4px; padding: 2px 5px; background: var(--reference-muted); color: #fff; font-size: 12px; line-height: 12px; }
 .chat-state { padding: 48px 20px; color: #888; text-align: center; }
+.chat-history-state { padding: 14px; color: #888; font-size: 12px; text-align: center; }
 .chat-connection-status { margin: 4px 10px; border: 1px solid #c7dceb; border-radius: 3px; background: #f1f8fd; color: #5c7890; font-size: 12px; line-height: 20px; text-align: center; }
 .chat-connection-status.degraded { border-color: #e6c8a2; background: #fff8ed; color: #9a641d; }
 .reference-message-time { display: block; margin: 0 6px 5px; color: #999; font-size: 11px; line-height: 14px; }
 .chat-retry { margin: 0 6px 7px; border: 1px solid #d66b6b; border-radius: 2px; background: #fff6f6; color: #c23b3b; font-size: 12px; padding: 2px 7px; }
-.chat-unread { position: sticky; bottom: 10px; left: 50%; display: block; margin: 0 auto 8px; border: 1px solid #8abbe5; border-radius: 12px; background: #edf7ff; color: #0876d8; font-size: 12px; padding: 4px 10px; }
+.chat-unread { position: fixed; right: 16px; z-index: 18; display: inline-flex; align-items: center; gap: 3px; border: 1px solid #d6e6f4; border-radius: 18px; background: #fff; color: #1677c8; box-shadow: 0 4px 12px rgba(25, 76, 115, .16); font-size: 12px; font-weight: 700; padding: 5px 12px; }
 
 .reference-odds-scroll { position: absolute; inset: 65px 0 170px; overflow-x: hidden; overflow-y: auto; background: #fff; }
 .odds-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; min-height: 100%; background: #d8d8d8; }
@@ -276,13 +279,19 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .notice-panel h2 { margin: 0 0 16px; font-size: 20px; }
 .notice-panel pre { margin: 0; white-space: pre-wrap; font-family: inherit; font-size: 14px; line-height: 1.7; }
 
-.settings-panel { width: min(92%, 300px); max-height: 80%; overflow: hidden; border-radius: 3px; background: #fff; box-shadow: 0 0 50px rgba(0,0,0,.3); color: #333; }
+.settings-panel { width: min(92%, 300px); max-height: 90%; overflow: hidden; border-radius: 3px; background: #fff; box-shadow: 0 0 50px rgba(0,0,0,.3); color: #333; }
 .settings-panel > header { display: flex; align-items: center; justify-content: space-between; height: 42px; padding: 0 12px; border-bottom: 1px solid #ededed; }
 .settings-panel > header button { width: 30px; height: 30px; border: 0; background: transparent; color: #777; font-size: 24px; padding: 0; }
 .settings-body { max-height: 258px; overflow: auto; padding: 12px 20px 16px; }
 .settings-body label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; font-size: 13px; }
 .settings-body input { width: 130px; height: 34px; border: 1px solid #ccc; border-radius: 2px; padding: 4px 8px; font-size: 14px; }
 .settings-save { display: block; width: 100%; height: 36px; margin-top: 8px; border: 0; border-radius: 2px; background: #1577c7; color: #fff; font-weight: 700; }
+.settings-body.quick-amount-settings { display: grid; gap: 12px; max-height: 330px; padding: 14px 18px 18px; }
+.quick-amount-settings input { width: 100%; height: 38px; border: 1px solid #ccc; border-radius: 2px; background: #fff; color: #333; padding: 4px 10px; font-size: 14px; }
+.quick-amount-actions { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 4px; }
+.quick-amount-actions button { height: 36px; min-width: 86px; border-radius: 2px; padding: 0 22px; font-weight: 700; }
+.quick-amount-default { border: 1px solid #cbd5e1; background: #fff; color: #475569; }
+.quick-amount-save { width: auto; margin: 0; background: #009688; }
 .avatar-setting-row, .admin-avatar-editor { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .avatar-setting-preview, .admin-avatar-preview { display: grid; place-items: center; width: 48px; height: 48px; flex: 0 0 48px; overflow: hidden; border-radius: 50%; background: #d5c4b4; color: #fff; font-size: 20px; font-weight: 700; }
 .avatar-setting-row small, .admin-avatar-editor small { display: block; margin-top: 3px; color: #888; font-size: 11px; }
@@ -293,8 +302,9 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .admin-avatar-editor input { display: block; width: 100%; margin-top: 5px; }
 
 .reference-toast { position: fixed; right: 18px; bottom: 76px; z-index: 120; max-width: min(360px, calc(100vw - 36px)); margin: 0; border: 1px solid; border-radius: 4px; background: #fff; padding: 10px 14px; font-size: 13px; }
-.toast-success { border-color: #a9d7cc; color: #157d67; }
-.toast-error { border-color: #e8b8b3; color: #c8524b; }
+.toast { position: fixed; top: 18px; right: 18px; z-index: 3000; display: flex; align-items: center; gap: 10px; width: min(380px, calc(100vw - 36px)); margin: 0; padding: 13px 15px; border: 1px solid; border-radius: 8px; background: #fff; box-shadow: 0 12px 30px rgba(15, 76, 129, .18); font-size: 13px; font-weight: 700; line-height: 1.45; }
+.toast-success { border-color: #86efac; color: #166534; background: #f0fdf4; }
+.toast-error { border-color: #fda4af; color: #9f1239; background: #fff1f2; }
 
 /* Formal account management uses the same quiet blue control-desk language as the existing admin page. */
 .admin-header-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -360,7 +370,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .reference-message { min-height: 0; }
   .reference-bubble { max-width: 55%; }
   .message-result .reference-bubble { max-width: 90%; }
-  .message-robot .reference-bubble { width: min(90%, 960px); max-width: min(90%, 960px); }
+  .message-robot .reference-bubble { width: fit-content; max-width: min(90%, 960px); }
 }
 
 @media (max-width: 620px) {
@@ -379,7 +389,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .collapse-button { flex-basis: 42px; width: 42px; margin-right: 6px; }
   .reference-bubble { max-width: 270px; margin-top: 30px; }
   .message-result .reference-bubble { width: 84%; max-width: 84%; }
-  .message-robot .reference-bubble { width: calc(100% - 72px); max-width: calc(100% - 72px); }
+  .message-robot .reference-bubble { width: fit-content; max-width: calc(100% - 72px); }
   .reference-avatar { top: -10px; left: -55px; width: 45px; height: 45px; }
   .reference-pre { font-size: 15px; line-height: 20px; }
   .history-heading, .history-row { grid-template-columns: 36px 44px minmax(150px, 1fr) 55px; }

@@ -127,6 +127,7 @@ public class PlayerDeskAdminService {
         TestPlayerAdminService.TestPlayerAdminView view = testPlayerAdminService.create(userCode, displayName, avatarKey, operator);
         jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE sys_user_id=?", view.player().userId());
         jdbc.update("UPDATE sys_user SET auth_mode='BOT_SERVICE' WHERE id=?", view.player().userId());
+        playerLinkAuthenticationService.issue(view.player().userId(), operator);
         repository.ensureBehavior(view.player().id());
         audit(operator, "POST", "/api/admin/player-desk/players/bot", Long.toString(view.player().userId()), "playerKind=BOT");
         return view.player().userId();

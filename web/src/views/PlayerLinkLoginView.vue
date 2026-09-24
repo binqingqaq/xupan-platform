@@ -45,7 +45,7 @@ onMounted(async () => {
   <PlayerLinkExpiredView v-else-if="!busy" />
   <main v-else class="auth-page player-link-page">
     <section class="auth-panel" aria-labelledby="player-link-title">
-      <p class="auth-eyebrow">XUPAN CHAT</p>
+      <p class="auth-eyebrow">奥巴AI</p>
       <h1 id="player-link-title">正在进入玩家前台</h1>
       <p class="auth-message">正在验证玩家链接...</p>
     </section>

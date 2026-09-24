@@ -4,6 +4,7 @@ import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.chat.repository.PlayerPointRequestRepository;
 import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.domain.PlayType;
@@ -11,6 +12,8 @@ import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.system.service.PlayerDeskAdminService;
+import com.xupan.server.system.service.PlayerPointOperationService;
+import com.xupan.server.system.service.PlayerPointRequestService;
 import com.xupan.server.system.service.PlayerPointsReportService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -30,10 +33,16 @@ import java.util.List;
 public class PlayerDeskAdminController {
     private final PlayerDeskAdminService service;
     private final PlayerPointsReportService pointsReportService;
+    private final PlayerPointRequestService pointRequestService;
+    private final PlayerPointOperationService pointOperationService;
 
-    public PlayerDeskAdminController(PlayerDeskAdminService service, PlayerPointsReportService pointsReportService) {
+    public PlayerDeskAdminController(PlayerDeskAdminService service, PlayerPointsReportService pointsReportService,
+                                     PlayerPointRequestService pointRequestService,
+                                     PlayerPointOperationService pointOperationService) {
         this.service = service;
         this.pointsReportService = pointsReportService;
+        this.pointRequestService = pointRequestService;
+        this.pointOperationService = pointOperationService;
     }
 
     @GetMapping("/summary")
@@ -61,6 +70,37 @@ public class PlayerDeskAdminController {
                                       @RequestParam(required = false) String date,
                                       @RequestParam(defaultValue = "500") int detailLimit) {
         return PointsReport.from(pointsReportService.report(kind, date, detailLimit, user(auth)));
+    }
+
+    @GetMapping("/point-requests")
+    public List<PointRequest> pointRequests(Authentication auth,
+                                            @RequestParam(defaultValue = "100") int limit) {
+        return pointRequestService.pending(user(auth), limit).stream().map(PointRequest::from).toList();
+    }
+
+    @GetMapping("/point-operations/recent")
+    public RecentPointOperations recentPointOperations(
+            Authentication auth,
+            @RequestParam String kind,
+            @RequestParam(required = false) Long beforeId,
+            @RequestParam(defaultValue = "50") int limit) {
+        return RecentPointOperations.from(pointOperationService.recent(kind, beforeId, limit, user(auth)));
+    }
+
+    @PostMapping("/point-requests/{requestId}/approve")
+    public PointRequest approvePointRequest(Authentication auth, @PathVariable long requestId,
+                                            @RequestBody(required = false) ReviewRequest request) {
+        PlayerPointRequestService.ReviewResult result = pointRequestService.approve(requestId, user(auth),
+                request == null ? null : request.reason());
+        return PointRequest.from(result.request());
+    }
+
+    @PostMapping("/point-requests/{requestId}/reject")
+    public PointRequest rejectPointRequest(Authentication auth, @PathVariable long requestId,
+                                           @RequestBody(required = false) ReviewRequest request) {
+        PlayerPointRequestService.ReviewResult result = pointRequestService.reject(requestId, user(auth),
+                request == null ? null : request.reason());
+        return PointRequest.from(result.request());
     }
 
     @PostMapping("/players/normal")
@@ -251,6 +291,35 @@ public class PlayerDeskAdminController {
     }
     public record BehaviorRequest(@NotBlank String mode, @Min(0) @Max(20) int betsPerIssue, @NotNull @DecimalMin("0.01") BigDecimal stakeMin, @NotNull @DecimalMin("0.01") BigDecimal stakeMax, boolean chatEnabled, @Min(0) @Max(20) int messagesPerIssue) {}
     public record MessageRequest(@NotBlank String content, @NotBlank String clientMessageId) {}
+    public record ReviewRequest(String reason) {}
+    public record PointRequest(long id, long userId, String requestType, BigDecimal amount, String status,
+                               String clientMessageId, long sourceMessageId, Instant requestedAt,
+                               String displayName, String memberCode, String playerKind) {
+        static PointRequest from(PlayerPointRequestRepository.Request x) {
+            return new PointRequest(x.id(), x.userId(), x.requestType(), x.amount(), x.status(),
+                    x.clientMessageId(), x.sourceMessageId(), x.requestedAt(),
+                    x.displayName(), x.memberCode(), x.playerKind());
+        }
+    }
+    public record RecentPointOperations(String kind, String businessDate, Instant fromInclusive,
+                                        Instant toExclusive, List<RecentPointOperation> items,
+                                        Long nextBeforeId, boolean hasMore) {
+        static RecentPointOperations from(PlayerPointOperationService.Recent x) {
+            return new RecentPointOperations(x.kind(), x.businessDate().toString(), x.fromInclusive(),
+                    x.toExclusive(), x.items().stream().map(RecentPointOperation::from).toList(),
+                    x.nextBeforeId(), x.hasMore());
+        }
+    }
+    public record RecentPointOperation(long ledgerId, long userId, String memberCode,
+                                       String displayName, String playerKind, String operationType,
+                                       String direction, BigDecimal amount, BigDecimal balanceAfter,
+                                       String reason, Instant createdAt) {
+        static RecentPointOperation from(PlayerPointOperationService.Item x) {
+            return new RecentPointOperation(x.ledgerId(), x.userId(), x.memberCode(), x.displayName(),
+                    x.playerKind(), x.operationType(), x.direction(), x.amount(), x.balanceAfter(),
+                    x.reason(), x.createdAt());
+        }
+    }
     public record MessageOutcome(ChatMessage message, boolean replayed, String feedback, Object bet) {
         static MessageOutcome from(ChatMessageService.ChatMessageSendOutcome x) { return new MessageOutcome(x.message(), x.deduplicated(), null, null); }
     }

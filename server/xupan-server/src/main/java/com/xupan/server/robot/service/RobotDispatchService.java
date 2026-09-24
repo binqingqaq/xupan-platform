@@ -256,17 +256,34 @@ public class RobotDispatchService {
         String values = parameters.stream().map(String::valueOf).collect(Collectors.joining());
         return switch (playType) {
             case FAN -> values + "番" + amount;
-            case ANGLE, CAR -> values + "/" + amount;
-            case STRICT -> values.charAt(0) + "严" + values.charAt(1) + "/" + amount;
+            case ANGLE -> values + "/" + amount;
+            case CAR -> formatCar(parameters, amount);
+            case STRICT -> values.charAt(0) + "念" + values.charAt(1) + "/" + amount;
             case ADD -> values.charAt(0) + "加" + values.substring(1) + "/" + amount;
             case POSITIVE -> values + "正" + amount;
             case TONG -> values.substring(0, 1) + "通" + values.substring(1) + "/" + amount;
-            case NONE -> values.substring(0, 2) + "无" + values.substring(2) + "/" + amount;
+            case NONE -> formatNone(parameters, amount);
             case ODD_EVEN -> (parameters.get(0) == 1 ? "单" : "双") + amount;
             case BIG_SMALL -> (parameters.get(0) == 1 ? "大" : "小") + amount;
             case SPECIAL -> parameters.stream().map(value -> String.format("%02d", value))
                     .collect(Collectors.joining("/")) + "特" + amount;
         };
+    }
+
+    private static String formatCar(List<Integer> parameters, String amount) {
+        int missingFan = java.util.stream.IntStream.rangeClosed(1, 4)
+                .filter(value -> !parameters.contains(value))
+                .findFirst()
+                .orElse(0);
+        return missingFan + "车" + amount;
+    }
+
+    private static String formatNone(List<Integer> parameters, String amount) {
+        if (parameters.size() == 2) {
+            return parameters.get(0) + "无" + parameters.get(1) + "/" + amount;
+        }
+        return parameters.get(0) + String.valueOf(parameters.get(1))
+                + "无" + parameters.get(2) + "/" + amount;
     }
 
     private DispatchResult skip(ChatRobotDispatch dispatch, String reason, Instant now) {

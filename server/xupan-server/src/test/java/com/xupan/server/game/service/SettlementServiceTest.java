@@ -36,6 +36,9 @@ class SettlementServiceTest {
         assertStatus(PlayType.POSITIVE, List.of(4), SettlementStatus.LOSE);
         assertStatus(PlayType.TONG, List.of(1, 2, 3), SettlementStatus.WIN);
         assertStatus(PlayType.NONE, List.of(1, 2, 3), SettlementStatus.WIN);
+        assertStatus(PlayType.NONE, List.of(2, 1), SettlementStatus.WIN);
+        assertStatus(PlayType.NONE, List.of(1, 2), SettlementStatus.LOSE);
+        assertStatus(PlayType.NONE, List.of(1, 3), SettlementStatus.DRAW);
         assertStatus(PlayType.TONG, List.of(3, 4, 1), SettlementStatus.DRAW);
         assertStatus(PlayType.TONG, List.of(1, 3, 2), SettlementStatus.LOSE);
         assertStatus(PlayType.NONE, List.of(1, 2, 3), SettlementStatus.WIN);

@@ -35,18 +35,21 @@ public class DemoGameService {
     private final GameIssueEventRepository eventRepository;
     private final 自动轮期服务 automationService;
     private final ApplicationEventPublisher eventPublisher;
+    private final GameBettingConfigService bettingConfigService;
 
     public DemoGameService(SettlementService settlementService, GameDataRepository repository,
                            VirtualWalletService walletService,
                            GameIssueEventRepository eventRepository,
                            自动轮期服务 automationService,
-                           ApplicationEventPublisher eventPublisher) {
+                           ApplicationEventPublisher eventPublisher,
+                           GameBettingConfigService bettingConfigService) {
         this.settlementService = settlementService;
         this.repository = repository;
         this.walletService = walletService;
         this.eventRepository = eventRepository;
         this.automationService = automationService;
         this.eventPublisher = eventPublisher;
+        this.bettingConfigService = bettingConfigService;
     }
 
     public synchronized GameView current(long authenticatedUserId) {
@@ -64,9 +67,9 @@ public class DemoGameService {
         GameDataRepository.BetDayStatistics dayStatistics = repository.findBetDayStatistics(wallet.accountId(), from, to);
         List<BetView> pending = repository.findBetsByAccountId(wallet.accountId(), SettlementStatus.PENDING, 100)
                 .stream().map(DemoGameService::toBetView).toList();
-        List<BetView> settled = repository.findBetsByAccountId(wallet.accountId(), null, 100)
+        List<BetView> settled = repository.findSettledBetsByAccountIdAndCreatedBetween(
+                        wallet.accountId(), from, to, 100)
                 .stream()
-                .filter(bet -> bet.settlementStatus() != SettlementStatus.PENDING)
                 .map(DemoGameService::toBetView)
                 .toList();
         return new BetSummaryView(dayStatistics.turnover(), dayStatistics.netProfit(), pending, settled);
@@ -98,13 +101,13 @@ public class DemoGameService {
                         .toList());
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = BetLimitExceededException.class)
     public synchronized BetView placeBet(long authenticatedUserId, PlaceBetRequest request) {
         return placeBetForUser(authenticatedUserId, request);
     }
 
     /** Uses the same bet, wallet debit, idempotency and settlement path for an admin-selected test player. */
-    @Transactional
+    @Transactional(noRollbackFor = BetLimitExceededException.class)
     public synchronized BetView placeBetForUser(long userId, PlaceBetRequest request) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
         if (request.idempotencyKey() == null || request.idempotencyKey().isBlank()) {
@@ -130,6 +133,7 @@ public class DemoGameService {
         BigDecimal snapshotOdds = repository.findOdds(request.playType())
                 .orElseThrow(() -> new IllegalArgumentException("玩法赔率不存在"));
         settlementService.validateBet(request.playType(), request.parameters(), request.stake(), snapshotOdds);
+        requireWithinLimit(wallet.accountId(), issue.issueNumber(), request);
         String betCode = "BET-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
         long betId;
         try {
@@ -148,6 +152,51 @@ public class DemoGameService {
         return repository.findBetByCode(betCode)
                 .map(DemoGameService::toBetView)
                 .orElseThrow(() -> new IllegalStateException("下注保存后未找到注单"));
+    }
+
+    /**
+     * Enforces the admin-configured quota for a single bet. Called before any write so a rejected
+     * bet leaves no partial state and callers may keep the remaining items of one batch.
+     */
+    private void requireWithinLimit(long accountId, String issueNumber, PlaceBetRequest request) {
+        var usage = bettingConfigService.loadUsage(accountId, issueNumber);
+        var rejection = bettingConfigService.evaluate(request.playType(), request.stake(), usage);
+        if (rejection != null) {
+            throw new BetLimitExceededException(request.playType(), request.parameters(),
+                    money(request.stake()), bettingConfigService.describeRejection(rejection));
+        }
+    }
+
+    @Transactional
+    public synchronized CancellationResult cancelCurrentBets(long authenticatedUserId, Instant now) {
+        if (now == null) {
+            throw new IllegalArgumentException("撤单时间不能为空");
+        }
+        automationService.advanceIfEnabled(now);
+        GameDataRepository.IssueRecord issue = ensureInitialized();
+        if (!自动轮期服务.BETTING.equals(issue.phase())
+                || issue.bettingEndsAt() == null || !now.isBefore(issue.bettingEndsAt())) {
+            return CancellationResult.stopped();
+        }
+        if (!now.isBefore(issue.bettingEndsAt().minusSeconds(30))) {
+            return CancellationResult.lastThirtySeconds();
+        }
+
+        VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
+        List<GameDataRepository.BetRecord> candidates = repository.findCancelableBets(
+                wallet.accountId(), issue.issueNumber(), now.minusSeconds(10));
+        List<CancellationItem> canceled = new ArrayList<>();
+        for (GameDataRepository.BetRecord bet : candidates) {
+            if (repository.cancelBetOnce(bet.id(), now)) {
+                var refund = walletService.refundForCancellation(authenticatedUserId, bet.id(),
+                        bet.issueNumber(), bet.stake());
+                canceled.add(new CancellationItem(bet, refund.wallet().balance()));
+            }
+        }
+        if (canceled.isEmpty()) {
+            return CancellationResult.noEligibleBets();
+        }
+        return CancellationResult.canceled(canceled, walletService.getForCurrentUser(authenticatedUserId).balance());
     }
 
     @Transactional
@@ -319,6 +368,39 @@ public class DemoGameService {
                                  List<BetView> pending, List<BetView> settled) {
     }
 
+    public record CancellationResult(Status status, List<CancellationItem> items,
+                                     BigDecimal balance) {
+        public enum Status {
+            STOPPED,
+            LAST_THIRTY_SECONDS,
+            NO_ELIGIBLE_BETS,
+            CANCELED
+        }
+
+        public CancellationResult {
+            items = List.copyOf(items == null ? List.of() : items);
+        }
+
+        static CancellationResult stopped() {
+            return new CancellationResult(Status.STOPPED, List.of(), null);
+        }
+
+        static CancellationResult lastThirtySeconds() {
+            return new CancellationResult(Status.LAST_THIRTY_SECONDS, List.of(), null);
+        }
+
+        static CancellationResult noEligibleBets() {
+            return new CancellationResult(Status.NO_ELIGIBLE_BETS, List.of(), null);
+        }
+
+        static CancellationResult canceled(List<CancellationItem> items, BigDecimal balance) {
+            return new CancellationResult(Status.CANCELED, items, balance);
+        }
+    }
+
+    public record CancellationItem(GameDataRepository.BetRecord bet, BigDecimal balanceAfter) {
+    }
+
     public record AccountView(String userCode, String displayName, BigDecimal balance, String status) {
     }
 
@@ -332,7 +414,7 @@ public class DemoGameService {
         return switch (settlement.status()) {
             case WIN -> settlement.stake().add(settlement.netProfit());
             case DRAW -> settlement.stake();
-            case LOSE, PENDING -> BigDecimal.ZERO;
+            case LOSE, PENDING, CANCELED -> BigDecimal.ZERO;
         };
     }
 }
