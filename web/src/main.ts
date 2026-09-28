@@ -38,8 +38,22 @@ function requiredAudience(path: string): AuthAudience | undefined {
   return undefined
 }
 
+function isAdminRoute(path: string): boolean {
+  return path === '/login' || path === '/console' || path.startsWith('/console/') ||
+    path.startsWith('/admin') || path === '/forbidden'
+}
+
+function setViewportForRoute(path: string) {
+  const viewport = document.querySelector('meta[name="viewport"]')
+  if (!viewport) return
+  viewport.setAttribute('content', isAdminRoute(path)
+    ? 'width=1000, user-scalable=yes'
+    : 'width=device-width, initial-scale=1.0')
+}
+
 router.afterEach(to => {
   if (to.meta.title) document.title = to.meta.title
+  setViewportForRoute(to.path)
 })
 
 router.beforeEach(async to => {

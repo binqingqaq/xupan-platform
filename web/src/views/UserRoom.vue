@@ -989,7 +989,7 @@ onUnmounted(() => {
   <div v-else class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2' }">
     <header class="reference-header">
       <div class="reference-toolbar">
-        <strong class="balance-text">虚拟余额:{{ balance }}</strong>
+        <strong class="balance-text">余额:{{ balance }}</strong>
         <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
         <div class="header-actions">
           <button class="quick-button" type="button" @click="openQuickBet">快捷</button>
@@ -1005,13 +1005,11 @@ onUnmounted(() => {
       </div>
       <div class="reference-issuebar">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
-        <span v-if="showingPreviousBalls" class="reference-ball-context">上期结果</span>
         <div class="reference-ball-row" :aria-label="ballNumbersLabel">
           <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8 }">
             {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
           </span>
         </div>
-        <span class="reference-ball-context fixed-ball-label">默认第1球</span>
         <span class="reference-countdown" :class="{ 'is-drawing': current?.phase === 'DRAWING' }">{{ phaseLabel }}</span>
         <button class="collapse-button" :class="{ expanded: historyOpen }" type="button" :aria-expanded="historyOpen" aria-label="展开历史开奖记录" title="展开历史开奖记录" @click="toggleHistory"><span class="collapse-chevron" aria-hidden="true"></span></button>
       </div>
@@ -1265,13 +1263,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.fixed-ball-label {
-  flex: 0 0 auto;
-  margin-left: 4px;
-  color: #68717d;
-  font-size: 11px;
-}
-
 .account-summary {
   width: calc(100% - 24px);
   max-width: 720px;

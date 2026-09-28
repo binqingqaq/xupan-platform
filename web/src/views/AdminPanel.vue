@@ -25,7 +25,7 @@ const selectedWallet = ref<VirtualWallet | null>(null)
 const ledger = ref<WalletLedgerEntry[]>([])
 const walletMode = ref<'grant' | 'adjust'>('grant')
 const balanceAmount = ref(100)
-const balanceReason = ref('首期虚拟余额分配')
+const balanceReason = ref('首期余额分配')
 const idempotencyKey = ref(createIdempotencyKey())
 const lastOperation = ref<WalletOperationResponse | null>(null)
 const drawNumbers = ref<(number | null)[]>(Array(8).fill(null))
@@ -132,7 +132,7 @@ async function submitWalletOperation() {
       : await api.adjustWallet(selectedUserId.value, payload)
     await loadSelectedWallet()
     idempotencyKey.value = createIdempotencyKey()
-    showFeedback(walletMode.value === 'grant' ? '虚拟余额已分配并记录流水' : '虚拟余额已调整并记录流水')
+    showFeedback(walletMode.value === 'grant' ? '余额已分配并记录流水' : '余额已调整并记录流水')
   } catch (error) {
     showFeedback(apiErrorMessage(error, '钱包操作未完成'), 'error')
   } finally {
@@ -209,7 +209,7 @@ onMounted(load)
       <section class="admin-summary" aria-label="运行概览">
         <div class="summary-item"><span>当前期</span><strong>{{ current?.issueNumber || '--' }}</strong></div>
         <div class="summary-item"><span>状态</span><strong>{{ statusText }}</strong></div>
-        <div class="summary-item"><span>成员虚拟余额</span><strong>{{ money(selectedWallet?.balance) }}</strong></div>
+        <div class="summary-item"><span>成员余额</span><strong>{{ money(selectedWallet?.balance) }}</strong></div>
         <div class="summary-item"><span>本期注单</span><strong>{{ current?.bets.length || 0 }} 条</strong></div>
       </section>
 
@@ -226,7 +226,7 @@ onMounted(load)
         </section>
 
         <section v-if="canManageWallet" class="admin-section">
-          <div class="section-title"><div><span class="eyebrow">WALLET</span><h2>成员虚拟余额</h2></div><span>正式用户</span></div>
+          <div class="section-title"><div><span class="eyebrow">WALLET</span><h2>成员余额</h2></div><span>正式用户</span></div>
           <label class="field-label" for="user-select">目标成员</label>
           <select id="user-select" v-model="selectedUserId" @change="loadSelectedWallet">
             <option v-for="user in users" :key="user.id" :value="user.id">{{ user.displayName }} · {{ user.username }}</option>
@@ -253,7 +253,7 @@ onMounted(load)
             <div v-for="entry in ledger.slice(0, 10)" :key="entry.id" class="ledger-row">
               <span>{{ entry.operationType }} · {{ entry.reason }}<small>前 {{ money(entry.balanceBefore) }} / 后 {{ money(entry.balanceAfter) }} · {{ entry.operatorName }}<template v-if="entry.relatedBetId"> · 注单 {{ entry.relatedBetId }}</template><template v-if="entry.issueNumber"> · {{ entry.issueNumber }}期</template></small></span><strong :class="entry.amount > 0 ? 'positive' : 'negative'">{{ signedAmount(entry.amount) }}</strong><time>{{ dateTime(entry.createdAt) }}</time>
             </div>
-            <p v-if="!ledger.length" class="empty-state">暂无虚拟余额流水</p>
+            <p v-if="!ledger.length" class="empty-state">暂无余额流水</p>
           </div>
         </section>
 

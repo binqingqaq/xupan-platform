@@ -167,7 +167,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.status === 401) return '登录状态已失效，请重新登录'
   if (error.code === 'TEST_PLAYER_OPERATION_FORBIDDEN') return '当前账号没有测试玩家管理权限'
   if (error.status === 403 || error.code === 'AUTH_PERMISSION_DENIED') return '当前账号没有执行此操作的权限'
-  if (error.code === 'WALLET_INSUFFICIENT_BALANCE') return '虚拟余额不足，下注未提交'
+  if (error.code === 'WALLET_INSUFFICIENT_BALANCE') return '余额不足，下注未提交'
   if (error.code === 'WALLET_INACTIVE') return '该用户的虚拟钱包当前不可用'
   if (error.code === 'WALLET_IDEMPOTENCY_CONFLICT') return '该幂等键已用于其他操作，请更换后重试'
   if (error.code === 'WALLET_OPERATION_REPLAYED') return '该操作已经处理，请刷新查看最新结果'

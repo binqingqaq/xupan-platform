@@ -85,7 +85,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 
 .reference-issuebar { display: flex; align-items: center; height: 35px; overflow: hidden; border-bottom: 1px solid #dedede; white-space: nowrap; }
 .reference-issue-number { flex: 0 0 clamp(138px, 10.2vw, 192px); width: clamp(138px, 10.2vw, 192px); transform: translateX(clamp(14px, 1.1vw, 22px)); padding-left: 0; color: #363636; font-size: 14px; line-height: 35px; text-align: center; }
-.reference-ball-context { flex: 0 0 auto; margin-right: 8px; color: #8a8a8a; font-size: 10px; line-height: 35px; }
 .reference-ball-row { display: flex; flex: 1 1 auto; align-items: center; justify-content: center; column-gap: clamp(18px, 3.4vw, 58px); min-width: 0; height: 35px; overflow: hidden; }
 .reference-ball { flex: 0 0 25px; width: 25px; height: 25px; border: 0; border-radius: 50%; background: var(--reference-blue); color: #fff; font-size: 14px; font-weight: 700; line-height: 25px; padding: 0; }
 .reference-ball.is-red { background: var(--reference-red); }
@@ -384,7 +383,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .pagination-actions button { flex: 1; }
   .drawer-header, .modal-header, .drawer-body, .modal-form { padding: 18px; }
   .reference-issue-number { flex-basis: 92px; width: 92px; transform: translateX(8px); font-size: 12px; }
-  .reference-ball-context { margin-right: 3px; font-size: 9px; }
   .reference-countdown { flex-basis: 54px; width: 54px; margin-right: 10px; font-size: 12px; }
   .collapse-button { flex-basis: 42px; width: 42px; margin-right: 6px; }
   .reference-bubble { max-width: 270px; margin-top: 30px; }
@@ -399,9 +397,6 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
   .odds-quickbar { min-height: 170px; padding-left: 5px; padding-right: 5px; }
   .odds-quickbar button { min-width: 28px; padding: 0 5px; }
   .odds-quickbar-actions button { min-width: 65px; }
-  .keyboard-columns { flex-direction: column; }
-  .keyboard-panel { width: 100%; }
-  .keyboard-action-panel { width: 100%; }
   .history-panel-heading, .history-panel-row { grid-template-columns: 46px minmax(190px, 1fr) 72px; gap: 5px; }
   .account-panel-layer { inset: 30px 0 0; }
   .account-panel { width: 100%; border-left: 0; }
@@ -415,20 +410,30 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 }
 
 @media (max-width: 520px) {
-  .reference-issue-number { flex-basis: 82px; width: 82px; transform: translateX(5px); }
-  .reference-ball-row { column-gap: clamp(5px, 1.6vw, 14px); }
-  .reference-ball { flex: 0 0 clamp(17px, 5vw, 22px); width: clamp(17px, 5vw, 22px); height: clamp(17px, 5vw, 22px); font-size: clamp(10px, 3.5vw, 12px); line-height: clamp(17px, 5vw, 22px); }
-  .reference-countdown { flex-basis: 48px; width: 48px; margin-right: 4px; }
-  .collapse-button { flex-basis: 38px; width: 38px; margin-right: 4px; }
-  .reference-countdown { padding: 0 5px; }
+  .reference-issue-number { flex-basis: 68px; width: 68px; transform: translateX(2px); font-size: 12px; }
+  .reference-ball-row { column-gap: clamp(2px, 0.8vw, 4px); }
+  .reference-ball { flex: 0 0 clamp(20px, 5.5vw, 24px); width: clamp(20px, 5.5vw, 24px); height: clamp(20px, 5.5vw, 24px); font-size: clamp(10px, 3.2vw, 13px); line-height: clamp(20px, 5.5vw, 24px); }
+  .reference-countdown { flex-basis: 44px; width: 44px; margin-right: 2px; font-size: 12px; padding: 0 2px; }
+  .collapse-button { flex-basis: 28px; width: 28px; margin-right: 2px; }
   .history-panel-table { font-size: 10px; }
   .history-panel-heading, .history-panel-row { grid-template-columns: minmax(76px, 1.2fr) repeat(8, minmax(22px, 1fr)) minmax(30px, .55fr) minmax(30px, .55fr) minmax(30px, .55fr); }
   .history-ball { width: 20px; height: 20px; font-size: 10px; line-height: 20px; }
   .header-menu { font-size: 12px; }
   .quick-menu { right: 66px; }
   .reference-send { margin-left: 5px; margin-right: 5px; }
-  .reference-keyboard button { flex-basis: 34px; width: 34px; margin-right: 2px; margin-left: 2px; padding: 5px 2px; }
-  .reference-keyboard button.wide { flex-basis: 52px; width: 52px; }
+  .keyboard-columns { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); align-items: stretch; gap: 4px; padding: 4px 6px 6px; }
+  .keyboard-panel, .keyboard-buttons, .keyboard-second-row-buttons, .keyboard-action-panel { display: contents; width: auto; margin: 0; min-width: 0; }
+  .keyboard-columns-flat, .keyboard-columns-flat .keyboard-panel, .keyboard-columns-flat .keyboard-number-panel { display: contents; width: auto; margin: 0; }
+  .reference-keyboard button { flex: none; width: 100%; height: 36px; min-height: 36px; margin: 0; border: 1px solid #e4e4e4; border-radius: 9999px; background: #f7fafd; color: #333; font-size: 14px; font-weight: 700; line-height: 26px; padding: 3px 2px; }
+  .reference-keyboard button.wide { width: 100%; }
+  .reference-keyboard button.keyboard-key-danger { background: #f14668; border-color: #f14668; color: #fff; }
+  .reference-keyboard button.keyboard-key-danger-light { background: #feecef; border-color: #f14668; color: #d33; }
+  .reference-keyboard button.keyboard-key-success { background: #effaf5; }
+  .reference-keyboard button.keyboard-key-info { background: #eff5fb; }
+  .reference-keyboard button.keyboard-key-link { background: #eff1fa; }
+  .reference-keyboard button.keyboard-key-primary { background: #ebfffc; }
+  .reference-keyboard button.keyboard-key-warning { background: #fffaeb; color: #8a5a00; }
+  .reference-keyboard button.wide { grid-column: auto; }
   .scratch-panel h2 { font-size: 22px; }
 }
 
@@ -437,7 +442,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 }
 
 /* 管理后台基础布局和用户管理切片 */
-.admin-page { min-height: 100vh; color: #263746; background: #f4f7fa; }
+.admin-page { min-width: 1000px; min-height: 100vh; color: #263746; background: #f4f7fa; }
 .admin-header { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 84px; padding: 18px clamp(18px, 5vw, 72px); border-bottom: 1px solid #dfe7ed; background: #fff; }
 .admin-header h1 { margin: 2px 0 0; color: #17324d; font-size: clamp(22px, 3vw, 32px); line-height: 1.15; }
 .admin-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

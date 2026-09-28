@@ -226,7 +226,7 @@ async function createUser() {
     createOpen.value = false
     page.value = 1
     await loadPage()
-    showFeedback('普通用户已创建，初始虚拟余额为 0.00')
+    showFeedback('普通用户已创建，初始余额为 0.00')
   } catch (error) {
     clearCreateForm()
     showFeedback(apiErrorMessage(error, '用户创建失败'), 'error')
@@ -394,7 +394,7 @@ onBeforeUnmount(() => {
     <div v-if="createOpen" class="user-modal-layer" role="presentation" @click.self="closeCreateModal">
       <section class="user-modal" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
         <header><div><span class="eyebrow">CREATE USER</span><h2 id="create-user-title">新增普通用户</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="closeCreateModal">×</button></header>
-        <p class="modal-note">新用户固定获得 USER 角色，虚拟余额从 0.00 开始，不在此处分配余额。</p>
+        <p class="modal-note">新用户固定获得 USER 角色，余额从 0.00 开始，不在此处分配余额。</p>
         <form class="user-form" @submit.prevent="createUser">
           <label>用户名<input v-model="newUsername" autocomplete="off" maxlength="64" required /></label>
           <label>展示名<input v-model="newDisplayName" autocomplete="off" maxlength="64" required /></label>
@@ -412,7 +412,7 @@ onBeforeUnmount(() => {
         <div v-else-if="!selectedUser" class="user-empty-state">正在加载详情...</div>
         <template v-else>
           <div class="admin-avatar-editor"><div class="admin-avatar-preview"><img v-if="selectedUser.avatarKey" :src="api.avatarUrl(selectedUser.avatarKey)" alt="用户头像" /><span v-else>{{ selectedUser.displayName.slice(0, 1) }}</span></div><label>真实头像<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="avatarUploading" @change="selectAvatar" /></label><button type="button" class="secondary-button" :disabled="!avatarFile || avatarUploading" @click="uploadSelectedAvatar">{{ avatarUploading ? '上传中...' : '上传头像' }}</button></div>
-          <dl class="user-detail-grid"><div><dt>ID</dt><dd>{{ selectedUser.id }}</dd></div><div><dt>用户名</dt><dd>{{ selectedUser.username }}</dd></div><div><dt>展示名</dt><dd>{{ selectedUser.displayName }}</dd></div><div><dt>状态</dt><dd><span class="user-status" :class="statusClass(selectedUser.status)">{{ statusLabel(selectedUser.status) }}</span></dd></div><div><dt>角色</dt><dd>{{ selectedUser.roles.join(' / ') || '--' }}</dd></div><div><dt>创建时间</dt><dd>{{ dateTime(selectedUser.createdAt) }}</dd></div><div><dt>最后登录</dt><dd>{{ dateTime(selectedUser.lastLoginAt) }}</dd></div><div><dt>虚拟余额</dt><dd>{{ selectedUser.wallet ? `¥${selectedUser.wallet.balance.toFixed(2)}` : '--' }}</dd></div></dl>
+          <dl class="user-detail-grid"><div><dt>ID</dt><dd>{{ selectedUser.id }}</dd></div><div><dt>用户名</dt><dd>{{ selectedUser.username }}</dd></div><div><dt>展示名</dt><dd>{{ selectedUser.displayName }}</dd></div><div><dt>状态</dt><dd><span class="user-status" :class="statusClass(selectedUser.status)">{{ statusLabel(selectedUser.status) }}</span></dd></div><div><dt>角色</dt><dd>{{ selectedUser.roles.join(' / ') || '--' }}</dd></div><div><dt>创建时间</dt><dd>{{ dateTime(selectedUser.createdAt) }}</dd></div><div><dt>最后登录</dt><dd>{{ dateTime(selectedUser.lastLoginAt) }}</dd></div><div><dt>余额</dt><dd>{{ selectedUser.wallet ? `¥${selectedUser.wallet.balance.toFixed(2)}` : '--' }}</dd></div></dl>
           <div class="detail-actions">
             <button v-if="selectedStatus !== 'ACTIVE'" type="button" class="secondary-button" :disabled="busy" @click="openStatusConfirmation(selectedUser, 'ACTIVE')">启用</button>
             <button v-if="selectedStatus === 'ACTIVE'" type="button" class="secondary-button warning-button" :disabled="busy || selectedUser.id === currentUserId" @click="openStatusConfirmation(selectedUser, 'DISABLED')">停用</button>

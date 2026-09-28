@@ -129,7 +129,7 @@ onMounted(() => { void loadState() })
 </template>
 
 <style scoped>
-.unified-admin-page { min-height: 100vh; overflow-x: clip; color: #263746; background: #f4f7fa; }
+.unified-admin-page { min-width: 1000px; min-height: 100vh; overflow-x: auto; color: #263746; background: #f4f7fa; }
 .unified-admin-topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 52px; border-bottom: 1px solid #b9d8ec; background: #e9f5fc; padding: 0 28px; }
 .unified-brand, .unified-topbar-status, .system-status { display: flex; align-items: center; gap: 10px; }
 .unified-brand { color: #17324d; }

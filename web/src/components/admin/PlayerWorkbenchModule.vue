@@ -499,4 +499,10 @@ label { display: grid; gap: 5px; color: #475569; font-size: 12px; font-weight: 7
 .play-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .play-option { display: flex; align-items: center; gap: 6px; color: #334155; font-size: 14px; }
 .play-option input { width: 16px; height: 16px; }
-.play-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }</style>
+.play-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.pane-heading { flex-direction: column; align-items: stretch; }
+.create-action-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.create-action-stack .create-actions, .create-action-stack .record-actions { display: contents; }
+.create-action-stack .create-actions button, .create-action-stack .record-actions button { flex: 1 1 0; }
+.record-actions { display: contents; }
+</style>
