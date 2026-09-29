@@ -18,6 +18,7 @@ describe('unified admin routes', () => {
     expect(consoleRoute.meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE', title: 'AI模型房间管理' })
     expect(players.component).toBeDefined()
     expect(players.meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE' })
+    expect(route('/console/stash').meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE' })
   })
 
   it('keeps the old operations page and separated robot permission boundary', () => {
@@ -33,6 +34,7 @@ describe('unified admin routes', () => {
     expect(route('/admin/users').redirect).toBe('/console/users')
     expect(route('/admin/test-players').redirect).toBe('/console/players')
     expect(route('/admin/robots').redirect).toBe('/console/robots')
+    expect(route('/admin/stash').redirect).toBe('/console/stash')
   })
 
   it('mounts the points approval and recent records panels in the unified shell', () => {
@@ -70,6 +72,28 @@ describe('unified admin routes', () => {
     expect(source).not.toContain('期号、封盘、开奖和结算将在后续模块中接入')
   })
 
+  it('keeps the removed runtime status block in the dedicated stash view', () => {
+    const unifiedSource = readFileSync(resolve(process.cwd(), 'src/views/UnifiedAdminPanel.vue'), 'utf8')
+    const stashSource = readFileSync(resolve(process.cwd(), 'src/views/AdminStashView.vue'), 'utf8')
+
+    expect(unifiedSource).toContain('<RouterLink to="/console/stash">查看备用模块</RouterLink>')
+    expect(unifiedSource).toContain('<ReportControlPanel class="unified-content-report" />')
+    expect(unifiedSource).not.toContain('aria-label="当前运行状态"')
+    expect(stashSource).toContain('<h1>备用模块</h1>')
+    expect(stashSource).toContain('aria-label="当前运行状态"')
+  })
+  it('keeps point increase red, point decrease green and forwards admin wheel scrolling', () => {
+    const unifiedSource = readFileSync(resolve(process.cwd(), 'src/views/UnifiedAdminPanel.vue'), 'utf8')
+    const approvalSource = readFileSync(resolve(process.cwd(), 'src/components/admin/PointsApprovalPanel.vue'), 'utf8')
+    const recordsSource = readFileSync(resolve(process.cwd(), 'src/components/admin/RecentPointsRecordsPanel.vue'), 'utf8')
+
+    expect(unifiedSource).toContain('@wheel="handleAdminWheel"')
+    expect(unifiedSource).toContain('function handleAdminWheel')
+    expect(approvalSource).toContain('request.requestType === \'TOP_UP\' ? \'is-top-up\' : \'is-down\'')
+    expect(approvalSource).toMatch(/\.request-direction\.is-down[\s\S]*?color: var\(--ops-green/)
+    expect(recordsSource).toMatch(/\.is-positive[\s\S]*?color: var\(--ops-red/)
+    expect(recordsSource).toMatch(/\.is-negative[\s\S]*?color: var\(--ops-green/)
+  })
   it('uses the requested page titles and favicon', () => {
     const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
     const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')

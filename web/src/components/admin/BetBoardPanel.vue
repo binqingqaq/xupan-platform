@@ -119,37 +119,226 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.bet-board-panel { min-width: 0; border: 1px solid #218bd0; background: #fff; color: #263746; }
-.bet-board-heading { border-bottom: 1px solid #cfe2ee; padding: 10px; }
-.bet-board-summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
-.bet-board-summary strong { color: #17324d; font-size: 15px; }
-.bet-board-summary span { color: #4f8f35; font-size: 12px; font-weight: 700; }
-.bet-board-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.bet-board-tabs button { min-width: 0; min-height: 34px; border: 1px solid #91c6e6; background: #fff; color: #536b7d; padding: 0 5px; font-size: 12px; font-weight: 700; cursor: pointer; }
-.bet-board-tabs button.active { border-color: #218bd0; background: #218bd0; color: #fff; }
-.bet-board-tabs button:focus-visible, .bet-board-remove:focus-visible { outline: 3px solid #9acff3; outline-offset: 1px; }
-.bet-board-body { min-height: 430px; }
-.bet-board-error { margin: 8px 10px 0; color: #b42318; font-size: 12px; }
-.bet-board-issue { min-height: 31px; border-bottom: 1px solid #dcebf3; padding: 7px 10px; background: #f7fbfd; color: #244e68; font-size: 12px; font-weight: 700; }
-.bet-board-list { max-height: 400px; overflow-y: auto; padding: 4px 0; }
-.bet-board-row { display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: start; gap: 4px; border-bottom: 1px solid #e5eef4; padding: 7px 8px 7px 10px; }
-.bet-board-copy { min-width: 0; color: #263746; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
-.bet-board-remove { width: 28px; height: 28px; border: 0; background: transparent; color: #d62f2f; font-size: 19px; line-height: 1; opacity: 1; cursor: not-allowed; }
-.bet-board-state { display: grid; min-height: 390px; place-content: center; padding: 14px; color: #8799a5; text-align: center; font-size: 12px; }
-.bet-board-previous { min-height: 430px; background: #fff; }
-.bet-board-draw-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 33px; border-bottom: 1px solid #dcebf3; padding: 5px 9px; color: #244e68; font-size: 12px; }
-.bet-board-draw-title span { color: #ef4444; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.bet-board-table { max-height: 397px; overflow-y: auto; }
-.bet-board-table-header, .bet-board-table-row { display: grid; grid-template-columns: 45px repeat(8, minmax(16px, 1fr)) 34px; align-items: center; gap: 2px; }
-.bet-board-table-header { position: sticky; top: 0; z-index: 1; min-height: 30px; border-bottom: 1px solid #dcebf3; background: #fff; color: #536b7d; text-align: center; font-size: 11px; }
-.bet-board-table-row { min-height: 30px; border-bottom: 1px solid #edf2f7; color: #405f74; text-align: center; font-size: 11px; }
-.bet-board-history-issue { padding-left: 5px; font-variant-numeric: tabular-nums; text-align: left; }
-.bet-board-history-status { color: #536b7d; white-space: nowrap; }
-.bet-board-fan { display: grid; width: 18px; height: 18px; place-self: center; place-items: center; border-radius: 2px; color: #fff; font-weight: 800; font-variant-numeric: tabular-nums; }
+.bet-board-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
+  background: var(--ops-panel, #fff);
+  color: var(--ops-text, #243b53);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
+}
+
+.bet-board-heading {
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: linear-gradient(#f4fbff, var(--ops-header, #dceeff));
+  padding: 5px 6px 6px;
+}
+
+.bet-board-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.bet-board-summary strong {
+  color: var(--ops-blue-deep, #15599d);
+  font-size: 12px;
+}
+
+.bet-board-summary span {
+  color: var(--ops-green, #23845f);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bet-board-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.bet-board-tabs button {
+  min-width: 0;
+  min-height: 24px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: linear-gradient(#fff, #eaf4ff);
+  color: var(--ops-text, #243b53);
+  padding: 0 3px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bet-board-tabs button.active {
+  border-color: var(--ops-blue, #2d7bcd);
+  background: linear-gradient(#5aa8e7, var(--ops-blue, #2d7bcd));
+  color: #fff;
+}
+
+.bet-board-tabs button:focus-visible,
+.bet-board-remove:focus-visible {
+  outline: 2px solid #9acff3;
+  outline-offset: 1px;
+}
+
+.bet-board-body {
+  min-height: 396px;
+}
+
+.bet-board-error {
+  margin: 6px 8px 0;
+  color: var(--ops-red, #d94747);
+  font-size: 11px;
+}
+
+.bet-board-issue {
+  min-height: 27px;
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: var(--ops-panel-soft, #f3f8ff);
+  color: var(--ops-blue-deep, #15599d);
+  padding: 5px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bet-board-list {
+  max-height: 367px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.bet-board-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 23px;
+  align-items: start;
+  gap: 3px;
+  border-bottom: 1px solid #e2edf7;
+  padding: 5px 5px 5px 7px;
+}
+
+.bet-board-copy {
+  min-width: 0;
+  color: var(--ops-text, #243b53);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.bet-board-remove {
+  width: 23px;
+  height: 23px;
+  border: 1px solid #efb0b0;
+  border-radius: 2px;
+  background: #fff5f5;
+  color: var(--ops-red, #d94747);
+  font-size: 17px;
+  line-height: 1;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.bet-board-state {
+  display: grid;
+  min-height: 360px;
+  place-content: center;
+  padding: 12px;
+  color: var(--ops-muted, #6d8093);
+  text-align: center;
+  font-size: 11px;
+}
+
+.bet-board-previous {
+  min-height: 396px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 23px, rgb(91 137 183 / 5%) 23px 24px),
+    #fff;
+}
+
+.bet-board-draw-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 28px;
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: var(--ops-panel-soft, #f3f8ff);
+  padding: 4px 7px;
+  color: var(--ops-blue-deep, #15599d);
+  font-size: 11px;
+}
+
+.bet-board-draw-title span {
+  color: var(--ops-red, #d94747);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bet-board-table {
+  max-height: 367px;
+  overflow-y: auto;
+}
+
+.bet-board-table-header,
+.bet-board-table-row {
+  display: grid;
+  grid-template-columns: 45px repeat(8, minmax(16px, 1fr)) 34px;
+  align-items: center;
+  gap: 2px;
+}
+
+.bet-board-table-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 26px;
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: linear-gradient(#fff, #eaf4ff);
+  color: var(--ops-blue-deep, #15599d);
+  text-align: center;
+  font-size: 10px;
+}
+
+.bet-board-table-row {
+  min-height: 26px;
+  border-bottom: 1px solid #e2edf7;
+  color: var(--ops-text, #243b53);
+  text-align: center;
+  font-size: 10px;
+}
+
+.bet-board-history-issue {
+  padding-left: 4px;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+}
+
+.bet-board-history-status {
+  color: var(--ops-muted, #6d8093);
+  white-space: nowrap;
+}
+
+.bet-board-fan {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-self: center;
+  place-items: center;
+  border-radius: 2px;
+  color: #fff;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 .bet-board-fan-1 { background: #2b8dca; }
 .bet-board-fan-2 { background: #2ea66b; }
 .bet-board-fan-3 { background: #e3c62e; color: #5e4b00; }
 .bet-board-fan-4 { background: #e7483f; }
+
 @media (max-width: 980px) {
   .bet-board-panel { grid-column: 1 / -1; }
 }

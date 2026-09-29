@@ -82,93 +82,96 @@ const showCountdown = ref(true)
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 18px;
-  min-height: 62px;
-  margin-top: 14px;
-  border: 1px solid #6ba0d5;
-  background: #fff;
-  color: #23506f;
-  padding: 7px 12px;
+  gap: 5px 14px;
+  min-height: 36px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
+  background: linear-gradient(#fff, var(--ops-panel-soft, #f3f8ff));
+  color: var(--ops-text, #243b53);
+  padding: 4px 8px;
   font-size: 12px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
 }
 
 .bottom-control-group {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .bottom-control-label {
-  color: #23506f;
+  color: var(--ops-blue-deep, #15599d);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .bottom-control-spaced {
-  margin-left: 14px;
+  margin-left: 9px;
 }
 
 .bottom-control-input {
-  width: 62px;
-  height: 28px;
-  border: 1px solid #2e8bd0;
-  background: #f2faff;
-  color: #1d6da8;
-  padding: 0 6px;
+  width: 54px;
+  height: 23px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  background: #fff;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 4px;
   font: inherit;
   font-weight: 700;
   text-align: center;
 }
 
 .bottom-control-input-narrow {
-  width: 48px;
+  width: 42px;
 }
 
 .bottom-control-unit {
-  color: #23506f;
+  color: var(--ops-blue-deep, #15599d);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .bottom-control-switches {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   margin-left: auto;
 }
 
 .bottom-switch-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .bottom-switch-option {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: #1e79bb;
+  color: var(--ops-blue-deep, #15599d);
   white-space: nowrap;
   cursor: pointer;
 }
 
 .bottom-switch-option input {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   margin: 0;
-  accent-color: #208fd4;
+  accent-color: var(--ops-blue, #2d7bcd);
 }
 
 .bottom-control-raise {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 24px;
-  margin-left: 4px;
-  border: 1px solid #8faec1;
-  background: #f4f8fb;
-  color: #35647f;
-  padding: 0 7px;
+  height: 22px;
+  margin-left: 2px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  background: linear-gradient(#fff, #e8f3ff);
+  color: var(--ops-text, #243b53);
+  padding: 0 6px;
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
@@ -187,7 +190,6 @@ input:focus-visible {
 @media (max-width: 760px) {
   .admin-bottom-control {
     align-items: flex-start;
-    padding: 8px;
   }
 
   .bottom-control-spaced {

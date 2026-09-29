@@ -16,17 +16,21 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  min-height: 46px;
-  margin-top: 14px;
-  border: 1px solid #6ba0d5;
-  background: #fff;
-  color: #2e5f86;
-  padding: 7px 12px;
+  gap: 5px;
+  min-height: 36px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
+  background: linear-gradient(#fff, var(--ops-panel-soft, #f3f8ff));
+  color: var(--ops-text, #243b53);
+  padding: 4px 8px;
   font-size: 12px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
 }
 
 .domain-label {
+  color: var(--ops-blue-deep, #15599d);
   font-weight: 800;
   white-space: nowrap;
 }
@@ -34,30 +38,30 @@
 .domain-select,
 .domain-login-link {
   display: inline-flex;
-  height: 28px;
+  height: 24px;
   align-items: center;
-  border: 1px solid #6ba0d5;
+  border: 1px solid var(--ops-line, #8eb7e6);
   background: #fff;
-  color: #367eae;
-  padding: 0 9px;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 7px;
   white-space: nowrap;
 }
 
 .domain-select i {
   margin-left: 9px;
-  color: #236ea5;
+  color: var(--ops-blue, #2d7bcd);
   font-style: normal;
 }
 
 .domain-register-label {
-  margin-left: 24px;
+  margin-left: 12px;
 }
 
 .domain-radio {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: #1e79bb;
+  color: var(--ops-blue-deep, #15599d);
   white-space: nowrap;
 }
 
@@ -65,17 +69,17 @@
   display: block;
   width: 10px;
   height: 10px;
-  border: 1px solid #208fd4;
+  border: 1px solid var(--ops-blue, #2d7bcd);
   border-radius: 50%;
   background: #fff;
 }
 
 .domain-radio:first-of-type i {
-  background: #208fd4;
+  background: var(--ops-blue, #2d7bcd);
 }
 
 .domain-login-label {
-  margin-left: 24px;
+  margin-left: 12px;
 }
 
 .domain-login-link {
@@ -85,25 +89,9 @@
 }
 
 .domain-copy {
-  color: #2e78af;
+  color: var(--ops-blue-deep, #15599d);
   text-decoration: underline;
   text-underline-offset: 3px;
   white-space: nowrap;
-}
-
-@media (max-width: 760px) {
-  .admin-domain-footer {
-    align-items: flex-start;
-    padding: 8px;
-  }
-
-  .domain-register-label,
-  .domain-login-label {
-    margin-left: 0;
-  }
-
-  .domain-login-link {
-    max-width: 52vw;
-  }
 }
 </style>

@@ -12,6 +12,8 @@ import {
 } from '../../bettingConfig'
 import type { BettingConfigView, BettingLimits } from '../../types'
 
+const props = withDefaults(defineProps<{ part?: 'all' | 'welcome' | 'game' }>(), { part: 'all' })
+
 const DISPLAY_FIELDS: BettingDisplayField[] = ['displayOdds', 'specialOdds', 'specialRebate']
 
 const config = ref<BettingConfigView | null>(null)
@@ -126,12 +128,12 @@ async function saveLimits() {
 }
 
 onMounted(() => {
-  void loadConfig()
+  if (props.part !== 'welcome') void loadConfig()
 })
 </script>
 
 <template>
-  <section class="admin-welcome-bar" aria-label="欢迎与账户状态静态区域">
+  <section v-if="props.part !== 'game'" class="admin-welcome-bar" aria-label="欢迎与账户状态静态区域">
     <span class="welcome-label">欢迎您:</span>
     <span class="welcome-user">vip168，</span>
     <span class="welcome-meta">托：10，</span>
@@ -142,7 +144,7 @@ onMounted(() => {
     <span class="welcome-password">修改密码</span>
   </section>
 
-  <section class="admin-game-control-bar" aria-label="状态与赔率配置区域">
+  <section v-if="props.part !== 'welcome'" class="admin-game-control-bar" aria-label="状态与赔率配置区域">
     <span class="game-control-label">当前状态:</span>
     <span class="game-control-value game-control-status">开盘</span>
     <label class="game-control-label" for="admin-display-odds">赔率:</label>
@@ -198,7 +200,7 @@ onMounted(() => {
   </section>
 
   <Teleport to="body">
-    <div v-if="limitOpen && limitDraft" class="limit-config-layer" role="presentation" @click.self="closeLimits">
+    <div v-if="props.part !== 'welcome' && limitOpen && limitDraft" class="limit-config-layer" role="presentation" @click.self="closeLimits">
       <section class="limit-config-dialog" role="dialog" aria-modal="true" aria-labelledby="limit-config-title">
         <header>
           <h3 id="limit-config-title">限额配置</h3>
@@ -225,10 +227,12 @@ onMounted(() => {
 <style scoped>
 .admin-welcome-bar,
 .admin-game-control-bar {
-  border: 1px solid #6ba0d5;
-  background: #fff;
-  color: #2e5f86;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
+  background: linear-gradient(#fff, var(--ops-panel-soft, #f3f8ff));
+  color: var(--ops-text, #243b53);
   font-size: 12px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
 }
 
 .admin-welcome-bar {
@@ -236,48 +240,49 @@ onMounted(() => {
   align-items: center;
   flex-wrap: wrap;
   gap: 0;
-  min-height: 42px;
-  padding: 5px 12px;
+  min-height: 32px;
+  padding: 3px 8px;
+  background: linear-gradient(#f6fbff, var(--ops-header, #dceeff));
 }
 
 .admin-game-control-bar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
-  min-height: 48px;
-  margin-top: 10px;
-  margin-bottom: 14px;
-  padding: 7px 12px;
+  gap: 4px;
+  min-height: 34px;
+  margin-top: 5px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
 }
 
 .welcome-label,
 .game-control-label {
-  color: #2e5f86;
+  color: var(--ops-blue-deep, #15599d);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .welcome-user {
-  color: #ff4b45;
+  color: var(--ops-red, #d94747);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .welcome-meta {
-  color: #367eae;
+  color: var(--ops-blue-deep, #15599d);
   white-space: nowrap;
 }
 
 .welcome-user,
 .welcome-meta {
-  margin-right: 12px;
+  margin-right: 10px;
 }
 
 .welcome-action {
-  color: #2687c5;
+  color: var(--ops-blue, #2d7bcd);
   text-decoration: underline;
-  text-underline-offset: 3px;
+  text-underline-offset: 2px;
   white-space: nowrap;
 }
 
@@ -286,74 +291,78 @@ onMounted(() => {
 }
 
 .welcome-points {
-  color: #2e5f86;
+  color: var(--ops-text, #243b53);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .welcome-points b {
-  color: #18527f;
+  color: var(--ops-blue-deep, #15599d);
 }
 
 .welcome-password {
-  margin-left: 42px;
-  color: #f03535;
+  margin-left: 24px;
+  color: var(--ops-red, #d94747);
   font-weight: 800;
   white-space: nowrap;
 }
 
 .game-control-value {
   display: inline-flex;
-  min-width: 44px;
-  height: 28px;
+  min-width: 40px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #6ba0d5;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
   background: #fff;
-  color: #2e6f9d;
-  padding: 0 7px;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 6px;
   white-space: nowrap;
 }
 
 .game-control-status {
   min-width: 58px;
-  color: #2584c6;
+  color: var(--ops-blue, #2d7bcd);
 }
 
 .game-control-input {
-  width: 58px;
-  height: 28px;
-  border: 1px solid #6ba0d5;
+  width: 52px;
+  height: 24px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
   background: #fff;
-  color: #2e6f9d;
-  padding: 0 6px;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 5px;
   font: inherit;
   text-align: center;
 }
 
 .game-control-input-wide {
-  width: 72px;
+  width: 66px;
 }
 
 .game-control-input:disabled {
-  background: #f2f7fb;
+  background: #eef4f9;
   color: #93aec2;
 }
 
 .game-control-limit-button {
-  min-width: 88px;
-  height: 28px;
-  border: 1px solid #6ba0d5;
-  background: #f4fbff;
-  color: #166b9e;
-  padding: 0 8px;
+  min-width: 54px;
+  height: 24px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: linear-gradient(#fff, #e8f3ff);
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 7px;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
 
 .game-control-limit-button:hover:not(:disabled) {
-  background: #e4f3fd;
+  border-color: var(--ops-blue, #2d7bcd);
+  background: linear-gradient(#f7fbff, #d8ecff);
 }
 
 .game-control-limit-button:disabled {
@@ -363,22 +372,22 @@ onMounted(() => {
 
 .game-control-notice,
 .game-control-error {
-  margin-left: 6px;
+  margin-left: 4px;
   white-space: nowrap;
 }
 
 .game-control-notice {
-  color: #178357;
+  color: var(--ops-green, #23845f);
 }
 
 .game-control-error {
-  color: #b42318;
+  color: var(--ops-red, #d94747);
 }
 
 button:focus-visible,
 input:focus-visible {
-  outline: 3px solid #9acff3;
-  outline-offset: 2px;
+  outline: 2px solid #9acff3;
+  outline-offset: 1px;
 }
 
 .limit-config-layer {
@@ -395,93 +404,100 @@ input:focus-visible {
   width: min(560px, 100%);
   max-height: 88vh;
   overflow-y: auto;
-  border: 1px solid #96c8e7;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
   background: #fff;
   box-shadow: 0 22px 60px rgb(15 23 42 / 28%);
-  padding: 20px;
+  padding: 0;
 }
 
 .limit-config-dialog header {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 8px;
+  margin: 0;
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: linear-gradient(#f4fbff, var(--ops-header, #dceeff));
+  padding: 7px 10px;
 }
 
 .limit-config-dialog h3 {
   margin: 0;
-  color: #244e68;
-  font-size: 17px;
+  color: var(--ops-blue-deep, #15599d);
+  font-size: 13px;
 }
 
 .limit-config-dialog header span {
-  color: #718596;
-  font-size: 12px;
+  color: var(--ops-muted, #6d8093);
+  font-size: 11px;
 }
 
 .limit-config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px 14px;
+  gap: 7px 12px;
+  padding: 10px 12px 0;
 }
 
 .limit-config-field {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  color: #334e60;
-  font-size: 13px;
+  gap: 8px;
+  color: var(--ops-text, #243b53);
+  font-size: 12px;
 }
 
 .limit-config-field input {
-  width: 110px;
-  height: 32px;
-  border: 1px solid #b8cbd8;
+  width: 104px;
+  height: 25px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
   background: #fff;
-  color: #244e68;
-  padding: 0 8px;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 7px;
   font: inherit;
   text-align: right;
 }
 
 .limit-config-error {
-  margin: 14px 0 0;
-  border: 1px solid #fecaca;
-  background: #fff1f2;
-  color: #b42318;
-  padding: 8px 10px;
-  font-size: 12px;
+  margin: 8px 12px 0;
+  border: 1px solid #efb6b6;
+  background: #fff5f5;
+  color: var(--ops-red, #d94747);
+  padding: 5px 7px;
+  font-size: 11px;
 }
 
 .limit-config-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 18px;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 0 12px 12px;
 }
 
 .limit-cancel-button,
 .limit-save-button {
-  min-width: 76px;
-  min-height: 38px;
-  border: 1px solid;
-  padding: 0 14px;
+  min-width: 64px;
+  min-height: 26px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  padding: 0 10px;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
 
 .limit-cancel-button {
-  border-color: #b8cbd8;
-  background: #fff;
-  color: #536b7d;
+  background: linear-gradient(#fff, #eaf4ff);
+  color: var(--ops-text, #243b53);
 }
 
 .limit-save-button {
-  border-color: #178357;
-  background: #178357;
+  border-color: var(--ops-green, #23845f);
+  background: linear-gradient(#47a77d, var(--ops-green, #23845f));
   color: #fff;
 }
 
@@ -489,29 +505,5 @@ input:focus-visible {
 .limit-save-button:disabled {
   cursor: not-allowed;
   opacity: .55;
-}
-
-@media (max-width: 760px) {
-  .admin-welcome-bar,
-  .admin-game-control-bar {
-    padding: 7px 8px;
-  }
-
-  .welcome-password {
-    margin-left: 0;
-  }
-
-  .welcome-spacer {
-    display: none;
-  }
-
-  .game-control-label,
-  .game-control-value {
-    font-size: 11px;
-  }
-
-  .game-control-limit-button {
-    min-width: 72px;
-  }
 }
 </style>

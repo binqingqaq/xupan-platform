@@ -1,0 +1,147 @@
+body.ops-console-body {
+  --ops-bg: #edf3fb;
+  --ops-shell: #f8fbff;
+  --ops-panel: #ffffff;
+  --ops-panel-soft: #f3f8ff;
+  --ops-line: #8eb7e6;
+  --ops-line-strong: #4b8ed3;
+  --ops-header: #dceeff;
+  --ops-header-deep: #bfdffb;
+  --ops-blue: #2d7bcd;
+  --ops-blue-deep: #15599d;
+  --ops-cyan: #37a9dd;
+  --ops-red: #d94747;
+  --ops-green: #23845f;
+  --ops-text: #243b53;
+  --ops-muted: #6d8093;
+  --ops-shadow: 0 2px 8px rgb(50 94 140 / 12%);
+}
+
+body.ops-console-body {
+  min-width: 1000px;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 70%), rgb(218 232 247 / 58%)),
+    repeating-linear-gradient(0deg, transparent 0 23px, rgb(91 137 183 / 7%) 23px 24px),
+    var(--ops-bg);
+  color: var(--ops-text);
+  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+}
+
+body.ops-console-body button,
+body.ops-console-body input,
+body.ops-console-body select,
+body.ops-console-body textarea {
+  border-radius: 2px;
+}
+
+body.ops-console-body button {
+  min-height: 26px;
+  border: 1px solid var(--ops-line);
+  background: linear-gradient(#ffffff, #eaf4ff);
+  color: var(--ops-text);
+  padding: 2px 8px;
+  line-height: 1.2;
+}
+
+body.ops-console-body button:hover:not(:disabled) {
+  border-color: var(--ops-line-strong);
+  background: linear-gradient(#f7fbff, #d8ecff);
+}
+
+body.ops-console-body button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+body.ops-console-body input,
+body.ops-console-body select,
+body.ops-console-body textarea {
+  border: 1px solid var(--ops-line);
+  background: #fff;
+  color: var(--ops-text);
+  padding: 3px 6px;
+}
+
+body.ops-console-body input:focus,
+body.ops-console-body select:focus,
+body.ops-console-body textarea:focus {
+  border-color: var(--ops-blue);
+  box-shadow: 0 0 0 1px rgb(45 123 205 / 24%);
+  outline: none;
+}
+
+body.ops-console-body .primary-button {
+  border-color: var(--ops-blue);
+  background: linear-gradient(#4d9ce0, #2471b9);
+  color: #fff;
+  font-weight: 700;
+}
+
+body.ops-console-body .secondary-button {
+  border-color: var(--ops-line);
+  background: linear-gradient(#ffffff, #e8f3ff);
+}
+
+body.ops-console-body .admin-page,
+body.ops-console-body .unified-admin-page {
+  width: 1000px;
+  min-width: 1000px;
+  min-height: 100vh;
+  margin: 0 auto;
+  background: var(--ops-shell);
+}
+
+body.ops-console-body .admin-header,
+body.ops-console-body .unified-admin-topbar {
+  border: 1px solid var(--ops-line-strong);
+  background: linear-gradient(#f4fbff, var(--ops-header));
+  color: var(--ops-text);
+  box-shadow: var(--ops-shadow);
+}
+
+body.ops-console-body .admin-section,
+body.ops-console-body .unified-player-workbench,
+body.ops-console-body .admin-summary,
+body.ops-console-body .unified-status-grid,
+body.ops-console-body .unified-sidebar-note,
+body.ops-console-body .unified-compat-links,
+body.ops-console-body .bet-board-panel,
+body.ops-console-body .report-control-panel,
+body.ops-console-body .points-approval-panel,
+body.ops-console-body .recent-points-panel,
+body.ops-console-body .admin-domain-footer,
+body.ops-console-body .admin-bottom-control {
+  border-color: var(--ops-line);
+  background: var(--ops-panel);
+  box-shadow: none;
+}
+
+body.ops-console-body .section-title,
+body.ops-console-body .panel-heading,
+body.ops-console-body .unified-nav-heading,
+body.ops-console-body .bet-board-heading {
+  border-bottom: 1px solid var(--ops-line);
+  background: linear-gradient(#eef8ff, #d8ecff);
+}
+
+body.ops-console-body .eyebrow {
+  color: var(--ops-blue-deep);
+  font-size: 9px;
+  letter-spacing: .08em;
+}
+
+/* Keep top-level admin panels from becoming wheel-event traps. */
+body.ops-console-body .unified-admin-page,
+body.ops-console-body .unified-player-workbench,
+body.ops-console-body .points-approval-panel,
+body.ops-console-body .recent-points-panel,
+body.ops-console-body .report-control-panel,
+body.ops-console-body .bet-board-panel,
+body.ops-console-body .admin-bottom-control,
+body.ops-console-body .admin-domain-footer,
+body.ops-console-body .admin-placeholder-panel,
+body.ops-console-body .unified-sidebar-note,
+body.ops-console-body .unified-stash-entry,
+body.ops-console-body .unified-compat-links {
+  overflow: clip;
+}

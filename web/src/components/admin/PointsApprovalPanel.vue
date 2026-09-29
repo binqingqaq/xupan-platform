@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
             <span :class="['request-direction', request.requestType === 'TOP_UP' ? 'is-top-up' : 'is-down']">
               {{ request.requestType === 'TOP_UP' ? '上分' : '下分' }}
             </span>
-            <strong>{{ request.requestType === 'TOP_UP' ? '+' : '-' }}{{ Number(request.amount).toFixed(2) }}</strong>
+            <strong :class="request.requestType === 'TOP_UP' ? 'is-top-up' : 'is-down'">{{ request.requestType === 'TOP_UP' ? '+' : '-' }}{{ Number(request.amount).toFixed(2) }}</strong>
             <span class="request-player">（{{ request.displayName }}）</span>
           </div>
           <div class="request-actions">
@@ -228,46 +228,269 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.points-approval-panel { min-width: 0; min-height: 300px; border: 1px solid #218bd0; background: #fff; color: #263746; }
-.panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-height: 54px; border-bottom: 1px solid #d7e8f3; padding: 8px 14px; }
-.panel-heading > div:first-child { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.panel-heading h2 { margin: 0; color: #244e68; font-size: 15px; white-space: nowrap; }
-.new-count { color: #b42318; font-size: 11px; font-weight: 700; }
-.sound-controls { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; color: #476274; font-size: 12px; }
-.sound-controls label { display: flex; align-items: center; gap: 5px; min-height: 36px; cursor: pointer; }
-.sound-controls input { width: 16px; height: 16px; margin: 0; accent-color: #177dc1; }
-.sound-test-button { min-height: 36px; border: 1px solid #7ab6d9; background: #f4fbff; color: #166b9e; padding: 0 10px; font-weight: 700; cursor: pointer; }
-.panel-body { min-height: 246px; padding: 12px 14px 14px; }
-.panel-notice, .panel-error, .panel-hint { margin: 0 0 10px; padding: 8px 10px; border: 1px solid #b7d7f2; background: #f1f8fe; color: #166b9e; font-size: 12px; }
-.panel-error { border-color: #fecaca; background: #fff1f2; color: #b42318; }
-.panel-hint { border-color: #f6d68a; background: #fffbeb; color: #9a6700; }
-.panel-state { display: grid; min-height: 210px; place-content: center; gap: 8px; color: #718596; text-align: center; font-size: 13px; }
-.panel-empty strong { color: #405f74; }
-.panel-empty span { font-size: 12px; }
-.request-list { display: grid; gap: 8px; max-height: 360px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
-.request-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; border: 1px solid #d9e8f2; background: #f9fcfd; padding: 8px 10px; }
-.request-label { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.request-label strong { color: #0b6e46; font-size: 18px; font-variant-numeric: tabular-nums; }
-.request-direction { color: #2a6d91; font-size: 12px; font-weight: 700; }
-.request-direction.is-down { color: #a14444; }
-.request-player { color: #536b7d; font-size: 13px; overflow-wrap: anywhere; }
-.request-actions, .confirm-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.approve-button, .cancel-button { min-width: 66px; min-height: 44px; border: 1px solid; padding: 0 12px; font-weight: 700; cursor: pointer; }
-.approve-button { border-color: #178357; background: #178357; color: #fff; }
-.cancel-button { border-color: #b8cbd8; background: #fff; color: #536b7d; }
-button:disabled { cursor: not-allowed; opacity: .55; }
-button:focus-visible { outline: 3px solid #9acff3; outline-offset: 2px; }
-.point-confirm-layer { position: fixed; inset: 0; z-index: 2400; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 48%); }
-.point-confirm-dialog { width: min(430px, 100%); border: 1px solid #96c8e7; background: #fff; box-shadow: 0 22px 60px rgb(15 23 42 / 28%); padding: 20px; }
-.point-confirm-dialog h3 { margin: 0 0 12px; color: #244e68; font-size: 17px; }
-.point-confirm-dialog p { margin: 0 0 10px; color: #334e60; line-height: 1.6; }
-.point-confirm-dialog .confirm-note { color: #718596; font-size: 12px; }
-.confirm-actions { justify-content: flex-end; margin-top: 18px; }
-@media (max-width: 700px) {
-  .panel-heading { align-items: flex-start; flex-direction: column; }
-  .sound-controls { justify-content: flex-start; }
-  .request-row { align-items: flex-start; flex-direction: column; }
-  .request-actions { width: 100%; }
-  .request-actions button { flex: 1; }
+.points-approval-panel {
+  min-width: 0;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
+  background: var(--ops-panel, #fff);
+  color: var(--ops-text, #243b53);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: linear-gradient(#f4fbff, var(--ops-header, #dceeff));
+  padding: 5px 8px;
+}
+
+.panel-heading > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.panel-heading h2 {
+  margin: 0;
+  color: var(--ops-blue-deep, #15599d);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.new-count {
+  color: var(--ops-red, #d94747);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.sound-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  color: var(--ops-text, #243b53);
+  font-size: 11px;
+}
+
+.sound-controls label {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.sound-controls input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--ops-blue, #2d7bcd);
+}
+
+.sound-test-button {
+  min-height: 24px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: linear-gradient(#fff, #eaf4ff);
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.panel-body {
+  min-height: 246px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 23px, rgb(91 137 183 / 5%) 23px 24px),
+    #fff;
+  padding: 7px 8px 8px;
+}
+
+.panel-notice,
+.panel-error,
+.panel-hint {
+  margin: 0 0 7px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: #f1f8fe;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 5px 7px;
+  font-size: 11px;
+}
+
+.panel-error {
+  border-color: #efb6b6;
+  background: #fff5f5;
+  color: var(--ops-red, #d94747);
+}
+
+.panel-hint {
+  border-color: #efd08c;
+  background: #fffbeb;
+  color: #9a6700;
+}
+
+.panel-state {
+  display: grid;
+  min-height: 210px;
+  place-content: center;
+  gap: 6px;
+  color: var(--ops-muted, #6d8093);
+  text-align: center;
+  font-size: 12px;
+}
+
+.panel-empty strong {
+  color: var(--ops-text, #243b53);
+}
+
+.panel-empty span {
+  font-size: 11px;
+}
+
+.request-list {
+  display: grid;
+  gap: 3px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.request-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  border: 1px solid #c8dfef;
+  border-radius: 2px;
+  background: #f9fcfd;
+  padding: 4px 6px;
+}
+
+.request-label {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.request-label strong {
+  color: var(--ops-red, #d94747);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.request-direction {
+  color: var(--ops-red, #d94747);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.request-label strong.is-down,
+.request-direction.is-down {
+  color: var(--ops-green, #23845f);
+}
+
+.request-player {
+  color: var(--ops-muted, #6d8093);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.request-actions,
+.confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.approve-button,
+.cancel-button {
+  min-width: 54px;
+  min-height: 26px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  padding: 0 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.approve-button {
+  border-color: var(--ops-green, #23845f);
+  background: linear-gradient(#47a77d, var(--ops-green, #23845f));
+  color: #fff;
+}
+
+.cancel-button {
+  background: linear-gradient(#fff, #eaf4ff);
+  color: var(--ops-text, #243b53);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+button:focus-visible {
+  outline: 2px solid #9acff3;
+  outline-offset: 1px;
+}
+
+.point-confirm-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2400;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 48%);
+}
+
+.point-confirm-dialog {
+  width: min(430px, 100%);
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 22px 60px rgb(15 23 42 / 28%);
+  padding: 14px;
+}
+
+.point-confirm-dialog h3 {
+  margin: -14px -14px 10px;
+  border-bottom: 1px solid var(--ops-line, #8eb7e6);
+  background: linear-gradient(#f4fbff, var(--ops-header, #dceeff));
+  color: var(--ops-blue-deep, #15599d);
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.point-confirm-dialog p {
+  margin: 0 0 8px;
+  color: var(--ops-text, #243b53);
+  line-height: 1.55;
+  font-size: 12px;
+}
+
+.point-confirm-dialog .confirm-note {
+  color: var(--ops-muted, #6d8093);
+  font-size: 11px;
+}
+
+.confirm-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 </style>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../../api'
-import { BOT_PLAY_TYPES, BOT_PLAY_TYPE_CODES, STAKE_RANGE_CODES, STAKE_RANGE_LABELS, STAKE_ROUND_TEN_LABELS, STAKE_ROUND_TEN_OPTIONS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation, validatePlayerMessage } from '../../playerDesk'
+import { BOT_PLAY_TYPES, BOT_PLAY_TYPE_CODES, STAKE_RANGE_CODES, STAKE_RANGE_LABELS, STAKE_ROUND_TEN_LABELS, STAKE_ROUND_TEN_OPTIONS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation } from '../../playerDesk'
 import type { PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskPointRecords, PlayerDeskSummary, PlayerNameHistory } from '../../types'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -11,7 +11,7 @@ const summary = ref<PlayerDeskSummary>({ totalPoints: 0, normalCount: 0, botCoun
 const kindSummary = ref<PlayerDeskSummary>({ totalPoints: 0, normalCount: 0, botCount: 0 })
 const page = ref<PlayerDeskPage>({ items: [], page: 1, pageSize: 20, total: 0 })
 const selected = ref<PlayerDeskDetail | null>(null)
-const loading = ref(false); const detailLoading = ref(false); const saving = ref(false); const sending = ref(false)
+const loading = ref(false); const detailLoading = ref(false); const saving = ref(false)
 const error = ref(''); const actionMessage = ref(''); const createError = ref(''); const behaviorError = ref('')
 const accessLink = ref<PlayerAccessLinkView | null>(null); const accessLinkBusy = ref(false)
 const linkDays = ref(7); const nicknameDraft = ref(''); const renameHistoryOpen = ref(false); const renameHistory = ref<PlayerNameHistory | null>(null); const renameLoading = ref(false)
@@ -27,7 +27,6 @@ const filter = reactive({ kind: 'NORMAL', status: '', keyword: '' })
 const normalDraft = reactive({ displayName: '' })
 const botDraft = reactive({ displayName: '' })
 const pointDraft = reactive({ amount: 100, reason: '', direction: 'grant' as 'grant' | 'adjust' })
-const messageDraft = reactive({ content: '', clientMessageId: '' })
 const behaviorDraft = reactive({
   mode: 'MANUAL' as 'AUTOMATIC' | 'MANUAL',
   betsPerIssue: 0,
@@ -259,13 +258,7 @@ async function saveBehavior() {
   try { const behavior = await api.updatePlayerBehavior(selected.value.userId, behaviorDraft); syncBehavior(behavior); await refresh(selected.value.userId); actionMessage.value = '托行为配置已保存' }
   catch (cause) { behaviorError.value = cause instanceof Error ? cause.message : '托行为配置保存失败' } finally { saving.value = false }
 }
-async function runNow() { if (!selected.value) return; saving.value = true; try { await api.runPlayerBehaviorNow(selected.value.userId); await refresh(selected.value.userId); actionMessage.value = '已执行一批托动作' } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '立即执行失败' } finally { saving.value = false } }
-async function sendMessage() {
-  if (!selected.value) return
-  messageDraft.clientMessageId = messageDraft.clientMessageId || createPlayerIdempotencyKey('player-message'); const errors = validatePlayerMessage(messageDraft.content, messageDraft.clientMessageId); if (errors.length) { actionMessage.value = errors[0]; return }
-  sending.value = true
-  try { await api.sendPlayerMessage(selected.value.userId, { content: messageDraft.content.trim(), clientMessageId: messageDraft.clientMessageId }); messageDraft.content = ''; messageDraft.clientMessageId = ''; await refresh(selected.value.userId); actionMessage.value = '托消息已发送' } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '托消息发送失败' } finally { sending.value = false }
-}
+
 function avatar(player: PlayerDeskItem) { return player.avatarKey ? api.avatarUrl(player.avatarKey) : '' }
 function money(value: number) { return formatPoints(value) }
 function dateTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '暂无' }
@@ -370,10 +363,10 @@ onBeforeUnmount(() => {
         <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
         <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
           <div class="player-edit-rows"><div class="player-edit-row"><span>会员ID：<strong>{{ selected.memberCode }}</strong></span><div class="days-editor"><input v-model.number="linkDays" type="number" min="1" max="3650" aria-label="链接有效期天数" /><span>天</span><button class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="saveLinkDays">保存</button><small>剩余 {{ linkDays }} 天</small></div></div><div class="player-edit-row"><label>昵称<input v-model="nicknameDraft" maxlength="128" /></label><button class="outline-button" type="button" :disabled="saving || selected.status === 'DELETED'" @click="updateNickname">更新</button></div><div class="player-edit-actions"><template v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'"><button v-if="selected.linkStatus?.active" class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="revokeAccessLink">拉黑</button><button v-else class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="whitelistPlayer">拉白</button></template><button class="outline-button" type="button" @click="openRenameHistory">换名记录</button></div></div>
-          <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div class="section-title"><div><h3>登录链接</h3><span>创建后自动生成；只有点击刷新链接才会更换。</span></div><strong>{{ selected.linkStatus?.active ? '链接有效' : selected.linkStatus?.revokedAt ? '已拉黑（链接保留）' : '链接已失效' }}</strong></div><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
-          <div class="detail-grid"><div><span>当前积分</span><strong class="points">{{ money(selected.balance) }}</strong></div><div><span>状态</span><strong>{{ playerStatusLabel(selected.status) }}</strong></div><div><span>创建时间</span><strong>{{ dateTime(selected.createdAt) }}</strong></div><div><span>最后登录</span><strong>{{ dateTime(selected.lastLoginAt) }}</strong></div></div>
-          <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="section-title"><h3>积分操作</h3><span>输入积分后直接上分或下分</span></div><div class="point-form"><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('grant')">上分</button><button class="outline-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('adjust')">下分</button></div></section>
-          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><div><h3>托行为模式</h3><span>自动模式每期下注且不发送聊天消息，手动模式只在点击立即执行时执行</span></div><button class="primary-button" :disabled="saving" type="button" @click="runNow">立即执行</button></div><form class="behavior-form" @submit.prevent="saveBehavior">
+          <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
+
+          <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="point-form"><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('grant')">上分</button><button class="outline-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('adjust')">下分</button></div></section>
+          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><h3>托行为模式</h3></div><form class="behavior-form" @submit.prevent="saveBehavior">
             <fieldset class="mode-field wide">
               <legend>执行模式</legend>
               <label><input v-model="behaviorDraft.mode" type="radio" value="AUTOMATIC" /> 自动：按计划下注</label>
@@ -389,7 +382,7 @@ onBeforeUnmount(() => {
             <label>上分金额上限<input v-model.number="behaviorDraft.topupMax" type="number" min="1" step="1" /></label>
             <p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p>
             <button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button>
-          </form><form class="message-form" @submit.prevent="sendMessage"><label>手动发送测试消息<input v-model="messageDraft.content" placeholder="例如：大家好，或 1番100" /></label><button class="outline-button" :disabled="sending" type="submit">{{ sending ? '发送中...' : '发送' }}</button></form></section>
+          </form></section>
         </template>
       </section>
     </section>
@@ -428,8 +421,8 @@ onBeforeUnmount(() => {
             <div v-else-if="pointRecordsError" class="record-state record-state-error" role="alert">{{ pointRecordsError }}<button class="outline-button" type="button" @click="loadPointRecords(pointRecordsDate)">重试</button></div>
             <div v-else-if="!pointRecords || !pointRecords.players.length" class="record-state">当前业务日暂无记录</div>
             <div v-else class="record-report">
-              <div class="record-summary-grid"><div><span>总流水</span><strong>{{ money(pointRecords.summary.turnover) }}</strong></div><div><span>总盈亏</span><strong :class="{ 'record-negative': pointRecords.summary.netProfit < 0 }">{{ money(pointRecords.summary.netProfit) }}</strong></div><div><span>总上分</span><strong>{{ money(pointRecords.summary.topUp) }}</strong></div><div><span>总下分</span><strong>{{ money(pointRecords.summary.down) }}</strong></div><div><span>总余额</span><strong>{{ money(pointRecords.summary.closingBalance) }}</strong></div><div><span>注单数</span><strong>{{ pointRecords.summary.betCount }}</strong></div></div>
-              <div class="record-player-list"><details v-for="player in pointRecords.players" :key="player.userId" class="record-player-card"><summary><div class="record-player-identity"><strong>{{ playerDisplayName(player) }}</strong><small>{{ player.playerKind === 'BOT' ? '托' : '普通玩家' }} · {{ player.memberCode }}</small></div><div class="record-player-totals"><span>流水 {{ money(player.turnover) }}</span><strong :class="{ 'record-negative': player.netProfit < 0 }">盈亏 {{ money(player.netProfit) }}</strong></div></summary><div class="record-player-content"><div class="record-player-summary-grid"><div><span>昨余</span><strong>{{ money(player.openingBalance) }}</strong></div><div><span>上分</span><strong>{{ money(player.topUp) }}</strong></div><div><span>下分</span><strong>{{ money(player.down) }}</strong></div><div><span>结余</span><strong>{{ money(player.closingBalance) }}</strong></div></div><div class="record-detail-columns"><section><h4>下注明细</h4><div v-if="!player.bets.length" class="muted">暂无下注记录</div><div v-for="bet in player.bets" :key="bet.id" class="record-event-row"><div><strong>{{ bet.issueNumber }}</strong><span>{{ bet.playType }}<template v-if="bet.parameters?.length"> · {{ bet.parameters.join(',') }}</template></span></div><div><strong>{{ money(bet.stake) }}</strong><em>{{ recordSettlementLabel(bet.settlementStatus) }}</em><b :class="{ 'record-negative': (bet.netProfit ?? 0) < 0 }">{{ bet.netProfit == null ? '--' : money(bet.netProfit) }}</b></div><small>{{ dateTime(bet.createdAt) }}</small></div></section><section><h4>积分操作</h4><div v-if="!player.pointOperations.length" class="muted">暂无积分操作</div><div v-for="operation in player.pointOperations" :key="operation.id" class="record-event-row"><div><strong>{{ recordOperationLabel(operation.operationType) }}</strong><span>{{ operation.reason || '系统操作' }}</span></div><div><strong :class="{ 'record-negative': operation.amount < 0 }">{{ operation.amount > 0 ? '+' : '' }}{{ money(operation.amount) }}</strong><span>{{ money(operation.balanceBefore) }} → {{ money(operation.balanceAfter) }}</span></div><small>{{ dateTime(operation.createdAt) }}</small></div></section></div></div></details></div>
+              <div class="record-summary-grid"><div><span>总流水</span><strong>{{ money(pointRecords.summary.turnover) }}</strong></div><div><span>总盈亏</span><strong :class="pointRecords.summary.netProfit > 0 ? 'record-positive' : pointRecords.summary.netProfit < 0 ? 'record-negative' : ''">{{ money(pointRecords.summary.netProfit) }}</strong></div><div><span>总上分</span><strong class="record-positive">{{ money(pointRecords.summary.topUp) }}</strong></div><div><span>总下分</span><strong class="record-negative">{{ money(pointRecords.summary.down) }}</strong></div><div><span>总余额</span><strong>{{ money(pointRecords.summary.closingBalance) }}</strong></div><div><span>注单数</span><strong>{{ pointRecords.summary.betCount }}</strong></div></div>
+              <div class="record-player-list"><details v-for="player in pointRecords.players" :key="player.userId" class="record-player-card"><summary><div class="record-player-identity"><strong>{{ playerDisplayName(player) }}</strong><small>{{ player.playerKind === 'BOT' ? '托' : '普通玩家' }} · {{ player.memberCode }}</small></div><div class="record-player-totals"><span>流水 {{ money(player.turnover) }}</span><strong :class="player.netProfit > 0 ? 'record-positive' : player.netProfit < 0 ? 'record-negative' : ''">盈亏 {{ money(player.netProfit) }}</strong></div></summary><div class="record-player-content"><div class="record-player-summary-grid"><div><span>昨余</span><strong>{{ money(player.openingBalance) }}</strong></div><div><span>上分</span><strong class="record-positive">{{ money(player.topUp) }}</strong></div><div><span>下分</span><strong class="record-negative">{{ money(player.down) }}</strong></div><div><span>结余</span><strong>{{ money(player.closingBalance) }}</strong></div></div><div class="record-detail-columns"><section><h4>下注明细</h4><div v-if="!player.bets.length" class="muted">暂无下注记录</div><div v-for="bet in player.bets" :key="bet.id" class="record-event-row"><div><strong>{{ bet.issueNumber }}</strong><span>{{ bet.playType }}<template v-if="bet.parameters?.length"> · {{ bet.parameters.join(',') }}</template></span></div><div><strong>{{ money(bet.stake) }}</strong><em>{{ recordSettlementLabel(bet.settlementStatus) }}</em><b :class="(bet.netProfit ?? 0) > 0 ? 'record-positive' : (bet.netProfit ?? 0) < 0 ? 'record-negative' : ''">{{ bet.netProfit == null ? '--' : money(bet.netProfit) }}</b></div><small>{{ dateTime(bet.createdAt) }}</small></div></section><section><h4>积分操作</h4><div v-if="!player.pointOperations.length" class="muted">暂无积分操作</div><div v-for="operation in player.pointOperations" :key="operation.id" class="record-event-row"><div><strong>{{ recordOperationLabel(operation.operationType) }}</strong><span>{{ operation.reason || '系统操作' }}</span></div><div><strong :class="operation.amount > 0 ? 'record-positive' : 'record-negative'">{{ operation.amount > 0 ? '+' : '' }}{{ money(operation.amount) }}</strong><span>{{ money(operation.balanceBefore) }} → {{ money(operation.balanceAfter) }}</span></div><small>{{ dateTime(operation.createdAt) }}</small></div></section></div></div></details></div>
             </div>
           </div>
         </section>
@@ -460,49 +453,332 @@ onBeforeUnmount(() => {
 
 <style scoped>
 :global(body) { background: #f4f7fb; }
-.player-desk-page { max-width: 1220px; margin: 0 auto; padding: 28px 24px 48px; color: #1f2937; }
-.player-desk-page.player-desk-embedded { max-width: none; margin: 0; padding: 0; }
-.player-desk-header, .detail-heading, .pane-heading, .section-title, .message-form { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.eyebrow { color: #1677c8; font-size: 11px; font-weight: 700; letter-spacing: 1.2px; margin: 0 0 6px; } h1, h2, h3, p { margin-top: 0; } h1 { margin-bottom: 6px; font-size: 28px; } h2 { margin-bottom: 4px; font-size: 18px; } h3 { margin-bottom: 2px; font-size: 15px; }
-.subline, .section-title span, .pane-heading span, .detail-identity p, .muted { color: #64748b; font-size: 13px; } .header-actions, .create-actions, .badges { display: flex; align-items: center; gap: 8px; }
-button, input, select { font: inherit; } button { cursor: pointer; } button:disabled { opacity: .55; cursor: not-allowed; } .primary-button, .secondary-button, .outline-button, .icon-button { min-height: 42px; border-radius: 4px; padding: 0 14px; border: 1px solid #187dcc; font-weight: 700; } .primary-button { background: #187dcc; color: #fff; } .secondary-button { background: #e8f3fc; color: #1265a5; } .outline-button { background: #fff; color: #1265a5; } .icon-button { width: 44px; padding: 0; background: #187dcc; color: white; font-size: 20px; } .desk-link { color: #1265a5; text-decoration: none; font-size: 13px; }
-.desk-toast-stack { position: fixed; top: 18px; right: 18px; z-index: 3000; display: grid; gap: 10px; width: min(380px, calc(100vw - 36px)); pointer-events: none; }
-.desk-toast { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 13px 15px; border: 1px solid; border-radius: 8px; box-shadow: 0 12px 30px rgba(15, 76, 129, .18); font-size: 13px; font-weight: 700; line-height: 1.45; text-align: left; pointer-events: auto; cursor: pointer; }
-.desk-toast.success { color: #166534; border-color: #86efac; background: #f0fdf4; } .desk-toast.error { color: #9f1239; border-color: #fda4af; background: #fff1f2; }
-.desk-toast-icon { display: inline-grid; flex: 0 0 20px; width: 20px; height: 20px; place-items: center; border-radius: 50%; color: #fff; background: #22a05a; font-size: 12px; }
-.desk-toast.error .desk-toast-icon { background: #e11d48; }
-.desk-toast-enter-active, .desk-toast-leave-active { transition: opacity .2s ease, transform .2s ease; } .desk-toast-enter-from, .desk-toast-leave-to { opacity: 0; transform: translateY(-8px); }
-.player-desk-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); align-items: start; min-width: 0; min-height: 0; border: 1px solid #84bff0; background: #fff; } .player-list-pane { border-right: 1px solid #b7d7f2; min-width: 0; } .player-list-pane, .player-detail-pane { min-width: 0; padding: 18px; } .pane-heading { align-items: flex-start; } .create-actions { flex-wrap: wrap; justify-content: flex-end; } .create-actions button { min-height: 36px; padding: 0 10px; font-size: 12px; }
-.create-action-stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; justify-items: stretch; } .create-action-stack .create-actions button, .create-action-stack .record-actions button { flex: 1 1 0; } .record-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; } .record-actions button { min-height: 34px; padding: 0 10px; font-size: 12px; }
-.player-stats { display: flex; align-items: stretch; min-width: 0; border: 1px solid #b7d7f2; background: #fff; } .player-stat-total, .player-stat { min-height: 58px; padding: 8px 14px; display: flex; flex-direction: column; justify-content: center; gap: 2px; border: 0; border-right: 1px solid #dbeafe; background: #fff; color: #64748b; } .player-stat-total strong, .player-stat strong { color: #0f4c81; font-size: 17px; font-variant-numeric: tabular-nums; } .player-stat { cursor: pointer; } .player-stat:last-child { border-right: 0; } .player-stat.active { background: #eef7ff; box-shadow: inset 0 -3px #1682d4; } .player-stat span, .player-stat-total span { font-size: 12px; }
-.filter-row { display: grid; grid-template-columns: 1fr 104px 112px; gap: 6px; padding: 16px 0 10px; border-bottom: 1px solid #e2e8f0; } input, select { width: 100%; min-height: 42px; padding: 0 10px; border: 1px solid #cbd5e1; border-radius: 3px; color: #1e293b; background: #fff; box-sizing: border-box; } input:focus, select:focus, button:focus-visible { outline: 3px solid #bfdbfe; outline-offset: 1px; } .refresh-rank-button { padding: 0 8px; white-space: nowrap; }
-label { display: grid; gap: 5px; color: #475569; font-size: 12px; font-weight: 700; } .player-row { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; text-align: left; padding: 11px 8px; min-height: 70px; border: 0; border-bottom: 1px solid #edf2f7; border-left: 3px solid transparent; background: #fff; } .player-row:hover, .player-row.selected { background: #eef7ff; border-left-color: #1682d4; } .player-row-main, .player-row-side { min-width: 0; display: flex; flex-direction: column; gap: 3px; } .player-row-main strong, .player-row-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .player-row-main small, .player-row-side small { color: #64748b; font-size: 11px; } .player-row-side { align-items: flex-end; } .player-row-side strong { color: #0f4c81; font-variant-numeric: tabular-nums; }
-.create-modal-layer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 45%); } .create-modal { width: min(440px, 100%); background: #fff; border: 1px solid #b7d7f2; box-shadow: 0 18px 50px rgb(15 23 42 / 22%); } .create-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px 0; } .create-modal-header h2 { margin-bottom: 0; } .modal-close { width: 34px; height: 34px; border: 0; background: transparent; color: #64748b; font-size: 24px; line-height: 1; } .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; } .create-modal .create-form { margin: 0; padding: 18px 20px 20px; border: 0; background: #fff; }
-.modal-subtitle { margin: 5px 0 0; color: #64748b; font-size: 12px; }
-.desk-avatar { width: 40px; height: 40px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; color: #fff; background: #1976b9; font-weight: 800; } .desk-avatar.large { width: 56px; height: 56px; font-size: 22px; } .desk-avatar img { width: 100%; height: 100%; object-fit: cover; } em { font-style: normal; } .player-kind-normal, .player-kind-bot, .test-badge { padding: 3px 7px; border-radius: 3px; font-size: 11px; font-weight: 700; } .player-kind-normal { color: #155e75; background: #cffafe; } .player-kind-bot { color: #92400e; background: #fef3c7; } .test-badge { color: #6b21a8; background: #f3e8ff; } .player-status-active { color: #15803d; } .player-status-disabled, .player-status-locked { color: #b91c1c; }
-.detail-heading { align-items: flex-start; padding-bottom: 18px; border-bottom: 1px solid #dbeafe; } .detail-identity { display: flex; align-items: center; gap: 12px; min-width: 0; } .detail-identity h2 { font-size: 21px; } .identity-grid, .detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 16px 0; border: 1px solid #e2e8f0; background: #e2e8f0; } .detail-grid { grid-template-columns: repeat(4, 1fr); margin-top: 0; } .identity-grid > div, .detail-grid > div { min-height: 72px; padding: 12px; background: #fff; min-width: 0; } .identity-grid span, .detail-grid span { display: block; color: #64748b; font-size: 12px; margin-bottom: 8px; } .identity-grid strong, .detail-grid strong { font-size: 13px; overflow-wrap: anywhere; } .detail-grid .points { color: #0f6eaa; font-size: 20px; font-variant-numeric: tabular-nums; }
-.detail-section { padding: 16px 0; border-top: 1px solid #e2e8f0; } .section-title { align-items: flex-start; margin-bottom: 12px; } .point-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; } .point-form label { flex: 0 1 150px; min-width: 120px; } .point-form button { flex: 0 0 96px; } .behavior-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 12px; align-items: end; } .behavior-form label { display: grid; gap: 4px; } .point-form .wide, .behavior-form .wide { grid-column: 1 / -1; } .switch-label { display: flex; align-items: center; gap: 8px; min-height: 42px; } .switch-label input { width: 18px; min-height: 18px; } .mode-field { display: flex; flex-wrap: wrap; gap: 14px; border: 1px solid #dbeafe; padding: 10px; margin: 0; } .mode-field legend { color: #475569; font-size: 12px; font-weight: 700; padding: 0 4px; } .mode-field label { display: flex; align-items: center; gap: 6px; } .mode-field input { width: 18px; min-height: 18px; } .message-form { align-items: end; margin-top: 14px; } .message-form label { flex: 1; }
-.link-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .issued-link { display: grid; gap: 8px; margin-top: 12px; padding: 10px 12px; background: #f8fbff; border: 1px solid #b7d7f2; } .issued-link-url { color: #1265a5; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; text-decoration: none; } .issued-link-url:hover { text-decoration: underline; } .issued-link small { color: #64748b; } .danger-button { color: #b42318; border-color: #fda4af; } .danger-fill-button { min-height: 42px; padding: 0 14px; border: 1px solid #b42318; border-radius: 4px; background: #b42318; color: #fff; font-weight: 700; } .delete-modal-content { padding: 18px 20px 20px; } .delete-modal-content p { margin-bottom: 10px; }
-.player-edit-rows { display: grid; gap: 10px; padding: 14px 0; border-bottom: 1px solid #e2e8f0; } .player-edit-row { display: flex; align-items: end; gap: 8px; min-height: 42px; } .player-edit-row > span { min-width: 116px; color: #475569; font-size: 13px; } .player-edit-row > span strong { color: #1e293b; } .player-edit-row label { flex: 0 1 320px; max-width: 340px; display: flex; align-items: center; gap: 8px; } .player-edit-row label input { flex: 1; min-width: 0; } .days-editor { display: flex; align-items: center; gap: 6px; } .days-editor input { width: 70px; } .days-editor small { color: #64748b; white-space: nowrap; } .player-edit-actions { display: flex; gap: 8px; } .rename-history-content { padding: 8px 20px 20px; } .rename-history-list { display: grid; gap: 10px; max-height: 280px; overflow: auto; } .rename-history-list > div { display: grid; gap: 3px; padding-bottom: 8px; border-bottom: 1px solid #edf2f7; } .rename-history-list small { color: #64748b; }
-.action-row { display: grid; grid-template-columns: 70px 1fr 70px 150px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .action-row strong, .action-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .action-row strong { font-weight: 500; } .action-row small { color: #64748b; } .action-succeeded { color: #15803d; } .action-failed { color: #b91c1c; } .action-pending, .action-processing { color: #a16207; } .field-error { color: #b91c1c; margin: 0; font-size: 12px; } .empty-state, .detail-empty { color: #64748b; text-align: center; padding: 46px 20px; } .detail-empty { display: grid; place-items: center; min-height: 500px; } .detail-empty span { color: #54a2d7; font-size: 42px; } .detail-empty p { font-size: 13px; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.records-modal { width: min(920px, 100%); max-height: min(820px, calc(100dvh - 40px)); display: flex; flex-direction: column; overflow: hidden; } .records-modal .create-modal-header { flex: 0 0 auto; } .record-modal-content { min-height: 0; overflow: auto; padding: 16px 20px 20px; } .record-date-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 10px; border-bottom: 1px solid #e2e8f0; } .record-date-tabs button { flex: 0 0 auto; min-height: 36px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: #fff; color: #64748b; font-size: 12px; cursor: pointer; } .record-date-tabs button.active { border-bottom-color: #ef4444; color: #0f4c81; font-weight: 700; } .record-state { display: grid; justify-items: center; gap: 12px; padding: 48px 16px; color: #64748b; font-size: 13px; } .record-state-error { color: #b42318; } .record-summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; margin: 14px 0; border: 1px solid #dbeafe; background: #dbeafe; } .record-summary-grid > div, .record-player-summary-grid > div { min-width: 0; padding: 10px; background: #fff; } .record-summary-grid span, .record-player-summary-grid span { display: block; margin-bottom: 5px; color: #64748b; font-size: 11px; } .record-summary-grid strong, .record-player-summary-grid strong { color: #0f4c81; font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; } .record-negative { color: #b42318 !important; } .record-player-list { display: grid; gap: 8px; } .record-player-card { border: 1px solid #8cc8ef; background: #f8fcff; } .record-player-card summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 12px; cursor: pointer; list-style-position: inside; } .record-player-card summary::marker { color: #1677c8; } .record-player-identity, .record-player-totals { min-width: 0; display: flex; gap: 4px; } .record-player-identity { flex-direction: column; } .record-player-identity strong { overflow-wrap: anywhere; } .record-player-identity small, .record-player-totals span { color: #64748b; font-size: 11px; } .record-player-totals { align-items: flex-end; flex-direction: column; white-space: nowrap; } .record-player-totals strong { color: #0f4c81; font-size: 13px; font-variant-numeric: tabular-nums; } .record-player-content { padding: 0 12px 12px; border-top: 1px solid #dbeafe; } .record-player-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 12px 0; border: 1px solid #dbeafe; background: #dbeafe; } .record-detail-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } .record-detail-columns section { min-width: 0; } .record-detail-columns h4 { margin: 8px 0; color: #334155; font-size: 12px; } .record-event-row { display: grid; gap: 5px; padding: 8px 0; border-bottom: 1px solid #e2e8f0; font-size: 12px; } .record-event-row > div { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; } .record-event-row span, .record-event-row small { color: #64748b; } .record-event-row span { overflow-wrap: anywhere; } .record-event-row small { font-size: 11px; }
-.bet-row { display: grid; grid-template-columns: 120px 1fr 90px 90px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #edf2f7; font-size: 12px; } .bet-row span { color: #475569; } .bet-row em { color: #1265a5; } .bet-row b { text-align: right; color: #15803d; font-variant-numeric: tabular-nums; }
-@media (max-width: 900px) { .player-desk-page { padding: 20px 14px 40px; } .player-desk-body { grid-template-columns: 1fr; } .player-list-pane { border-right: 0; border-bottom: 1px solid #b7d7f2; } .player-detail-pane { min-height: 500px; } }
-@media (max-width: 620px) { .player-desk-page { padding: 18px 12px 32px; } .player-desk-header { align-items: flex-start; flex-direction: column; } .filter-row { grid-template-columns: 1fr 112px; } .filter-row input { grid-column: span 2; } .pane-heading { flex-direction: column; } .player-stats { width: 100%; } .player-stat-total, .player-stat { flex: 1; } .create-action-stack { width: 100%; justify-items: stretch; } .create-actions, .record-actions { justify-content: flex-start; } .create-actions button, .record-actions button { flex: 1; } .identity-grid, .detail-grid { grid-template-columns: 1fr 1fr; } .behavior-form { grid-template-columns: 1fr 1fr; } .behavior-form .wide { grid-column: span 2; } .behavior-form button { grid-column: span 1; } .detail-heading { flex-direction: column; } .player-edit-row { align-items: stretch; flex-wrap: wrap; } .player-edit-row label { width: 100%; } .days-editor { width: 100%; } .days-editor input { flex: 1; } .message-form { align-items: stretch; flex-direction: column; } .action-row { grid-template-columns: 64px 1fr 64px; } .action-row small { grid-column: span 3; } .bet-row { grid-template-columns: minmax(0, 1fr) auto; } .bet-row > * { min-width: 0; } .records-modal { max-height: calc(100dvh - 20px); } .record-modal-content { padding-left: 12px; padding-right: 12px; } .record-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .record-player-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .record-detail-columns { grid-template-columns: 1fr; gap: 10px; } .record-player-card summary { align-items: flex-start; } .record-player-totals { text-align: right; } }
-@media (max-width: 375px) { .player-desk-page { padding-left: 10px; padding-right: 10px; } h1 { font-size: 24px; } .player-row { grid-template-columns: 1fr auto; gap: 7px; padding-left: 4px; padding-right: 4px; } .desk-avatar { width: 34px; height: 34px; } .primary-button, .secondary-button, .outline-button { padding: 0 10px; } }
 
-.behavior-play-field { display: flex; align-items: center; gap: 8px; color: #334155; font-size: 13px; }
-.behavior-play-field small { color: #64748b; }
-.play-modal-layer { position: fixed; inset: 0; z-index: 2600; display: grid; place-items: center; padding: 20px; background: rgb(15 23 42 / 45%); }
-.play-modal { width: min(460px, 100%); border: 1px solid #93c5fd; background: #fff; padding: 20px; box-shadow: 0 22px 60px rgb(15 23 42 / 28%); }
-.play-modal h3 { margin: 0 0 16px; color: #1e3a5f; font-size: 17px; }
-.play-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.play-option { display: flex; align-items: center; gap: 6px; color: #334155; font-size: 14px; }
-.play-option input { width: 16px; height: 16px; }
-.play-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-.pane-heading { flex-direction: column; align-items: stretch; }
-.create-action-stack { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.player-desk-page {
+  --retro-blue: #1f6da8;
+  --retro-blue-dark: #155887;
+  --retro-line: #9bbfe0;
+  --retro-line-strong: #5f97c4;
+  --retro-panel: #f7fbff;
+  --retro-title: #d8ebfb;
+  width: 100%;
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 10px 12px 18px;
+  color: #243b53;
+  font-family: Tahoma, "Microsoft YaHei", Arial, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  box-sizing: border-box;
+}
+.player-desk-page.player-desk-embedded { max-width: none; margin: 0; padding: 0; }
+.player-desk-page *, .player-desk-page *::before, .player-desk-page *::after, .create-modal, .create-modal *, .play-modal, .play-modal * { box-sizing: border-box; }
+
+h1, h2, h3, p { margin-top: 0; }
+h1 { margin-bottom: 4px; font-size: 20px; }
+h2 { margin-bottom: 2px; font-size: 15px; }
+h3 { margin-bottom: 1px; font-size: 13px; }
+.eyebrow { margin: 0 0 2px; color: #1b6aa5; font-size: 9px; font-weight: 700; letter-spacing: .8px; }
+.subline, .section-title span, .pane-heading span, .detail-identity p, .muted { color: #657b90; font-size: 11px; }
+.header-actions, .create-actions, .badges { display: flex; align-items: center; gap: 4px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { opacity: .52; cursor: not-allowed; }
+.primary-button, .secondary-button, .outline-button, .icon-button, .danger-fill-button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--retro-blue);
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 26px;
+  white-space: nowrap;
+}
+.primary-button { color: #fff; background: linear-gradient(#5aa9df, #2479b5); border-color: #1d6da6; text-shadow: 0 1px 0 rgb(0 0 0 / 18%); }
+.primary-button:hover:not(:disabled) { background: linear-gradient(#69b4e6, #2b82bd); }
+.secondary-button { color: #145b8e; background: linear-gradient(#f8fcff, #dceefa); }
+.outline-button { color: #145b8e; background: linear-gradient(#fff, #eef6fc); }
+.outline-button:hover:not(:disabled), .secondary-button:hover:not(:disabled) { border-color: #1d76b2; background: #e5f3fd; }
+.icon-button { width: 30px; padding: 0; color: #fff; background: #2479b5; font-size: 16px; }
+.danger-button { color: #a32620; border-color: #d58d88; }
+.danger-fill-button { color: #fff; background: linear-gradient(#cf554b, #a92d25); border-color: #92241e; }
+.desk-link { color: #1265a5; text-decoration: none; font-size: 11px; }
+
+input, select {
+  width: 100%;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid #90b4d2;
+  border-radius: 2px;
+  color: #20364b;
+  background: #fff;
+  box-shadow: inset 0 1px 1px rgb(20 60 95 / 8%);
+}
+input[type="checkbox"], input[type="radio"] { width: 14px; height: 14px; min-height: 14px; padding: 0; box-shadow: none; }
+input:focus, select:focus, button:focus-visible { outline: 2px solid #78b7e6; outline-offset: 0; }
+label { display: grid; gap: 2px; color: #3f596f; font-size: 11px; font-weight: 700; }
+
+.desk-toast-stack { position: fixed; top: 12px; right: 12px; z-index: 3000; display: grid; gap: 5px; width: min(360px, calc(100vw - 24px)); pointer-events: none; }
+.desk-toast { display: flex; align-items: flex-start; gap: 6px; width: 100%; padding: 7px 9px; border: 1px solid; border-radius: 2px; box-shadow: 0 4px 14px rgb(15 56 88 / 22%); font-size: 11px; font-weight: 700; line-height: 1.4; text-align: left; pointer-events: auto; cursor: pointer; }
+.desk-toast.success { color: #166534; border-color: #78b88a; background: #eefaf1; }
+.desk-toast.error { color: #9f1239; border-color: #d98b98; background: #fff0f2; }
+.desk-toast-icon { display: inline-grid; flex: 0 0 16px; width: 16px; height: 16px; place-items: center; border-radius: 50%; color: #fff; background: #22a05a; font-size: 10px; }
+.desk-toast.error .desk-toast-icon { background: #d23c4c; }
+.desk-toast-enter-active, .desk-toast-leave-active { transition: opacity .18s ease, transform .18s ease; }
+.desk-toast-enter-from, .desk-toast-leave-to { opacity: 0; transform: translateY(-5px); }
+
+.player-desk-body {
+  display: grid;
+  grid-template-columns: 336px minmax(0, 1fr);
+  align-items: stretch;
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  border: 1px solid var(--retro-line-strong);
+  border-radius: 2px;
+  background: #9fc4e2;
+  box-shadow: inset 0 0 0 1px #f8fcff, 0 3px 12px rgb(40 84 120 / 13%);
+}
+.player-list-pane, .player-detail-pane {
+  min-width: 0;
+  min-height: 0;
+  overflow: visible;
+  overscroll-behavior: auto;
+  padding: 7px;
+  background: #fff;
+  scrollbar-color: #82abd0 #e5eff8;
+  scrollbar-width: thin;
+}
+.player-list-pane { border-right: 1px solid #5f97c4; }
+.player-list-pane::-webkit-scrollbar, .player-detail-pane::-webkit-scrollbar, .record-modal-content::-webkit-scrollbar, .record-player-list::-webkit-scrollbar { width: 10px; height: 10px; }
+.player-list-pane::-webkit-scrollbar-track, .player-detail-pane::-webkit-scrollbar-track, .record-modal-content::-webkit-scrollbar-track, .record-player-list::-webkit-scrollbar-track { background: #e6f0f8; }
+.player-list-pane::-webkit-scrollbar-thumb, .player-detail-pane::-webkit-scrollbar-thumb, .record-modal-content::-webkit-scrollbar-thumb, .record-player-list::-webkit-scrollbar-thumb { border: 2px solid #e6f0f8; border-radius: 2px; background: #7ca8ce; }
+
+.pane-heading {
+  position: static;
+  z-index: 3;
+  display: grid;
+  gap: 4px;
+  margin: 0 0 5px;
+  padding: 5px;
+  border: 1px solid #7fb0d8;
+  border-radius: 2px;
+  background: linear-gradient(#f2f9ff, #d5eafb);
+}
+.player-stats { display: grid; grid-template-columns: minmax(0, 1.55fr) repeat(2, minmax(0, .8fr)); min-width: 0; border: 1px solid #82afd4; border-radius: 2px; background: #fff; }
+.player-stat-total, .player-stat { display: flex; min-width: 0; min-height: 38px; padding: 4px 6px; flex-direction: column; justify-content: center; gap: 0; border: 0; border-right: 1px solid #bcd7ed; color: #627789; background: #fff; }
+.player-stat-total strong, .player-stat strong { overflow: hidden; color: #145b8e; font-size: 14px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.player-stat { cursor: pointer; }
+.player-stat:last-child { border-right: 0; }
+.player-stat.active { background: #d9edfc; box-shadow: inset 0 -2px #1d78b7; }
+.player-stat span, .player-stat-total span { font-size: 10px; }
+.create-action-stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
 .create-action-stack .create-actions, .create-action-stack .record-actions { display: contents; }
-.create-action-stack .create-actions button, .create-action-stack .record-actions button { flex: 1 1 0; }
-.record-actions { display: contents; }
+.create-action-stack button { min-width: 0; min-height: 25px; padding: 1px 4px; line-height: 21px; white-space: normal; }
+
+.filter-row { display: grid; grid-template-columns: minmax(0, 1fr) 68px 78px; gap: 3px; margin: 0 0 5px; padding: 4px; border: 1px solid #9ec2e0; border-radius: 2px; background: #edf6fd; }
+.filter-row input, .filter-row select, .filter-row button { min-height: 27px; height: 27px; }
+.refresh-rank-button { min-width: 0; padding: 0 4px; }
+.player-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; align-items: center; width: 100%; min-height: 43px; padding: 4px 5px; border: 0; border-bottom: 1px solid #d8e5f0; border-left: 3px solid transparent; text-align: left; background: #fff; }
+.player-row:hover { background: #eef7ff; }
+.player-row.selected { border-left-color: #1d78b7; background: #dcedfb; }
+.player-row-main, .player-row-side { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
+.player-row-main strong, .player-row-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-row-main strong { font-size: 11px; }
+.player-row-side { align-items: flex-end; }
+.player-row-side strong { color: #145b8e; font-size: 12px; font-variant-numeric: tabular-nums; }
+.player-row-main small, .player-row-side small { color: #667c90; font-size: 10px; }
+
+.detail-heading {
+  position: static;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 5px 6px;
+  border: 1px solid #7fb0d8;
+  border-radius: 2px;
+  background: linear-gradient(#f2f9ff, #d5eafb);
+}
+.detail-identity { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.detail-identity > div { min-width: 0; }
+.detail-identity h2 { overflow: hidden; margin: 0; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.desk-avatar { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; overflow: hidden; border: 1px solid #5b94c3; border-radius: 2px; color: #fff; background: #287cb4; font-size: 13px; font-weight: 800; }
+.desk-avatar.large { flex-basis: 40px; width: 40px; height: 40px; font-size: 16px; }
+.desk-avatar img { width: 100%; height: 100%; object-fit: cover; }
+em { font-style: normal; }
+.player-kind-normal, .player-kind-bot, .test-badge { display: inline-block; padding: 1px 4px; border: 1px solid; border-radius: 2px; font-size: 9px; font-weight: 700; line-height: 14px; }
+.player-kind-normal { color: #155e75; border-color: #6fc4d4; background: #dcf8fb; }
+.player-kind-bot { color: #86500a; border-color: #d8b35d; background: #fff2c9; }
+.test-badge { color: #682b86; border-color: #c89bd8; background: #f4e5fa; }
+.player-status-active { color: #15803d; }
+.player-status-disabled, .player-status-locked { color: #b91c1c; }
+
+.player-edit-rows { display: grid; gap: 4px; padding: 6px 0; border-bottom: 1px solid #c7daeb; }
+.player-edit-row { display: flex; align-items: center; gap: 4px; min-height: 28px; }
+.player-edit-row > span { min-width: 102px; color: #50687e; font-size: 11px; }
+.player-edit-row > span strong { color: #20364b; }
+.player-edit-row label { display: flex; flex: 0 1 250px; max-width: 280px; align-items: center; gap: 4px; }
+.player-edit-row label input { flex: 1; min-width: 0; }
+.days-editor { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.days-editor input { width: 52px; }
+.days-editor small { color: #667c90; font-size: 10px; white-space: nowrap; }
+.player-edit-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.detail-section { padding: 7px 0; border-top: 1px solid #c7daeb; }
+.section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+.section-title > div { min-width: 0; }
+.section-title span { display: block; }
+.section-title strong { color: #145b8e; font-size: 11px; }
+
+.identity-grid, .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 6px 0; border: 1px solid #aac9e2; background: #aac9e2; }
+.identity-grid > div, .detail-grid > div { min-width: 0; min-height: 44px; padding: 5px; background: #fff; }
+.identity-grid span, .detail-grid span { display: block; margin-bottom: 3px; color: #687e91; font-size: 10px; }
+.identity-grid strong, .detail-grid strong { display: block; overflow-wrap: anywhere; font-size: 11px; }
+.detail-grid .points { color: #0f6eaa; font-size: 15px; font-variant-numeric: tabular-nums; }
+
+.point-form { display: grid; grid-template-columns: minmax(0, 1fr) 54px 54px; align-items: end; gap: 4px; }
+.point-form label { min-width: 0; }
+.point-form button { width: 100%; padding: 0 4px; }
+.behavior-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 5px 6px; }
+.behavior-form label { min-width: 0; }
+.behavior-form .wide, .point-form .wide { grid-column: 1 / -1; }
+.mode-field { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 5px 6px; border: 1px solid #b7d2e8; border-radius: 2px; background: #f8fcff; }
+.mode-field legend { padding: 0 3px; color: #50687e; font-size: 10px; font-weight: 700; }
+.mode-field label { display: flex; align-items: center; gap: 4px; }
+.behavior-play-field { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; color: #3f596f; font-size: 11px; }
+.behavior-play-field small { overflow: hidden; color: #667c90; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.message-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px; margin-top: 6px; }
+.message-form label { min-width: 0; }
+.field-error { margin: 0; color: #b42318; font-size: 11px; }
+.empty-state, .detail-empty { color: #667c90; text-align: center; padding: 26px 10px; }
+.detail-empty { display: grid; place-items: center; min-height: 100%; }
+.detail-empty span { color: #4f96c9; font-size: 32px; }
+.detail-empty p { font-size: 11px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.link-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.issued-link { display: grid; gap: 3px; margin-top: 5px; padding: 5px 6px; border: 1px solid #9ec2e0; border-radius: 2px; background: #f3f9fe; }
+.issued-link-url { color: #1265a5; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; text-decoration: none; }
+.issued-link-url:hover { text-decoration: underline; }
+.issued-link small { color: #667c90; font-size: 10px; }
+
+.action-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px 132px; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid #d8e5f0; font-size: 11px; }
+.action-row strong, .action-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.action-row strong { font-weight: 500; }
+.action-row small { color: #667c90; }
+.action-succeeded { color: #15803d; }
+.action-failed { color: #b91c1c; }
+.action-pending, .action-processing { color: #a16207; }
+
+.create-modal-layer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: auto; padding: 12px; background: rgb(38 61 82 / 48%); }
+.create-modal { width: min(420px, 100%); overflow: hidden; border: 1px solid #6f9fc6; border-radius: 2px; background: #fff; box-shadow: 0 5px 24px rgb(20 50 75 / 30%); }
+.create-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #83afd3; background: linear-gradient(#f2f9ff, #d2e8f9); }
+.create-modal-header h2 { margin: 0; font-size: 14px; }
+.modal-close { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 2px; color: #4b6378; background: transparent; font-size: 18px; line-height: 1; }
+.modal-close:hover:not(:disabled) { border-color: #93b8d6; background: #e4f2fc; }
+.create-modal .create-form { margin: 0; padding: 8px; border: 0; background: #fff; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 4px; margin-top: 6px; }
+.modal-subtitle { margin: 2px 0 0; color: #667c90; font-size: 10px; }
+.delete-modal-content, .rename-history-content { padding: 8px; }
+.delete-modal-content p { margin-bottom: 6px; }
+.form-hint { margin-bottom: 6px; color: #667c90; font-size: 10px; }
+.rename-history-list { display: grid; gap: 5px; max-height: 240px; overflow: auto; }
+.rename-history-list > div { display: grid; gap: 2px; padding-bottom: 4px; border-bottom: 1px solid #d8e5f0; }
+.rename-history-list small { color: #667c90; font-size: 10px; }
+
+.records-modal { display: flex; width: min(860px, 100%); max-height: min(720px, calc(100dvh - 24px)); flex-direction: column; }
+.records-modal .create-modal-header { flex: 0 0 auto; }
+.record-modal-content { min-height: 0; overflow: auto; padding: 7px 8px 8px; }
+.record-date-tabs { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 5px; border-bottom: 1px solid #bcd3e8; }
+.record-date-tabs button { flex: 0 0 auto; min-height: 27px; padding: 0 7px; border: 1px solid #b8d2e8; border-radius: 2px; color: #5b7185; background: linear-gradient(#fff, #eef6fc); font-size: 10px; cursor: pointer; }
+.record-date-tabs button.active { border-color: #e1a276; color: #9b3d2a; background: #fff1e8; font-weight: 700; }
+.record-state { display: grid; justify-items: center; gap: 6px; padding: 28px 10px; color: #667c90; font-size: 11px; }
+.record-state-error { color: #b42318; }
+.record-summary-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; margin: 7px 0; border: 1px solid #aac9e2; background: #aac9e2; }
+.record-summary-grid > div, .record-player-summary-grid > div { min-width: 0; padding: 5px; background: #fff; }
+.record-summary-grid span, .record-player-summary-grid span { display: block; margin-bottom: 2px; color: #687e91; font-size: 9px; }
+.record-summary-grid strong, .record-player-summary-grid strong { overflow-wrap: anywhere; color: #145b8e; font-size: 12px; font-variant-numeric: tabular-nums; }
+.record-positive { color: #b42318 !important; }
+.record-negative { color: #1f7a4d !important; }
+.record-player-list { display: grid; gap: 4px; max-height: 430px; overflow: auto; }
+.record-player-card { border: 1px solid #8ab8db; border-radius: 2px; background: #f7fbff; }
+.record-player-card summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 7px; cursor: pointer; list-style-position: inside; }
+.record-player-card summary::marker { color: #1d78b7; }
+.record-player-identity, .record-player-totals { display: flex; min-width: 0; gap: 2px; }
+.record-player-identity { flex-direction: column; }
+.record-player-identity strong { overflow-wrap: anywhere; font-size: 11px; }
+.record-player-identity small, .record-player-totals span { color: #667c90; font-size: 9px; }
+.record-player-totals { align-items: flex-end; flex-direction: column; white-space: nowrap; }
+.record-player-totals strong { color: #145b8e; font-size: 11px; font-variant-numeric: tabular-nums; }
+.record-player-content { padding: 0 7px 7px; border-top: 1px solid #bcd3e8; }
+.record-player-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 6px 0; border: 1px solid #aac9e2; background: #aac9e2; }
+.record-detail-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.record-detail-columns section { min-width: 0; }
+.record-detail-columns h4 { margin: 4px 0; color: #334155; font-size: 11px; }
+.record-event-row { display: grid; gap: 2px; padding: 4px 0; border-bottom: 1px solid #d8e5f0; font-size: 10px; }
+.record-event-row > div { display: flex; align-items: baseline; justify-content: space-between; gap: 5px; }
+.record-event-row span, .record-event-row small { color: #667c90; }
+.record-event-row span { overflow-wrap: anywhere; }
+.record-event-row small { font-size: 9px; }
+.bet-row { display: grid; grid-template-columns: 100px minmax(0, 1fr) 72px 72px; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid #d8e5f0; font-size: 10px; }
+.bet-row span { color: #50687e; }
+.bet-row em { color: #1265a5; }
+.bet-row b { color: #15803d; font-variant-numeric: tabular-nums; text-align: right; }
+
+.play-modal-layer { position: fixed; inset: 0; z-index: 2600; display: grid; place-items: center; overflow: auto; padding: 12px; background: rgb(38 61 82 / 48%); }
+.play-modal { width: min(440px, 100%); padding: 8px; border: 1px solid #6f9fc6; border-radius: 2px; background: #fff; box-shadow: 0 5px 24px rgb(20 50 75 / 30%); }
+.play-modal h3 { margin: 0 0 7px; padding-bottom: 5px; border-bottom: 1px solid #bcd3e8; color: #1e3a5f; font-size: 13px; }
+.play-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px 7px; }
+.play-option { display: flex; align-items: center; gap: 4px; color: #334155; font-size: 11px; }
+.play-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-top: 8px; }
+
+@media (max-width: 900px) {
+  .player-desk-page { padding: 6px; }
+  .player-desk-body { grid-template-columns: minmax(250px, 36%) minmax(0, 1fr); height: clamp(520px, calc(100dvh - 80px), 720px); }
+  .behavior-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .record-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .player-desk-page { padding: 4px; }
+  .player-desk-body { grid-template-columns: minmax(126px, 42%) minmax(0, 1fr); height: clamp(480px, calc(100dvh - 64px), 680px); }
+  .player-list-pane, .player-detail-pane { padding: 4px; }
+  .pane-heading, .detail-heading { top: -4px; padding: 3px; }
+  .player-stat-total, .player-stat { min-height: 34px; padding: 3px; }
+  .player-stat-total strong, .player-stat strong { font-size: 12px; }
+  .filter-row { grid-template-columns: minmax(0, 1fr) 45px 50px; gap: 2px; padding: 3px; }
+  .filter-row input, .filter-row select, .filter-row button { min-height: 25px; height: 25px; padding: 1px 3px; font-size: 10px; }
+  .player-row { min-height: 39px; padding: 3px; }
+  .player-row-main strong, .player-row-side strong { font-size: 10px; }
+  .detail-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .detail-actions { width: 100%; flex-wrap: wrap; }
+  .desk-avatar.large { flex-basis: 32px; width: 32px; height: 32px; font-size: 13px; }
+  .detail-identity h2 { font-size: 12px; }
+  .player-edit-row { align-items: stretch; flex-wrap: wrap; }
+  .player-edit-row > span { min-width: 100%; }
+  .player-edit-row label { flex: 1 1 100%; width: 100%; max-width: none; }
+  .days-editor { width: 100%; flex-wrap: wrap; }
+  .days-editor input { flex: 1; width: auto; min-width: 40px; }
+  .identity-grid, .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .identity-grid > div, .detail-grid > div { min-height: 40px; padding: 3px; }
+  .point-form { grid-template-columns: minmax(0, 1fr) 42px 42px; gap: 2px; }
+  .point-form button { padding: 0 2px; font-size: 10px; }
+  .behavior-form { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .message-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .section-title { align-items: stretch; flex-direction: column; }
+  .section-title .primary-button { width: 100%; }
+  .records-modal { max-height: calc(100dvh - 8px); }
+  .record-modal-content { padding: 5px; }
+  .record-summary-grid, .record-player-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .record-detail-columns { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .record-player-card summary { align-items: flex-start; }
+  .record-player-totals { text-align: right; }
+  .play-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>

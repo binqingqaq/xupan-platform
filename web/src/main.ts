@@ -9,6 +9,7 @@ import { adminRoutes } from './adminRoutes'
 import { restoreSession, subscribeAuthState, type AuthAudience } from './api'
 import './styles.css'
 import './styles/display-mobile-home.css'
+import './styles/admin-retro.css'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -44,6 +45,8 @@ function isAdminRoute(path: string): boolean {
 }
 
 function setViewportForRoute(path: string) {
+  const isConsolePath = path === '/console' || path.startsWith('/console/')
+  document.body.classList.toggle('ops-console-body', isConsolePath)
   const viewport = document.querySelector('meta[name="viewport"]')
   if (!viewport) return
   viewport.setAttribute('content', isAdminRoute(path)
