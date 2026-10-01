@@ -1,5 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 import AdminPanel from './views/AdminPanel.vue'
+import AgentManagement from './views/AgentManagement.vue'
 import AdminStashView from './views/AdminStashView.vue'
 import RobotManagement from './views/RobotManagement.vue'
 import TestPlayerManagement from './views/TestPlayerManagement.vue'
@@ -15,6 +16,11 @@ const userManageRoute = {
 export const adminRoutes: RouteRecordRaw[] = [
   { path: '/console', component: UnifiedAdminPanel, meta: userManageRoute },
   { path: '/console/stash', component: AdminStashView, meta: userManageRoute },
+  {
+    path: '/console/agents',
+    component: AgentManagement,
+    meta: { requiresAuth: true, requiredPermission: 'AGENT_MANAGE', title: '代理组织管理' },
+  },
   { path: '/console/operations', component: AdminPanel, meta: userManageRoute },
   { path: '/console/users', component: UserManagement, meta: userManageRoute },
   { path: '/console/players', component: TestPlayerManagement, meta: userManageRoute },
@@ -25,6 +31,7 @@ export const adminRoutes: RouteRecordRaw[] = [
   },
   { path: '/admin', redirect: '/console' },
   { path: '/admin/stash', redirect: '/console/stash' },
+  { path: '/admin/agents', redirect: '/console/agents' },
   { path: '/admin/operations', redirect: '/console/operations' },
   { path: '/admin/users', redirect: '/console/users' },
   { path: '/admin/test-players', redirect: '/console/players' },

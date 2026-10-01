@@ -35,7 +35,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint(exceptionHandler)
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/console", "/console/**", "/admin", "/admin/**",
+                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/console", "/console/**", "/agent", "/platform-admin", "/platform-admin/**", "/admin", "/admin/**",
                                 "/display", "/display/", "/display/**", "/assets/**", "/avatars/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/player-auth/exchange", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/media/avatars/**").permitAll()
@@ -52,6 +52,11 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/users/*/wallet/adjustments").hasAuthority("PERM_WALLET_ADJUST")
                         .requestMatchers("/api/admin/users/*/wallet", "/api/admin/users/*/wallet/ledger")
                         .hasAuthority("PERM_WALLET_LEDGER_READ")
+                        .requestMatchers("/api/admin/agent-groups", "/api/admin/agent-groups/**",
+                                        "/api/admin/agents", "/api/admin/agents/**",
+                                        "/api/admin/agent-player-assignments", "/api/admin/agent-player-assignments/**")
+                        .hasAuthority("PERM_AGENT_MANAGE")
+                        .requestMatchers("/api/agent", "/api/agent/**").hasAuthority("PERM_AGENT_CONSOLE_READ")
                         .requestMatchers("/api/admin/users", "/api/admin/users/**").hasAuthority("PERM_USER_MANAGE")
                         .requestMatchers("/api/admin/test-players", "/api/admin/test-players/**")
                         .hasAuthority("PERM_USER_MANAGE")

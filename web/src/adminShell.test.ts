@@ -19,6 +19,7 @@ describe('unified admin routes', () => {
     expect(players.component).toBeDefined()
     expect(players.meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE' })
     expect(route('/console/stash').meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE' })
+    expect(route('/console/agents').meta).toMatchObject({ requiresAuth: true, requiredPermission: 'AGENT_MANAGE' })
   })
 
   it('keeps the old operations page and separated robot permission boundary', () => {
@@ -35,6 +36,7 @@ describe('unified admin routes', () => {
     expect(route('/admin/test-players').redirect).toBe('/console/players')
     expect(route('/admin/robots').redirect).toBe('/console/robots')
     expect(route('/admin/stash').redirect).toBe('/console/stash')
+    expect(route('/admin/agents').redirect).toBe('/console/agents')
   })
 
   it('mounts the points approval and recent records panels in the unified shell', () => {
@@ -51,6 +53,7 @@ describe('unified admin routes', () => {
     expect(source).toContain('AdminWelcomeControlPanel')
     expect(source).toContain('AdminDomainFooterPanel')
     expect(source).toContain('AdminBottomControlPanel')
+    expect(source).toContain('<RouterLink to="/console/agents">代理管理</RouterLink>')
     expect(source).not.toContain('后台功能导航')
     expect(reportSource).toContain('报网类型:')
     expect(reportSource).toContain('设置账号')
@@ -102,6 +105,7 @@ describe('unified admin routes', () => {
     expect(html).toContain('href="/display/picture/favicon.ico"')
     expect(routerSource).toContain("title: 'AI模型房间管理'")
     expect(routerSource).toContain("title: '奥巴AI'")
+    expect(routerSource).toContain("requiredPermission: 'AGENT_CONSOLE_READ'")
   })
 
   it('hides the player status toggle while keeping the handler for later', () => {

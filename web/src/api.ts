@@ -57,6 +57,16 @@ import type {
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
+  Agent,
+  AgentGroup,
+  AgentOverview,
+  AgentPage,
+  AgentPlayerAssignmentPage,
+  AgentPlayerPage,
+  CreateAgentGroupRequest,
+  CreateAgentRequest,
+} from './types/agent'
+import type {
   ChangeRobotStatusRequest,
   CreateRobotRequest,
   DispatchSummary,
@@ -188,6 +198,14 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'USER_SELF_OPERATION_FORBIDDEN') return '不能停用或锁定当前管理员账号'
   if (error.code === 'USER_ROLE_INVALID') return '角色无效或已停用，请刷新角色列表'
   if (error.code === 'USER_PASSWORD_INVALID') return '密码不符合安全策略，请重新设置'
+  if (error.code === 'AGENT_MANAGE_FORBIDDEN') return '当前账号没有代理管理权限'
+  if (error.code === 'AGENT_CODE_EXISTS') return '代理编码已存在'
+  if (error.code === 'AGENT_CODE_INVALID') return '代理编码或渠道组编码格式不合法'
+  if (error.code === 'AGENT_GROUP_CODE_EXISTS') return '渠道组编码已存在'
+  if (error.code === 'AGENT_GROUP_HAS_ACTIVE_AGENTS') return '渠道组下仍有启用代理，不能停用'
+  if (error.code === 'AGENT_NOT_ACTIVE') return '目标代理当前不可用'
+  if (error.code === 'AGENT_PLAYER_TRANSFER_FORBIDDEN') return '第一版只允许分配平台直属玩家'
+  if (error.code === 'AGENT_CONSOLE_FORBIDDEN' || error.code === 'AGENT_DISABLED') return '代理后台当前不可用'
   if (error.code === 'USER_QUERY_INVALID') return '筛选或分页参数不合法'
   if (error.code === 'TEST_PLAYER_NOT_FOUND') return '测试玩家不存在，请刷新列表后重试'
   if (error.code === 'TEST_PLAYER_USERNAME_EXISTS') return '测试玩家登录名已存在，请换一个登录名'
@@ -369,7 +387,51 @@ export const api = {
     request<ChatWsTicketResponse>(`/api/auth/ws-ticket?roomCode=${encodeURIComponent(roomCode)}`, {
       method: 'POST',
     }),
-  current: () => request<GameView>('/api/demo/game/current'),
+  listAgentGroups: () => request<AgentGroup[]>('/api/admin/agent-groups'),
+  createAgentGroup: (payload: CreateAgentGroupRequest) => request<AgentGroup>('/api/admin/agent-groups', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  changeAgentGroupStatus: (groupId: number, status: 'ACTIVE' | 'DISABLED') =>
+    request<AgentGroup>(`/api/admin/agent-groups/${groupId}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status }),
+    }),
+  listAgents: (params: { status?: string; keyword?: string; groupId?: number; page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.status) search.set('status', params.status)
+    if (params.keyword) search.set('keyword', params.keyword)
+    if (params.groupId) search.set('groupId', String(params.groupId))
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 20))
+    return request<AgentPage>(`/api/admin/agents?${search.toString()}`)
+  },
+  createAgent: (payload: CreateAgentRequest) => request<Agent>('/api/admin/agents', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  changeAgentStatus: (agentId: number, status: 'ACTIVE' | 'DISABLED') =>
+    request<Agent>(`/api/admin/agents/${agentId}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status }),
+    }),
+  listAgentPlayerAssignments: (params: { keyword?: string; agentId?: number; page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.keyword) search.set('keyword', params.keyword)
+    if (params.agentId) search.set('agentId', String(params.agentId))
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 20))
+    return request<AgentPlayerAssignmentPage>(`/api/admin/agent-player-assignments?${search.toString()}`)
+  },
+  assignPlayerToAgent: (userId: number, agentId: number) =>
+    request<void>(`/api/admin/agent-player-assignments/${userId}`, {
+      method: 'PUT', body: JSON.stringify({ agentId }),
+    }),
+  getAgentOverview: () => request<AgentOverview>('/api/agent/me'),
+  listAgentPlayers: (params: { kind?: string; keyword?: string; page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.kind) search.set('kind', params.kind)
+    if (params.keyword) search.set('keyword', params.keyword)
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 20))
+    return request<AgentPlayerPage>(`/api/agent/players?${search.toString()}`)
+  },  current: () => request<GameView>('/api/demo/game/current'),
   getMyBetSummary: () => request<MyBetSummaryResponse>('/api/demo/game/bets/summary'),
   placeBet: (payload: { ballNumber: 1; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string }) =>
     request<BetView>('/api/demo/game/bets', { method: 'POST', body: JSON.stringify(payload) }),

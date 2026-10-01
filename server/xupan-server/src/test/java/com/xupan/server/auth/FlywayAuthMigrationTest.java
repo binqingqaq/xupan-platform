@@ -39,6 +39,8 @@ class FlywayAuthMigrationTest {
             "ROLE_MANAGE",
             "PERMISSION_MANAGE",
             "AUDIT_READ",
+            "AGENT_MANAGE",
+            "AGENT_CONSOLE_READ",
             "WALLET_READ",
             "WALLET_GRANT",
             "WALLET_ADJUST",
@@ -53,6 +55,7 @@ class FlywayAuthMigrationTest {
                     "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE",
                     "CHAT_MESSAGE_REVIEW", "CHAT_MESSAGE_RECALL", "CHAT_USER_MUTE", "CHAT_USER_KICK",
                     "WALLET_READ"),
+            "AGENT", Set.of("AGENT_CONSOLE_READ"),
             "OPERATOR", Set.of(
                     "GAME_CURRENT_READ", "GAME_ODDS_READ", "GAME_ODDS_WRITE",
                     "ROBOT_READ", "ROBOT_WRITE", "ROBOT_TEMPLATE_WRITE"),
@@ -69,14 +72,14 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34");
     }
 
     @Test
     void createsIdentitySessionAndAuditTables() {
         assertThat(tableNames()).contains(
                 "SYS_USER", "SYS_ROLE", "SYS_PERMISSION", "SYS_USER_ROLE", "SYS_ROLE_PERMISSION",
-                "AUTH_SESSION", "AUTH_WS_TICKET", "SYS_LOGIN_LOG", "SYS_OPERATION_LOG", "PLAYER_ACCESS_LINK");
+                "AUTH_SESSION", "AUTH_WS_TICKET", "SYS_LOGIN_LOG", "SYS_OPERATION_LOG", "PLAYER_ACCESS_LINK", "AGENT_GROUP", "AGENT");
 
         assertThat(tableNames()).contains("TEST_PLAYER_BEHAVIOR", "TEST_PLAYER_ACTION");
         assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("PLAYER_KIND");
@@ -87,7 +90,7 @@ class FlywayAuthMigrationTest {
                 "ID", "USERNAME", "DISPLAY_NAME", "AVATAR_KEY", "PASSWORD_HASH", "STATUS",
                 "FAILED_LOGIN_COUNT", "LOCKED_UNTIL", "SECURITY_VERSION", "LAST_LOGIN_AT",
                 "LAST_LOGIN_IP", "CREATED_AT", "UPDATED_AT", "USER_TYPE", "INTERNAL_CODE", "AUTH_MODE");
-        assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("MEMBER_CODE");
+        assertThat(columnNames("DEMO_USER_ACCOUNT")).contains("MEMBER_CODE", "AGENT_ID");
         assertThat(columnNames("AUTH_SESSION")).containsExactlyInAnyOrder(
                 "ID", "SESSION_ID", "USER_ID", "ACCESS_TOKEN_HASH", "ACCESS_EXPIRES_AT",
                 "REFRESH_TOKEN_HASH", "REFRESH_EXPIRES_AT", "DEVICE_LABEL", "IP_DIGEST",
@@ -143,7 +146,7 @@ class FlywayAuthMigrationTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_user", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM auth_session", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM auth_ws_ticket", Integer.class)).isZero();
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_role", Integer.class)).isEqualTo(4);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_role", Integer.class)).isEqualTo(5);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_permission", Integer.class))
                 .isEqualTo(PERMISSION_CODES.size());
 

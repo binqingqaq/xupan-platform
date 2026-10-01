@@ -111,6 +111,7 @@ onMounted(() => { void loadState() })
           <span>现有兼容入口</span>
           <RouterLink to="/console/operations">旧运营页</RouterLink>
           <RouterLink to="/console/users">用户管理</RouterLink>
+          <RouterLink to="/console/agents">代理管理</RouterLink>
           <RouterLink to="/console/robots">服务端机器人</RouterLink>
         </section>
       </aside>

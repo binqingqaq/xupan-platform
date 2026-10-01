@@ -1,6 +1,9 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
+import AgentConsole from './views/AgentConsole.vue'
+import PlatformAdminHome from './views/PlatformAdminHome.vue'
+import PlatformAdminLoginView from './views/PlatformAdminLoginView.vue'
 import ForbiddenView from './views/ForbiddenView.vue'
 import LoginView from './views/LoginView.vue'
 import UserRoom from './views/UserRoom.vue'
@@ -26,26 +29,29 @@ const router = createRouter({
     { path: '/display', redirect: '/display/mobile' },
     { path: '/display/mobile', component: () => import('./views/DisplayMobileHome.vue'), meta: { title: '168开奖网移动端首页' } },
     { path: '/login', component: LoginView, meta: { title: 'AI模型房间管理' } },
+    { path: '/platform-admin/login', component: PlatformAdminLoginView, meta: { title: 'XUPAN 超级管理后台' } },
+    { path: '/platform-admin', component: PlatformAdminHome, meta: { requiresAuth: true, requiredPermission: 'USER_MANAGE', title: 'XUPAN 超级管理后台' } },
     { path: '/player-login', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/forbidden', component: ForbiddenView, meta: { title: 'AI模型房间管理' } },
     { path: '/room', component: UserRoom, meta: { requiresAuth: true, title: '奥巴AI' } },
+    { path: '/agent', component: AgentConsole, meta: { requiresAuth: true, requiredPermission: 'AGENT_CONSOLE_READ', title: '代理后台' } },
     ...adminRoutes,
   ],
 })
 
 function requiredAudience(path: string): AuthAudience | undefined {
-  if (path === '/login' || path === '/console' || path.startsWith('/console/')) return 'ADMIN'
+  if (path === '/login' || path.startsWith('/platform-admin') || path === '/console' || path.startsWith('/console/') || path === '/agent' || path.startsWith('/agent/')) return 'ADMIN'
   return undefined
 }
 
 function isAdminRoute(path: string): boolean {
-  return path === '/login' || path === '/console' || path.startsWith('/console/') ||
-    path.startsWith('/admin') || path === '/forbidden'
+  return path === '/login' || path.startsWith('/platform-admin') || path === '/console' || path.startsWith('/console/') ||
+    path === '/agent' || path.startsWith('/agent/') || path.startsWith('/admin') || path === '/forbidden'
 }
 
 function setViewportForRoute(path: string) {
-  const isConsolePath = path === '/console' || path.startsWith('/console/')
+  const isConsolePath = path.startsWith('/platform-admin') || path === '/console' || path.startsWith('/console/') || path === '/agent' || path.startsWith('/agent/')
   document.body.classList.toggle('ops-console-body', isConsolePath)
   const viewport = document.querySelector('meta[name="viewport"]')
   if (!viewport) return

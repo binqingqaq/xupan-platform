@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, apiErrorMessage, restoreSession } from '../api'
+import type { CurrentUserView } from '../types'
 
 const route = useRoute()
 const router = useRouter()
@@ -10,9 +11,9 @@ const password = ref('')
 const busy = ref(false)
 const error = ref('')
 
-const redirectPath = computed(() => {
-  const value = typeof route.query.redirect === 'string' ? route.query.redirect : '/console'
-  return value.startsWith('/') && !value.startsWith('//') ? value : '/console'
+const explicitRedirect = computed(() => {
+  const value = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  return value.startsWith('/') && !value.startsWith('//') ? value : ''
 })
 
 const pageMessage = computed(() => route.query.reason === 'expired'
@@ -23,6 +24,13 @@ const pageMessage = computed(() => route.query.reason === 'expired'
       ? '你已退出登录'
     : '请输入账号和密码继续')
 
+function landingPath(user: CurrentUserView): string {
+  if (explicitRedirect.value) return explicitRedirect.value
+  if (user.permissions.includes('USER_MANAGE')) return '/console'
+  if (user.permissions.includes('AGENT_CONSOLE_READ')) return '/agent'
+  return '/forbidden'
+}
+
 async function submit() {
   if (!username.value.trim() || !password.value) {
     error.value = '请输入用户名和密码'
@@ -31,9 +39,9 @@ async function submit() {
   busy.value = true
   error.value = ''
   try {
-    await api.login(username.value.trim(), password.value)
+    const result = await api.login(username.value.trim(), password.value)
     password.value = ''
-    await router.replace(redirectPath.value)
+    await router.replace(landingPath(result.user))
   } catch (loginError) {
     error.value = apiErrorMessage(loginError, '登录失败，请稍后重试')
   } finally {
@@ -42,9 +50,8 @@ async function submit() {
 }
 
 onMounted(async () => {
-  if (await restoreSession('ADMIN')) {
-    await router.replace(redirectPath.value)
-  }
+  const user = await restoreSession('ADMIN')
+  if (user) await router.replace(landingPath(user))
 })
 </script>
 
