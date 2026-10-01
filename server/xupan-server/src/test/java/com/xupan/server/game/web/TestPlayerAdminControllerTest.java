@@ -16,13 +16,17 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.matchesPattern;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -76,14 +80,14 @@ class TestPlayerAdminControllerTest {
         MvcResult created = mockMvc.perform(post("/api/admin/test-players")
                         .with(bearer(adminToken))
                         .contentType("application/json")
-                        .content("{\"displayName\":\"透明玩家一号\",\"userCode\":\"TP-ONE\","
-                                + "\"avatarKey\":\"avatar-test-1\"}"))
+                        .content("{\"displayName\":\"透明玩家一号\",\"userCode\":\"TP-ONE\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.identityType").value("TEST"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.balance").value(0.00))
                 .andReturn();
         long playerId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.accountId")).longValue();
+        long userId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.userId")).longValue();
         String playerCode = "TP-ONE";
 
         mockMvc.perform(get("/api/admin/test-players").with(bearer(adminToken))
@@ -91,8 +95,24 @@ class TestPlayerAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.items[0].identityType").value("TEST"))
-                .andExpect(jsonPath("$.items[0].avatarKey").value("avatar-test-1"));
+                .andExpect(jsonPath("$.items[0].avatarKey").value(matchesPattern("^preset-\\d{2}\\.(jpg|png)$")));
 
+        MvcResult avatarList = mockMvc.perform(get("/api/admin/player-desk/avatar-presets")
+                        .with(bearer(adminToken)).param("userId", String.valueOf(userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isArray())
+                .andReturn();
+        List<Map<String, Object>> presets = JsonPath.read(avatarList.getResponse().getContentAsString(), "$");
+        assertThat(presets).hasSize(40);
+        String availableAvatar = presets.stream()
+                .filter(option -> Boolean.TRUE.equals(option.get("available")))
+                .map(option -> (String) option.get("key"))
+                .findFirst().orElseThrow();
+        mockMvc.perform(put("/api/admin/player-desk/players/" + userId + "/avatar")
+                        .with(bearer(adminToken)).contentType("application/json")
+                        .content("{\"avatarKey\":\"" + availableAvatar + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.avatarKey").value(availableAvatar));
         mockMvc.perform(post("/api/admin/test-players/" + playerCode + "/balance/grants")
                         .with(bearer(adminToken)).contentType("application/json")
                         .content("{\"amount\":100.00,\"reason\":\"测试初始额度\","

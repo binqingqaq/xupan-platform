@@ -17,8 +17,8 @@ describe('test player admin helpers', () => {
     expect(testPlayerStatusLabel('ACTIVE')).toBe('启用中')
     expect(testPlayerStatusLabel('DISABLED')).toBe('已停用')
     expect(testPlayerStatusClass('ACTIVE')).toBe('test-player-status-active')
-    expect(validateTestPlayerDraft({ userCode: 'bad name', displayName: '', avatarKey: 'x'.repeat(65) })).toHaveLength(3)
-    expect(validateTestPlayerDraft({ userCode: 'player_01', displayName: '联调玩家', avatarKey: '' })).toEqual([])
+    expect(validateTestPlayerDraft({ userCode: 'bad name', displayName: '' })).toHaveLength(2)
+    expect(validateTestPlayerDraft({ userCode: 'player_01', displayName: '联调玩家' })).toEqual([])
   })
 
   it('validates money operations and encodes list filters', () => {

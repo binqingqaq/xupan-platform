@@ -72,8 +72,7 @@ class TestPlayerAdminControllerTest {
 
         mockMvc.perform(post("/api/admin/test-players").header("Authorization", bearer(adminToken))
                         .contentType("application/json")
-                        .content("{\"userCode\":\"TP-001\",\"displayName\":\"透明测试玩家\","
-                                + "\"avatarKey\":\"avatar-test-1\"}"))
+                        .content("{\"userCode\":\"TP-001\",\"displayName\":\"透明测试玩家\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.internalCode").value(matchesPattern("^wxid_[A-Za-z0-9]{16}$")))
                 .andExpect(jsonPath("$.memberCode").value(matchesPattern("^v[0-9]+$")))
@@ -92,7 +91,7 @@ class TestPlayerAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.internalCode").value(matchesPattern("^wxid_[A-Za-z0-9]{16}$")))
                 .andExpect(jsonPath("$.memberCode").value(matchesPattern("^v[0-9]+$")))
-                .andExpect(jsonPath("$.avatarKey").value("avatar-test-1"))
+                .andExpect(jsonPath("$.avatarKey").value(matchesPattern("^preset-\\d{2}\\.(jpg|png)$")))
                 .andExpect(jsonPath("$.ledger").isEmpty());
 
         String memberToken = login(MEMBER, PASSWORD);

@@ -113,8 +113,6 @@ const selectedQuickNumber = ref('1')
 const selectedQuickAmount = ref(100)
 const settingAmounts = ref(DEFAULT_QUICK_BET_AMOUNTS.map(String))
 const quickBetScrollTop = ref(0)
-const avatarInput = ref<HTMLInputElement | null>(null)
-const avatarUploading = ref(false)
 const keyboardFlat = ref(false)
 const voiceEnabled = ref(false)
 let gameRefreshTimer: number | undefined
@@ -780,22 +778,6 @@ function quickAmountText(value: number) {
   return Number(value).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 }
 
-async function uploadCurrentUserAvatar(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  avatarUploading.value = true
-  try {
-    await api.uploadMyAvatar(file)
-    currentUser.value = await api.me()
-    showFeedback('头像已更新')
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, '头像上传失败'), 'error')
-  } finally {
-    avatarUploading.value = false
-  }
-}
 
 function selectOddsCard(card: OddsCard) {
   const code = selectedQuickNumber.value
@@ -946,7 +928,7 @@ function avatarText(name: string) {
 }
 
 function isStoredAvatarKey(value: string | null | undefined): value is string {
-  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|gif|webp)$/i.test(value))
+  return Boolean(value && (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|gif|webp)$/i.test(value) || /^preset-\d{2}\.(jpg|png)$/i.test(value)))
 }
 
 function createChatClientMessageId() {

@@ -37,8 +37,8 @@ describe('player desk helpers', () => {
   it('validates normal and bot player creation fields', () => {
     expect(validateNormalPlayerDraft({ displayName: '' })).toHaveLength(1)
     expect(validateNormalPlayerDraft({ displayName: '普通玩家' })).toEqual([])
-    expect(validateBotPlayerDraft({ userCode: 'bot 1', displayName: '', avatarKey: 'x'.repeat(65) })).toHaveLength(1)
-    expect(validateBotPlayerDraft({ userCode: 'bot_1', displayName: '托1', avatarKey: '' })).toEqual([])
+    expect(validateBotPlayerDraft({ userCode: 'bot 1', displayName: '' })).toHaveLength(1)
+    expect(validateBotPlayerDraft({ userCode: 'bot_1', displayName: '托1' })).toEqual([])
   })
 
   it('validates points, behavior and manual message constraints', () => {

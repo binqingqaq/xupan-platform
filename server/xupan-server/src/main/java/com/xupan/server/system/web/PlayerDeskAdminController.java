@@ -11,6 +11,7 @@ import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.system.repository.PlayerDeskRepository;
+import com.xupan.server.media.AvatarPresetService;
 import com.xupan.server.system.service.PlayerDeskAdminService;
 import com.xupan.server.system.service.PlayerPointOperationService;
 import com.xupan.server.system.service.PlayerPointRequestService;
@@ -111,8 +112,20 @@ public class PlayerDeskAdminController {
 
     @PostMapping("/players/bot")
     public Detail createBot(Authentication auth, @Valid @RequestBody CreateBot request) {
-        long id = service.createBot(request.userCode(), request.displayName(), request.avatarKey(), user(auth));
+        long id = service.createBot(request.userCode(), request.displayName(), user(auth));
         return Detail.from(service.detail(id, user(auth)));
+    }
+
+    @GetMapping("/avatar-presets")
+    public List<AvatarPresetService.AvatarPresetOption> avatarPresets(Authentication auth,
+                                                                      @RequestParam(required = false) Long userId) {
+        return service.avatarPresets(userId, user(auth));
+    }
+
+    @PutMapping("/players/{userId}/avatar")
+    public Detail updateAvatar(Authentication auth, @PathVariable long userId,
+                               @Valid @RequestBody AvatarUpdate request) {
+        return Detail.from(service.replaceAvatar(userId, request.avatarKey(), user(auth)));
     }
 
     @PatchMapping("/players/{userId}/status")
@@ -288,8 +301,9 @@ public class PlayerDeskAdminController {
         }
     }
     public record CreateNormal(@NotBlank String displayName) {}
-    public record CreateBot(String userCode, @NotBlank String displayName, String avatarKey) {}
+    public record CreateBot(String userCode, @NotBlank String displayName) {}
     public record StatusRequest(@NotBlank String status) {}
+    public record AvatarUpdate(@NotBlank String avatarKey) {}
     public record BalanceRequest(@NotNull BigDecimal amount, @NotBlank String reason, @NotBlank String idempotencyKey) {}
     public record NicknameRequest(@NotBlank String displayName) {}
     public record NameHistory(String currentName, long remainingToday, List<NameChange> records) {

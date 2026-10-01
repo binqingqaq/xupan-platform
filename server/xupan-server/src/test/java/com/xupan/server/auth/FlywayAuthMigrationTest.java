@@ -69,7 +69,7 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33");
     }
 
     @Test
@@ -316,6 +316,14 @@ class FlywayAuthMigrationTest {
                         + "JOIN sys_permission p ON p.id = rp.permission_id "
                         + "WHERE r.role_code = ? ORDER BY p.permission_code",
                 String.class, roleCode));
+    }
+
+    @Test
+    void createsAvatarPresetPool() {
+        assertThat(tableNames()).contains("AVATAR_PRESET");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM avatar_preset", Integer.class)).isEqualTo(40);
+        assertThat(constraintNames("AVATAR_PRESET")).contains(
+                "UK_AVATAR_PRESET_ORDER", "UK_AVATAR_PRESET_ASSIGNEE", "FK_AVATAR_PRESET_USER");
     }
 
     private Map<String, Integer> seedCounts() {

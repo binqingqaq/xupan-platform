@@ -101,6 +101,13 @@ public class UserRepository {
     }
 
     @Transactional
+    public boolean isPlayerAccount(long userId) {
+        Boolean exists = jdbcTemplate.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM demo_user_account WHERE sys_user_id = ?)
+                """, Boolean.class, userId);
+        return Boolean.TRUE.equals(exists);
+    }
+
     public int updateAvatarKey(long userId, String avatarKey) {
         if (avatarKey == null || avatarKey.isBlank() || avatarKey.length() > 255) {
             throw new IllegalArgumentException("avatarKey 无效");

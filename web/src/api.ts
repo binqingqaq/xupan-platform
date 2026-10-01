@@ -37,6 +37,7 @@ import type {
   PlayerDeskDetail,
   PlayerDeskPage,
   PlayerDeskSummary,
+  AvatarPresetOption,
   PlayerDeskItem,
   PlayerDeskStatus,
   PlayerMessageOutcome,
@@ -155,6 +156,11 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AVATAR_FILE_INVALID') return '请选择有效的头像图片'
   if (error.code === 'AVATAR_FILE_TOO_LARGE') return '头像图片不能超过 5 MB'
   if (error.code === 'AVATAR_FILE_TYPE_INVALID') return '头像只支持 JPG、PNG、GIF 或 WebP 图片'
+  if (error.code === 'AVATAR_POOL_EXHAUSTED') return '头像池已满，请先删除或更换已占用头像'
+  if (error.code === 'AVATAR_PRESET_ASSIGNED') return '该头像已被其他玩家或托使用'
+  if (error.code === 'AVATAR_PRESET_INVALID') return '头像不在可选池中'
+  if (error.code === 'AVATAR_OPERATION_FORBIDDEN') return '玩家和托只能在头像池中选择头像'
+  if (error.code === 'PLAYER_AVATAR_FORBIDDEN') return '已删除玩家不能更换头像'
   if (error.code === 'AUTH_INVALID_CREDENTIALS') return '用户名或密码错误'
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
@@ -315,10 +321,17 @@ async function request<T>(url: string, options: RequestInit = {}, retryOnUnautho
   return body as T
 }
 
+function isPresetAvatarKey(avatarKey: string) {
+  return /^preset-\d{2}\.(jpg|png)$/i.test(avatarKey)
+}
+
 export const api = {
-  avatarUrl: (avatarKey: string | null | undefined) => avatarKey
-    ? `/api/media/avatars/${encodeURIComponent(avatarKey)}`
-    : '',
+  avatarUrl: (avatarKey: string | null | undefined) => {
+    if (!avatarKey) return ''
+    return isPresetAvatarKey(avatarKey)
+      ? `/avatars/presets/${encodeURIComponent(avatarKey)}`
+      : `/api/media/avatars/${encodeURIComponent(avatarKey)}`
+  },
   hasAccessToken: () => Boolean(getAccessToken()),
   login: (username: string, password: string) => request<{ accessToken: string; user: CurrentUserView }>('/api/auth/login', {
     method: 'POST',
@@ -444,6 +457,16 @@ export const api = {
     return request<PlayerDeskPage>(`/api/admin/player-desk/players?${query.toString()}`)
   },
   getPlayerDeskPlayer: (userId: number, includeDeleted = false) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}?includeDeleted=${includeDeleted}`),
+
+  getPlayerAvatarPresets: (userId?: number) => {
+    const query = userId ? `?userId=${encodeURIComponent(String(userId))}` : ''
+    return request<AvatarPresetOption[]>(`/api/admin/player-desk/avatar-presets${query}`)
+  },
+  updatePlayerAvatar: (userId: number, avatarKey: string) =>
+    request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/avatar`, {
+      method: 'PUT',
+      body: JSON.stringify({ avatarKey }),
+    }),
   deletePlayerDeskPlayer: (userId: number) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}`, { method: 'DELETE' }),
   issuePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links`, { method: 'POST' }),
   getCurrentPlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/current`),
@@ -538,11 +561,6 @@ export const api = {
     request<TestPlayerView>('/api/admin/test-players', { method: 'POST', body: JSON.stringify(payload) }),
   changeTestPlayerStatus: (userCode: string, payload: ChangeTestPlayerStatusRequest) =>
     request<TestPlayerView>(`/api/admin/test-players/${encodeURIComponent(userCode)}/status`, { method: 'PATCH', body: JSON.stringify(payload) }),
-  uploadTestPlayerAvatar: (userCode: string, file: File) => {
-    const form = new FormData()
-    form.append('file', file)
-    return request<{ avatarKey: string; url: string }>(`/api/admin/test-players/${encodeURIComponent(userCode)}/avatar`, { method: 'PUT', body: form })
-  },
   grantTestPlayerBalance: (userCode: string, payload: Required<TestPlayerBalanceRequest>) =>
     request<TestPlayerBalanceOperationResponse>(`/api/admin/test-players/${encodeURIComponent(userCode)}/balance/grants`, {
       method: 'POST',

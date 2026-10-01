@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../../api'
 import { BOT_PLAY_TYPES, BOT_PLAY_TYPE_CODES, STAKE_RANGE_CODES, STAKE_RANGE_LABELS, STAKE_ROUND_TEN_LABELS, STAKE_ROUND_TEN_OPTIONS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation } from '../../playerDesk'
-import type { PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskPointRecords, PlayerDeskSummary, PlayerNameHistory } from '../../types'
+import type { AvatarPresetOption, PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskPointRecords, PlayerDeskSummary, PlayerNameHistory } from '../../types'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 const emit = defineEmits<{ pointsChanged: [] }>()
@@ -17,6 +17,12 @@ const accessLink = ref<PlayerAccessLinkView | null>(null); const accessLinkBusy 
 const linkDays = ref(7); const nicknameDraft = ref(''); const renameHistoryOpen = ref(false); const renameHistory = ref<PlayerNameHistory | null>(null); const renameLoading = ref(false)
 const createMode = ref<'normal' | 'bot' | null>(null)
 const deleteConfirmOpen = ref(false)
+const avatarPickerOpen = ref(false)
+const avatarOptions = ref<AvatarPresetOption[]>([])
+const avatarDraft = ref('')
+const avatarLoading = ref(false)
+const avatarSaving = ref(false)
+const avatarError = ref('')
 const pointRecordsOpen = ref(false)
 const pointRecordsKind = ref<'NORMAL' | 'BOT'>('NORMAL')
 const pointRecordsDate = ref(businessDateAt0600())
@@ -152,6 +158,7 @@ async function loadPointRecords(businessDate: string) {
   }
 }
 function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && avatarPickerOpen.value) closeAvatarPicker()
   if (event.key === 'Escape' && pointRecordsOpen.value) closePointRecords()
 }
 function openCreate(mode: 'normal' | 'bot') {
@@ -168,6 +175,7 @@ function closeCreate() {
   createMode.value = null
 }
 async function selectPlayer(userId: number) {
+  closeAvatarPicker()
   detailLoading.value = true; error.value = ''
   try {
     const previousUserId = selected.value?.userId
@@ -205,6 +213,51 @@ async function createBot() {
   try { const created = await api.createBotPlayer({ displayName: botDraft.displayName.trim() }); const id = created.userId; Object.assign(botDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '托已创建，登录链接已生成，默认未启用自动行为' }
   catch (cause) { createError.value = cause instanceof Error ? cause.message : '托创建失败' } finally { saving.value = false }
 }
+async function openAvatarPicker() {
+  if (!selected.value || selected.value.status === 'DELETED') return
+  avatarPickerOpen.value = true
+  avatarLoading.value = true
+  avatarError.value = ''
+  try {
+    avatarOptions.value = await api.getPlayerAvatarPresets(selected.value.userId)
+    avatarDraft.value = avatarOptions.value.find(option => option.selected)?.key || ''
+  } catch (cause) {
+    avatarError.value = cause instanceof Error ? cause.message : '头像列表加载失败'
+  } finally {
+    avatarLoading.value = false
+  }
+}
+
+function closeAvatarPicker() {
+  if (avatarSaving.value) return
+  avatarPickerOpen.value = false
+  avatarError.value = ''
+  avatarDraft.value = ''
+  avatarOptions.value = []
+}
+
+function chooseAvatar(option: AvatarPresetOption) {
+  if (!option.available && !option.selected) return
+  avatarDraft.value = option.key
+}
+
+async function saveAvatar() {
+  if (!selected.value || !avatarDraft.value) return
+  avatarSaving.value = true
+  avatarError.value = ''
+  try {
+    const updated = await api.updatePlayerAvatar(selected.value.userId, avatarDraft.value)
+    selected.value = updated
+    await refresh(updated.userId)
+    avatarPickerOpen.value = false
+    actionMessage.value = '头像已更新'
+  } catch (cause) {
+    avatarError.value = cause instanceof Error ? cause.message : '头像更新失败'
+  } finally {
+    avatarSaving.value = false
+  }
+}
+
 async function operatePoints(direction: 'grant' | 'adjust') {
   if (!selected.value) return
   pointDraft.direction = direction
@@ -352,6 +405,29 @@ onBeforeUnmount(() => {
         </Transition>
       </div>
     </Teleport>
+    <Teleport to="body">
+      <div v-if="avatarPickerOpen && selected" class="create-modal-layer" role="presentation" @click.self="closeAvatarPicker">
+        <section class="create-modal avatar-picker-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-picker-title">
+          <header class="create-modal-header"><div><span class="eyebrow">AVATAR POOL</span><h2 id="avatar-picker-title">选择头像</h2></div><button class="modal-close" type="button" aria-label="关闭" :disabled="avatarSaving" @click="closeAvatarPicker">×</button></header>
+          <div class="avatar-picker-content">
+            <p class="form-hint">当前头像池中的头像不会重复占用；删除玩家或托后，原头像会释放。</p>
+            <div v-if="avatarLoading" class="record-state">正在加载头像...</div>
+            <div v-else-if="avatarError" class="record-state record-state-error">{{ avatarError }}</div>
+            <div v-else class="avatar-picker-grid">
+              <button v-for="option in avatarOptions" :key="option.key" class="avatar-option" :class="{ selected: avatarDraft === option.key, occupied: !option.available && !option.selected }" type="button" :disabled="!option.available && !option.selected" :title="option.assignedDisplayName ? `已被 ${option.assignedDisplayName} 占用` : ''" @click="chooseAvatar(option)">
+                <img :src="option.url" alt="" />
+                <span v-if="option.selected">已选</span>
+                <span v-else-if="!option.available">{{ option.assignedDisplayName || '已占用' }}</span>
+              </button>
+            </div>
+            <div class="modal-actions">
+              <button class="outline-button" type="button" :disabled="avatarSaving" @click="closeAvatarPicker">取消</button>
+              <button class="primary-button" type="button" :disabled="avatarSaving || !avatarDraft || avatarDraft === selected.avatarKey" @click="saveAvatar">{{ avatarSaving ? '保存中...' : '确认更换' }}</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </Teleport>
     <section class="player-desk-body">
       <aside class="player-list-pane" aria-label="玩家管理">
         <div class="pane-heading"><div class="player-stats" aria-label="玩家统计"><div class="player-stat-total"><span>总积分</span><strong>{{ money(summary.totalPoints) }}</strong></div><button class="player-stat" :class="{ active: filter.kind === 'NORMAL' }" type="button" @click="selectKind('NORMAL')"><span>普</span><strong>（{{ kindSummary.normalCount }}）</strong></button><button class="player-stat" :class="{ active: filter.kind === 'BOT' }" type="button" @click="selectKind('BOT')"><span>托</span><strong>（{{ kindSummary.botCount }}）</strong></button></div><div class="create-action-stack"><div class="create-actions"><button class="primary-button" type="button" @click="openCreate('normal')">创建普通玩家</button><button class="secondary-button" type="button" @click="openCreate('bot')">创建托</button></div><div class="record-actions"><button class="outline-button" type="button" @click="openPointRecords('NORMAL')">积分记录</button><button class="outline-button" type="button" @click="openPointRecords('BOT')">托积分记录</button></div></div></div>
@@ -361,7 +437,7 @@ onBeforeUnmount(() => {
       </aside>
       <section class="player-detail-pane" aria-label="玩家详情">
         <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
-        <template v-else><div class="detail-heading"><div class="detail-identity"><span class="desk-avatar large"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></span><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
+        <template v-else><div class="detail-heading"><div class="detail-identity"><button class="desk-avatar large avatar-trigger" type="button" :disabled="selected.status === 'DELETED'" title="点击更换头像" @click="openAvatarPicker"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></button><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
           <div class="player-edit-rows"><div class="player-edit-row"><span>会员ID：<strong>{{ selected.memberCode }}</strong></span><div class="days-editor"><input v-model.number="linkDays" type="number" min="1" max="3650" aria-label="链接有效期天数" /><span>天</span><button class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="saveLinkDays">保存</button><small>剩余 {{ linkDays }} 天</small></div></div><div class="player-edit-row"><label>昵称<input v-model="nicknameDraft" maxlength="128" /></label><button class="outline-button" type="button" :disabled="saving || selected.status === 'DELETED'" @click="updateNickname">更新</button></div><div class="player-edit-actions"><template v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'"><button v-if="selected.linkStatus?.active" class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="revokeAccessLink">拉黑</button><button v-else class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="whitelistPlayer">拉白</button></template><button class="outline-button" type="button" @click="openRenameHistory">换名记录</button></div></div>
           <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
 
@@ -682,6 +758,18 @@ em { font-style: normal; }
 .modal-close { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 2px; color: #4b6378; background: transparent; font-size: 18px; line-height: 1; }
 .modal-close:hover:not(:disabled) { border-color: #93b8d6; background: #e4f2fc; }
 .create-modal .create-form { margin: 0; padding: 8px; border: 0; background: #fff; }
+
+.avatar-trigger { padding: 0; cursor: pointer; }
+.avatar-trigger:disabled { cursor: default; opacity: .75; }
+.avatar-picker-modal { width: min(760px, 100%); max-height: min(760px, calc(100dvh - 24px)); display: flex; flex-direction: column; }
+.avatar-picker-content { min-height: 0; overflow: auto; padding: 8px; }
+.avatar-picker-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.avatar-option { position: relative; aspect-ratio: 1; padding: 2px; overflow: hidden; border: 1px solid #9bc0dc; border-radius: 3px; background: #eef7fd; cursor: pointer; }
+.avatar-option img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 2px; }
+.avatar-option span { position: absolute; right: 2px; bottom: 2px; left: 2px; overflow: hidden; padding: 2px 3px; border-radius: 2px; color: #fff; background: rgb(20 45 65 / 78%); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.avatar-option.selected { border-color: #d97706; box-shadow: 0 0 0 2px #fdba74; }
+.avatar-option.occupied { cursor: not-allowed; filter: grayscale(.75); opacity: .62; }
+@media (max-width: 720px) { .avatar-picker-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .modal-actions { display: flex; justify-content: flex-end; gap: 4px; margin-top: 6px; }
 .modal-subtitle { margin: 2px 0 0; color: #667c90; font-size: 10px; }
 .delete-modal-content, .rename-history-content { padding: 8px; }

@@ -268,6 +268,15 @@ export interface PlayerActionSummary {
 export interface PlayerDeskLedgerEntry extends WalletLedgerEntry {
 }
 
+export interface AvatarPresetOption {
+  key: string
+  url: string
+  displayOrder: number
+  available: boolean
+  assignedUserId: number | null
+  assignedDisplayName: string | null
+  selected: boolean
+}
 export interface PlayerDeskDetail extends PlayerDeskItem {
   createdAt: string
   lastLoginAt: string | null
@@ -503,7 +512,6 @@ export interface PlayerMessageOutcome {
 export interface CreateTestPlayerRequest {
   userCode: string
   displayName: string
-  avatarKey?: string
 }
 
 export interface TestPlayerBetRequest {

@@ -10,6 +10,7 @@ import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.VirtualWalletService;
+import com.xupan.server.media.AvatarPresetService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.playerauth.domain.PlayerAccessLink;
 import com.xupan.server.playerauth.repository.PlayerAccessLinkRepository;
@@ -40,6 +41,7 @@ public class PlayerDeskAdminService {
     private final SessionRepository sessionRepository;
     private final PlayerAccessLinkRepository accessLinkRepository;
     private final PlayerLinkAuthenticationService playerLinkAuthenticationService;
+    private final AvatarPresetService avatarPresetService;
 
     public PlayerDeskAdminService(PlayerDeskRepository repository, PermissionService permissionService,
                                   UserAdminService userAdminService, TestPlayerAdminService testPlayerAdminService,
@@ -48,7 +50,8 @@ public class PlayerDeskAdminService {
                                   JdbcTemplate jdbc, GameDataRepository gameDataRepository,
                                   UserRepository userRepository, SessionRepository sessionRepository,
                                   PlayerAccessLinkRepository accessLinkRepository,
-                                  PlayerLinkAuthenticationService playerLinkAuthenticationService) {
+                                  PlayerLinkAuthenticationService playerLinkAuthenticationService,
+                                  AvatarPresetService avatarPresetService) {
         this.repository = repository;
         this.permissionService = permissionService;
         this.userAdminService = userAdminService;
@@ -63,8 +66,27 @@ public class PlayerDeskAdminService {
         this.sessionRepository = sessionRepository;
         this.accessLinkRepository = accessLinkRepository;
         this.playerLinkAuthenticationService = playerLinkAuthenticationService;
+        this.avatarPresetService = avatarPresetService;
     }
 
+    @Transactional(readOnly = true)
+    public List<AvatarPresetService.AvatarPresetOption> avatarPresets(Long selectedUserId, long operator) {
+        requireAdmin(operator);
+        return avatarPresetService.list(selectedUserId);
+    }
+
+    @Transactional
+    public Detail replaceAvatar(long userId, String avatarKey, long operator) {
+        requireAdmin(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId);
+        if ("DELETED".equals(player.userStatus()) || "DELETED".equals(player.accountStatus())) {
+            throw BusinessException.conflict("PLAYER_AVATAR_FORBIDDEN", "已删除玩家不能更换头像");
+        }
+        avatarPresetService.replaceForUser(userId, avatarKey);
+        audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/avatar",
+                Long.toString(userId), "avatarKey=" + avatarKey);
+        return detail(userId, operator);
+    }
     @Transactional(readOnly = true)
     public Page page(String kind, String status, String keyword, int page, int pageSize, long operator) {
         return page(kind, status, keyword, page, pageSize, false, operator);
@@ -124,9 +146,9 @@ public class PlayerDeskAdminService {
     }
 
     @Transactional
-    public long createBot(String userCode, String displayName, String avatarKey, long operator) {
+    public long createBot(String userCode, String displayName, long operator) {
         requireAdmin(operator);
-        TestPlayerAdminService.TestPlayerAdminView view = testPlayerAdminService.create(userCode, displayName, avatarKey, operator);
+        TestPlayerAdminService.TestPlayerAdminView view = testPlayerAdminService.create(userCode, displayName, operator);
         jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE sys_user_id=?", view.player().userId());
         jdbc.update("UPDATE sys_user SET auth_mode='BOT_SERVICE' WHERE id=?", view.player().userId());
         playerLinkAuthenticationService.issue(view.player().userId(), operator);
@@ -157,6 +179,7 @@ public class PlayerDeskAdminService {
         if (permissionService.hasPermission(userId, "USER_MANAGE")) {
             throw BusinessException.forbidden("PLAYER_DELETE_FORBIDDEN", "不能通过玩家工作台删除管理员");
         }
+        avatarPresetService.release(userId);
         if ("DELETED".equals(player.userStatus()) && "DELETED".equals(player.accountStatus())) {
             return detail(userId, true, operator);
         }

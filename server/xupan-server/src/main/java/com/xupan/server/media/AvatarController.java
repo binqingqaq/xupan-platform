@@ -5,6 +5,7 @@ import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.robot.service.RobotAdminService;
 import com.xupan.server.system.service.UserAdminService;
+import com.xupan.server.web.BusinessException;
 import org.springframework.core.io.Resource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -49,6 +50,9 @@ public class AvatarController {
     public AvatarResponse updateMine(Authentication authentication,
                                      @RequestPart("file") MultipartFile file) {
         AuthenticatedUser user = principal(authentication);
+        if (userRepository.isPlayerAccount(user.getUserId())) {
+            throw BusinessException.forbidden("AVATAR_OPERATION_FORBIDDEN", "玩家和托只能在头像池中选择头像");
+        }
         String key = storageService.store(file).avatarKey();
         if (userRepository.updateAvatarKey(user.getUserId(), key) != 1) {
             throw new IllegalStateException("用户头像更新失败");

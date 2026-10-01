@@ -88,7 +88,7 @@ export function validateNormalPlayerDraft(draft: { displayName: string }): strin
   return errors
 }
 
-export function validateBotPlayerDraft(draft: { displayName: string; userCode?: string; avatarKey?: string }): string[] {
+export function validateBotPlayerDraft(draft: { displayName: string; userCode?: string }): string[] {
   const errors: string[] = []
   if (!draft.displayName.trim() || draft.displayName.trim().length > 64) errors.push('昵称不能为空且不能超过 64 个字符')
   return errors

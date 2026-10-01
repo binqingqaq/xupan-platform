@@ -9,8 +9,7 @@ import com.xupan.server.game.repository.DemoAccountRepository;
 import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
-import com.xupan.server.media.AvatarProperties;
-import com.xupan.server.media.AvatarStorageService;
+import com.xupan.server.media.AvatarPresetService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -33,8 +32,7 @@ public class TestPlayerAdminService {
     private final SessionRepository sessionRepository;
     private final OperationAuditRepository auditRepository;
     private final DemoGameService gameService;
-    private final AvatarStorageService avatarStorageService;
-    private final AvatarProperties avatarProperties;
+    private final AvatarPresetService avatarPresetService;
 
     public TestPlayerAdminService(DemoAccountRepository accountRepository,
                                   UserRepository userRepository,
@@ -44,8 +42,7 @@ public class TestPlayerAdminService {
                                   SessionRepository sessionRepository,
                                   OperationAuditRepository auditRepository,
                                   DemoGameService gameService,
-                                  AvatarStorageService avatarStorageService,
-                                  AvatarProperties avatarProperties) {
+                                  AvatarPresetService avatarPresetService) {
         this.accountRepository = accountRepository;
         this.userRepository = userRepository;
         this.walletService = walletService;
@@ -54,8 +51,7 @@ public class TestPlayerAdminService {
         this.sessionRepository = sessionRepository;
         this.auditRepository = auditRepository;
         this.gameService = gameService;
-        this.avatarStorageService = avatarStorageService;
-        this.avatarProperties = avatarProperties;
+        this.avatarPresetService = avatarPresetService;
     }
 
     @Transactional(readOnly = true)
@@ -76,25 +72,22 @@ public class TestPlayerAdminService {
     }
 
     @Transactional
-    public TestPlayerAdminView create(String userCode, String displayName, String avatarKey,
-                                      long operatorUserId) {
+    public TestPlayerAdminView create(String userCode, String displayName, long operatorUserId) {
         requireAdmin(operatorUserId);
         String code = optional(userCode, 64);
         if (code == null) {
             code = generatedUserCode();
         }
         String name = required(displayName, "REQUEST_INVALID", "显示名称不能为空", 128);
-        String avatar = optional(avatarKey, 255);
-        if (avatar == null && avatarProperties.isAutoGenerate()) {
-            avatar = avatarStorageService.storeGenerated(code).avatarKey();
-        }
         if (accountRepository.existsByUserCode(code) || userRepository.findByUsername(code).isPresent()) {
             throw BusinessException.conflict("TEST_PLAYER_EXISTS", "测试玩家编码已存在");
         }
         String generatedPassword = "TestPlayer-" + UUID.randomUUID();
         try {
-            long userId = userRepository.insertTestPlayer(code, name, avatar,
+            long userId = userRepository.insertTestPlayer(code, name, null,
                     passwordPolicy.encode(generatedPassword));
+            String avatar = avatarPresetService.allocateForUser(userId);
+            userRepository.updateAvatarKey(userId, avatar);
             if (userRepository.assignRole(userId, "USER") != 1) {
                 throw BusinessException.badRequest("TEST_PLAYER_ROLE_INVALID", "测试玩家角色不可用");
             }
@@ -175,21 +168,6 @@ public class TestPlayerAdminService {
     public long betTargetUserId(String userCode, long operatorUserId) {
         requireAdmin(operatorUserId);
         return requirePlayer(userCode).userId();
-    }
-
-    @Transactional
-    public TestPlayerAdminView updateAvatar(String userCode, String avatarKey, long operatorUserId) {
-        requireAdmin(operatorUserId);
-        DemoAccountRepository.TestPlayerRecord player = requirePlayer(userCode);
-        if (avatarKey == null || avatarKey.isBlank() || avatarKey.length() > 255) {
-            throw BusinessException.badRequest("AVATAR_FILE_INVALID", "头像标识无效");
-        }
-        if (userRepository.updateAvatarKey(player.userId(), avatarKey) != 1) {
-            throw BusinessException.notFound("TEST_PLAYER_NOT_FOUND", "测试玩家不存在");
-        }
-        audit(operatorUserId, "PUT", "/api/admin/test-players/" + player.userCode() + "/avatar",
-                Long.toString(player.id()), "avatarKey=" + avatarKey);
-        return view(requirePlayer(userCode));
     }
 
     private TestPlayerAdminView view(DemoAccountRepository.TestPlayerRecord player) {

@@ -12,7 +12,6 @@ xupan:
       external:
         enabled: false
   avatar:
-    auto-generate: false
   robot:
     dispatch-interval-ms: 60000
     dispatch-batch-size: 50

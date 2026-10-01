@@ -17,7 +17,6 @@ export function testPlayerStatusClass(status: TestPlayerStatus | string): string
 export function validateTestPlayerDraft(draft: {
   userCode: string
   displayName: string
-  avatarKey: string
 }): string[] {
   const errors: string[] = []
   if (!/^[a-zA-Z0-9._-]{1,64}$/.test(draft.userCode.trim())) {
@@ -25,9 +24,6 @@ export function validateTestPlayerDraft(draft: {
   }
   if (!draft.displayName.trim() || draft.displayName.trim().length > 64) {
     errors.push('昵称不能为空且不能超过 64 个字符')
-  }
-  if (draft.avatarKey.trim().length > 64) {
-    errors.push('头像标识不能超过 64 个字符')
   }
   return errors
 }
