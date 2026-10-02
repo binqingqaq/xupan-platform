@@ -1,6 +1,7 @@
 package com.xupan.server.platformadmin.service;
 
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.web.BusinessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -71,7 +72,7 @@ public class PlatformReportService {
         Long scopedSubAccountId = accessService.scopedGroupId(operator, subAccountId);
         StringBuilder machineSql = new StringBuilder("""
                 SELECT ag.id, ag.agent_code, ag.display_name, g.id group_id, g.username group_username,
-                       ag.score,
+                       ag.score, COALESCE(ag.rebate_mode, 'SINGLE') rebate_mode,
                        COALESCE((SELECT SUM(a.balance) FROM demo_user_account a
                                   WHERE a.agent_id=ag.id AND a.status <> 'DELETED'), 0) player_balance,
                        COALESCE((SELECT SUM(b.stake) FROM game_bet b
@@ -87,21 +88,26 @@ public class PlatformReportService {
         args.add(Timestamp.from(range.to()));
         if (scopedSubAccountId != null) { machineSql.append(" AND g.id=?"); args.add(scopedSubAccountId); }
         machineSql.append(" ORDER BY ag.id");
-        List<MachineProfitRow> base = jdbc.query(machineSql.toString(), (rs, n) -> new MachineProfitRow(
+        List<MachineBase> base = jdbc.query(machineSql.toString(), (rs, n) -> new MachineBase(
                 rs.getLong("id"), rs.getString("agent_code"), rs.getString("display_name"),
                 nullableLong(rs, "group_id"), rs.getString("group_username"), rs.getBigDecimal("score"),
                 rs.getBigDecimal("player_balance"), rs.getBigDecimal("total_flow"),
-                ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO), args.toArray());
+                rs.getString("rebate_mode")), args.toArray());
 
         Map<Long, BalanceMovement> movements = balanceMovements(range, scopedSubAccountId);
         Map<Long, FlowMetrics> flowMetrics = flowMetrics(range, scopedSubAccountId);
         List<MachineProfitRow> rows = base.stream().map(row -> {
             BalanceMovement movement = movements.getOrDefault(row.machineId(), BalanceMovement.ZERO);
             FlowMetrics flow = flowMetrics.getOrDefault(row.machineId(), FlowMetrics.ZERO);
+            // BY220 x_robot.ls：单边显示单边返水，双边显示双边返水，生效口径随机器配置切换。
+            String rebateMode = normalizeRebateMode(row.rebateMode());
+            BigDecimal effectiveRebate = MachineBettingConfig.DOUBLE.equals(rebateMode)
+                    ? flow.doubleFanShui()
+                    : flow.fanShui();
             return new MachineProfitRow(row.machineId(), row.machineCode(), row.machineName(), row.groupId(),
                     row.groupUsername(), row.score(), row.playerBalance(), row.totalFlow(),
                     flow.singleFlow(), flow.doubleFlow(), flow.profit(), flow.fanShui(), flow.doubleFanShui(),
-                    movement.up(), movement.down());
+                    movement.up(), movement.down(), rebateMode, effectiveRebate);
         }).toList();
         BigDecimal totalRemaining = rows.stream().map(row -> row.score().add(row.playerBalance()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -117,13 +123,15 @@ public class PlatformReportService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalRebateDouble = rows.stream().map(MachineProfitRow::rebateDouble)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalEffectiveRebate = rows.stream().map(MachineProfitRow::effectiveRebate)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalUp = rows.stream().map(MachineProfitRow::totalUp)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal totalDown = rows.stream().map(MachineProfitRow::totalDown)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return new ProfitReport(range.day(), range.day3(), range.from(), range.to(), rows,
                 totalRemaining, totalFlow, totalSingle, totalDouble, totalProfit, totalFanShui,
-                totalRebateDouble, totalUp, totalDown, totalUp.subtract(totalDown));
+                totalRebateDouble, totalEffectiveRebate, totalUp, totalDown, totalUp.subtract(totalDown));
     }
 
     private Map<Long, FlowMetrics> flowMetrics(BusinessRange range, Long subAccountId) {
@@ -323,6 +331,13 @@ public class PlatformReportService {
         return value == null ? BigDecimal.ZERO : value;
     }
 
+    /** BY220 x_robot.ls：单边/双边返水口径，未知值回退单边。 */
+    private static String normalizeRebateMode(String value) {
+        return MachineBettingConfig.DOUBLE.equalsIgnoreCase(value == null ? null : value.trim())
+                ? MachineBettingConfig.DOUBLE
+                : MachineBettingConfig.SINGLE;
+    }
+
     private static BigDecimal money(BigDecimal value) {
         return value == null ? ZERO : value.setScale(2, RoundingMode.HALF_UP);
     }
@@ -353,12 +368,18 @@ public class PlatformReportService {
                                    String groupUsername, BigDecimal score, BigDecimal playerBalance,
                                    BigDecimal totalFlow, BigDecimal totalSingleFlow, BigDecimal totalDoubleFlow,
                                    BigDecimal totalProfit, BigDecimal totalFanShui, BigDecimal rebateDouble,
-                                   BigDecimal totalUp, BigDecimal totalDown) {}
+                                   BigDecimal totalUp, BigDecimal totalDown, String rebateMode,
+                                   BigDecimal effectiveRebate) {}
     public record ProfitReport(LocalDate day, LocalDate day3, Instant fromInclusive, Instant toExclusive,
                                List<MachineProfitRow> machines, BigDecimal totalRemaining, BigDecimal totalFlow,
                                BigDecimal totalSingleFlow, BigDecimal totalDoubleFlow, BigDecimal totalProfit,
-                               BigDecimal totalFanShui, BigDecimal totalRebateDouble, BigDecimal totalUp,
+                               BigDecimal totalFanShui, BigDecimal totalRebateDouble,
+                               BigDecimal totalEffectiveRebate, BigDecimal totalUp,
                                BigDecimal totalDown, BigDecimal totalUpDown) {}
+
+    private record MachineBase(long machineId, String machineCode, String machineName, Long groupId,
+                               String groupUsername, BigDecimal score, BigDecimal playerBalance,
+                               BigDecimal totalFlow, String rebateMode) {}
 }
 
 

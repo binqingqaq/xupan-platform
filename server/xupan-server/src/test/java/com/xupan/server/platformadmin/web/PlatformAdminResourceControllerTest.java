@@ -359,7 +359,32 @@ class PlatformAdminResourceControllerTest {
                 .andExpect(jsonPath("$.machines[0].rebateDouble").value(2.10))
                 .andExpect(jsonPath("$.totalDoubleFlow").value(210.00))
                 .andExpect(jsonPath("$.totalFanShui").value(2.19))
-                .andExpect(jsonPath("$.totalRebateDouble").value(2.10));
+                .andExpect(jsonPath("$.totalRebateDouble").value(2.10))
+                // 默认单边口径：生效返水取单边返水
+                .andExpect(jsonPath("$.machines[0].rebateMode").value("SINGLE"))
+                .andExpect(jsonPath("$.machines[0].effectiveRebate").value(2.19))
+                .andExpect(jsonPath("$.totalEffectiveRebate").value(2.19));
+    }
+
+    @Test
+    void reportsEffectiveRebateFollowsMachineRebateMode() throws Exception {
+        ReportFixture fixture = createReportFixture("mode");
+        long accountId = fixture.accountId();
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_MODE_FAN", "FAN", "1", "10.00", "3.850",
+                "28.50", "WIN", "1.0000", "0.0000");
+        // 双边口径：生效返水改为双边返水（BY220 x_robot.ls）
+        jdbcTemplate.update("UPDATE agent SET rebate_mode = 'DOUBLE' WHERE id = ?", fixture.machineId());
+        String token = login(ADMIN, PASSWORD);
+
+        mockMvc.perform(get("/api/admin/reports/profit")
+                        .header("Authorization", bearer(token))
+                        .param("day", "2026-10-02").param("subAccountId", Long.toString(fixture.groupId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.machines[0].rebateMode").value("DOUBLE"))
+                .andExpect(jsonPath("$.machines[0].totalFanShui").value(0.29))
+                .andExpect(jsonPath("$.machines[0].rebateDouble").value(0.10))
+                .andExpect(jsonPath("$.machines[0].effectiveRebate").value(0.10))
+                .andExpect(jsonPath("$.totalEffectiveRebate").value(0.10));
     }
 
     @Test

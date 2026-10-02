@@ -40,9 +40,11 @@ beforeEach(() => {
       groupUsername: '子账号', score: 0, playerBalance: 100, totalFlow: 42,
       totalSingleFlow: 38.5, totalDoubleFlow: 52, totalProfit: 26.5,
       totalFanShui: 0.05, rebateDouble: 0.09, totalUp: 0, totalDown: 0,
+      rebateMode: 'DOUBLE', effectiveRebate: 0.09,
     }],
     totalRemaining: 100, totalFlow: 42, totalSingleFlow: 38.5, totalDoubleFlow: 52,
-    totalProfit: 26.5, totalFanShui: 0.05, totalRebateDouble: 0.09, totalUp: 0, totalDown: 0, totalUpDown: 0,
+    totalProfit: 26.5, totalFanShui: 0.05, totalRebateDouble: 0.09, totalEffectiveRebate: 0.09,
+    totalUp: 0, totalDown: 0, totalUpDown: 0,
   })
 })
 
@@ -72,6 +74,8 @@ describe('platform admin reports', () => {
     expect(container.textContent).toContain('双边流水')
     expect(container.textContent).toContain('反水')
     expect(container.textContent).toContain('双边反水')
+    expect(container.textContent).toContain('生效反水')
+    expect(container.textContent).toContain('双边')
     expect(container.textContent).toContain('52.00')
     expect(container.textContent).toContain('0.05')
     expect(container.textContent).toContain('0.09')

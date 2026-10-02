@@ -64,14 +64,15 @@ public class PlatformReportController {
                                        BigDecimal totalFlow, BigDecimal totalSingleFlow,
                                        BigDecimal totalDoubleFlow, BigDecimal totalProfit,
                                        BigDecimal totalFanShui, BigDecimal totalRebateDouble,
-                                       BigDecimal totalUp, BigDecimal totalDown,
+                                       BigDecimal totalEffectiveRebate, BigDecimal totalUp, BigDecimal totalDown,
                                        BigDecimal totalUpDown) {
         static ProfitReportResponse from(PlatformReportService.ProfitReport report) {
             return new ProfitReportResponse(report.day().toString(), report.day3().toString(),
                     report.fromInclusive(), report.toExclusive(),
                     report.machines().stream().map(MachineProfitResponse::from).toList(),
                     report.totalRemaining(), report.totalFlow(), report.totalSingleFlow(), report.totalDoubleFlow(),
-                    report.totalProfit(), report.totalFanShui(), report.totalRebateDouble(), report.totalUp(),
+                    report.totalProfit(), report.totalFanShui(), report.totalRebateDouble(),
+                    report.totalEffectiveRebate(), report.totalUp(),
                     report.totalDown(), report.totalUpDown());
         }
     }
@@ -80,12 +81,14 @@ public class PlatformReportController {
                                         String groupUsername, BigDecimal score, BigDecimal playerBalance,
                                         BigDecimal totalFlow, BigDecimal totalSingleFlow, BigDecimal totalDoubleFlow, BigDecimal totalProfit,
                                         BigDecimal totalFanShui, BigDecimal rebateDouble,
-                                        BigDecimal totalUp, BigDecimal totalDown) {
+                                        BigDecimal totalUp, BigDecimal totalDown,
+                                        String rebateMode, BigDecimal effectiveRebate) {
         static MachineProfitResponse from(PlatformReportService.MachineProfitRow row) {
             return new MachineProfitResponse(row.machineId(), row.machineCode(), row.machineName(), row.groupId(),
                     row.groupUsername(), row.score(), row.playerBalance(), row.totalFlow(), row.totalSingleFlow(),
                     row.totalDoubleFlow(),
-                    row.totalProfit(), row.totalFanShui(), row.rebateDouble(), row.totalUp(), row.totalDown());
+                    row.totalProfit(), row.totalFanShui(), row.rebateDouble(), row.totalUp(), row.totalDown(),
+                    row.rebateMode(), row.effectiveRebate());
         }
     }
 }

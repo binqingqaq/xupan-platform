@@ -146,6 +146,8 @@ export interface MachineProfit {
   rebateDouble: number
   totalUp: number
   totalDown: number
+  rebateMode: 'SINGLE' | 'DOUBLE' | string
+  effectiveRebate: number
 }
 
 export interface ProfitReport {
@@ -161,6 +163,7 @@ export interface ProfitReport {
   totalProfit: number
   totalFanShui: number
   totalRebateDouble: number
+  totalEffectiveRebate: number
   totalUp: number
   totalDown: number
   totalUpDown: number
