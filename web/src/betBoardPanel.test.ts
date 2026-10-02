@@ -24,7 +24,7 @@ const currentBoard = {
     betText: '4番/100',
     stake: 100,
     settlementStatus: 'PENDING' as const,
-    reportStatus: 'UNREPORTED' as const,
+    reportStatus: 'PENDING' as const,
     createdAt: '2026-09-23T10:00:00Z',
   }],
   history: [],
@@ -65,7 +65,7 @@ describe('bet board panel', () => {
   it('shows the report status on the bet row and resubmits when clicked', async () => {
     vi.mocked(api.resubmitReportOrder).mockResolvedValue({
       betId: 1,
-      reportStatus: 'REPORTED',
+      reportStatus: 'ACCEPTED',
       config: {} as never,
     })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -100,7 +100,7 @@ describe('bet board panel', () => {
   it('disables resubmit for already reported bets', async () => {
     vi.mocked(api.getBetBoard).mockResolvedValue({
       ...currentBoard,
-      items: [{ ...currentBoard.items[0], reportStatus: 'REPORTED' as const }],
+      items: [{ ...currentBoard.items[0], reportStatus: 'ACCEPTED' as const }],
     })
 
     const container = document.createElement('div')

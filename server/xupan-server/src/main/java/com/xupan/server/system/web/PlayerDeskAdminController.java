@@ -497,7 +497,7 @@ import java.util.List;
                               String issueNumber, int ballNumber, String playType, String parametersText,
                               BigDecimal stake, BigDecimal odds, String settlementStatus, String reportStatus,
                               Instant createdAt) {
-        static ReportOrder from(com.xupan.server.report.repository.ReportConfigRepository.OrderRow x) {
+        static ReportOrder from(com.xupan.server.report.repository.ReportUpstreamOrderRepository.OrderRow x) {
             return new ReportOrder(x.betId(), x.betCode(), x.accountId(), x.memberCode(), x.displayName(),
                     x.issueNumber(), x.ballNumber(), x.playType(), x.parametersText(), x.stake(), x.odds(),
                     x.settlementStatus(), x.reportStatus(), x.createdAt());

@@ -1,3 +1,5 @@
+import type { ReportStatus as ImportedReportStatus } from '../types'
+
 export interface SubAccount {
   id: number
   code: string
@@ -229,7 +231,7 @@ export interface UnsettledOrderItem {
   issueNumber: string
   command: string
   createdAt: string
-  reportStatus: 'UNREPORTED' | 'REPORTED' | 'FAILED'
+  reportStatus: ImportedReportStatus
 }
 
 export interface UnsettledOrderPage {

@@ -47,9 +47,12 @@ public class BetBoardRepository {
         args.add(limit);
         return jdbcTemplate.query("""
                 SELECT b.id, a.display_name, a.player_kind, b.play_type, b.parameters_text,
-                       b.stake, b.settlement_status, b.report_status, b.created_at
+                       b.stake, b.settlement_status,
+                       COALESCE(o.status, 'PENDING') AS report_status, b.created_at
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
+                  LEFT JOIN report_upstream_order o
+                         ON o.id = (SELECT MAX(o2.id) FROM report_upstream_order o2 WHERE o2.bet_id = b.id)
                  WHERE b.issue_number = ?
                    AND a.player_kind = ?
                    AND b.settlement_status <> 'CANCELED'

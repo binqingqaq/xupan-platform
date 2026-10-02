@@ -846,7 +846,21 @@ export interface ReportConfigUpdateRequest {
 }
 
 /** 报网上报状态；TIMEOUT 与 FAILED 分开，便于"超时订单"计数与重报。 */
-export type ReportStatus = 'UNREPORTED' | 'REPORTED' | 'FAILED' | 'TIMEOUT'
+/**
+ * 上游上报订单状态（Flyway V58 ck_report_upstream_order_status）。
+ *
+ * 对应需求文档《代理报网盘口与结算业务规则说明》§16.4：
+ * 待处理/已接受/已拒绝/超时/已撤单/已退款/已结算。
+ * 注单的上报状态由**最新一行上报订单**派生；没有任何上报订单行时派生为 PENDING（还没报）。
+ */
+export type ReportStatus =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'TIMEOUT'
+  | 'CANCELLED'
+  | 'REFUNDED'
+  | 'SETTLED'
 
 export interface ReportOrderItem {
   betId: number

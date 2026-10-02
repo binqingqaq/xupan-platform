@@ -51,13 +51,15 @@ public class PlatformUnsettledOrderService {
                 """, Long.class);
         List<Row> items = jdbc.query("""
                 SELECT b.id, b.issue_number, b.play_type, b.parameters_text, b.stake,
-                       b.created_at, b.report_status,
+                       b.created_at, COALESCE(o.status, 'PENDING') AS report_status,
                        COALESCE(g.username, g.display_name, g.group_code, '') AS sub_account,
                        COALESCE(m.display_name, m.agent_code, '') AS machine_name,
                        a.member_code,
                        COALESCE(u.display_name, a.display_name) AS player_name
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
+                  LEFT JOIN report_upstream_order o
+                         ON o.id = (SELECT MAX(o2.id) FROM report_upstream_order o2 WHERE o2.bet_id = b.id)
                   LEFT JOIN sys_user u ON u.id = a.sys_user_id
                   LEFT JOIN agent m ON m.id = a.agent_id
                   LEFT JOIN agent_group g ON g.id = m.group_id

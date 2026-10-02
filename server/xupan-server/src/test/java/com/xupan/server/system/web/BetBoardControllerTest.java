@@ -142,16 +142,16 @@ class BetBoardControllerTest {
     void returnsReportStatusOnEveryBetSoConsoleCanResubmit() throws Exception {
         long accountId = jdbc.queryForObject(
                 "SELECT id FROM demo_user_account WHERE player_kind = 'NORMAL' LIMIT 1", Long.class);
-        insertBetWithReportStatus(accountId, "BB-REPORT-FAILED", "FAN", "1", "10.00", "PENDING", "FAILED");
-        insertBetWithReportStatus(accountId, "BB-REPORT-REPORTED", "FAN", "2", "10.00", "PENDING", "REPORTED");
+        insertBetWithReportStatus(accountId, "BB-REPORT-REJECTED", "FAN", "1", "10.00", "PENDING", "REJECTED");
+        insertBetWithReportStatus(accountId, "BB-REPORT-ACCEPTED", "FAN", "2", "10.00", "PENDING", "ACCEPTED");
 
         String token = login(ADMIN, PASSWORD);
         mockMvc.perform(get("/api/admin/player-desk/bet-board")
                         .param("kind", "NORMAL")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.items[?(@.reportStatus == 'FAILED')]", hasSize(1)))
-                .andExpect(jsonPath("$.items[?(@.reportStatus == 'REPORTED')]", hasSize(1)));
+                .andExpect(jsonPath("$.items[?(@.reportStatus == 'REJECTED')]", hasSize(1)))
+                .andExpect(jsonPath("$.items[?(@.reportStatus == 'ACCEPTED')]", hasSize(1)));
     }
 
     @Test
@@ -174,15 +174,29 @@ class BetBoardControllerTest {
                 new BigDecimal(stake), status);
     }
 
+    /**
+     * 造一笔带指定上报状态的注单。
+     *
+     * <p>V58 起上报状态不是 {@code game_bet} 上的列，而是"该注单最新一行上报订单"的派生值，
+     * 因此这里追加一行上报订单。</p>
+     */
     private void insertBetWithReportStatus(long accountId, String code, String playType, String parameters,
                                            String stake, String status, String reportStatus) {
         jdbc.update("""
                 INSERT INTO game_bet
                     (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                     play_type, parameters_text, stake, odds_snapshot, settlement_status, report_status)
-                VALUES (?, ?, ?, ?, 1, ?, ?, ?, 1.950, ?, ?)
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, 1.950, ?)
                 """, accountId, code, code, CURRENT_ISSUE, playType, parameters,
-                new BigDecimal(stake), status, reportStatus);
+                new BigDecimal(stake), status);
+        jdbc.update("""
+                INSERT INTO report_upstream_order
+                    (bet_id, agent_id, attempt_no, status, idempotency_key, sent_at, resolved_at)
+                SELECT b.id, a.agent_id, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.bet_code = ?
+                """, reportStatus, "SEED-" + code, code);
     }
 
     private String login(String username, String password) throws Exception {

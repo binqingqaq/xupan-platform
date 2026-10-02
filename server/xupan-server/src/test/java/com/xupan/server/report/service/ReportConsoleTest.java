@@ -285,23 +285,23 @@ class ReportConsoleTest {
                 .andExpect(status().isOk());
 
         long accountA = createPlayer(token, "报网验证玩家A");
-        long acceptedBet = insertBet(accountA, "reportconsole-bet-accepted", "UNREPORTED");
+        long acceptedBet = insertBet(accountA, "reportconsole-bet-accepted", "PENDING");
 
         // 盘口 A → 适配器接受 → REPORTED
         mockMvc.perform(post("/api/admin/player-desk/report/orders/" + acceptedBet + "/resubmit")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.betId").value((int) acceptedBet))
-                .andExpect(jsonPath("$.reportStatus").value("REPORTED"))
+                .andExpect(jsonPath("$.reportStatus").value("ACCEPTED"))
                 .andExpect(jsonPath("$.config.machineId").value((int) machineAId));
-        assertThat(reportStatusOf(acceptedBet)).isEqualTo("REPORTED");
+        assertThat(reportStatusOf(acceptedBet)).isEqualTo("ACCEPTED");
 
         // 盘口 D → 适配器超时 → TIMEOUT（超时不退款、不删单，只标记）
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("{\"reportRouteCode\":\"D\"}"))
                 .andExpect(status().isOk());
-        long timeoutBet = insertBet(accountA, "reportconsole-bet-timeout", "UNREPORTED");
+        long timeoutBet = insertBet(accountA, "reportconsole-bet-timeout", "PENDING");
         mockMvc.perform(post("/api/admin/player-desk/report/orders/" + timeoutBet + "/resubmit")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
@@ -319,12 +319,12 @@ class ReportConsoleTest {
         // 别的机器的注单 → 404（按"不存在"处理）
         String machineBToken = login(MACHINE_B_USER, PASSWORD);
         long accountB = createPlayer(machineBToken, "报网验证玩家B");
-        long foreignBet = insertBet(accountB, "reportconsole-bet-foreign", "UNREPORTED");
+        long foreignBet = insertBet(accountB, "reportconsole-bet-foreign", "PENDING");
         mockMvc.perform(post("/api/admin/player-desk/report/orders/" + foreignBet + "/resubmit")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("REPORT_BET_NOT_FOUND"));
-        assertThat(reportStatusOf(foreignBet)).isEqualTo("UNREPORTED");
+        assertThat(reportStatusOf(foreignBet)).isEqualTo("PENDING");
 
         // 重报写审计（不含任何凭据）
         Long audits = jdbc.queryForObject("""
@@ -339,10 +339,10 @@ class ReportConsoleTest {
     void countsAndFiltersOrdersByReportStatus() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
         long accountA = createPlayer(token, "报网统计玩家");
-        insertBet(accountA, "reportconsole-bet-unreported", "UNREPORTED");
-        insertBet(accountA, "reportconsole-bet-failed", "FAILED");
+        insertBet(accountA, "reportconsole-bet-unreported", "PENDING");
+        insertBet(accountA, "reportconsole-bet-failed", "REJECTED");
         insertBet(accountA, "reportconsole-bet-timeout", "TIMEOUT");
-        insertBet(accountA, "reportconsole-bet-reported", "REPORTED");
+        insertBet(accountA, "reportconsole-bet-reported", "ACCEPTED");
         // 别的机器的注单不能计入本机器的统计
         String machineBToken = login(MACHINE_B_USER, PASSWORD);
         long accountB = createPlayer(machineBToken, "报网统计玩家B");
@@ -370,7 +370,7 @@ class ReportConsoleTest {
                 .andExpect(jsonPath("$.items[0].issueNumber").value(ISSUE_NUMBER))
                 .andExpect(jsonPath("$.items[0].settlementStatus").value("PENDING"));
 
-        mockMvc.perform(get("/api/admin/player-desk/report/orders").param("status", "REPORTED")
+        mockMvc.perform(get("/api/admin/player-desk/report/orders").param("status", "ACCEPTED")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1));
@@ -390,7 +390,7 @@ class ReportConsoleTest {
     void submitForBetOnlyReportsWhenAutoAndOnline() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
         long accountA = createPlayer(token, "自动上报玩家");
-        long betId = insertBet(accountA, "reportconsole-bet-auto", "UNREPORTED");
+        long betId = insertBet(accountA, "reportconsole-bet-auto", "PENDING");
 
         // 自动上报开、但机器离线 → 不提交，状态不变
         mockMvc.perform(put("/api/admin/player-desk/report")
@@ -398,13 +398,13 @@ class ReportConsoleTest {
                         .content(fullConfig("A", true, false, REPORT_SECRET)))
                 .andExpect(status().isOk());
         assertThat(reportService.submitForBet(betId)).isEmpty();
-        assertThat(reportStatusOf(betId)).isEqualTo("UNREPORTED");
+        assertThat(reportStatusOf(betId)).isEqualTo("PENDING");
 
         // 本地模拟登录后 → 自动上报成功，并且重复调用是幂等的
         mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(token)))
                 .andExpect(status().isOk());
-        assertThat(reportService.submitForBet(betId)).contains("REPORTED");
-        assertThat(reportStatusOf(betId)).isEqualTo("REPORTED");
+        assertThat(reportService.submitForBet(betId)).contains("ACCEPTED");
+        assertThat(reportStatusOf(betId)).isEqualTo("ACCEPTED");
         assertThat(reportService.submitForBet(betId)).isEmpty();
 
         // 不存在的注单直接跳过，不抛异常
@@ -429,19 +429,37 @@ class ReportConsoleTest {
         return jdbc.queryForObject("SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, userId);
     }
 
-    /** 直接插入注单，覆盖 V38/V48/V53 之后的必填列；上报状态由用例指定。 */
+    /**
+     * 直接插入注单，覆盖 V38/V48/V53 之后的必填列。
+     *
+     * <p>V58 起上报状态不在 {@code game_bet} 上，而是"该注单最新一行上报订单"的派生值；
+     * 指定非 {@code PENDING} 状态时改为追加一行上报订单。</p>
+     */
     private long insertBet(long accountId, String betCode, String reportStatus) {
         jdbc.update("""
                 INSERT INTO game_bet
                     (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                     play_type, parameters_text, stake, odds_snapshot, report_status)
-                VALUES (?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850, ?)
-                """, accountId, betCode, betCode, ISSUE_NUMBER, reportStatus);
-        return jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
+                     play_type, parameters_text, stake, odds_snapshot)
+                VALUES (?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850)
+                """, accountId, betCode, betCode, ISSUE_NUMBER);
+        Long betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
+        if (betId != null && reportStatus != null && !"PENDING".equals(reportStatus)) {
+            jdbc.update("""
+                    INSERT INTO report_upstream_order
+                        (bet_id, agent_id, attempt_no, status, idempotency_key, sent_at, resolved_at)
+                    SELECT ?, a.agent_id, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                      FROM demo_user_account a WHERE a.id = ?
+                    """, betId, reportStatus, "SEED-" + betCode, accountId);
+        }
+        return betId;
     }
 
     private String reportStatusOf(long betId) {
-        return jdbc.queryForObject("SELECT report_status FROM game_bet WHERE id = ?", String.class, betId);
+        return jdbc.queryForObject("""
+                SELECT COALESCE((SELECT o.status FROM report_upstream_order o
+                                  WHERE o.bet_id = b.id ORDER BY o.id DESC LIMIT 1), 'PENDING')
+                  FROM game_bet b WHERE b.id = ?
+                """, String.class, betId);
     }
 
     private boolean online(long machineId) {

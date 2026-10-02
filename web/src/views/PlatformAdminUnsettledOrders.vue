@@ -57,8 +57,9 @@ function time(value: string) {
 }
 
 function reportStatus(value: UnsettledOrderItem['reportStatus']) {
-  if (value === 'REPORTED') return '已飞单'
-  if (value === 'FAILED') return '失败'
+  if (value === 'ACCEPTED' || value === 'SETTLED') return '已飞单'
+  if (value === 'REJECTED') return '失败'
+  if (value === 'TIMEOUT') return '超时'
   return '未报'
 }
 

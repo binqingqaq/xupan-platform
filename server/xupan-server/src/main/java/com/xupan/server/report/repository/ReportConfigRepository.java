@@ -7,24 +7,22 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 /**
- * 机器级报网配置（BY220 {@code x_robot.flyers_*}）与订单上报状态的持久化。
+ * 机器级报网配置（BY220 {@code x_robot.flyers_*}）。
  *
  * <p>边界（强制）：</p>
  * <ul>
  *   <li>本仓储**不读取** {@code agent.report_password_ciphertext} 的密文值，只暴露
  *       {@code hasPassword} 布尔，避免明文/密文从任何一层泄露到响应、日志或审计。</li>
- *   <li>订单相关读写一律带机器范围条件（{@code demo_user_account.agent_id}），
- *       保证机器账号只能看到、只能改自己机器名下的注单。</li>
  *   <li>不做任何外部访问；{@code report_url} 只保存不请求。</li>
  * </ul>
  *
- * <p>字段依据 Flyway V56（{@code agent.report_*}、{@code game_bet.report_status}），本类不修改迁移。</p>
+ * <p>订单侧（上报订单实体、派生上报状态、待上报扫描）在
+ * {@link ReportUpstreamOrderRepository}：V58 起本地注单与上游上报订单是两个实体，
+ * 上报状态不再是 {@code game_bet} 上的一个列。</p>
  */
 @Repository
 public class ReportConfigRepository {
@@ -105,155 +103,9 @@ public class ReportConfigRepository {
                 """, agentId);
     }
 
-    /** 按 {@code report_status} 统计本机器注单：超时 / 未报 / 失败。 */
-    public StatusCounts counts(long agentId) {
-        return jdbc.queryForObject("""
-                SELECT COALESCE(SUM(CASE WHEN b.report_status = 'TIMEOUT' THEN 1 ELSE 0 END), 0) AS timeout_count,
-                       COALESCE(SUM(CASE WHEN b.report_status = 'UNREPORTED' THEN 1 ELSE 0 END), 0) AS unreported_count,
-                       COALESCE(SUM(CASE WHEN b.report_status = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed_count
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE a.agent_id = ?
-                """, (rs, rowNum) -> new StatusCounts(rs.getLong("timeout_count"),
-                rs.getLong("unreported_count"), rs.getLong("failed_count")), agentId);
-    }
-
-    /** 列出本机器范围内的注单；{@code status} 为 {@code null} 时不过滤上报状态。 */
-    public List<OrderRow> findOrders(long agentId, String status, int page, int pageSize) {
-        StringBuilder sql = new StringBuilder("""
-                SELECT b.id, b.bet_code, b.user_id, b.issue_number, b.ball_number, b.play_type,
-                       b.parameters_text, b.stake, b.odds_snapshot, b.settlement_status, b.report_status,
-                       b.created_at, a.member_code, a.display_name
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE a.agent_id = ?
-                """);
-        List<Object> args = new ArrayList<>();
-        args.add(agentId);
-        if (status != null && !status.isBlank()) {
-            sql.append(" AND b.report_status = ?");
-            args.add(status);
-        }
-        sql.append(" ORDER BY b.created_at DESC, b.id DESC LIMIT ? OFFSET ?");
-        args.add(pageSize);
-        args.add((long) (page - 1) * pageSize);
-        return jdbc.query(sql.toString(), (rs, rowNum) -> new OrderRow(
-                rs.getLong("id"), rs.getString("bet_code"), rs.getLong("user_id"), rs.getString("member_code"),
-                rs.getString("display_name"), rs.getString("issue_number"), rs.getInt("ball_number"),
-                rs.getString("play_type"), rs.getString("parameters_text"), rs.getBigDecimal("stake"),
-                rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"), rs.getString("report_status"),
-                instant(rs.getTimestamp("created_at"))), args.toArray());
-    }
-
-    /** 统计本机器范围内指定上报状态的注单数。 */
-    public long countOrders(long agentId, String status) {
-        StringBuilder sql = new StringBuilder("""
-                SELECT COUNT(*)
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE a.agent_id = ?
-                """);
-        List<Object> args = new ArrayList<>();
-        args.add(agentId);
-        if (status != null && !status.isBlank()) {
-            sql.append(" AND b.report_status = ?");
-            args.add(status);
-        }
-        Long total = jdbc.queryForObject(sql.toString(), Long.class, args.toArray());
-        return total == null ? 0 : total;
-    }
-
-    /** 按注单 id 读取快照与其所属机器（供重报与下注链路使用）。 */
-    public Optional<BetRow> findBet(long betId) {
-        List<BetRow> rows = jdbc.query("""
-                SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
-                       b.stake, b.odds_snapshot, b.report_status, b.settlement_status
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE b.id = ?
-                """, (rs, rowNum) -> betRow(rs), betId);
-        return rows.stream().findFirst();
-    }
-
-    /** 按注单 id + 机器范围读取快照；范围外的注单按"不存在"处理。 */
-    public Optional<BetRow> findBetForAgent(long betId, long agentId) {
-        List<BetRow> rows = jdbc.query("""
-                SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
-                       b.stake, b.odds_snapshot, b.report_status, b.settlement_status
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE b.id = ? AND a.agent_id = ?
-                """, (rs, rowNum) -> betRow(rs), betId, agentId);
-        return rows.stream().findFirst();
-    }
-
-    /**
-     * 捞出待上报的注单（BY220 {@code Websocket.php:658-673} 的飞单轮询：捞 {@code flyers_status=3} 的订单重报）。
-     *
-     * <p>只取"已开启自动上报且当前在线且报网类型已配置"的机器名下的订单；未结算完成的订单同样会被取到，
-     * 因为它们仍需要上报（BY220 的上报与结算是两条线）。</p>
-     *
-     * @param statuses 允许上报的状态集合（首次上报为 {@code UNREPORTED}，重报含 {@code FAILED/TIMEOUT}）
-     * @param limit    单次上限，避免一次任务处理过多订单
-     */
-    public List<BetRow> findSubmittableBets(Collection<String> statuses, int limit) {
-        if (statuses == null || statuses.isEmpty() || limit <= 0) {
-            return List.of();
-        }
-        String placeholders = String.join(",", Collections.nCopies(statuses.size(), "?"));
-        List<Object> args = new ArrayList<>(statuses);
-        args.add(limit);
-        return jdbc.query("""
-                SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
-                       b.stake, b.odds_snapshot, b.report_status, b.settlement_status
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                  JOIN agent ag ON ag.id = a.agent_id
-                 WHERE b.report_status IN (""" + placeholders + """
-                       )
-                   AND ag.deleted_at IS NULL
-                   AND ag.report_auto = TRUE
-                   AND ag.report_online = TRUE
-                   AND ag.report_type IS NOT NULL
-                   AND ag.report_type <> 'NONE'
-                 ORDER BY b.id
-                 LIMIT ?
-                """, (rs, rowNum) -> betRow(rs), args.toArray());
-    }
-
     /** 读取机器的报网配置（供上报任务判断是否满足上报条件）。 */
     public Optional<ReportConfigRow> findConfigByAgent(long agentId) {
         return findConfig(agentId);
-    }
-
-    /** 注单是否仍未结算（失败退单时用于审计留痕）。 */
-    public String findSettlementStatus(long betId) {
-        List<String> rows = jdbc.queryForList("SELECT settlement_status FROM game_bet WHERE id = ?",
-                String.class, betId);
-        return rows.stream().findFirst().orElse(null);
-    }
-
-    /**
-     * 回写上报状态。
-     *
-     * <p>两个条件同时生效，保证并发与越权都改不动别人的注单：
-     * {@code id} 命中目标注单、{@code user_id} 属于目标机器、且当前状态在 {@code allowedFrom} 内。</p>
-     *
-     * @return 受影响行数；0 表示注单不存在、不属于该机器或状态已变化
-     */
-    public int updateReportStatus(long betId, long agentId, String newStatus, List<String> allowedFrom) {
-        if (allowedFrom == null || allowedFrom.isEmpty()) {
-            return 0;
-        }
-        String placeholders = String.join(",", java.util.Collections.nCopies(allowedFrom.size(), "?"));
-        List<Object> args = new ArrayList<>();
-        args.add(newStatus);
-        args.add(betId);
-        args.addAll(allowedFrom);
-        args.add(agentId);
-        return jdbc.update("UPDATE game_bet SET report_status = ? WHERE id = ? AND report_status IN ("
-                + placeholders + ") AND user_id IN (SELECT id FROM demo_user_account WHERE agent_id = ?)",
-                args.toArray());
     }
 
     /**
@@ -263,7 +115,7 @@ public class ReportConfigRepository {
      * 本项目不接真实上游，因此这里用"已成功上报的投注额累计"作为本地模拟值：它是本项目可算的真实事实，
      * 不会被误当成上游数据。界面已标注"本地模拟"。</p>
      */
-    public void addReportedStake(long agentId, java.math.BigDecimal stake) {
+    public void addReportedStake(long agentId, BigDecimal stake) {
         if (stake == null || stake.signum() <= 0) {
             return;
         }
@@ -271,13 +123,6 @@ public class ReportConfigRepository {
                 UPDATE agent SET report_stake = report_stake + ?, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ? AND deleted_at IS NULL
                 """, stake, agentId);
-    }
-
-    private static BetRow betRow(java.sql.ResultSet rs) throws java.sql.SQLException {
-        return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("sys_user_id"), rs.getLong("agent_id"),
-                rs.getString("issue_number"), rs.getString("play_type"), rs.getString("parameters_text"),
-                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("report_status"),
-                rs.getString("settlement_status"));
     }
 
     private static BigDecimal amount(BigDecimal value) {
@@ -300,22 +145,5 @@ public class ReportConfigRepository {
     public record ReportConfigUpdate(String reportType, Boolean reportAuto, Boolean reportWithdraw,
                                      String reportUsername, String passwordCiphertext, String reportUrl,
                                      String reportNetworkCode, String reportRouteCode) {
-    }
-
-    /** 注单上报状态计数。 */
-    public record StatusCounts(long timeoutCount, long unreportedCount, long failedCount) {
-    }
-
-    /** 注单快照（含所属机器），供重报与下注链路使用。 */
-    public record BetRow(long betId, long accountId, long sysUserId, long agentId, String issueNumber, String playType,
-                         String parametersText, BigDecimal stake, BigDecimal odds, String reportStatus,
-                         String settlementStatus) {
-    }
-
-    /** 报网订单列表行。 */
-    public record OrderRow(long betId, String betCode, long accountId, String memberCode, String displayName,
-                           String issueNumber, int ballNumber, String playType, String parametersText,
-                           BigDecimal stake, BigDecimal odds, String settlementStatus, String reportStatus,
-                           Instant createdAt) {
     }
 }

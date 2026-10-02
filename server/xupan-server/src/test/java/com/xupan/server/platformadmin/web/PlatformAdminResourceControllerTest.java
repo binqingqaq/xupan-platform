@@ -585,7 +585,7 @@ class PlatformAdminResourceControllerTest {
                 .andExpect(jsonPath("$.items[0].memberCode").value("V-UNSETTLED-001"))
                 .andExpect(jsonPath("$.items[0].playerName").value("未结订单玩家"))
                 .andExpect(jsonPath("$.items[0].command").value("1番100"))
-                .andExpect(jsonPath("$.items[0].reportStatus").value("UNREPORTED"));
+                .andExpect(jsonPath("$.items[0].reportStatus").value("PENDING"));
 
         mockMvc.perform(delete("/api/admin/unsettled-orders/" + betId).header("Authorization", bearer(token)))
                 .andExpect(status().isOk())

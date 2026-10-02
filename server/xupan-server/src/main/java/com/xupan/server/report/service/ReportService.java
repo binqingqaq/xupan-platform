@@ -9,6 +9,7 @@ import com.xupan.server.playerauth.service.PlayerLinkTokenCipher;
 import com.xupan.server.report.domain.ReportCommand;
 import com.xupan.server.report.domain.ReportOutcome;
 import com.xupan.server.report.repository.ReportConfigRepository;
+import com.xupan.server.report.repository.ReportUpstreamOrderRepository;
 import com.xupan.server.system.service.PlayerDeskScopeService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.stereotype.Service;
@@ -53,12 +54,22 @@ public class ReportService {
             Set.of("NONE", "TT", "K28", "LS8899", "WNS", "LX", "HY", "CENTER");
     /** 允许的盘口线路，与 V56 的 {@code ck_agent_report_route} 保持一致。 */
     public static final Set<String> ROUTE_CODES = Set.of("A", "B", "C", "D");
-    /** 订单上报状态，与 V56 的 {@code ck_game_bet_report_status} 保持一致。 */
-    public static final Set<String> REPORT_STATUSES = Set.of("UNREPORTED", "REPORTED", "FAILED", "TIMEOUT");
-    /** 允许重报的当前状态（对应 BY220 {@code reFeidan}）。 */
-    public static final Set<String> RESUBMITTABLE_STATUSES = Set.of("UNREPORTED", "FAILED", "TIMEOUT");
+    /**
+     * 上游上报订单状态机，与 V58 的 {@code ck_report_upstream_order_status} 保持一致。
+     *
+     * <p>对应需求文档《代理报网盘口与结算业务规则说明》§16.4：
+     * 待处理 / 已接受 / 已拒绝 / 超时 / 已撤单 / 已退款 / 已结算。
+     * 本阶段（本地模拟上报）写入 {@code PENDING/ACCEPTED/REJECTED/TIMEOUT}；
+     * 后三个由中心上游第二层结算写入。</p>
+     */
+    public static final Set<String> REPORT_STATUSES = Set.of(
+            "PENDING", "ACCEPTED", "REJECTED", "TIMEOUT", "CANCELLED", "REFUNDED", "SETTLED");
+    /** 没有上报订单行时派生出来的状态：还没报过。 */
+    public static final String STATUS_PENDING = "PENDING";
+    /** 允许重报的当前状态（对应 BY220 {@code reFeidan}：只重报未报/失败/超时）。 */
+    public static final Set<String> RESUBMITTABLE_STATUSES = Set.of("PENDING", "REJECTED", "TIMEOUT");
     /** 尚未上报、可供自动上报链路处理的当前状态。 */
-    public static final List<String> SUBMIT_FROM_STATUSES = List.of("UNREPORTED");
+    public static final List<String> SUBMIT_FROM_STATUSES = List.of(STATUS_PENDING);
     /** BY220 报网类型里的"无"。 */
     private static final String TYPE_NONE = "NONE";
     private static final int MAX_NETWORK_CODE_LENGTH = 64;
@@ -69,6 +80,7 @@ public class ReportService {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final ReportConfigRepository repository;
+    private final ReportUpstreamOrderRepository orderRepository;
     private final PlayerDeskScopeService scopeService;
     private final PermissionService permissionService;
     private final OperationAuditRepository auditRepository;
@@ -78,12 +90,14 @@ public class ReportService {
     private final VirtualWalletService walletService;
     private final ChatMessageService chatMessageService;
 
-    public ReportService(ReportConfigRepository repository, PlayerDeskScopeService scopeService,
+    public ReportService(ReportConfigRepository repository, ReportUpstreamOrderRepository orderRepository,
+                         PlayerDeskScopeService scopeService,
                          PermissionService permissionService, OperationAuditRepository auditRepository,
                          ReportAdapter reportAdapter, PlayerLinkTokenCipher passwordCipher,
                          GameDataRepository gameDataRepository, VirtualWalletService walletService,
                          ChatMessageService chatMessageService) {
         this.repository = repository;
+        this.orderRepository = orderRepository;
         this.scopeService = scopeService;
         this.permissionService = permissionService;
         this.auditRepository = auditRepository;
@@ -165,7 +179,7 @@ public class ReportService {
         return view(targetAgentId);
     }
 
-    /** 按 {@code report_status}（可空=全部）列出本机器范围内的注单。 */
+    /** 按派生上报状态（可空=全部）列出本机器范围内的注单。 */
     @Transactional(readOnly = true)
     public ReportOrderPage orders(long operator, Long machineId, String status, int page, int pageSize) {
         long targetAgentId = targetAgentId(operator, machineId);
@@ -173,50 +187,43 @@ public class ReportService {
             throw BusinessException.badRequest("REPORT_QUERY_INVALID", "分页参数必须为 1 到 100");
         }
         String normalizedStatus = normalizeStatus(status);
-        List<ReportConfigRepository.OrderRow> items =
-                repository.findOrders(targetAgentId, normalizedStatus, page, pageSize);
+        List<ReportUpstreamOrderRepository.OrderRow> items =
+                orderRepository.findOrders(targetAgentId, normalizedStatus, page, pageSize);
         return new ReportOrderPage(items, page, pageSize,
-                repository.countOrders(targetAgentId, normalizedStatus));
+                orderRepository.countOrders(targetAgentId, normalizedStatus));
     }
 
     /**
      * 重报单笔注单（对应 BY220 {@code reFeidan}）。
      *
-     * <p>只允许当前状态为 {@code UNREPORTED/FAILED/TIMEOUT} 且属于该机器的注单；
+     * <p>只允许派生状态为 {@code PENDING/REJECTED/TIMEOUT} 且属于该机器的注单；
      * 范围外的注单按"不存在"返回 404，状态不允许返回 409。
      * 适配器结果与状态回写在**同一事务**内完成，并写审计（不含任何凭据）。</p>
      */
     @Transactional
     public ResubmitResult resubmit(long operator, Long machineId, long betId) {
         long targetAgentId = targetAgentIdForWrite(operator, machineId);
-        ReportConfigRepository.BetRow bet = repository.findBetForAgent(betId, targetAgentId)
+        ReportUpstreamOrderRepository.BetRow bet = orderRepository.findBetForAgent(betId, targetAgentId)
                 .orElseThrow(() -> BusinessException.notFound("REPORT_BET_NOT_FOUND", "注单不存在或不在当前机器范围内"));
         if (!RESUBMITTABLE_STATUSES.contains(bet.reportStatus())) {
             throw BusinessException.conflict("REPORT_BET_STATUS_INVALID", "该注单当前上报状态不允许重报");
         }
         ReportConfigRepository.ReportConfigRow config = requireConfig(targetAgentId);
-        String newStatus = submit(bet, config);
-        int updated = repository.updateReportStatus(betId, targetAgentId, newStatus,
-                List.copyOf(RESUBMITTABLE_STATUSES));
-        if (updated != 1) {
-            throw BusinessException.conflict("REPORT_BET_STATUS_INVALID", "该注单当前上报状态不允许重报");
-        }
+        String newStatus = submitAttempt(bet, config);
         audit(operator, "POST", "/api/admin/player-desk/report/orders/" + betId + "/resubmit", targetAgentId,
                 "betId=" + betId + ",reportStatus=" + newStatus);
         return new ResubmitResult(betId, newStatus, view(targetAgentId));
     }
 
     /**
-     * 供下注链路调用的自动上报入口。
+     * 供上报链路调用的自动上报入口（BY220 飞单）。
      *
-     * <p>仅当注单当前状态为 {@code UNREPORTED}、机器的 {@code report_auto=true} 且
-     * {@code report_online=true}、并且 {@code report_type} 已配置为非 {@code NONE} 时才提交；
-     * 其余情况直接跳过（返回 {@link Optional#empty()}），不影响下注本身。</p>
+     * <p>仅当注单派生状态为 {@code PENDING}（从未上报，或上次尝试仍挂在待处理）、机器的
+     * {@code report_auto=true} 且 {@code report_online=true}、并且 {@code report_type} 已配置为非
+     * {@code NONE} 时才提交；其余情况直接跳过（返回 {@link Optional#empty()}），不影响下注本身。</p>
      *
-     * <p><b>边界（本阶段明确不做）</b>：失败退单只做到"标记状态"。
-     * 本方法**不修改玩家钱包、不删除注单、不写退款流水**；
-     * 失败退单的物理删除 + 幂等退款 + 聊天室取消反馈由后续专门改动接手
-     * （对应计划第 11.2 节的失败退单路径）。{@code TIMEOUT} 一律只标记，不退款。</p>
+     * <p>每次提交都会在 {@code report_upstream_order} **追加一行**上报尝试（不覆盖历史），
+     * 随后在同一事务内落结果。</p>
      *
      * @return 本次提交后的上报状态；未提交时为 {@link Optional#empty()}
      */
@@ -225,7 +232,7 @@ public class ReportService {
         if (betId <= 0) {
             return Optional.empty();
         }
-        ReportConfigRepository.BetRow bet = repository.findBet(betId).orElse(null);
+        ReportUpstreamOrderRepository.BetRow bet = orderRepository.findBet(betId).orElse(null);
         if (bet == null || !SUBMIT_FROM_STATUSES.contains(bet.reportStatus())) {
             return Optional.empty();
         }
@@ -236,17 +243,67 @@ public class ReportService {
         if (config == null || !config.reportAuto() || !config.reportOnline() || !configured(config.reportType())) {
             return Optional.empty();
         }
-        String newStatus = submit(bet, config);
-        if ("FAILED".equals(newStatus) && withdrawOnFailure(bet, config)) {
-            // 已按 BY220 失败退单：注单被物理删除并退还本金，不再回写状态
-            return Optional.of("WITHDRAWN");
+        return Optional.of(submitAttempt(bet, config));
+    }
+
+    /**
+     * 追加一次上报尝试并立即落结果（同一事务）。
+     *
+     * <p>顺序：写 {@code PENDING} 尝试行（留痕、幂等键 {@code REPORT-<betId>-<attemptNo>}）
+     * → 调适配器 → 把结果回写到该尝试行。失败退单开启且结果为 {@code REJECTED} 时执行退单；
+     * {@code ACCEPTED} 时累计本机押注本地模拟值。{@code TIMEOUT} 只落状态，不退款。</p>
+     *
+     * @return 本次尝试的结果状态；退单成功时为 {@code WITHDRAWN}
+     */
+    private String submitAttempt(ReportUpstreamOrderRepository.BetRow bet,
+                                 ReportConfigRepository.ReportConfigRow config) {
+        Instant sentAt = Instant.now();
+        int attemptNo = orderRepository.nextAttemptNo(bet.betId());
+        long orderId = orderRepository.insertAttempt(bet.betId(), bet.agentId(), attemptNo, STATUS_PENDING,
+                config.reportType(), config.reportRouteCode(), config.reportNetworkCode(),
+                "REPORT-" + bet.betId() + "-" + attemptNo, requestSummary(bet), null, null, sentAt, null);
+
+        ReportCommand command = new ReportCommand(bet.betId(), bet.accountId(), bet.agentId(), bet.issueNumber(),
+                bet.playType(), bet.parametersText(), bet.stake(), bet.odds(), config.reportType(),
+                config.reportNetworkCode(), config.reportRouteCode(), config.reportOnline());
+        ReportOutcome outcome = reportAdapter.submit(command);
+        String newStatus = mapOutcome(outcome);
+        orderRepository.resolveAttempt(orderId, newStatus, outcome.name(), responseMessage(outcome),
+                upstreamOrderNo(bet, attemptNo), Instant.now());
+
+        if ("REJECTED".equals(newStatus) && withdrawOnFailure(bet, config)) {
+            // 已按 BY220 失败退单：注单被物理删除并退还本金
+            return "WITHDRAWN";
         }
-        int updated = repository.updateReportStatus(betId, bet.agentId(), newStatus, SUBMIT_FROM_STATUSES);
-        if (updated == 1 && "REPORTED".equals(newStatus)) {
+        if ("ACCEPTED".equals(newStatus)) {
             // 押注为本地模拟值：累计"已成功上报"的投注额（BY220 本地登录时 betting 也为 0，真值来自真实上游）
             repository.addReportedStake(bet.agentId(), bet.stake());
         }
-        return updated == 1 ? Optional.of(newStatus) : Optional.empty();
+        return newStatus;
+    }
+
+    /** 上报请求摘要（落库留痕；不含任何凭据）。 */
+    private static String requestSummary(ReportUpstreamOrderRepository.BetRow bet) {
+        return "bet=" + bet.betId() + ",issue=" + bet.issueNumber() + ",play=" + bet.playType()
+                + ",stake=" + bet.stake();
+    }
+
+    /**
+     * 上游订单号。
+     *
+     * <p>本项目只做本地模拟上报，没有真实上游单号；这里生成一个可追溯的内部单号，
+     * 与 {@code response_code=MIGRATED} 一样属于本系统事实，不伪装成上游返回值。</p>
+     */
+    private static String upstreamOrderNo(ReportUpstreamOrderRepository.BetRow bet, int attemptNo) {
+        return "LOCAL-" + bet.betId() + "-" + attemptNo;
+    }
+
+    private static String responseMessage(ReportOutcome outcome) {
+        return switch (outcome) {
+            case ACCEPTED -> "本地模拟上游已接受";
+            case REJECTED -> "本地模拟上游拒绝";
+            case TIMEOUT -> "本地模拟上游未及时返回结果";
+        };
     }
 
     /**
@@ -255,18 +312,18 @@ public class ReportService {
      * <p>BY220 每 2.4 秒捞出"未报/失败"的订单重新飞单；xupan 由 {@code ReportDispatchScheduler}
      * 以可配置间隔调用本方法，只处理已开启自动上报、在线且报网类型已配置的机器。</p>
      *
-     * @param includeRetry true 时一并重报 {@code FAILED/TIMEOUT}（对应 BY220 轮询捞 {@code flyers_status=3}）
+     * @param includeRetry true 时一并重报 {@code REJECTED/TIMEOUT}（对应 BY220 轮询捞 {@code flyers_status=3}）
      * @return 处理条数与退单条数
      */
     @Transactional
     public DispatchResult dispatchPending(boolean includeRetry, int limit) {
         List<String> statuses = includeRetry
-                ? List.of("UNREPORTED", "FAILED", "TIMEOUT")
+                ? List.of(STATUS_PENDING, "REJECTED", "TIMEOUT")
                 : SUBMIT_FROM_STATUSES;
-        List<ReportConfigRepository.BetRow> bets = repository.findSubmittableBets(statuses, limit);
+        List<ReportUpstreamOrderRepository.BetRow> bets = orderRepository.findSubmittableBets(statuses, limit);
         int submitted = 0;
         int withdrawn = 0;
-        for (ReportConfigRepository.BetRow bet : bets) {
+        for (ReportUpstreamOrderRepository.BetRow bet : bets) {
             Optional<String> result = submitForBet(bet.betId());
             if (result.isEmpty()) {
                 continue;
@@ -284,13 +341,6 @@ public class ReportService {
     public record DispatchResult(int scanned, int submitted, int withdrawn) {
     }
 
-    private String submit(ReportConfigRepository.BetRow bet, ReportConfigRepository.ReportConfigRow config) {
-        ReportCommand command = new ReportCommand(bet.betId(), bet.accountId(), bet.agentId(), bet.issueNumber(),
-                bet.playType(), bet.parametersText(), bet.stake(), bet.odds(), config.reportType(),
-                config.reportNetworkCode(), config.reportRouteCode(), config.reportOnline());
-        return mapOutcome(reportAdapter.submit(command));
-    }
-
     /**
      * 失败自动退单（BY220 {@code common.php:1627-1641}）。
      *
@@ -304,7 +354,7 @@ public class ReportService {
      *
      * @return true 表示已退单（注单被物理删除）
      */
-    private boolean withdrawOnFailure(ReportConfigRepository.BetRow bet,
+    private boolean withdrawOnFailure(ReportUpstreamOrderRepository.BetRow bet,
                                       ReportConfigRepository.ReportConfigRow config) {
         if (!config.reportWithdraw()) {
             return false;
@@ -334,15 +384,15 @@ public class ReportService {
 
     private static String mapOutcome(ReportOutcome outcome) {
         return switch (outcome) {
-            case ACCEPTED -> "REPORTED";
-            case REJECTED -> "FAILED";
+            case ACCEPTED -> "ACCEPTED";
+            case REJECTED -> "REJECTED";
             case TIMEOUT -> "TIMEOUT";
         };
     }
 
     private ReportConfigView view(long agentId) {
         ReportConfigRepository.ReportConfigRow config = requireConfig(agentId);
-        ReportConfigRepository.StatusCounts counts = repository.counts(agentId);
+        ReportUpstreamOrderRepository.StatusCounts counts = orderRepository.counts(agentId);
         return new ReportConfigView(config.agentId(), config.reportType(), config.reportAuto(),
                 config.reportOnline(), config.reportWithdraw(), config.reportUsername(), config.hasPassword(),
                 config.reportUrl(), config.reportNetworkCode(), config.reportRouteCode(), config.reportBalance(),
@@ -490,7 +540,7 @@ public class ReportService {
     }
 
     /** 报网订单分页结果。 */
-    public record ReportOrderPage(List<ReportConfigRepository.OrderRow> items, int page, int pageSize, long total) {
+    public record ReportOrderPage(List<ReportUpstreamOrderRepository.OrderRow> items, int page, int pageSize, long total) {
     }
 
     /** 重报结果；带最新配置快照便于前端一次刷新。 */

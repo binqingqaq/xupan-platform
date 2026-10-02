@@ -31,7 +31,7 @@ beforeEach(() => {
       issueNumber: '3006154',
       command: '1番100',
       createdAt: '2026-10-02T01:00:00Z',
-      reportStatus: 'UNREPORTED',
+      reportStatus: 'PENDING',
     }],
     page: 1,
     pageSize: 30,
@@ -55,7 +55,7 @@ describe('platform admin unsettled orders', () => {
       .mockResolvedValueOnce({
         items: [{
           id: 7, subAccount: 'sub001', machineName: '机器甲', memberCode: 'V100', playerName: '玩家甲',
-          issueNumber: '3006154', command: '1番100', createdAt: '2026-10-02T01:00:00Z', reportStatus: 'UNREPORTED',
+          issueNumber: '3006154', command: '1番100', createdAt: '2026-10-02T01:00:00Z', reportStatus: 'PENDING',
         }], page: 1, pageSize: 30, total: 1,
       })
       .mockResolvedValueOnce({ items: [], page: 1, pageSize: 30, total: 0 })

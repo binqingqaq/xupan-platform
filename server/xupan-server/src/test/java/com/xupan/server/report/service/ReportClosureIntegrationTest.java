@@ -91,18 +91,20 @@ class ReportClosureIntegrationTest {
         configureReport("K28", "A", true, false);
         reportService.login(adminId, machineId);
 
-        // ② 下注产生一笔待报订单（下注本身只标记 UNREPORTED，BY220 上报由轮询完成）
-        long acceptedBet = insertBet("CLOSURE-ACCEPT-1", "UNREPORTED");
+        // ② 下注产生一笔待报订单（下注本身还没有上报订单行，派生状态为 PENDING，BY220 上报由轮询完成）
+        long acceptedBet = insertBet("CLOSURE-ACCEPT-1", "PENDING");
 
         // ③ 轮询上报 → 已报
         ReportService.DispatchResult first = reportService.dispatchPending(true, 50);
         assertThat(first.scanned()).isGreaterThanOrEqualTo(1);
-        assertThat(reportStatusOf(acceptedBet)).isEqualTo("REPORTED");
+        assertThat(reportStatusOf(acceptedBet)).isEqualTo("ACCEPTED");
+        // 追加保留：一次上报尝试一行，不覆盖历史
+        assertThat(attemptCountOf(acceptedBet)).isEqualTo(1);
         // 押注为本地模拟值（BY220 本地登录时 betting 也为 0）：累计已成功上报的投注额
         assertThat(reportStakeOf()).isEqualByComparingTo("10.00");
 
         // ④ 盘口切到 D（本地模拟超时分支）→ 新订单上报后为 TIMEOUT，且**不退款、不删单**
-        long timeoutBet = insertBet("CLOSURE-TIMEOUT-1", "UNREPORTED");
+        long timeoutBet = insertBet("CLOSURE-TIMEOUT-1", "PENDING");
         BigDecimal balanceBefore = balanceOf();
         jdbc.update("UPDATE agent SET report_route_code='D' WHERE id=?", machineId);
         reportService.dispatchPending(true, 50);
@@ -114,7 +116,7 @@ class ReportClosureIntegrationTest {
         // ⑤ 打开失败自动退单，并清空网盘编码 → 适配器判为配置不完整（REJECTED）→ 退款并物理删除注单
         jdbc.update("UPDATE agent SET report_route_code='A' WHERE id=?", machineId);
         jdbc.update("UPDATE agent SET report_withdraw=TRUE WHERE id=?", machineId);
-        long failedBet = insertBet("CLOSURE-FAIL-1", "UNREPORTED");
+        long failedBet = insertBet("CLOSURE-FAIL-1", "PENDING");
         jdbc.update("UPDATE agent SET report_network_code=NULL WHERE id=?", machineId);
         BigDecimal balanceBeforeWithdraw = balanceOf();
         reportService.dispatchPending(true, 50);
@@ -135,40 +137,40 @@ class ReportClosureIntegrationTest {
         // 先按完整配置登录（login 有配置完整性前置校验），再清空网盘编码让适配器判为失败
         reportService.login(adminId, machineId);
         jdbc.update("UPDATE agent SET report_network_code=NULL WHERE id=?", machineId);
-        long betId = insertBet("CLOSURE-RETRY-1", "UNREPORTED");
+        long betId = insertBet("CLOSURE-RETRY-1", "PENDING");
         jdbc.update("UPDATE agent SET report_withdraw=FALSE WHERE id=?", machineId);
 
         reportService.dispatchPending(true, 50);
-        assertThat(reportStatusOf(betId)).isEqualTo("FAILED");
+        assertThat(reportStatusOf(betId)).isEqualTo("REJECTED");
         assertThat(betExists(betId)).as("未开启失败退单时保留注单").isTrue();
 
         // 配置仍不完整时重报：适配器仍判失败，状态保持 FAILED（重报本身不做配置完整性前置校验，
         // 因为它就是"再试一次"的入口；只有 login 要求配置完整）
         var stillFailed = reportService.resubmit(adminId, machineId, betId);
-        assertThat(stillFailed.reportStatus()).isEqualTo("FAILED");
+        assertThat(stillFailed.reportStatus()).isEqualTo("REJECTED");
 
         // 补齐网盘编码后手动重报 → 已报
         jdbc.update("UPDATE agent SET report_network_code='K28' WHERE id=?", machineId);
         var result = reportService.resubmit(adminId, machineId, betId);
-        assertThat(result.reportStatus()).isEqualTo("REPORTED");
+        assertThat(result.reportStatus()).isEqualTo("ACCEPTED");
     }
 
     @Test
     void offlineMachineIsSkippedByDispatch() {
         configureReport("K28", "A", true, false);
         // 未登录（离线）：轮询不得处理该机器的订单
-        long betId = insertBet("CLOSURE-OFFLINE-1", "UNREPORTED");
+        long betId = insertBet("CLOSURE-OFFLINE-1", "PENDING");
         reportService.dispatchPending(true, 50);
-        assertThat(reportStatusOf(betId)).isEqualTo("UNREPORTED");
+        assertThat(reportStatusOf(betId)).isEqualTo("PENDING");
     }
 
     @Test
     void autoReportDisabledIsSkippedByDispatch() {
         configureReport("K28", "A", false, false); // 关闭自动上报
         reportService.login(adminId, machineId);
-        long betId = insertBet("CLOSURE-MANUAL-1", "UNREPORTED");
+        long betId = insertBet("CLOSURE-MANUAL-1", "PENDING");
         reportService.dispatchPending(true, 50);
-        assertThat(reportStatusOf(betId)).isEqualTo("UNREPORTED");
+        assertThat(reportStatusOf(betId)).isEqualTo("PENDING");
     }
 
     private void assertThatThrownByResubmitMissing(long betId) {
@@ -189,22 +191,48 @@ class ReportClosureIntegrationTest {
                 """, type, route, auto, withdraw, machineId);
     }
 
+    /**
+     * 造一笔注单。
+     *
+     * <p>V58 起上报状态不在 {@code game_bet} 上，而是"该注单最新一行上报订单"的派生值，
+     * 因此需要指定非 {@code PENDING} 状态时改写成追加一行上报订单。</p>
+     */
     private long insertBet(String betCode, String reportStatus) {
         jdbc.update("""
                 INSERT INTO game_bet
                     (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                     play_type, parameters_text, stake, odds_snapshot, report_status)
-                VALUES (?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850, ?)
-                """, accountId, betCode, betCode, ISSUE_NUMBER, reportStatus);
+                     play_type, parameters_text, stake, odds_snapshot)
+                VALUES (?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850)
+                """, accountId, betCode, betCode, ISSUE_NUMBER);
         Long id = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
-        if (id != null) {
-            createdBetIds.add(id);
+        if (id == null) {
+            return 0L;
         }
-        return id == null ? 0L : id;
+        createdBetIds.add(id);
+        if (reportStatus != null && !"PENDING".equals(reportStatus)) {
+            jdbc.update("""
+                    INSERT INTO report_upstream_order
+                        (bet_id, agent_id, attempt_no, status, idempotency_key, sent_at, resolved_at)
+                    VALUES (?, ?, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """, id, machineId, reportStatus, "SEED-" + betCode);
+        }
+        return id;
     }
 
+    /** 注单的派生上报状态：最新一行上报订单的状态，没有行即 {@code PENDING}。 */
     private String reportStatusOf(long betId) {
-        return jdbc.queryForObject("SELECT report_status FROM game_bet WHERE id = ?", String.class, betId);
+        return jdbc.queryForObject("""
+                SELECT COALESCE((SELECT o.status FROM report_upstream_order o
+                                  WHERE o.bet_id = b.id ORDER BY o.id DESC LIMIT 1), 'PENDING')
+                  FROM game_bet b WHERE b.id = ?
+                """, String.class, betId);
+    }
+
+    /** 该注单的上报订单行数（验证"追加保留"）。 */
+    private long attemptCountOf(long betId) {
+        Long count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM report_upstream_order WHERE bet_id = ?", Long.class, betId);
+        return count == null ? 0L : count;
     }
 
     private boolean betExists(long betId) {
