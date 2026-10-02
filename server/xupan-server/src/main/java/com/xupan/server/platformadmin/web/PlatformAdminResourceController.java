@@ -2,6 +2,7 @@ package com.xupan.server.platformadmin.web;
 
 import com.xupan.server.agent.repository.AgentRepository;
 import com.xupan.server.auth.domain.AuthenticatedUser;
+import com.xupan.server.auth.service.AuditQueryService;
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.platformadmin.service.PlatformAdminService;
 import jakarta.validation.Valid;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -28,9 +30,29 @@ import java.util.List;
 public class PlatformAdminResourceController {
 
     private final PlatformAdminService service;
+    private final AuditQueryService auditQueryService;
 
-    public PlatformAdminResourceController(PlatformAdminService service) {
+    public PlatformAdminResourceController(PlatformAdminService service, AuditQueryService auditQueryService) {
         this.service = service;
+        this.auditQueryService = auditQueryService;
+    }
+
+    /**
+     * 查询操作审计（账本原则 3：{@code AUDIT_READ} 落地）。
+     *
+     * <p>BY220 {@code admin.php} 的"日志"菜单（{@code changed/loglist}）在模板里是注释掉的，
+     * 因此这里只提供数据接口，**不新增菜单页面**，避免发明 BY220 未启用的业务流程。</p>
+     */
+    @GetMapping("/audit-logs")
+    public AuditLogPage auditLogs(Authentication authentication,
+                                  @RequestParam(required = false) Long operatorUserId,
+                                  @RequestParam(required = false) String permissionCode,
+                                  @RequestParam(required = false) String result,
+                                  @RequestParam(required = false) String keyword,
+                                  @RequestParam(defaultValue = "1") int page,
+                                  @RequestParam(defaultValue = "20") int pageSize) {
+        return AuditLogPage.from(auditQueryService.search(operator(authentication).getUserId(),
+                operatorUserId, permissionCode, result, keyword, page, pageSize));
     }
 
     @GetMapping("/sub-accounts")
@@ -164,11 +186,34 @@ public class PlatformAdminResourceController {
         }
     }
 
+    /** 一页操作审计（账本原则 3）。 */
+    public record AuditLogPage(List<AuditLogEntry> items, int page, int pageSize, long total) {
+        static AuditLogPage from(AuditQueryService.Page x) {
+            return new AuditLogPage(x.items().stream().map(AuditLogEntry::from).toList(),
+                    x.page(), x.pageSize(), x.total());
+        }
+    }
+
+    /**
+     * 一行操作审计。
+     *
+     * <p>刻意不返回 {@code ip_digest}：它是摘要值，对本机运维没有帮助，
+     * 减少一处可能被误当成"可还原来源"的字段。</p>
+     */
+    public record AuditLogEntry(long id, Long operatorUserId, String permissionCode, String httpMethod,
+                                String requestPath, String resourceId, String result, String errorCode,
+                                String requestSummary, Instant createdAt) {
+        static AuditLogEntry from(com.xupan.server.auth.repository.OperationAuditRepository.AuditRow x) {
+            return new AuditLogEntry(x.id(), x.operatorUserId(), x.permissionCode(), x.httpMethod(),
+                    x.requestPath(), x.resourceId(), x.result(), x.errorCode(), x.requestSummary(),
+                    x.createdAt());
+        }
+    }
+
     public record MachinePlayerResponse(long userId, long accountId, String internalCode, String displayName,
                                         String memberCode, String playerKind, String userStatus,
                                         String accountStatus, BigDecimal balance, Instant createdAt,
-                                        Instant lastLoginAt) {
-        static MachinePlayerResponse from(AgentRepository.AgentPlayerRow row) {
+                                        Instant lastLoginAt) {        static MachinePlayerResponse from(AgentRepository.AgentPlayerRow row) {
             return new MachinePlayerResponse(row.userId(), row.accountId(), row.internalCode(), row.displayName(),
                     row.memberCode(), row.playerKind(), row.userStatus(), row.accountStatus(), row.balance(),
                     row.createdAt(), row.lastLoginAt());

@@ -1344,6 +1344,77 @@ class PlatformAdminResourceControllerTest {
                 "SELECT COUNT(*) FROM agent_group WHERE username = 'platform_test_expiry_range'", Long.class))
                 .isZero();
     }
+    /**
+     * 审计日志查询（账本原则 3：{@code AUDIT_READ} 落地）。
+     *
+     * <p>以前审计只能写不能查，{@code AUDIT_READ} 是死权限；这个用例固定住：
+     * 有权限能查到刚写下的审计、无权限被拒、过滤条件与分页校验生效。</p>
+     */
+    @Test
+    void auditLogQueryRequiresPermissionAndFiltersEntries() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+
+        // 先制造一条可查的审计：创建一个机器（写 MACHINE_MANAGE 审计）
+        mockMvc.perform(post("/api/admin/machines")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"username\":\"platform_test_audit_machine\",\"rawPassword\":\"AuditPassword123\","
+                                + "\"displayName\":\"审计测试机器\",\"score\":100,\"boardOpen\":true,"
+                                + "\"robotManage\":false,\"chaseEnabled\":false,\"botCount\":0,\"closeSeconds\":10,"
+                                + "\"cancelSeconds\":5,\"rebateRate\":0.1,\"oddsRate\":1.95,\"specialRebateRate\":0.2,"
+                                + "\"specialOddsRate\":18,\"totalLimit\":10000,\"positiveLimit\":1000,"
+                                + "\"angleLimit\":1000,\"strictLimit\":1000,\"tongLimit\":1000,\"carLimit\":1000,"
+                                + "\"specialLimit\":1000,\"oddEvenLimit\":1000,\"bigSmallLimit\":1000,"
+                                + "\"fanLimit\":1000,\"addLimit\":1000,\"playerMaxStake\":500,"
+                                + "\"playerMinStake\":10,\"games\":[\"AU8\"]}"))
+                .andExpect(status().isOk());
+
+        // 按权限码过滤：能查到 MACHINE_MANAGE 的审计
+        mockMvc.perform(get("/api/admin/audit-logs").param("permissionCode", "MACHINE_MANAGE")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.items[0].permissionCode").value("MACHINE_MANAGE"))
+                .andExpect(jsonPath("$.items[0].httpMethod").value("POST"))
+                .andExpect(jsonPath("$.items[0].result").value("SUCCESS"));
+
+        // 关键词匹配请求路径
+        mockMvc.perform(get("/api/admin/audit-logs").param("keyword", "/api/admin/machines")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+
+        // 非法 result → 400
+        mockMvc.perform(get("/api/admin/audit-logs").param("result", "BOGUS")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isBadRequest());
+
+        // 分页越界 → 400
+        mockMvc.perform(get("/api/admin/audit-logs").param("pageSize", "1000")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("AUDIT_QUERY_INVALID"));
+
+        // 无 AUDIT_READ 的子账号 → 403（审计不是所有登录用户都能看）
+        mockMvc.perform(get("/api/admin/audit-logs").header("Authorization", bearer(subAccountToken())))
+                .andExpect(status().isForbidden());
+    }
+
+    /** 造一个只有子账号角色（无 AUDIT_READ）的登录账号，用于验证审计查询的权限门。 */
+    private String subAccountToken() throws Exception {
+        String username = "platform_test_audit_sub";
+        jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username = ?)", username);
+        jdbcTemplate.update("DELETE FROM sys_user WHERE username = ?", username);
+        jdbcTemplate.update("INSERT INTO sys_user (username, display_name, password_hash, status, auth_mode, "
+                        + "internal_code) VALUES (?, '审计无权限子账号', ?, 'ACTIVE', 'PASSWORD', ?)",
+                username, new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder().encode(PASSWORD),
+                "AUDIT-SUB-" + System.nanoTime());
+        Long userId = jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
+        jdbcTemplate.update("INSERT INTO sys_user_role (user_id, role_id) "
+                + "SELECT ?, id FROM sys_role WHERE role_code = 'SUB_ACCOUNT'", userId);
+        return login(username, PASSWORD);
+    }
+
     private String login(String username, String password) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/login").contentType("application/json")
                         .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
@@ -1367,6 +1438,23 @@ class PlatformAdminResourceControllerTest {
                 + "domain_links = NULL, chat_warning = '仅供本地研究', information = NULL, "
                 + "header_enabled = TRUE, status_bar_enabled = TRUE, keyboard_mode = FALSE, "
                 + "updated_by = NULL WHERE id = 1");
+        // 审计权限门用例自建的子账号：先解角色再删用户，避免外键残留
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE UPPER(agent_code) LIKE 'PLATFORM_TEST_AUDIT%')");
+        jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE UPPER(agent_code) LIKE 'PLATFORM_TEST_AUDIT%')");
+        jdbcTemplate.update("DELETE FROM agent WHERE UPPER(agent_code) LIKE 'PLATFORM_TEST_AUDIT%'");
+        jdbcTemplate.update("DELETE FROM sys_login_log WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'platform_test_audit_sub%')");
+        jdbcTemplate.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'platform_test_audit_sub%')");
+        jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'platform_test_audit_sub%')");
+        jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'platform_test_audit_sub%')");
+        jdbcTemplate.update("DELETE FROM auth_session WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'platform_test_audit_sub%')");
+        jdbcTemplate.update("DELETE FROM sys_user WHERE username LIKE 'platform_test_audit_sub%'");
         cleanupByUsers("DELETE FROM sys_operation_log WHERE operator_user_id IN %s");
         cleanupByUsers("DELETE FROM sys_login_log WHERE user_id IN %s");
         cleanupByUsers("DELETE FROM player_admin_notice WHERE recipient_user_id IN %s OR sender_user_id IN %s", true);

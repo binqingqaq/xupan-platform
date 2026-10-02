@@ -10,6 +10,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 /**
@@ -76,6 +78,81 @@ public class OperationAuditRepository {
             throw new IllegalArgumentException("非法操作审计结果");
         }
         return result;
+    }
+
+    /**
+     * 分页查询操作审计（账本原则 3：日志不只可写，还要可查）。
+     *
+     * <p>过滤条件都可空：{@code operatorUserId} 按操作者、{@code permissionCode} 按权限码、
+     * {@code result} 按成功/失败、{@code keyword} 在请求路径与资源 id 上模糊匹配。</p>
+     */
+    public List<AuditRow> findEntries(Long operatorUserId, String permissionCode, String result,
+                                                String keyword, int page, int pageSize) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT id, operator_user_id, permission_code, http_method, request_path, resource_id,
+                       result, error_code, request_summary, created_at
+                  FROM sys_operation_log
+                """);
+        ListOfArgs args = filterArgs(operatorUserId, permissionCode, result, keyword, sql);
+        sql.append(" ORDER BY id DESC LIMIT ? OFFSET ?");
+        args.values.add(pageSize);
+        args.values.add((long) (page - 1) * pageSize);
+        return jdbcTemplate.query(sql.toString(), (rs, rowNum) -> {
+            Timestamp created = rs.getTimestamp("created_at");
+            return new AuditRow(rs.getLong("id"), rs.getObject("operator_user_id", Long.class),
+                    rs.getString("permission_code"), rs.getString("http_method"), rs.getString("request_path"),
+                    rs.getString("resource_id"), rs.getString("result"), rs.getString("error_code"),
+                    rs.getString("request_summary"), created == null ? null : created.toInstant());
+        }, args.values.toArray());
+    }
+
+    /** 与 {@link #findEntries} 同条件的总数。 */
+    public long countEntries(Long operatorUserId, String permissionCode, String result, String keyword) {
+        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM sys_operation_log");
+        ListOfArgs args = filterArgs(operatorUserId, permissionCode, result, keyword, sql);
+        Long total = jdbcTemplate.queryForObject(sql.toString(), Long.class, args.values.toArray());
+        return total == null ? 0 : total;
+    }
+
+    /**
+     * 拼装过滤条件。
+     *
+     * <p>注意审计里的 {@code request_summary} 可能与资源 id 无关，因此关键词只匹配
+     * 请求路径与资源 id，避免把摘要里可能出现的凭据字样当查询条件暴露出去。</p>
+     */
+    private static ListOfArgs filterArgs(Long operatorUserId, String permissionCode, String result,
+                                         String keyword, StringBuilder sql) {
+        ListOfArgs args = new ListOfArgs();
+        if (operatorUserId != null) {
+            sql.append(" WHERE operator_user_id = ?");
+            args.values.add(operatorUserId);
+        }
+        if (permissionCode != null && !permissionCode.isBlank()) {
+            sql.append(args.values.isEmpty() ? " WHERE " : " AND ").append("permission_code = ?");
+            args.values.add(permissionCode.trim());
+        }
+        if (result != null && !result.isBlank()) {
+            sql.append(args.values.isEmpty() ? " WHERE " : " AND ").append("result = ?");
+            args.values.add(requiredResult(result.trim().toUpperCase(Locale.ROOT)));
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            sql.append(args.values.isEmpty() ? " WHERE " : " AND ")
+                    .append("(request_path LIKE ? OR resource_id LIKE ?)");
+            String pattern = "%" + keyword.trim() + "%";
+            args.values.add(pattern);
+            args.values.add(pattern);
+        }
+        return args;
+    }
+
+    private static final class ListOfArgs {
+        private final List<Object> values = new java.util.ArrayList<>();
+    }
+
+    /** 一行操作审计。 */
+    public record AuditRow(long id, Long operatorUserId, String permissionCode, String httpMethod,
+                           String requestPath, String resourceId, String result, String errorCode,
+                           String requestSummary, Instant createdAt) {
     }
 
     private static Timestamp timestamp(Instant value) {
