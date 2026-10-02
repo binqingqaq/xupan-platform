@@ -131,10 +131,32 @@ class BetBoardControllerTest {
                 .andExpect(jsonPath("$.items[0].betText").value("23无1/116"));
     }
 
+    /**
+     * 下注榜每条注单都必须带上报状态（BY220 下注榜的 {@code flyers_status}）。
+     *
+     * 代理是在下注榜里点这个状态标记来重新飞单的
+     * （{@code application/rbt/view/index/admin_list.html:1975-1992}），所以它必须随下注榜下发；
+     * 否则代理后台就没有 BY220 的重报入口。
+     */
+    @Test
+    void returnsReportStatusOnEveryBetSoConsoleCanResubmit() throws Exception {
+        long accountId = jdbc.queryForObject(
+                "SELECT id FROM demo_user_account WHERE player_kind = 'NORMAL' LIMIT 1", Long.class);
+        insertBetWithReportStatus(accountId, "BB-REPORT-FAILED", "FAN", "1", "10.00", "PENDING", "FAILED");
+        insertBetWithReportStatus(accountId, "BB-REPORT-REPORTED", "FAN", "2", "10.00", "PENDING", "REPORTED");
+
+        String token = login(ADMIN, PASSWORD);
+        mockMvc.perform(get("/api/admin/player-desk/bet-board")
+                        .param("kind", "NORMAL")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[?(@.reportStatus == 'FAILED')]", hasSize(1)))
+                .andExpect(jsonPath("$.items[?(@.reportStatus == 'REPORTED')]", hasSize(1)));
+    }
+
     @Test
     void rejectsOrdinaryPlayers() throws Exception {
         String token = login(NORMAL, PASSWORD);
-
         mockMvc.perform(get("/api/admin/player-desk/bet-board")
                         .param("kind", "NORMAL")
                         .header("Authorization", bearer(token)))
@@ -150,6 +172,17 @@ class BetBoardControllerTest {
                 VALUES (?, ?, ?, ?, 1, ?, ?, ?, 1.950, ?)
                 """, accountId, code, code, CURRENT_ISSUE, playType, parameters,
                 new BigDecimal(stake), status);
+    }
+
+    private void insertBetWithReportStatus(long accountId, String code, String playType, String parameters,
+                                           String stake, String status, String reportStatus) {
+        jdbc.update("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status, report_status)
+                VALUES (?, ?, ?, ?, 1, ?, ?, ?, 1.950, ?, ?)
+                """, accountId, code, code, CURRENT_ISSUE, playType, parameters,
+                new BigDecimal(stake), status, reportStatus);
     }
 
     private String login(String username, String password) throws Exception {

@@ -177,7 +177,7 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
 
     <div class="unified-admin-layout">
       <aside class="unified-admin-sidebar" aria-label="后台辅助信息">
-        <BetBoardPanel />
+        <BetBoardPanel :scope="scope" :machine-id="selectedMachineId" />
         <section class="unified-sidebar-note">
           <div class="unified-nav-heading"><strong>模块预留</strong><span>未接入</span></div>
           <p>其他后台区域保留位置，后续按独立计划逐块接入。</p>

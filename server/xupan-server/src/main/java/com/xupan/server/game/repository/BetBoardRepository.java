@@ -47,7 +47,7 @@ public class BetBoardRepository {
         args.add(limit);
         return jdbcTemplate.query("""
                 SELECT b.id, a.display_name, a.player_kind, b.play_type, b.parameters_text,
-                       b.stake, b.settlement_status, b.created_at
+                       b.stake, b.settlement_status, b.report_status, b.created_at
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
                  WHERE b.issue_number = ?
@@ -64,6 +64,7 @@ public class BetBoardRepository {
                 rs.getString("parameters_text"),
                 money(rs.getBigDecimal("stake")),
                 rs.getString("settlement_status"),
+                rs.getString("report_status"),
                 rs.getTimestamp("created_at").toInstant()
         ), args.toArray());
     }
@@ -81,8 +82,15 @@ public class BetBoardRepository {
         }
     }
 
+    /**
+     * 下注榜的一条注单。
+     *
+     * <p>{@code reportStatus} 对应 BY220 下注榜每条注单上的 {@code flyers_status}
+     * （{@code application/rbt/view/index/admin_list.html:1961-1992}）：代理就是在下注榜里点这个状态标记
+     * 来触发重新飞单，所以它必须随下注榜一起返回。</p>
+     */
     public record BetItem(long id, String displayName, String playerKind, String playType,
                           String parametersText, BigDecimal stake, String settlementStatus,
-                          java.time.Instant createdAt) {
+                          String reportStatus, java.time.Instant createdAt) {
     }
 }

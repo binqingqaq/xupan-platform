@@ -85,7 +85,7 @@ public class BetBoardService {
         List<Integer> parameters = parseParameters(item.parametersText());
         return new BetItem(item.id(), item.displayName(), item.playerKind(),
                 renderBetText(playType, parameters, item.stake()), item.stake(),
-                item.settlementStatus(), item.createdAt());
+                item.settlementStatus(), item.reportStatus(), item.createdAt());
     }
 
     private static DrawHistory toHistory(GameDataRepository.IssueRecord issue) {
@@ -171,7 +171,8 @@ public class BetBoardService {
     }
 
     public record BetItem(long id, String displayName, String playerKind, String betText,
-                          BigDecimal stake, String settlementStatus, Instant createdAt) {
+                          BigDecimal stake, String settlementStatus, String reportStatus,
+                          Instant createdAt) {
     }
 
     public record DrawHistory(String issueNumber, String status, Instant settledAt, List<DrawBall> balls) {

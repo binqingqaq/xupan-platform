@@ -402,6 +402,8 @@ export interface BetBoardBetItem {
   betText: string
   stake: number
   settlementStatus: SettlementStatus
+  /** 上报状态（BY220 下注榜每条注单的 `flyers_status`）；代理点它触发重新飞单。 */
+  reportStatus: ReportStatus
   createdAt: string
 }
 

@@ -16,8 +16,6 @@ import {
   type PlayerDeskScope,
   type ReportConfigUpdateRequest,
   type ReportConfigView,
-  type ReportOrderItem,
-  type ReportStatus,
 } from '../../types'
 
 const props = defineProps<{
@@ -30,13 +28,9 @@ const props = defineProps<{
 const emit = defineEmits<{ (event: 'changed', config: ReportConfigView): void }>()
 
 const config = ref<ReportConfigView | null>(null)
-const orders = ref<ReportOrderItem[]>([])
-const orderTotal = ref(0)
-const orderStatusFilter = ref<ReportStatus | ''>('')
 const loading = ref(false)
 const saving = ref(false)
 const loggingIn = ref(false)
-const resubmittingBetId = ref<number | null>(null)
 const notice = ref('')
 const noticeKind = ref<'ok' | 'error'>('ok')
 
@@ -71,46 +65,33 @@ const reportTypeLabel = computed(() => {
 
 const onlineText = computed(() => (config.value?.reportOnline ? '在线' : '离线'))
 const loginButtonDisabled = computed(() => !machineReady.value || loggingIn.value || saving.value)
-const orderStatusLabel = (status: ReportStatus): string => {
-  if (status === 'REPORTED') return '已报'
-  if (status === 'FAILED') return '失败'
-  if (status === 'TIMEOUT') return '超时'
-  return '未报'
-}
 
 function setNotice(message: string, kind: 'ok' | 'error' = 'ok') {
   notice.value = message
   noticeKind.value = kind
 }
 
+/**
+ * 读取机器报网配置与状态统计。
+ *
+ * 上报订单列表与重报入口**不在这里**：BY220 把它们做在下注榜的注单状态标记上
+ * （`admin_list.html:1975-1992`），因此由 `BetBoardPanel` 承担；本面板只保留报网控制行
+ * （类型、账号、登录/退出、开关、超时/未报/失败计数、刷新），与 BY220 报网栏一致。
+ */
 async function load() {
   if (!machineReady.value) {
     config.value = null
-    orders.value = []
-    orderTotal.value = 0
     return
   }
   loading.value = true
   try {
     config.value = await api.getReportConfig(effectiveMachineId.value)
     emit('changed', config.value)
-    await loadOrders()
   } catch (cause) {
     setNotice(apiErrorMessage(cause, '报网配置加载失败，请刷新重试'), 'error')
   } finally {
     loading.value = false
   }
-}
-
-async function loadOrders() {
-  const page = await api.listReportOrders({
-    machineId: effectiveMachineId.value,
-    status: orderStatusFilter.value || null,
-    page: 1,
-    pageSize: 20,
-  })
-  orders.value = page.items
-  orderTotal.value = page.total
 }
 
 /** 保存报网类型/开关等基础配置（不动账号密码）。 */
@@ -234,29 +215,6 @@ async function logout() {
   }
 }
 
-async function resubmit(order: ReportOrderItem) {
-  if (!machineReady.value) {
-    setNotice(readOnlyHint.value, 'error')
-    return
-  }
-  resubmittingBetId.value = order.betId
-  try {
-    const result = await api.resubmitReportOrder(order.betId, effectiveMachineId.value)
-    config.value = result.config
-    emit('changed', result.config)
-    setNotice(`单号 ${order.betCode ?? order.betId} 重报结果：${orderStatusLabel(result.reportStatus)}`)
-    await loadOrders()
-  } catch (cause) {
-    setNotice(apiErrorMessage(cause, '重报失败'), 'error')
-  } finally {
-    resubmittingBetId.value = null
-  }
-}
-
-function canResubmit(order: ReportOrderItem): boolean {
-  return order.reportStatus === 'UNREPORTED' || order.reportStatus === 'FAILED' || order.reportStatus === 'TIMEOUT'
-}
-
 onMounted(() => {
   void load()
 })
@@ -267,10 +225,6 @@ watch(
     void load()
   },
 )
-
-watch(orderStatusFilter, () => {
-  void loadOrders()
-})
 
 defineExpose({ load })
 </script>
@@ -336,55 +290,9 @@ defineExpose({ load })
       {{ notice }}
     </p>
 
-    <div class="report-control-row report-control-orders">
-      <strong class="report-control-label">上报订单:</strong>
-      <select v-model="orderStatusFilter" class="report-order-filter" :disabled="!machineReady" aria-label="按上报状态筛选">
-        <option value="">全部</option>
-        <option value="UNREPORTED">未报</option>
-        <option value="REPORTED">已报</option>
-        <option value="FAILED">失败</option>
-        <option value="TIMEOUT">超时</option>
-      </select>
-      <span class="report-control-metric">共 <b>{{ orderTotal }}</b> 条</span>
-    </div>
-
-    <div v-if="machineReady" class="report-order-list">
-      <p v-if="!orders.length" class="report-order-empty">当前没有符合条件的上报订单</p>
-      <table v-else class="report-order-table">
-        <thead>
-          <tr>
-            <th>单号</th>
-            <th>期号</th>
-            <th>玩家</th>
-            <th>内容</th>
-            <th>金额</th>
-            <th>状态</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="order in orders" :key="order.betId">
-            <td>{{ order.betCode ?? order.betId }}</td>
-            <td>{{ order.issueNumber }}</td>
-            <td>{{ order.displayName ?? order.memberCode ?? order.accountId }}</td>
-            <td>{{ order.playType }} {{ order.parametersText ?? '' }}</td>
-            <td>{{ order.stake }}</td>
-            <td :class="`report-status is-${order.reportStatus.toLowerCase()}`">{{ orderStatusLabel(order.reportStatus) }}</td>
-            <td>
-              <button
-                type="button"
-                class="report-control-button report-resubmit"
-                :disabled="!canResubmit(order) || resubmittingBetId === order.betId"
-                :title="canResubmit(order) ? '重新提交到上游' : '已上报的订单不能重报'"
-                @click="resubmit(order)"
-              >
-                {{ resubmittingBetId === order.betId ? '重报中' : '重报' }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <!-- BY220 报网栏到此结束（robot.php 的报网控制区）。
+         上报订单列表与重报不在这里：BY220 把它们做在下注榜的注单状态标记上
+         （application/rbt/view/index/admin_list.html:1975-1992），由 BetBoardPanel 承担。 -->
 
     <div v-if="accountDialogOpen" class="report-account-mask" role="dialog" aria-label="设置报网账号">
       <div class="report-account-dialog">
@@ -465,8 +373,7 @@ defineExpose({ load })
   white-space: nowrap;
 }
 
-.report-type-select,
-.report-order-filter {
+.report-type-select {
   height: 23px;
   min-width: 74px;
   border: 1px solid var(--ops-line, #8eb7e6);
@@ -476,8 +383,7 @@ defineExpose({ load })
   font-size: 12px;
 }
 
-.report-type-select:disabled,
-.report-order-filter:disabled {
+.report-type-select:disabled {
   background: #eef2f6;
   color: #93a4b3;
 }
@@ -600,59 +506,6 @@ defineExpose({ load })
 .report-control-notice.is-error {
   color: #b02a2a;
   background: #fdeeee;
-}
-
-.report-order-list {
-  max-height: 190px;
-  overflow: auto;
-  border-top: 1px solid var(--ops-line, #8eb7e6);
-}
-
-.report-order-empty {
-  margin: 0;
-  padding: 10px 8px;
-  color: #7d8d9c;
-  text-align: center;
-}
-
-.report-order-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-}
-
-.report-order-table th,
-.report-order-table td {
-  padding: 3px 6px;
-  border-bottom: 1px solid #dce7f2;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.report-order-table th {
-  position: sticky;
-  top: 0;
-  background: var(--ops-panel-soft, #f3f8ff);
-  color: var(--ops-blue-deep, #15599d);
-}
-
-.report-status.is-reported {
-  color: #2f7a2a;
-  font-weight: 700;
-}
-
-.report-status.is-failed,
-.report-status.is-timeout {
-  color: #d63333;
-  font-weight: 700;
-}
-
-.report-status.is-unreported {
-  color: #8a6d1f;
-}
-
-.report-resubmit {
-  min-width: 42px;
 }
 
 .report-account-mask {

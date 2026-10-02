@@ -1,20 +1,57 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../../api'
-import { betBoardCountdown, betBoardFanClass, formatBetBoardPoints } from '../../betBoard'
-import type { BetBoardView } from '../../types'
+import {
+  betBoardCanResubmit,
+  betBoardCountdown,
+  betBoardFanClass,
+  betBoardReportStatusLabel,
+  formatBetBoardPoints,
+} from '../../betBoard'
+import type { BetBoardView, PlayerDeskScope } from '../../types'
 
 type BoardTab = 'NORMAL' | 'BOT' | 'PREVIOUS' | 'DRAW'
+
+const props = defineProps<{
+  /** 当前身份范围；机器账号固定自己那台，管理员需选择机器。 */
+  scope?: PlayerDeskScope | null
+  /** 管理员选中的机器；机器账号忽略。 */
+  machineId?: number | null
+}>()
 
 const board = ref<BetBoardView | null>(null)
 const activeTab = ref<BoardTab>('NORMAL')
 const loading = ref(true)
 const error = ref('')
+const resubmittingBetId = ref<number | null>(null)
+const resubmitNotice = ref('')
 const clockTick = ref(0)
 const serverOffsetMs = ref(0)
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let clockTimer: ReturnType<typeof setInterval> | undefined
 let requestSequence = 0
+
+/**
+ * 重报（BY220 `index/reFeidan`）只对"未报/失败/超时"的注单开放。
+ *
+ * BY220 把重报入口做在**下注榜的注单状态标记**上（`admin_list.html:1975-1992`），
+ * 因此这里同样是点状态标记触发，不再另设"上报订单"区块。
+ */
+async function resubmitBet(betId: number) {
+  const confirmed = window.confirm('确定要重新飞单吗?')
+  if (!confirmed) return
+  resubmittingBetId.value = betId
+  resubmitNotice.value = ''
+  try {
+    const result = await api.resubmitReportOrder(betId, props.machineId ?? null)
+    resubmitNotice.value = `单号 ${betId} 重报结果：${betBoardReportStatusLabel(result.reportStatus)}`
+    await loadBoard()
+  } catch (cause) {
+    resubmitNotice.value = apiErrorMessage(cause, '重新飞单失败')
+  } finally {
+    resubmittingBetId.value = null
+  }
+}
 
 const activeKind = computed<'NORMAL' | 'BOT'>(() => activeTab.value === 'BOT' ? 'BOT' : 'NORMAL')
 const activeCount = computed(() => activeTab.value === 'BOT'
@@ -80,6 +117,7 @@ onBeforeUnmount(() => {
 
     <div class="bet-board-body">
       <p v-if="error" class="bet-board-error" role="alert">{{ error }}</p>
+      <p v-if="resubmitNotice" class="bet-board-resubmit-notice" role="status">{{ resubmitNotice }}</p>
 
       <div v-if="activeTab === 'NORMAL' || activeTab === 'BOT'" class="bet-board-current" role="tabpanel">
         <div class="bet-board-issue">澳8番摊/8球（{{ board?.issueNumber || '--' }}期）</div>
@@ -87,7 +125,19 @@ onBeforeUnmount(() => {
         <div v-else-if="!board?.items.length" class="bet-board-state">当前期暂无{{ activeTab === 'BOT' ? '托' : '普通玩家' }}下注</div>
         <div v-else class="bet-board-list">
           <div v-for="item in board.items" :key="item.id" class="bet-board-row">
-            <div class="bet-board-copy">[{{ item.displayName }}] "{{ item.betText }}" 合计：{{ formatBetBoardPoints(item.stake) }}</div>
+            <!-- BY220 把上报状态与重报入口都放在注单这一行上（admin_list.html:1961-1992）：
+                 未报/失败/超时时点状态标记即"重新飞单"，已报的不可点。 -->
+            <button
+              type="button"
+              class="bet-board-copy"
+              :class="[`is-report-${item.reportStatus.toLowerCase()}`, { 'is-resubmittable': betBoardCanResubmit(item.reportStatus) }]"
+              :disabled="!betBoardCanResubmit(item.reportStatus) || resubmittingBetId === item.id"
+              :title="betBoardCanResubmit(item.reportStatus) ? '点击重新飞单' : '已报的注单不能重报'"
+              @click="resubmitBet(item.id)"
+            >
+              [{{ item.displayName }}] "{{ item.betText }}" 合计：{{ formatBetBoardPoints(item.stake) }}
+              <span class="bet-board-report-status">{{ resubmittingBetId === item.id ? '重报中' : betBoardReportStatusLabel(item.reportStatus) }}</span>
+            </button>
             <button class="bet-board-remove" type="button" disabled title="管理员撤单功能暂未开放" aria-label="管理员撤单功能暂未开放">×</button>
           </div>
         </div>
@@ -195,6 +245,12 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.bet-board-resubmit-notice {
+  margin: 6px 8px 0;
+  color: #2f7a2a;
+  font-size: 11px;
+}
+
 .bet-board-issue {
   min-height: 27px;
   border-bottom: 1px solid var(--ops-line, #8eb7e6);
@@ -226,6 +282,42 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  border: 0;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+}
+
+/* 可重报的注单：状态标记可点（BY220 下注榜点状态即重新飞单）。 */
+.bet-board-copy.is-resubmittable {
+  cursor: pointer;
+}
+
+.bet-board-copy.is-resubmittable:hover .bet-board-report-status {
+  text-decoration: underline;
+}
+
+.bet-board-copy:disabled {
+  cursor: default;
+}
+
+.bet-board-report-status {
+  margin-left: 4px;
+  font-weight: 700;
+}
+
+.bet-board-copy.is-report-reported .bet-board-report-status {
+  color: #2f7a2a;
+}
+
+.bet-board-copy.is-report-failed .bet-board-report-status,
+.bet-board-copy.is-report-timeout .bet-board-report-status {
+  color: var(--ops-red, #d94747);
+}
+
+.bet-board-copy.is-report-unreported .bet-board-report-status {
+  color: #8a6d1f;
 }
 
 .bet-board-remove {

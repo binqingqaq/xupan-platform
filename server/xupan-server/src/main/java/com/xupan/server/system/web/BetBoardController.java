@@ -49,11 +49,19 @@ public class BetBoardController {
         }
     }
 
+    /**
+     * 下注榜的一行。
+     *
+     * <p>{@code reportStatus} 是 BY220 下注榜里每条注单上的 {@code flyers_status}：代理点该状态标记即可重新飞单
+     * （{@code application/rbt/view/index/admin_list.html:1975-1992}）。重报入口属于下注榜，不另设"上报订单"区块。</p>
+     */
     public record BetItemResponse(long id, String displayName, String playerKind, String betText,
-                                  BigDecimal stake, String settlementStatus, Instant createdAt) {
+                                  BigDecimal stake, String settlementStatus, String reportStatus,
+                                  Instant createdAt) {
         static BetItemResponse from(BetBoardService.BetItem item) {
             return new BetItemResponse(item.id(), item.displayName(), item.playerKind(),
-                    item.betText(), item.stake(), item.settlementStatus(), item.createdAt());
+                    item.betText(), item.stake(), item.settlementStatus(), item.reportStatus(),
+                    item.createdAt());
         }
     }
 
