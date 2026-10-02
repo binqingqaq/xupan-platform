@@ -90,6 +90,24 @@ public class AgentConsoleController {
         return LinkResponse.from(service.currentLink(principal(authentication).getUserId(), userId), origin(request));
     }
 
+    @GetMapping("/players/{userId}/bets")
+    public BetPageResponse bets(Authentication authentication, @PathVariable long userId,
+                                @RequestParam(defaultValue = "1") int page,
+                                @RequestParam(defaultValue = "20") int pageSize) {
+        AgentConsoleService.BetPage result = service.bets(principal(authentication).getUserId(), userId, page, pageSize);
+        return new BetPageResponse(result.items().stream().map(BetDetailResponse::from).toList(),
+                result.page(), result.pageSize(), result.total());
+    }
+
+    @GetMapping("/players/{userId}/ledger")
+    public LedgerPageResponse ledger(Authentication authentication, @PathVariable long userId,
+                                     @RequestParam(defaultValue = "1") int page,
+                                     @RequestParam(defaultValue = "20") int pageSize) {
+        AgentConsoleService.LedgerPage result = service.ledger(principal(authentication).getUserId(), userId, page, pageSize);
+        return new LedgerPageResponse(result.items().stream().map(LedgerDetailResponse::from).toList(),
+                result.page(), result.pageSize(), result.total());
+    }
+
     @PostMapping("/players/{userId}/link/rotate")
     public LinkResponse rotateLink(Authentication authentication, @PathVariable long userId,
                                    HttpServletRequest request) {
@@ -171,6 +189,31 @@ public class AgentConsoleController {
             String token = URLEncoder.encode(link.rawToken(), StandardCharsets.UTF_8);
             return new LinkResponse(link.linkId(), link.userId(), link.scope(), link.expiresAt(),
                     origin + "/33/" + token);
+        }
+    }
+
+    public record BetPageResponse(List<BetDetailResponse> items, int page, int pageSize, long total) {
+    }
+
+    public record BetDetailResponse(long id, String betCode, String issueNumber, int ballNumber,
+                                    String command, BigDecimal stake, BigDecimal odds, String settlementStatus,
+                                    BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {
+        static BetDetailResponse from(AgentConsoleService.BetRow row) {
+            return new BetDetailResponse(row.id(), row.betCode(), row.issueNumber(), row.ballNumber(),
+                    row.command(), row.stake(), row.odds(), row.settlementStatus(), row.netProfit(),
+                    row.explanation(), row.createdAt(), row.settledAt());
+        }
+    }
+
+    public record LedgerPageResponse(List<LedgerDetailResponse> items, int page, int pageSize, long total) {
+    }
+
+    public record LedgerDetailResponse(long id, String operationType, BigDecimal amount,
+                                       BigDecimal balanceBefore, BigDecimal balanceAfter, String reason,
+                                       Instant createdAt) {
+        static LedgerDetailResponse from(AgentConsoleService.LedgerRow row) {
+            return new LedgerDetailResponse(row.id(), row.operationType(), row.amount(), row.balanceBefore(),
+                    row.balanceAfter(), row.reason(), row.createdAt());
         }
     }
 

@@ -67,6 +67,9 @@ import type {
   AgentScoreChange,
   AgentPlayerLink,
   AgentOperations,
+  AgentBetDetail,
+  AgentLedgerDetail,
+  AgentPlayerDetailPage,
   AgentPlayerPage,
   CreateAgentGroupRequest,
   CreateAgentRequest,
@@ -517,6 +520,12 @@ export const api = {
     const suffix = search.toString()
     return request<AgentOperations>(`/api/agent/operations${suffix ? `?${suffix}` : ''}`)
   },
+  listAgentPlayerBets: (userId: number, page = 1, pageSize = 20) =>
+    request<AgentPlayerDetailPage<AgentBetDetail>>(
+      `/api/agent/players/${userId}/bets?page=${page}&pageSize=${pageSize}`),
+  listAgentPlayerLedger: (userId: number, page = 1, pageSize = 20) =>
+    request<AgentPlayerDetailPage<AgentLedgerDetail>>(
+      `/api/agent/players/${userId}/ledger?page=${page}&pageSize=${pageSize}`),
   listSubAccounts: () => request<SubAccount[]>('/api/admin/sub-accounts'),
   createSubAccount: (payload: SubAccountInput) => request<SubAccount>('/api/admin/sub-accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateSubAccount: (id: number, payload: SubAccountInput) => request<SubAccount>(`/api/admin/sub-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

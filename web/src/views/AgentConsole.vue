@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
-import type { AgentOperations, AgentOverview, AgentPlayer, AgentPlayerLink } from '../types/agent'
+import type { AgentBetDetail, AgentLedgerDetail, AgentOperations, AgentOverview, AgentPlayer, AgentPlayerLink } from '../types/agent'
 
 const router = useRouter()
 const overview = ref<AgentOverview | null>(null)
@@ -28,6 +28,12 @@ const linkOpen = ref(false)
 const linkTarget = ref<AgentPlayer | null>(null)
 const playerLink = ref<AgentPlayerLink | null>(null)
 const linkLoading = ref(false)
+const detailOpen = ref(false)
+const detailTarget = ref<AgentPlayer | null>(null)
+const detailTab = ref<'BETS' | 'LEDGER'>('BETS')
+const betDetails = ref<AgentBetDetail[]>([])
+const ledgerDetails = ref<AgentLedgerDetail[]>([])
+const detailLoading = ref(false)
 
 async function load() {
   loading.value = true
@@ -183,6 +189,35 @@ async function copyLink() {
   }
 }
 
+async function openDetails(player: AgentPlayer) {
+  detailTarget.value = player
+  detailTab.value = 'BETS'
+  detailOpen.value = true
+  await loadDetails()
+}
+
+async function loadDetails() {
+  const player = detailTarget.value
+  if (!player) return
+  detailLoading.value = true
+  error.value = ''
+  try {
+    if (detailTab.value === 'BETS') {
+      betDetails.value = (await api.listAgentPlayerBets(player.userId)).items
+    } else {
+      ledgerDetails.value = (await api.listAgentPlayerLedger(player.userId)).items
+    }
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '玩家明细加载失败')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function time(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--'
+}
+
 onMounted(() => { void load() })
 </script>
 
@@ -246,7 +281,7 @@ onMounted(() => { void load() })
             <td>{{ player.playerKind === 'BOT' ? '托' : '普通玩家' }}</td>
             <td>{{ player.balance.toFixed(2) }}</td>
             <td>{{ player.userStatus === 'ACTIVE' && player.accountStatus === 'ACTIVE' ? '正常' : player.userStatus }}</td>
-            <td class="agent-console-row-actions"><button type="button" @click="openScore(player, 'TOP_UP')">上分</button><button type="button" @click="openScore(player, 'DOWN')">下分</button><button type="button" @click="openLink(player)">链接</button></td>
+            <td class="agent-console-row-actions"><button type="button" @click="openScore(player, 'TOP_UP')">上分</button><button type="button" @click="openScore(player, 'DOWN')">下分</button><button type="button" @click="openLink(player)">链接</button><button type="button" @click="openDetails(player)">明细</button></td>
           </tr>
           <tr v-if="players.length === 0"><td colspan="7" class="agent-console-empty">当前没有符合条件的数据</td></tr>
         </tbody>
@@ -287,6 +322,27 @@ onMounted(() => { void load() })
           <button type="button" :disabled="!playerLink || linkLoading" @click="revokeLink">拉黑</button>
           <button type="button" :disabled="!playerLink || linkLoading" @click="restoreLink">恢复</button>
         </footer>
+      </section>
+    </div>
+
+    <div v-if="detailOpen" class="agent-console-modal-mask" @click.self="detailOpen = false">
+      <section class="agent-console-modal agent-console-detail-modal">
+        <header><h2>玩家明细 · {{ detailTarget?.displayName }}</h2><button type="button" @click="detailOpen = false">×</button></header>
+        <div class="agent-console-detail-tabs">
+          <button type="button" :class="{ active: detailTab === 'BETS' }" @click="detailTab = 'BETS'; loadDetails()">注单</button>
+          <button type="button" :class="{ active: detailTab === 'LEDGER' }" @click="detailTab = 'LEDGER'; loadDetails()">流水</button>
+        </div>
+        <div class="agent-console-detail-body">
+          <p v-if="detailLoading" class="agent-console-empty">正在加载...</p>
+          <table v-else-if="detailTab === 'BETS'">
+            <thead><tr><th>期号</th><th>内容</th><th>金额</th><th>赔率</th><th>状态</th><th>盈亏</th><th>时间</th></tr></thead>
+            <tbody><tr v-for="bet in betDetails" :key="bet.id"><td>{{ bet.issueNumber }}</td><td>{{ bet.command }}</td><td>{{ bet.stake.toFixed(2) }}</td><td>{{ bet.odds }}</td><td>{{ bet.settlementStatus }}</td><td>{{ bet.netProfit === null ? '--' : bet.netProfit.toFixed(2) }}</td><td>{{ time(bet.createdAt) }}</td></tr><tr v-if="betDetails.length===0"><td colspan="7">暂无注单</td></tr></tbody>
+          </table>
+          <table v-else>
+            <thead><tr><th>类型</th><th>金额</th><th>变动前</th><th>变动后</th><th>原因</th><th>时间</th></tr></thead>
+            <tbody><tr v-for="entry in ledgerDetails" :key="entry.id"><td>{{ entry.operationType }}</td><td>{{ entry.amount.toFixed(2) }}</td><td>{{ entry.balanceBefore.toFixed(2) }}</td><td>{{ entry.balanceAfter.toFixed(2) }}</td><td>{{ entry.reason }}</td><td>{{ time(entry.createdAt) }}</td></tr><tr v-if="ledgerDetails.length===0"><td colspan="6">暂无流水</td></tr></tbody>
+          </table>
+        </div>
       </section>
     </div>
   </main>
@@ -333,6 +389,14 @@ onMounted(() => { void load() })
 .agent-console-modal input { padding: 8px; border: 1px solid #bdc8c2; }
 .agent-console-link-body { padding: 16px; }
 .agent-console-link-url { overflow-wrap: anywhere; padding: 10px; background: #f4f7f5; font-family: ui-monospace, monospace; font-size: 12px; }
+.agent-console-detail-modal { width: min(980px, calc(100vw - 24px)); }
+.agent-console-detail-tabs { display: flex; gap: 8px; padding: 12px 16px 0; }
+.agent-console-detail-tabs button { padding: 7px 14px; border: 1px solid #bdc8c2; background: #fff; cursor: pointer; }
+.agent-console-detail-tabs button.active { background: #476356; color: #fff; }
+.agent-console-detail-body { overflow: auto; padding: 12px 16px 16px; }
+.agent-console-detail-body table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 12px; }
+.agent-console-detail-body th, .agent-console-detail-body td { padding: 7px; border: 1px solid #d6ded9; text-align: left; }
+.agent-console-detail-body th { background: #e8eeea; }
 .agent-console-modal footer { justify-content: flex-end; gap: 8px; margin-top: 16px; background: #fff; }
 @media (max-width: 900px) { .agent-console-operation-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 720px) { .agent-console-page { padding: 12px; } .agent-console-stats { grid-template-columns: repeat(2, 1fr); } .agent-console-operation-grid { grid-template-columns: repeat(2, 1fr); } .agent-console-table { display: block; overflow-x: auto; } }

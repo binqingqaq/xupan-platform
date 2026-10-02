@@ -129,3 +129,35 @@ export interface AgentOperations {
   botTurnover: number
   activePlayerCount: number
 }
+
+export interface AgentBetDetail {
+  id: number
+  betCode: string
+  issueNumber: string
+  ballNumber: number
+  command: string
+  stake: number
+  odds: number
+  settlementStatus: string
+  netProfit: number | null
+  explanation: string | null
+  createdAt: string
+  settledAt: string | null
+}
+
+export interface AgentLedgerDetail {
+  id: number
+  operationType: string
+  amount: number
+  balanceBefore: number
+  balanceAfter: number
+  reason: string
+  createdAt: string
+}
+
+export interface AgentPlayerDetailPage<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+}

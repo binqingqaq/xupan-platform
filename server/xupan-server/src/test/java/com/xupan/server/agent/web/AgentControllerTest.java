@@ -181,6 +181,16 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.netProfit").value(5.00))
                 .andExpect(jsonPath("$.pendingBetCount").value(1))
                 .andExpect(jsonPath("$.normalTurnover").value(30.00));
+        mockMvc.perform(get("/api/agent/players/" + normalUserId + "/bets")
+                        .header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items.length()").value(2));
+        mockMvc.perform(get("/api/agent/players/" + normalUserId + "/ledger")
+                        .header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.items.length()").value(2));
         mockMvc.perform(get("/api/admin/agents").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));

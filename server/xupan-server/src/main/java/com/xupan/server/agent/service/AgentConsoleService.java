@@ -5,6 +5,8 @@ import com.xupan.server.agent.repository.AgentRepository;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationResult;
+import com.xupan.server.game.domain.BetCommandFormatter;
+import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.playerauth.service.PlayerLinkAuthenticationService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
@@ -191,6 +193,57 @@ public class AgentConsoleService {
                 : rows.get(0);
     }
 
+    @Transactional(readOnly = true)
+    public BetPage bets(long accountUserId, long playerUserId, int page, int pageSize) {
+        Agent agent = requireManagedPlayerAgentReadOnly(accountUserId, playerUserId);
+        validatePage(page, pageSize);
+        AgentRepository.AgentPlayerRow player = requirePlayer(agent.id(), playerUserId);
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM game_bet b
+                 WHERE b.user_id = ?
+                """, Long.class, player.accountId());
+        List<BetRow> items = jdbc.query("""
+                SELECT b.id, b.bet_code, b.issue_number, b.ball_number, b.play_type,
+                       b.parameters_text, b.stake, b.odds_snapshot, b.settlement_status,
+                       b.net_profit, b.explanation, b.created_at, b.settled_at
+                  FROM game_bet b
+                 WHERE b.user_id = ?
+                 ORDER BY b.id DESC
+                 LIMIT ? OFFSET ?
+                """, (rs, rowNum) -> new BetRow(rs.getLong("id"), rs.getString("bet_code"),
+                rs.getString("issue_number"), rs.getInt("ball_number"),
+                command(rs.getString("play_type"), rs.getString("parameters_text"), rs.getBigDecimal("stake")),
+                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"),
+                rs.getBigDecimal("net_profit"), rs.getString("explanation"),
+                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at"))),
+                player.accountId(), pageSize, (long) (page - 1) * pageSize);
+        return new BetPage(items, page, pageSize, total == null ? 0 : total);
+    }
+
+    @Transactional(readOnly = true)
+    public LedgerPage ledger(long accountUserId, long playerUserId, int page, int pageSize) {
+        Agent agent = requireManagedPlayerAgentReadOnly(accountUserId, playerUserId);
+        validatePage(page, pageSize);
+        AgentRepository.AgentPlayerRow player = requirePlayer(agent.id(), playerUserId);
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger l
+                 WHERE l.user_id = ?
+                """, Long.class, player.accountId());
+        List<LedgerRow> items = jdbc.query("""
+                SELECT l.id, l.operation_type, l.amount, l.balance_before, l.balance_after,
+                       l.reason, l.created_at
+                  FROM demo_balance_ledger l
+                 WHERE l.user_id = ?
+                 ORDER BY l.id DESC
+                 LIMIT ? OFFSET ?
+                """, (rs, rowNum) -> new LedgerRow(rs.getLong("id"), rs.getString("operation_type"),
+                rs.getBigDecimal("amount"), rs.getBigDecimal("balance_before"),
+                rs.getBigDecimal("balance_after"), rs.getString("reason"),
+                instant(rs.getTimestamp("created_at"))), player.accountId(), pageSize,
+                (long) (page - 1) * pageSize);
+        return new LedgerPage(items, page, pageSize, total == null ? 0 : total);
+    }
+
     @Transactional
     public PlayerLinkAuthenticationService.IssuedLink rotateLink(long accountUserId, long playerUserId) {
         Agent agent = requireManagedPlayerAgent(accountUserId, playerUserId);
@@ -269,6 +322,18 @@ public class AgentConsoleService {
         return agent;
     }
 
+    private Agent requireManagedPlayerAgentReadOnly(long accountUserId, long playerUserId) {
+        requirePlayerManage(accountUserId);
+        Agent agent = requireActiveAgent(accountUserId);
+        Long actualAgentId = agentRepository.findCurrentAgentId(playerUserId)
+                .orElseThrow(() -> BusinessException.notFound("AGENT_PLAYER_NOT_FOUND", "玩家不存在"));
+        if (actualAgentId != agent.id()) {
+            throw BusinessException.forbidden("AGENT_PLAYER_OUT_OF_SCOPE", "玩家不属于当前代理");
+        }
+        requirePlayer(agent.id(), playerUserId);
+        return agent;
+    }
+
     private void auditScoreChange(long operator, AgentRepository.AgentPlayerRow player, String direction,
                                   BigDecimal amount, BigDecimal agentScore, BigDecimal playerBalance,
                                   long ledgerId) {
@@ -313,6 +378,27 @@ public class AgentConsoleService {
         }
     }
 
+    private static void validatePage(int page, int pageSize) {
+        if (page < 1 || pageSize < 1 || pageSize > 100) {
+            throw BusinessException.badRequest("AGENT_DETAIL_QUERY_INVALID", "分页参数必须为 1 到 100");
+        }
+    }
+
+    private static String command(String playType, String parametersText, BigDecimal stake) {
+        try {
+            List<Integer> parameters = java.util.Arrays.stream(
+                            parametersText == null ? new String[0] : parametersText.split(","))
+                    .map(String::trim).filter(value -> !value.isEmpty()).map(Integer::valueOf).toList();
+            return BetCommandFormatter.format(PlayType.valueOf(playType), parameters, stake);
+        } catch (RuntimeException exception) {
+            return playType + " " + (parametersText == null ? "" : parametersText);
+        }
+    }
+
+    private static java.time.Instant instant(Timestamp value) {
+        return value == null ? null : value.toInstant();
+    }
+
     public record AgentPlayerPage(List<AgentRepository.AgentPlayerRow> items, int page, int pageSize, long total) {
     }
 
@@ -323,5 +409,20 @@ public class AgentConsoleService {
     public record OperationsSummary(String day, long betCount, BigDecimal turnover, BigDecimal netProfit,
                                     long pendingBetCount, BigDecimal normalTurnover, BigDecimal botTurnover,
                                     long activePlayerCount) {
+    }
+
+    public record BetPage(List<BetRow> items, int page, int pageSize, long total) {
+    }
+
+    public record BetRow(long id, String betCode, String issueNumber, int ballNumber, String command,
+                         BigDecimal stake, BigDecimal odds, String settlementStatus, BigDecimal netProfit,
+                         String explanation, Instant createdAt, Instant settledAt) {
+    }
+
+    public record LedgerPage(List<LedgerRow> items, int page, int pageSize, long total) {
+    }
+
+    public record LedgerRow(long id, String operationType, BigDecimal amount, BigDecimal balanceBefore,
+                            BigDecimal balanceAfter, String reason, Instant createdAt) {
     }
 }

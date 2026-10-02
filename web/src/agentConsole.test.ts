@@ -19,6 +19,8 @@ vi.mock('./api', () => ({
     revokeAgentPlayerLink: vi.fn(),
     restoreAgentPlayerLink: vi.fn(),
     getAgentOperations: vi.fn(),
+    listAgentPlayerBets: vi.fn(),
+    listAgentPlayerLedger: vi.fn(),
     logout: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -68,6 +70,19 @@ beforeEach(() => {
   vi.mocked(api.getAgentOperations).mockResolvedValue({
     day: '2026-10-02', betCount: 12, turnover: 1250, netProfit: 88.5,
     pendingBetCount: 3, normalTurnover: 1000, botTurnover: 250, activePlayerCount: 5,
+  })
+  vi.mocked(api.listAgentPlayerBets).mockResolvedValue({
+    items: [{
+      id: 9, betCode: 'BET-9', issueNumber: '3000000', ballNumber: 1, command: '1番100',
+      stake: 100, odds: 3.85, settlementStatus: 'WIN', netProfit: 285,
+      explanation: '中奖', createdAt: '2026-10-02T00:00:00Z', settledAt: '2026-10-02T00:01:00Z',
+    }], page: 1, pageSize: 20, total: 1,
+  })
+  vi.mocked(api.listAgentPlayerLedger).mockResolvedValue({
+    items: [{
+      id: 10, operationType: 'BET_DEBIT', amount: -100, balanceBefore: 200,
+      balanceAfter: 100, reason: '下注扣款', createdAt: '2026-10-02T00:00:00Z',
+    }], page: 1, pageSize: 20, total: 1,
   })
 })
 
@@ -168,5 +183,33 @@ describe('agent console', () => {
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.rotateAgentPlayerLink).toHaveBeenCalledWith(101)
     expect(container!.textContent).toContain('rotated-token')
+  })
+
+  it('opens player bet and ledger details', async () => {
+    vi.mocked(api.listAgentPlayers).mockResolvedValue({
+      items: [{
+        userId: 101, accountId: 201, internalCode: 'P-101', displayName: '玩家甲',
+        memberCode: 'V-101', playerKind: 'NORMAL', userStatus: 'ACTIVE', accountStatus: 'ACTIVE',
+        balance: 0, createdAt: '2026-10-02T00:00:00Z', lastLoginAt: null,
+      }],
+      page: 1, pageSize: 100, total: 1,
+    })
+    await mountConsole()
+
+    const detailButton = [...container!.querySelectorAll<HTMLButtonElement>('.agent-console-row-actions button')]
+      .find(button => button.textContent?.includes('明细'))
+    detailButton?.click()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.listAgentPlayerBets).toHaveBeenCalledWith(101)
+    expect(container!.textContent).toContain('1番100')
+
+    const ledgerTab = [...container!.querySelectorAll<HTMLButtonElement>('.agent-console-detail-tabs button')]
+      .find(button => button.textContent?.includes('流水'))
+    ledgerTab?.click()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.listAgentPlayerLedger).toHaveBeenCalledWith(101)
+    expect(container!.textContent).toContain('下注扣款')
   })
 })
