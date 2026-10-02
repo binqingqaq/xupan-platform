@@ -94,6 +94,54 @@ class ReportConsoleTest {
         clean();
     }
 
+    /**
+     * 回归（账本原则 8）：同一上游账号不得被多台机器共用；软删除后必须释放占用。
+     *
+     * <p>依据《代理报网盘口与结算业务规则说明》§14：共用同一上游账号会导致
+     * 余额混合、订单归属不明、风险共用与退款不清。</p>
+     */
+    @Test
+    void forbidsSharingUpstreamAccountAcrossMachinesAndReleasesOnDelete() throws Exception {
+        String tokenA = login(MACHINE_A_USER, PASSWORD);
+        String tokenB = login(MACHINE_B_USER, PASSWORD);
+
+        // 机器 A 占用 feidan-a
+        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenA))
+                        .contentType("application/json").content("{\"reportUsername\":\"feidan-a\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportUsername").value("feidan-a"));
+
+        // 机器 B 使用同一上游账号 → 409
+        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenB))
+                        .contentType("application/json").content("{\"reportUsername\":\"feidan-a\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REPORT_USERNAME_TAKEN"));
+
+        // 换成别的账号即可
+        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenB))
+                        .contentType("application/json").content("{\"reportUsername\":\"feidan-b\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportUsername").value("feidan-b"));
+
+        // 软删除机器 B → 释放上游账号与凭据，不长期占位
+        String adminToken = login(ADMIN, PASSWORD);
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/api/admin/machines/" + machineBId).header("Authorization", bearer(adminToken)))
+                .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent WHERE id = ? AND report_username IS NOT NULL",
+                Long.class, machineBId)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM agent WHERE id = ? AND report_password_ciphertext IS NOT NULL",
+                Long.class, machineBId)).isZero();
+
+        // 释放后机器 A 可以改用 feidan-b
+        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenA))
+                        .contentType("application/json").content("{\"reportUsername\":\"feidan-b\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportUsername").value("feidan-b"));
+    }
+
     @Test
     void machineAccountReadsEmptyReportConfigByDefault() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);

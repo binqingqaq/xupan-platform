@@ -139,6 +139,7 @@ public class ReportService {
                         "REPORT_NETWORK_CODE_INVALID", "网盘编码无效"),
                 update.reportRouteCode() == null ? current.reportRouteCode()
                         : resolveRouteCode(update.reportRouteCode()));
+        requireReportUsernameAvailable(applied.reportUsername(), targetAgentId);
         repository.updateConfig(targetAgentId, applied);
         audit(operator, "PUT", "/api/admin/player-desk/report", targetAgentId,
                 "reportType=" + applied.reportType() + ",route=" + applied.reportRouteCode()
@@ -169,8 +170,20 @@ public class ReportService {
         return view(targetAgentId);
     }
 
-    /** 退出报网：只置 {@code report_online=false}，保留配置与上次登录时间。 */
-    @Transactional
+    /**
+     * 校验上游账号未被其它机器占用（账本原则 8）。
+     *
+     * <p>《代理报网盘口与结算业务规则说明》§14：共用同一上游账号会导致余额混合、订单归属不明、
+     * 风险共用与退款不清，因此这里直接拒绝，而不是"明确隔离"。</p>
+     */
+    private void requireReportUsernameAvailable(String reportUsername, long targetAgentId) {
+        repository.findAgentIdByReportUsername(reportUsername, targetAgentId).ifPresent(other -> {
+            throw BusinessException.conflict("REPORT_USERNAME_TAKEN",
+                    "该飞单账号已被其它机器占用：" + other);
+        });
+    }
+
+    /** 退出报网：只置 {@code report_online=false}，保留配置与上次登录时间。 */    @Transactional
     public ReportConfigView logout(long operator, Long machineId) {
         long targetAgentId = targetAgentIdForWrite(operator, machineId);
         requireConfig(targetAgentId);

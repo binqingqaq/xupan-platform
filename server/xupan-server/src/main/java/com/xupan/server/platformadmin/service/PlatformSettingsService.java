@@ -99,7 +99,9 @@ public class PlatformSettingsService {
                 """, revokedAt, operator, revokedAt);
         jdbc.update("""
                 UPDATE agent
-                   SET status='DISABLED', board_open=FALSE, deleted_at=?, deleted_by=?, updated_at=?
+                   SET status='DISABLED', board_open=FALSE, deleted_at=?, deleted_by=?, updated_at=?,
+                       -- 原则 8：全量删除同样释放上游账号占用并清掉飞单密码密文
+                       report_username=NULL, report_password_ciphertext=NULL, report_online=FALSE
                  WHERE system_owned=FALSE AND deleted_at IS NULL
                 """, revokedAt, operator, revokedAt);
         jdbc.update("""

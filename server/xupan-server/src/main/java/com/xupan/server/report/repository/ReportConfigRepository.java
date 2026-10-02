@@ -109,6 +109,33 @@ public class ReportConfigRepository {
     }
 
     /**
+     * 该上游账号是否已被**其它**未删除的机器占用（原则 8：禁止多代理共用上游账号）。
+     *
+     * @return 占用它的机器 id；未被占用时为 {@link Optional#empty()}
+     */
+    public Optional<Long> findAgentIdByReportUsername(String reportUsername, long excludeAgentId) {
+        if (reportUsername == null || reportUsername.isBlank()) {
+            return Optional.empty();
+        }
+        return jdbc.query("""
+                SELECT id FROM agent
+                 WHERE report_username = ? AND id <> ? AND deleted_at IS NULL
+                 ORDER BY id LIMIT 1
+                """, (rs, rowNum) -> rs.getLong("id"), reportUsername.trim(), excludeAgentId)
+                .stream().findFirst();
+    }
+
+    /** 释放上游账号占用（软删除机器时调用，避免占位阻挡复用）。 */
+    public int releaseReportCredential(long agentId) {
+        return jdbc.update("""
+                UPDATE agent
+                   SET report_username = NULL, report_password_ciphertext = NULL, report_online = FALSE,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, agentId);
+    }
+
+    /**
      * 累加机器的"押注"本地模拟值（BY220 {@code x_rbfly.betting}）。
      *
      * <p>BY220 本地环境登录时把 {@code betting} 写 0（{@code rbt/Index.php:803}），真值只由真实上游返回。

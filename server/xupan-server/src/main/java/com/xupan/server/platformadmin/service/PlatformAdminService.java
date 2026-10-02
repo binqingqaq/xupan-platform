@@ -270,7 +270,10 @@ public class PlatformAdminService {
         int updated = jdbc.update("""
                 UPDATE agent
                    SET status='DISABLED', board_open=FALSE, deleted_at=CURRENT_TIMESTAMP,
-                       deleted_by=?, updated_at=CURRENT_TIMESTAMP
+                       deleted_by=?, updated_at=CURRENT_TIMESTAMP,
+                       -- 原则 8：释放上游账号占用，避免软删除的机器长期占位阻挡复用；
+                       -- 同时清掉飞单密码密文，删除后的账号不应继续持有凭据。
+                       report_username=NULL, report_password_ciphertext=NULL, report_online=FALSE
                  WHERE id=? AND deleted_at IS NULL
                 """, operator, id);
         if (updated == 0) throw BusinessException.notFound("MACHINE_NOT_FOUND", "机器不存在");
