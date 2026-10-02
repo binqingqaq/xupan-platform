@@ -2,11 +2,14 @@ package com.xupan.server.auth.security;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.domain.SessionRecord;
+import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.service.TokenService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -14,19 +17,25 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
 /** Converts a valid opaque Bearer token into a server-loaded authenticated principal. */
 public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(BearerTokenAuthenticationFilter.class);
+
     private final TokenService tokenService;
     private final AuthenticatedUserDetailsService userDetailsService;
+    private final SessionRepository sessionRepository;
 
     public BearerTokenAuthenticationFilter(TokenService tokenService,
-                                           AuthenticatedUserDetailsService userDetailsService) {
+                                           AuthenticatedUserDetailsService userDetailsService,
+                                           SessionRepository sessionRepository) {
         this.tokenService = tokenService;
         this.userDetailsService = userDetailsService;
+        this.sessionRepository = sessionRepository;
     }
 
     @Override
@@ -45,9 +54,21 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
                 }
                 return user.map(current -> new AuthenticatedSession(value.sessionId(), current));
             });
-            authenticatedSession.ifPresent(value -> authenticate(request, value));
+            authenticatedSession.ifPresent(value -> {
+                authenticate(request, value);
+                touch(value.sessionId());
+            });
         }
         filterChain.doFilter(request, response);
+    }
+
+    private void touch(String sessionId) {
+        try {
+            Instant now = Instant.now();
+            sessionRepository.touchIfOlderThan(sessionId, now, now.minusSeconds(10));
+        } catch (RuntimeException exception) {
+            log.warn("更新会话活跃时间失败 sessionId={}", sessionId, exception);
+        }
     }
 
     private Optional<AuthenticatedUser> loadEnabledUser(SessionRecord session) {

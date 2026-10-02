@@ -17,6 +17,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -32,6 +35,8 @@ class AuthControllerTest {
     private static final String USER_PASSWORD = "AuthPassword123";
     private static final String ADMIN_USERNAME = "auth-test-admin";
     private static final String ADMIN_PASSWORD = "AdminPassword123";
+    private static final String SUB_ACCOUNT_USERNAME = "auth-test-sub-account";
+    private static final String SUB_ACCOUNT_PASSWORD = "SubAccountPassword123";
 
     @Autowired
     private MockMvc mockMvc;
@@ -126,6 +131,27 @@ class AuthControllerTest {
                         .content("{\"username\":\"" + USERNAME + "\",\"password\":\"" + USER_PASSWORD + "\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH_INVALID_CREDENTIALS"));
+    }
+
+    @Test
+    void expiredBy220SubAccountCannotLoginUntilExpirationIsExtended() throws Exception {
+        long userId = insertUser(SUB_ACCOUNT_USERNAME, SUB_ACCOUNT_PASSWORD, "SUB_ACCOUNT");
+        jdbcTemplate.update("""
+                INSERT INTO agent_group
+                    (group_code, display_name, status, username, sys_user_id, expires_at)
+                VALUES ('AUTH_TEST_SUB_ACCOUNT', '登录过期测试子账号', 'ACTIVE', ?, ?, ?)
+                """, SUB_ACCOUNT_USERNAME, userId, Timestamp.from(Instant.now().minusSeconds(60)));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + SUB_ACCOUNT_USERNAME + "\",\"password\":\""
+                                + SUB_ACCOUNT_PASSWORD + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_SUB_ACCOUNT_EXPIRED"));
+
+        jdbcTemplate.update("UPDATE agent_group SET expires_at = ? WHERE sys_user_id = ?",
+                Timestamp.from(Instant.now().plusSeconds(3600)), userId);
+        loginResult(SUB_ACCOUNT_USERNAME, SUB_ACCOUNT_PASSWORD);
     }
 
     @Test
@@ -232,10 +258,11 @@ class AuthControllerTest {
                 .andReturn();
     }
 
-    private void insertUser(String username, String password, String roleCode) {
+    private long insertUser(String username, String password, String roleCode) {
         long userId = userRepository.insert(username, username, passwordPolicy.encode(password), "ACTIVE");
         assertThat(userRepository.assignRole(userId, roleCode)).isEqualTo(1);
         walletService.ensureWalletForUser(userId, username);
+        return userId;
     }
 
     private void cleanUsers() {
@@ -245,6 +272,7 @@ class AuthControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code <> 'DEMO-USER'");
+        jdbcTemplate.update("DELETE FROM agent_group WHERE sys_user_id IN (SELECT id FROM sys_user)");
         jdbcTemplate.update("DELETE FROM sys_user_role");
         jdbcTemplate.update("DELETE FROM sys_user");
     }

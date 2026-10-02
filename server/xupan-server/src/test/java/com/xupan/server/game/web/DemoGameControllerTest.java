@@ -24,7 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
-@TestPropertySource(properties = "xupan.automation.enabled=false")
+@TestPropertySource(properties = {
+        "xupan.automation.enabled=false",
+        "spring.task.scheduling.enabled=false"
+})
 class DemoGameControllerTest {
 
     private static final String TEST_USERNAME = "game-test-admin";
@@ -59,7 +62,11 @@ class DemoGameControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM game_bet");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE game_code LIKE 'MULTI_%'");
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
+        jdbcTemplate.update("DELETE FROM game_issue_event WHERE game_code LIKE 'MULTI_%'");
+        jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'MULTI_%')");
+        jdbcTemplate.update("DELETE FROM game_definition WHERE game_code LIKE 'MULTI_%'");
         jdbcTemplate.update("DELETE FROM game_issue_event");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?))", TEST_USERNAME, SECOND_USERNAME);
@@ -75,6 +82,8 @@ class DemoGameControllerTest {
         accessToken = login();
         jdbcTemplate.update("DELETE FROM game_odds");
         jdbcTemplate.update("DELETE FROM game_issue");
+        jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'MULTI_%')");
+        jdbcTemplate.update("DELETE FROM game_definition WHERE game_code LIKE 'MULTI_%'");
     }
 
     private String login() throws Exception {
@@ -95,6 +104,46 @@ class DemoGameControllerTest {
             request.addHeader("Authorization", "Bearer " + token);
             return request;
         };
+    }
+
+    @Test
+    void keepsEachGameIssueAndBetDimensionIsolated() throws Exception {
+        mockMvc.perform(post("/api/admin/game-settings").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("""
+                                {"gameCode":"MULTI_TEST","displayName":"多彩种测试","ballIndexes":"1,2,3,4,5,6,7,8",
+                                 "sortOrder":99,"algorithm":"SUM","switchEnabled":false,"specialEnabled":true,
+                                 "specialModel":"MODEL_ONE","keyboardEnabled":true,"status":"ACTIVE",
+                                 "oddsAte":18.1,"oddsAdx":2.1,"oddsBte":18.2,"oddsBdx":2.2,
+                                 "oddsCte":18.3,"oddsCdx":2.3,"oddsDte":18.4,"oddsDdx":2.4}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gameCode").value("MULTI_TEST"));
+
+        mockMvc.perform(get("/api/demo/game/catalog").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.gameCode == 'MULTI_TEST')]").isNotEmpty());
+
+        mockMvc.perform(get("/api/demo/game/current").param("gameCode", "MULTI_TEST").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gameCode").value("MULTI_TEST"))
+                .andExpect(jsonPath("$.issueNumber").value("MULTI_TEST-3000000"));
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],"
+                                + "\"stake\":10.00,\"idempotencyKey\":\"MULTI-BET-001\","
+                                + "\"gameCode\":\"MULTI_TEST\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.issueNumber").value("MULTI_TEST-3000000"));
+
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.gameCode").value("AU8"))
+                .andExpect(jsonPath("$.issueNumber").value("3000000"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT game_code FROM game_bet WHERE request_idempotency_key = 'MULTI-BET-001'", String.class))
+                .isEqualTo("MULTI_TEST");
     }
 
     @Test
@@ -253,17 +302,40 @@ class DemoGameControllerTest {
     }
 
     @Test
+    void settlesManualDrawAgainstSelectedBall() throws Exception {
+        mockMvc.perform(put("/api/demo/game/admin/odds/FAN").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"odds\":3.850}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":2,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-SELECTED-BALL-2\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ballNumber").value(2))
+                .andExpect(jsonPath("$.settlementStatus").value("PENDING"));
+
+        mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"numbers\":[2,1,3,4,5,6,7,8]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CLOSED"));
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT settlement_status FROM game_bet
+                 WHERE request_idempotency_key = 'BET-SELECTED-BALL-2'
+                """, String.class)).isEqualTo("WIN");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT balance FROM demo_user_account WHERE sys_user_id = ?
+                """, java.math.BigDecimal.class, testUserId)).isEqualByComparingTo("1028.50");
+    }
+    @Test
     void rejectsInvalidBetAndDrawPayloads() throws Exception {
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"ballNumber\":9,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-INVALID-BALL\"}"))
                 .andExpect(status().isBadRequest());
 
-        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
-                        .contentType("application/json")
-                        .content("{\"ballNumber\":2,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.00,\"idempotencyKey\":\"BET-INVALID-BALL-2\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REQUEST_INVALID"));
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")

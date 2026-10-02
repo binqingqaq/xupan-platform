@@ -4,6 +4,7 @@ import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
+import com.xupan.server.platformadmin.service.GameSettingsService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +39,7 @@ public class 自动轮期服务 {
     private final ApplicationEventPublisher eventPublisher;
     private final Clock clock;
     private final boolean automationEnabled;
+    private final GameSettingsService gameSettingsService;
 
     @Autowired
     public 自动轮期服务(GameDataRepository gameRepository,
@@ -45,9 +47,10 @@ public class 自动轮期服务 {
                         SettlementService settlementService,
                         VirtualWalletService walletService,
                         ApplicationEventPublisher eventPublisher,
+                        GameSettingsService gameSettingsService,
                         @Value("${xupan.automation.enabled:true}") boolean automationEnabled) {
         this(gameRepository, eventRepository, settlementService, walletService,
-                eventPublisher, Clock.systemUTC(), automationEnabled);
+                eventPublisher, gameSettingsService, Clock.systemUTC(), automationEnabled);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
@@ -55,8 +58,10 @@ public class 自动轮期服务 {
                  SettlementService settlementService,
                  VirtualWalletService walletService,
                  ApplicationEventPublisher eventPublisher,
+                 GameSettingsService gameSettingsService,
                  Clock clock) {
-        this(gameRepository, eventRepository, settlementService, walletService, eventPublisher, clock, true);
+        this(gameRepository, eventRepository, settlementService, walletService, eventPublisher,
+                gameSettingsService, clock, true);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
@@ -64,6 +69,7 @@ public class 自动轮期服务 {
                  SettlementService settlementService,
                  VirtualWalletService walletService,
                  ApplicationEventPublisher eventPublisher,
+                 GameSettingsService gameSettingsService,
                  Clock clock,
                  boolean automationEnabled) {
         this.gameRepository = gameRepository;
@@ -73,27 +79,46 @@ public class 自动轮期服务 {
         this.eventPublisher = eventPublisher;
         this.clock = clock;
         this.automationEnabled = automationEnabled;
+        this.gameSettingsService = gameSettingsService;
     }
 
     @Scheduled(fixedDelay = 1000)
     @Transactional
     public void scheduledAdvance() {
-        advanceIfEnabled(clock.instant());
+        if (!automationEnabled) return;
+        advanceAllActive(clock.instant());
+    }
+
+    @Transactional
+    public synchronized void advanceAllActive(Instant now) {
+        for (GameSettingsService.GameCatalogItem game : gameSettingsService.activeCatalog()) {
+            advance(game.gameCode(), now);
+        }
     }
 
     @Transactional
     public void advanceIfEnabled(Instant now) {
+        advanceIfEnabled(GameDataRepository.DEFAULT_GAME_CODE, now);
+    }
+
+    @Transactional
+    public void advanceIfEnabled(String gameCode, Instant now) {
         if (automationEnabled) {
-            advance(now);
+            advance(gameCode, now);
         }
     }
 
     @Transactional
     public synchronized void advance(Instant now) {
-        GameDataRepository.IssueRecord issue = ensureCurrentIssue(now);
+        advance(GameDataRepository.DEFAULT_GAME_CODE, now);
+    }
+
+    @Transactional
+    public synchronized void advance(String gameCode, Instant now) {
+        GameDataRepository.IssueRecord issue = ensureCurrentIssue(gameCode, now);
         if (issue.bettingEndsAt() == null || issue.drawEndsAt() == null) {
             gameRepository.initializeSchedule(issue.issueNumber(), issue.startedAt() == null ? now : issue.startedAt());
-            issue = gameRepository.findCurrentIssue().orElseThrow();
+            issue = gameRepository.findCurrentIssue(gameCode).orElseThrow();
         }
 
         if (BETTING.equals(issue.phase())) {
@@ -105,32 +130,32 @@ public class 自动轮期服务 {
                     && gameRepository.transitionPhase(issue.issueNumber(), BETTING, DRAWING)) {
                 eventRepository.appendOnce(issue.issueNumber(), "BETTING_CLOSED",
                         issue.issueNumber() + "期停止", now);
-                issue = gameRepository.findCurrentIssue().orElseThrow();
+                issue = gameRepository.findCurrentIssue(gameCode).orElseThrow();
             }
         }
 
         if (DRAWING.equals(issue.phase()) && !now.isBefore(issue.drawEndsAt())) {
-            finalizeIssue(issue, now);
+            finalizeIssue(gameCode, issue, now);
         }
     }
 
-    private GameDataRepository.IssueRecord ensureCurrentIssue(Instant now) {
-        return gameRepository.findCurrentIssue().orElseGet(() -> {
-            GameDataRepository.IssueRecord latest = gameRepository.findLatestIssue().orElse(null);
+    private GameDataRepository.IssueRecord ensureCurrentIssue(String gameCode, Instant now) {
+        return gameRepository.findCurrentIssue(gameCode).orElseGet(() -> {
+            GameDataRepository.IssueRecord latest = gameRepository.findLatestIssue(gameCode).orElse(null);
             if (latest == null) {
-                gameRepository.saveBettingIssue(INITIAL_ISSUE, now);
+                gameRepository.saveBettingIssue(gameCode, initialIssue(gameCode), now);
             } else {
-                gameRepository.saveBettingIssue(nextIssueNumber(latest.issueNumber()),
+                gameRepository.saveBettingIssue(gameCode, nextIssueNumber(gameCode, latest.issueNumber()),
                         latest.settledAt() == null ? now : latest.settledAt());
             }
-            GameDataRepository.IssueRecord created = gameRepository.findCurrentIssue().orElseThrow();
+            GameDataRepository.IssueRecord created = gameRepository.findCurrentIssue(gameCode).orElseThrow();
             eventRepository.appendOnce(created.issueNumber(), "ISSUE_STARTED",
                     created.issueNumber() + "期开始", created.startedAt());
             return created;
         });
     }
 
-    private void finalizeIssue(GameDataRepository.IssueRecord issue, Instant now) {
+    private void finalizeIssue(String gameCode, GameDataRepository.IssueRecord issue, Instant now) {
         List<Integer> numbers = generateFinalNumbers();
         if (!gameRepository.saveFinalResult(issue.issueNumber(), numbers, now)) {
             return;
@@ -161,9 +186,9 @@ public class 自动轮期服务 {
         eventRepository.appendOnce(issue.issueNumber(), "DRAW_RESULT",
                 resultMessage(issue.issueNumber(), numbers), now);
 
-        String nextIssue = nextIssueNumber(issue.issueNumber());
-        if (gameRepository.findCurrentIssue().isEmpty()) {
-            gameRepository.saveBettingIssue(nextIssue, issue.drawEndsAt());
+        String nextIssue = nextIssueNumber(gameCode, issue.issueNumber());
+        if (gameRepository.findCurrentIssue(gameCode).isEmpty()) {
+            gameRepository.saveBettingIssue(gameCode, nextIssue, issue.drawEndsAt());
             eventRepository.appendOnce(nextIssue, "ISSUE_STARTED", nextIssue + "期开始", issue.drawEndsAt());
         }
     }
@@ -190,11 +215,17 @@ public class 自动轮期服务 {
         return numbers;
     }
 
-    private static String nextIssueNumber(String issueNumber) {
+    private static String initialIssue(String gameCode) {
+        return GameDataRepository.DEFAULT_GAME_CODE.equals(gameCode) ? INITIAL_ISSUE : gameCode + "-" + INITIAL_ISSUE;
+    }
+
+    private static String nextIssueNumber(String gameCode, String issueNumber) {
+        String prefix = GameDataRepository.DEFAULT_GAME_CODE.equals(gameCode) ? "" : gameCode + "-";
+        String numeric = issueNumber.startsWith(prefix) ? issueNumber.substring(prefix.length()) : issueNumber;
         try {
-            return String.valueOf(Long.parseLong(issueNumber) + 1);
+            return prefix + (Long.parseLong(numeric) + 1);
         } catch (NumberFormatException ignored) {
-            return INITIAL_ISSUE;
+            return initialIssue(gameCode);
         }
     }
 

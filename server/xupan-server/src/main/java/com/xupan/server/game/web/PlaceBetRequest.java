@@ -13,10 +13,19 @@ import java.math.BigDecimal;
 import java.util.List;
 
 public record PlaceBetRequest(
-        @NotNull @Min(1) @Max(1) Integer ballNumber,
+        @NotNull @Min(1) @Max(8) Integer ballNumber,
         @NotNull PlayType playType,
         List<Integer> parameters,
         @NotNull @DecimalMin("0.01") @Digits(integer = 12, fraction = 2) BigDecimal stake,
-        @NotBlank @Size(max = 128) String idempotencyKey
+        @NotBlank @Size(max = 128) String idempotencyKey,
+        @Size(max = 32) String gameCode
 ) {
+    public PlaceBetRequest(Integer ballNumber, PlayType playType, List<Integer> parameters,
+                           BigDecimal stake, String idempotencyKey) {
+        this(ballNumber, playType, parameters, stake, idempotencyKey, null);
+    }
+
+    public String normalizedGameCode() {
+        return gameCode == null || gameCode.isBlank() ? "AU8" : gameCode.trim().toUpperCase(java.util.Locale.ROOT);
+    }
 }

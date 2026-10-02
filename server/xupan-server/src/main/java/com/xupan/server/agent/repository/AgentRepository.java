@@ -36,7 +36,7 @@ public class AgentRepository {
 
     public long defaultAgentId() {
         Long id = jdbc.queryForObject(
-                "SELECT id FROM agent WHERE agent_code = 'PLATFORM_DIRECT' AND system_owned = TRUE",
+                "SELECT id FROM agent WHERE agent_code = 'PLATFORM_DIRECT' AND system_owned = TRUE AND deleted_at IS NULL",
                 Long.class);
         if (id == null) {
             throw new IllegalStateException("平台直属代理不存在");
@@ -48,6 +48,7 @@ public class AgentRepository {
         return jdbc.query("""
                 SELECT id, group_code, display_name, status, created_by, created_at, updated_at
                   FROM agent_group
+                 WHERE deleted_at IS NULL
                  ORDER BY id
                 """, (rs, rowNum) -> new AgentGroup(
                 rs.getLong("id"), rs.getString("group_code"), rs.getString("display_name"),
@@ -58,7 +59,7 @@ public class AgentRepository {
     public Optional<AgentGroup> findGroup(long groupId) {
         return jdbc.query("""
                 SELECT id, group_code, display_name, status, created_by, created_at, updated_at
-                  FROM agent_group WHERE id = ?
+                  FROM agent_group WHERE id = ? AND deleted_at IS NULL
                 """, (rs, rowNum) -> new AgentGroup(
                 rs.getLong("id"), rs.getString("group_code"), rs.getString("display_name"),
                 rs.getString("status"), nullableLong(rs, "created_by"),
@@ -84,7 +85,7 @@ public class AgentRepository {
 
     public long countActiveAgentsInGroup(long groupId) {
         Long count = jdbc.queryForObject("""
-                SELECT COUNT(*) FROM agent WHERE group_id = ? AND status = 'ACTIVE'
+                SELECT COUNT(*) FROM agent WHERE group_id = ? AND status = 'ACTIVE' AND deleted_at IS NULL
                 """, Long.class, groupId);
         return count == null ? 0L : count;
     }
@@ -111,7 +112,7 @@ public class AgentRepository {
     }
 
     public Optional<AgentRow> findAgent(long agentId) {
-        return jdbc.query(AGENT_SELECT + " WHERE ag.id = ? "
+        return jdbc.query(AGENT_SELECT + " WHERE ag.id = ? AND ag.deleted_at IS NULL "
                         + "GROUP BY ag.id, ag.agent_code, ag.display_name, ag.group_id, ag.account_user_id, "
                         + "ag.system_owned, ag.status, ag.created_by, ag.created_at, ag.updated_at, "
                         + "g.group_code, g.display_name, u.username",
@@ -122,7 +123,7 @@ public class AgentRepository {
         return jdbc.query("""
                 SELECT id, agent_code, display_name, group_id, account_user_id, system_owned,
                        status, created_by, created_at, updated_at
-                  FROM agent WHERE id = ?
+                  FROM agent WHERE id = ? AND deleted_at IS NULL
                 """, (rs, rowNum) -> mapAgent(rs), agentId).stream().findFirst();
     }
 
@@ -130,13 +131,13 @@ public class AgentRepository {
         return jdbc.query("""
                 SELECT id, agent_code, display_name, group_id, account_user_id, system_owned,
                        status, created_by, created_at, updated_at
-                  FROM agent WHERE account_user_id = ?
+                  FROM agent WHERE account_user_id = ? AND deleted_at IS NULL
                 """, (rs, rowNum) -> mapAgent(rs), accountUserId).stream().findFirst();
     }
 
     public boolean agentCodeExists(String code) {
         return Boolean.TRUE.equals(jdbc.queryForObject(
-                "SELECT EXISTS(SELECT 1 FROM agent WHERE agent_code = ?)", Boolean.class, code));
+                "SELECT EXISTS(SELECT 1 FROM agent WHERE agent_code = ? AND deleted_at IS NULL)", Boolean.class, code));
     }
 
     public long createAgent(String code, String displayName, Long groupId, Long accountUserId, Long createdBy) {
@@ -214,6 +215,7 @@ public class AgentRepository {
                   FROM demo_user_account a
                   JOIN sys_user u ON u.id = a.sys_user_id
                  WHERE a.agent_id = ?
+                   AND EXISTS (SELECT 1 FROM agent ag WHERE ag.id = a.agent_id AND ag.deleted_at IS NULL)
                    AND a.identity_type IN ('REAL', 'TEST')
                    AND a.player_kind IN ('NORMAL', 'BOT')
                    AND u.status <> 'DELETED' AND a.status <> 'DELETED'
@@ -249,6 +251,7 @@ public class AgentRepository {
                   FROM demo_user_account a
                   JOIN sys_user u ON u.id = a.sys_user_id
                  WHERE a.agent_id = ?
+                   AND EXISTS (SELECT 1 FROM agent ag WHERE ag.id = a.agent_id AND ag.deleted_at IS NULL)
                    AND a.identity_type IN ('REAL', 'TEST')
                    AND a.player_kind IN ('NORMAL', 'BOT')
                    AND u.status <> 'DELETED' AND a.status <> 'DELETED'
@@ -272,6 +275,7 @@ public class AgentRepository {
 
     private void appendAgentFilter(StringBuilder sql, List<Object> args, String status,
                                    String keyword, Long groupId) {
+        sql.append(" AND ag.deleted_at IS NULL");
         if (status != null && !status.isBlank()) {
             sql.append(" AND ag.status = ?");
             args.add(status.trim().toUpperCase());
@@ -290,6 +294,7 @@ public class AgentRepository {
     }
 
     private void appendPlayerFilter(StringBuilder sql, List<Object> args, String keyword, Long agentId) {
+        sql.append(" AND ag.deleted_at IS NULL");
         if (agentId != null) {
             sql.append(" AND a.agent_id = ?");
             args.add(agentId);

@@ -8,6 +8,8 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+
 /** Loads the current account and permissions from the database for every authentication. */
 @Service
 public class AuthenticatedUserDetailsService implements UserDetailsService {
@@ -34,6 +36,9 @@ public class AuthenticatedUserDetailsService implements UserDetailsService {
     }
 
     private AuthenticatedUser toAuthenticatedUser(UserAccount user) {
+        if (!userRepository.isLoginWindowOpen(user.id(), Instant.now())) {
+            throw new UsernameNotFoundException("子账号已过期");
+        }
         return new AuthenticatedUser(user, permissionService.toAuthorities(
                 permissionService.findPermissionCodes(user.id())));
     }

@@ -1,5 +1,6 @@
 package com.xupan.server.config;
 
+import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.security.AuthenticatedUserDetailsService;
 import com.xupan.server.auth.security.BearerTokenAuthenticationFilter;
 import com.xupan.server.auth.web.AuthenticationExceptionHandler;
@@ -22,8 +23,10 @@ public class SecurityConfig {
 
     public SecurityConfig(com.xupan.server.auth.service.TokenService tokenService,
                           AuthenticatedUserDetailsService userDetailsService,
+                          SessionRepository sessionRepository,
                           AuthenticationExceptionHandler exceptionHandler) {
-        this.bearerTokenAuthenticationFilter = new BearerTokenAuthenticationFilter(tokenService, userDetailsService);
+        this.bearerTokenAuthenticationFilter = new BearerTokenAuthenticationFilter(
+                tokenService, userDetailsService, sessionRepository);
         this.exceptionHandler = exceptionHandler;
     }
 
@@ -56,6 +59,34 @@ public class SecurityConfig {
                                         "/api/admin/agents", "/api/admin/agents/**",
                                         "/api/admin/agent-player-assignments", "/api/admin/agent-player-assignments/**")
                         .hasAuthority("PERM_AGENT_MANAGE")
+                        .requestMatchers("/api/admin/sub-accounts", "/api/admin/sub-accounts/**").hasAuthority("PERM_SUB_ACCOUNT_MANAGE")
+                        .requestMatchers("/api/admin/machines", "/api/admin/machines/**").hasAuthority("PERM_MACHINE_MANAGE")
+                        .requestMatchers("/api/admin/reports", "/api/admin/reports/**").hasAuthority("PERM_REPORT_READ")
+                        .requestMatchers(HttpMethod.GET, "/api/admin/draw-history", "/api/admin/draw-history/**").hasAuthority("PERM_DRAW_HISTORY_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/draw-history/*/force-settle", "/api/admin/draw-history/force-settle-all").hasAuthority("PERM_DRAW_HISTORY_FORCE_SETTLE")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/draw-history/supplement").hasAuthority("PERM_DRAW_HISTORY_SUPPLEMENT")
+                        .requestMatchers(HttpMethod.GET, "/api/admin/unsettled-orders", "/api/admin/unsettled-orders/**").hasAuthority("PERM_UNSETTLED_ORDER_READ")
+                        .requestMatchers(HttpMethod.DELETE, "/api/admin/unsettled-orders/**").hasAuthority("PERM_UNSETTLED_ORDER_DELETE")
+                        .requestMatchers(HttpMethod.GET, "/api/admin/order-corrections", "/api/admin/order-corrections/**").hasAuthority("PERM_ORDER_CORRECTION_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/order-corrections/**").hasAuthority("PERM_ORDER_CORRECTION_MANAGE")
+                        .requestMatchers(HttpMethod.GET, "/api/admin/online-players", "/api/admin/online-players/**").hasAuthority("PERM_ONLINE_PLAYER_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/online-players/*/disconnect").hasAuthority("PERM_ONLINE_PLAYER_DISCONNECT")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/online-players/*/messages").hasAuthority("PERM_ONLINE_PLAYER_MESSAGE")
+                        .requestMatchers("/api/me/admin-notices", "/api/me/admin-notices/**").access(nonChatOnly())
+                        .requestMatchers(HttpMethod.GET, "/api/admin/settings").hasAuthority("PERM_PLATFORM_SETTINGS_READ")
+                        .requestMatchers(HttpMethod.PUT, "/api/admin/settings").hasAuthority("PERM_PLATFORM_SETTINGS_WRITE")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/settings/delete-all-accounts").hasAuthority("PERM_PLATFORM_SETTINGS_WRITE")
+                        .requestMatchers(HttpMethod.GET, "/api/platform/public-settings").access(nonChatOnly())
+                        .requestMatchers(HttpMethod.GET, "/api/admin/report-networks", "/api/admin/report-networks/**").hasAuthority("PERM_REPORT_NETWORK_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/report-networks").hasAuthority("PERM_REPORT_NETWORK_WRITE")
+                        .requestMatchers(HttpMethod.PUT, "/api/admin/report-networks/**").hasAuthority("PERM_REPORT_NETWORK_WRITE")
+                        .requestMatchers(HttpMethod.GET, "/api/admin/game-settings", "/api/admin/game-settings/**").hasAuthority("PERM_GAME_SETTINGS_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/game-settings").hasAuthority("PERM_GAME_SETTINGS_WRITE")
+                        .requestMatchers(HttpMethod.PUT, "/api/admin/game-settings/**").hasAuthority("PERM_GAME_SETTINGS_WRITE")
+                        .requestMatchers(HttpMethod.DELETE, "/api/admin/game-settings/**").hasAuthority("PERM_GAME_SETTINGS_WRITE")
+                        .requestMatchers("/api/admin/password").hasAuthority("PERM_PLATFORM_PASSWORD_MANAGE")
+                        .requestMatchers(HttpMethod.PATCH, "/api/admin/report-networks/**").hasAuthority("PERM_REPORT_NETWORK_WRITE")
+                        .requestMatchers(HttpMethod.DELETE, "/api/admin/report-networks/**").hasAuthority("PERM_REPORT_NETWORK_WRITE")
                         .requestMatchers("/api/agent", "/api/agent/**").hasAuthority("PERM_AGENT_CONSOLE_READ")
                         .requestMatchers("/api/admin/users", "/api/admin/users/**").hasAuthority("PERM_USER_MANAGE")
                         .requestMatchers("/api/admin/test-players", "/api/admin/test-players/**")
@@ -69,7 +100,7 @@ public class SecurityConfig {
                         .hasAnyAuthority("PERM_CHAT_MESSAGE_SEND", "SCOPE_CHAT_ONLY")
                         .requestMatchers(HttpMethod.POST, "/api/chat/rooms/*/read-cursor")
                         .hasAnyAuthority("PERM_CHAT_ROOM_READ", "SCOPE_CHAT_ONLY")
-                        .requestMatchers("/api/demo/game/current", "/api/demo/game/bets/summary").hasAuthority("PERM_GAME_CURRENT_READ")
+                        .requestMatchers("/api/demo/game/current", "/api/demo/game/catalog", "/api/demo/game/bets/summary").hasAuthority("PERM_GAME_CURRENT_READ")
                         .requestMatchers("/api/demo/game/bets").hasAuthority("PERM_GAME_BET_PLACE")
                         .requestMatchers("/api/demo/account").hasAuthority("PERM_GAME_CURRENT_READ")
                         .requestMatchers("/api/demo/game/admin/**").hasAuthority("PERM_GAME_ODDS_WRITE")

@@ -110,6 +110,18 @@ public class GameBettingConfigService {
         return new LimitUsage(total, byType);
     }
 
+    public LimitUsage loadUsageExcludingBet(long accountId, String issueNumber, long excludedBetId) {
+        Map<PlayType, BigDecimal> byType = new EnumMap<>(PlayType.class);
+        BigDecimal total = BigDecimal.ZERO.setScale(2);
+        for (GameDataRepository.BetUsage usage : gameRepository.findBetUsageByIssueExcludingBet(
+                accountId, issueNumber, excludedBetId)) {
+            BigDecimal stake = money(usage.stake());
+            byType.put(usage.playType(), stake);
+            total = total.add(stake);
+        }
+        return new LimitUsage(total, byType);
+    }
+
     public LimitRejection evaluate(PlayType playType, BigDecimal rawStake, LimitUsage usage) {
         GameBettingConfigRepository.ConfigRecord config = requireConfig();
         BigDecimal stake = money(rawStake);

@@ -53,10 +53,15 @@ public class DemoGameService {
     }
 
     public synchronized GameView current(long authenticatedUserId) {
+        return current(authenticatedUserId, GameDataRepository.DEFAULT_GAME_CODE);
+    }
+
+    public synchronized GameView current(long authenticatedUserId, String gameCode) {
+        String normalizedGameCode = normalizedGameCode(gameCode);
         Instant now = Instant.now();
-        automationService.advanceIfEnabled(now);
-        GameDataRepository.IssueRecord issue = ensureInitialized();
-        return toGameView(issue, now, authenticatedUserId);
+        automationService.advanceIfEnabled(normalizedGameCode, now);
+        GameDataRepository.IssueRecord issue = ensureInitialized(normalizedGameCode);
+        return toGameView(normalizedGameCode, issue, now, authenticatedUserId);
     }
 
     public BetSummaryView betSummary(long authenticatedUserId) {
@@ -75,13 +80,14 @@ public class DemoGameService {
         return new BetSummaryView(dayStatistics.turnover(), dayStatistics.netProfit(), pending, settled);
     }
 
-    private GameView toGameView(GameDataRepository.IssueRecord issue, Instant now, long authenticatedUserId) {
+    private GameView toGameView(String gameCode, GameDataRepository.IssueRecord issue, Instant now,
+                               long authenticatedUserId) {
         List<BallView> ballViews = toBallViews(automationService.previewNumbers(issue, now));
-        List<BallView> previousBallViews = repository.findLatestSettledIssue()
+        List<BallView> previousBallViews = repository.findLatestSettledIssue(gameCode)
                 .map(GameDataRepository.IssueRecord::numbers)
                 .map(DemoGameService::toBallViews)
                 .orElseGet(List::of);
-        List<HistoryView> historyViews = repository.findSettledIssues(10).stream()
+        List<HistoryView> historyViews = repository.findSettledIssues(gameCode, 10).stream()
                 .map(DemoGameService::toHistoryView)
                 .toList();
         List<OddsView> oddsViews = new ArrayList<>();
@@ -92,7 +98,7 @@ public class DemoGameService {
                 .map(DemoGameService::toBetView)
                 .toList();
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
-        return new GameView(issue.issueNumber(), issue.status(), issue.phase(), ballViews, previousBallViews, historyViews, oddsViews, betViews,
+        return new GameView(gameCode, issue.issueNumber(), issue.status(), issue.phase(), ballViews, previousBallViews, historyViews, oddsViews, betViews,
                 new AccountView(wallet.userCode(), wallet.displayName(), wallet.balance(), wallet.status()),
                 now, issue.bettingEndsAt(), issue.drawEndsAt(),
                 自动轮期服务.DRAWING.equals(issue.phase()),
@@ -109,12 +115,10 @@ public class DemoGameService {
     /** Uses the same bet, wallet debit, idempotency and settlement path for an admin-selected test player. */
     @Transactional(noRollbackFor = BetLimitExceededException.class)
     public synchronized BetView placeBetForUser(long userId, PlaceBetRequest request) {
-        GameDataRepository.IssueRecord issue = ensureInitialized();
+        String gameCode = request.normalizedGameCode();
+        GameDataRepository.IssueRecord issue = ensureInitialized(gameCode);
         if (request.idempotencyKey() == null || request.idempotencyKey().isBlank()) {
             throw new IllegalArgumentException("GAME_BET_IDEMPOTENCY_KEY_REQUIRED");
-        }
-        if (request.ballNumber() != 1) {
-            throw BusinessException.badRequest("GAME_BALL_NOT_SUPPORTED", "下注无效：当前只支持第1球");
         }
         VirtualWallet wallet = walletService.getForCurrentUser(userId);
         var replay = repository.findBetByAccountIdAndIdempotencyKey(wallet.accountId(), request.idempotencyKey());
@@ -123,6 +127,9 @@ public class DemoGameService {
                 throw BusinessException.conflict("WALLET_IDEMPOTENCY_CONFLICT", "重复下注请求参数不一致");
             }
             return toBetView(replay.get());
+        }
+        if (!repository.isGameEnabled(gameCode)) {
+            throw BusinessException.conflict("GAME_DISABLED", "当前彩种已关闭，不能下注");
         }
         if (!自动轮期服务.BETTING.equals(issue.phase())) {
             String message = 自动轮期服务.DRAWING.equals(issue.phase())
@@ -135,11 +142,13 @@ public class DemoGameService {
         settlementService.validateBet(request.playType(), request.parameters(), request.stake(), snapshotOdds);
         requireWithinLimit(wallet.accountId(), issue.issueNumber(), request);
         String betCode = "BET-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
+        GameDataRepository.BettingRates rates = repository.findBettingRatesByAccountId(wallet.accountId());
+
         long betId;
         try {
-            betId = repository.saveBetWithOddsSnapshot(wallet.accountId(), betCode, request.idempotencyKey(),
+            betId = repository.saveBetWithOddsSnapshot(gameCode, wallet.accountId(), betCode, request.idempotencyKey(),
                     issue.issueNumber(), request.ballNumber(), request.playType(), request.parameters(),
-                    money(request.stake()), odds(snapshotOdds));
+                    money(request.stake()), odds(snapshotOdds), rates.rebateRate(), rates.specialRebateRate());
         } catch (DuplicateKeyException duplicate) {
             var concurrentReplay = repository.findBetByAccountIdAndIdempotencyKey(wallet.accountId(), request.idempotencyKey())
                     .orElseThrow(() -> duplicate);
@@ -172,8 +181,8 @@ public class DemoGameService {
         if (now == null) {
             throw new IllegalArgumentException("撤单时间不能为空");
         }
-        automationService.advanceIfEnabled(now);
-        GameDataRepository.IssueRecord issue = ensureInitialized();
+        automationService.advanceIfEnabled(GameDataRepository.DEFAULT_GAME_CODE, now);
+        GameDataRepository.IssueRecord issue = ensureInitialized(GameDataRepository.DEFAULT_GAME_CODE);
         if (!自动轮期服务.BETTING.equals(issue.phase())
                 || issue.bettingEndsAt() == null || !now.isBefore(issue.bettingEndsAt())) {
             return CancellationResult.stopped();
@@ -213,7 +222,7 @@ public class DemoGameService {
                 .filter(bet -> bet.settlementStatus() == SettlementStatus.PENDING)
                 .map(bet -> new PendingSettlement(bet.id(), bet.accountId(), settlementService.settle(
                         bet.playType(), bet.parameters(), bet.stake(), bet.odds(),
-                        results.get(0))))
+                        results.get(bet.ballNumber() - 1))))
                 .toList();
 
         repository.saveIssue(issue.issueNumber(), "CLOSED", numbers);
@@ -231,7 +240,9 @@ public class DemoGameService {
                     pending.betId(), pending.accountId(), issue.issueNumber(), pending.settlement().status(),
                     pending.settlement().stake(), pending.settlement().netProfit(), payout));
         }
-        return toGameView(repository.findLatestIssue().orElseThrow(), Instant.now(), authenticatedUserId);
+        return toGameView(GameDataRepository.DEFAULT_GAME_CODE,
+                repository.findLatestIssue(GameDataRepository.DEFAULT_GAME_CODE).orElseThrow(),
+                Instant.now(), authenticatedUserId);
     }
 
     public synchronized OddsView updateOdds(PlayType playType, BigDecimal newOdds) {
@@ -261,18 +272,26 @@ public class DemoGameService {
     }
 
     private GameDataRepository.IssueRecord ensureInitialized() {
-        GameDataRepository.IssueRecord issue = repository.findCurrentIssue().orElse(null);
+        return ensureInitialized(GameDataRepository.DEFAULT_GAME_CODE);
+    }
+
+    private GameDataRepository.IssueRecord ensureInitialized(String gameCode) {
+        String normalizedGameCode = normalizedGameCode(gameCode);
+        if (!repository.gameExists(normalizedGameCode)) {
+            throw BusinessException.notFound("GAME_NOT_FOUND", "彩种不存在");
+        }
+        GameDataRepository.IssueRecord issue = repository.findCurrentIssue(normalizedGameCode).orElse(null);
         if (issue == null) {
-            issue = repository.findLatestIssue().orElse(null);
+            issue = repository.findLatestIssue(normalizedGameCode).orElse(null);
         }
         if (issue == null) {
-            repository.saveBettingIssue(INITIAL_ISSUE, Instant.now());
-            issue = repository.findCurrentIssue().orElseThrow();
+            repository.saveBettingIssue(normalizedGameCode, initialIssue(normalizedGameCode), Instant.now());
+            issue = repository.findCurrentIssue(normalizedGameCode).orElseThrow();
         }
         if (issue.startedAt() == null || issue.bettingEndsAt() == null || issue.drawEndsAt() == null) {
             Instant startedAt = issue.startedAt() == null ? Instant.now() : issue.startedAt();
             repository.initializeSchedule(issue.issueNumber(), startedAt);
-            issue = repository.findCurrentIssue().orElse(issue);
+            issue = repository.findCurrentIssue(normalizedGameCode).orElse(issue);
         }
         for (var entry : defaultOdds().entrySet()) {
             if (repository.findOdds(entry.getKey()).isEmpty()) {
@@ -280,6 +299,16 @@ public class DemoGameService {
             }
         }
         return issue;
+    }
+
+    private static String normalizedGameCode(String gameCode) {
+        return gameCode == null || gameCode.isBlank()
+                ? GameDataRepository.DEFAULT_GAME_CODE
+                : gameCode.trim().toUpperCase(java.util.Locale.ROOT);
+    }
+
+    private static String initialIssue(String gameCode) {
+        return GameDataRepository.DEFAULT_GAME_CODE.equals(gameCode) ? INITIAL_ISSUE : gameCode + "-" + INITIAL_ISSUE;
     }
 
     private static EnumMap<PlayType, BigDecimal> defaultOdds() {
@@ -343,7 +372,7 @@ public class DemoGameService {
         return parameters == null ? List.of() : List.copyOf(parameters);
     }
 
-    public record GameView(String issueNumber, String status, String phase, List<BallView> balls,
+    public record GameView(String gameCode, String issueNumber, String status, String phase, List<BallView> balls,
                            List<BallView> previousBalls, List<HistoryView> history, List<OddsView> odds,
                            List<BetView> bets, AccountView account,
                            Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,

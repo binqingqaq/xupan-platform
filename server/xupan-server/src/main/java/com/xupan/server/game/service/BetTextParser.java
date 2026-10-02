@@ -15,8 +15,8 @@ import java.util.regex.Pattern;
  *
  * <p>The parser deliberately owns no user, issue, wallet, or settlement state.
  * It only turns one text item into a structured bet request candidate. The
- * default target is always ball 1; callers must not infer another ball from
- * the text.</p>
+ * default target is ball 1; callers that have an explicit selected ball must
+ * pass it to the overload instead of inferring it from the text.</p>
  */
 public final class BetTextParser {
 
@@ -43,6 +43,14 @@ public final class BetTextParser {
      * whitespace is ignored, but whitespace inside an item is not accepted.
      */
     public static ParseResult parse(String text) {
+        return parse(text, 1);
+    }
+
+    /** Parses one bet for an explicitly selected BY220 ball 1-8. */
+    public static ParseResult parse(String text, int ballNumber) {
+        if (ballNumber < 1 || ballNumber > 8) {
+            return invalid("球号必须在 1 到 8 之间");
+        }
         if (text != null && (text.contains(",") || text.contains("，"))) {
             String source = text.trim();
             String[] items = source.split("[,，]", -1);
@@ -55,7 +63,7 @@ public final class BetTextParser {
                 if (item.isBlank()) {
                     return invalid("组合下注格式不正确");
                 }
-                ParseResult itemResult = parseSingle(item.trim());
+                ParseResult itemResult = parseSingle(item.trim(), ballNumber);
                 if (!itemResult.accepted()) {
                     return invalid("组合下注格式不正确");
                 }
@@ -63,20 +71,20 @@ public final class BetTextParser {
             }
             return new ParseResult(Status.ACCEPTED, bets.get(0), "", bets);
         }
-        return parseSingle(text);
+        return parseSingle(text, ballNumber);
     }
 
-    private static ParseResult parseSingle(String text) {
+    private static ParseResult parseSingle(String text, int ballNumber) {
         if (text == null || text.isBlank()) {
             return invalid("下注文本不能为空");
         }
 
         String source = text.trim();
-        ParseResult result = parseWithAmount(source, FAN, PlayType.FAN, 1, false);
+        ParseResult result = parseWithAmount(source, FAN, PlayType.FAN, 1, false, ballNumber);
         if (result != null) {
             return result;
         }
-        result = parseWithAmount(source, ANGLE, PlayType.ANGLE, 2, true);
+        result = parseWithAmount(source, ANGLE, PlayType.ANGLE, 2, true, ballNumber);
         if (result != null) {
             return result;
         }
@@ -87,42 +95,42 @@ public final class BetTextParser {
                     .filter(value -> value != excludedFan)
                     .boxed()
                     .toList();
-            return accepted(source, PlayType.CAR, coveredFans, car.group(2));
+            return accepted(source, ballNumber, PlayType.CAR, coveredFans, car.group(2));
         }
-        result = parseWithAmount(source, STRICT, PlayType.STRICT, 2, true);
+        result = parseWithAmount(source, STRICT, PlayType.STRICT, 2, true, ballNumber);
         if (result != null) {
             return result;
         }
-        result = parseWithAmount(source, ADD, PlayType.ADD, 3, true);
+        result = parseWithAmount(source, ADD, PlayType.ADD, 3, true, ballNumber);
         if (result != null) {
             return result;
         }
-        result = parseWithAmount(source, POSITIVE, PlayType.POSITIVE, 1, false);
+        result = parseWithAmount(source, POSITIVE, PlayType.POSITIVE, 1, false, ballNumber);
         if (result != null) {
             return result;
         }
-        result = parseWithAmount(source, TONG, PlayType.TONG, 3, true);
+        result = parseWithAmount(source, TONG, PlayType.TONG, 3, true, ballNumber);
         if (result != null) {
             return result;
         }
-        result = parseWithAmount(source, NONE_SHORT, PlayType.NONE, 2, true);
+        result = parseWithAmount(source, NONE_SHORT, PlayType.NONE, 2, true, ballNumber);
         if (result != null) {
             return result;
         }
-        result = parseWithAmount(source, NONE, PlayType.NONE, 3, true);
+        result = parseWithAmount(source, NONE, PlayType.NONE, 3, true, ballNumber);
         if (result != null) {
             return result;
         }
 
         Matcher oddEven = ODD_EVEN.matcher(source);
         if (oddEven.matches()) {
-            return accepted(source, oddEven.group(1).equals("单") ? PlayType.ODD_EVEN : PlayType.ODD_EVEN,
+            return accepted(source, ballNumber, oddEven.group(1).equals("单") ? PlayType.ODD_EVEN : PlayType.ODD_EVEN,
                     List.of(oddEven.group(1).equals("单") ? 1 : 2), oddEven.group(2));
         }
 
         Matcher bigSmall = BIG_SMALL.matcher(source);
         if (bigSmall.matches()) {
-            return accepted(source, PlayType.BIG_SMALL,
+            return accepted(source, ballNumber, PlayType.BIG_SMALL,
                     List.of(bigSmall.group(1).equals("大") ? 1 : 2), bigSmall.group(2));
         }
 
@@ -132,7 +140,7 @@ public final class BetTextParser {
             if (numbers == null) {
                 return invalid("特玩法号码必须在 01 至 20 之间且不能重复");
             }
-            return accepted(source, PlayType.SPECIAL, numbers, special.group(2));
+            return accepted(source, ballNumber, PlayType.SPECIAL, numbers, special.group(2));
         }
 
         Matcher shortForm = SHORT.matcher(source);
@@ -143,7 +151,7 @@ public final class BetTextParser {
             if (parameters == null || hasDuplicates(parameters)) {
                 return invalid("番值必须是 1 至 4 且不能重复");
             }
-            return accepted(source, playType, parameters, shortForm.group(2));
+            return accepted(source, ballNumber, playType, parameters, shortForm.group(2));
         }
 
         return invalid("无法识别的下注格式");
@@ -156,7 +164,7 @@ public final class BetTextParser {
     }
 
     private static ParseResult parseWithAmount(String source, Pattern pattern, PlayType playType,
-                                                int expectedParameterCount, boolean requireDistinct) {
+                                                int expectedParameterCount, boolean requireDistinct, int ballNumber) {
         Matcher matcher = pattern.matcher(source);
         if (!matcher.matches()) {
             return null;
@@ -173,7 +181,7 @@ public final class BetTextParser {
         if (requireDistinct && hasDuplicates(parameters)) {
             return invalid("同一玩法中的番值不能重复");
         }
-        return accepted(source, playType, parameters, matcher.group(matcher.groupCount()));
+        return accepted(source, ballNumber, playType, parameters, matcher.group(matcher.groupCount()));
     }
 
     private static List<Integer> parseFanNumbers(String text) {
@@ -204,14 +212,14 @@ public final class BetTextParser {
         return values.size() != values.stream().distinct().count();
     }
 
-    private static ParseResult accepted(String source, PlayType playType, List<Integer> parameters,
-                                        String amountText) {
+    private static ParseResult accepted(String source, int ballNumber, PlayType playType,
+                                        List<Integer> parameters, String amountText) {
         BigDecimal amount = parseAmount(amountText);
         if (amount == null) {
             return invalid("金额必须是大于 0 且最多两位小数的数字");
         }
         return new ParseResult(Status.ACCEPTED,
-                new ParsedBet(1, playType, parameters, amount, source), "");
+                new ParsedBet(ballNumber, playType, parameters, amount, source), "");
     }
 
     private static BigDecimal parseAmount(String text) {
@@ -266,8 +274,8 @@ public final class BetTextParser {
     public record ParsedBet(int ballNumber, PlayType playType, List<Integer> parameters,
                             BigDecimal stake, String sourceText) {
         public ParsedBet {
-            if (ballNumber != 1) {
-                throw new IllegalArgumentException("confirmed text bets only target ball 1");
+            if (ballNumber < 1 || ballNumber > 8) {
+                throw new IllegalArgumentException("text bets only target balls 1-8");
             }
             Objects.requireNonNull(playType, "playType");
             parameters = List.copyOf(parameters);

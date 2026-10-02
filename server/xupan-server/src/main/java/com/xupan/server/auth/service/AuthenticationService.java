@@ -74,6 +74,11 @@ public class AuthenticationService {
             } catch (RuntimeException ignored) {
                 matches = false;
             }
+            if (!userRepository.isLoginWindowOpen(user.id(), now)) {
+                loginAuditRepository.recordFailure(user.username(), user.id(), "AUTH_SUB_ACCOUNT_EXPIRED",
+                        ip(metadata), userAgent(metadata), now);
+                return LoginAttempt.failure("AUTH_SUB_ACCOUNT_EXPIRED");
+            }
             if (!matches) {
                 int nextFailureCount = user.failedLoginCount() + 1;
                 Instant lockedUntil = passwordPolicy.shouldLock(nextFailureCount)
@@ -144,6 +149,9 @@ public class AuthenticationService {
     }
 
     private CurrentUser currentUser(UserAccount user, String authMode, String scope) {
+        if (!userRepository.isLoginWindowOpen(user.id(), clock.instant())) {
+            throw new AuthenticationFailure("AUTH_SUB_ACCOUNT_EXPIRED");
+        }
         if ("CHAT_ONLY".equals(scope)) {
             return new CurrentUser(user.id(), user.username(), user.displayName(), user.avatarKey(),
                     "PLAYER_LINK", "CHAT_ONLY", List.of(), List.of("CHAT_ROOM_READ", "CHAT_MESSAGE_SEND"));

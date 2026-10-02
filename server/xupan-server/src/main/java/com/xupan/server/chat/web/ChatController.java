@@ -53,7 +53,8 @@ public class ChatController {
         AuthenticatedUser user = principal(authentication);
         return avatarResolver.toResponse(chatMessageService.sendUserMessage(user.getUserId(), roomCode,
                 request == null ? null : request.clientMessageId(),
-                request == null ? null : request.content(), Instant.now()));
+                request == null ? null : request.content(),
+                request == null ? "AU8" : request.normalizedGameCode(), Instant.now()));
     }
 
     @PostMapping("/read-cursor")

@@ -255,6 +255,16 @@ public class SessionRepository {
                 """, timestamp(lastSeenAt), sessionId) == 1;
     }
 
+    @Transactional
+    public boolean touchIfOlderThan(String sessionId, Instant touchedAt, Instant staleBefore) {
+        return jdbcTemplate.update("""
+                UPDATE auth_session SET last_seen_at = ?
+                 WHERE session_id = ?
+                   AND revoked_at IS NULL
+                   AND (last_seen_at IS NULL OR last_seen_at < ?)
+                """, timestamp(touchedAt), sessionId, timestamp(staleBefore)) == 1;
+    }
+
     private Optional<SessionRecord> find(String predicate, Object... args) {
         return jdbcTemplate.query("SELECT " + SESSION_COLUMNS + " FROM auth_session s "
                         + "JOIN sys_user u ON u.id = s.user_id " + predicate,

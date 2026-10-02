@@ -2,6 +2,7 @@ package com.xupan.server.auth.security;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.domain.SessionRecord;
+import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.auth.service.TokenService;
 import jakarta.servlet.ServletException;
@@ -17,6 +18,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -28,8 +30,9 @@ class BearerTokenAuthenticationFilterTest {
 
     private final TokenService tokenService = mock(TokenService.class);
     private final AuthenticatedUserDetailsService detailsService = mock(AuthenticatedUserDetailsService.class);
+    private final SessionRepository sessionRepository = mock(SessionRepository.class);
     private final BearerTokenAuthenticationFilter filter =
-            new BearerTokenAuthenticationFilter(tokenService, detailsService);
+            new BearerTokenAuthenticationFilter(tokenService, detailsService, sessionRepository);
 
     @AfterEach
     void clearContext() {
@@ -67,6 +70,7 @@ class BearerTokenAuthenticationFilterTest {
                 .extracting(value -> value.getAuthority()).containsExactly("PERM_CHAT_ROOM_READ");
         verify(tokenService).validateAccessToken("access-token");
         verify(detailsService).loadUserById(7L);
+        verify(sessionRepository).touchIfOlderThan(eq("session"), any(Instant.class), any(Instant.class));
     }
 
     @Test

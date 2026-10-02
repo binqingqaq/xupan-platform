@@ -16,7 +16,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
 @ActiveProfiles("test")
-@TestPropertySource(properties = "xupan.automation.enabled=false")
+@TestPropertySource(properties = {
+        "xupan.automation.enabled=false",
+        "spring.task.scheduling.enabled=false"
+})
 class 自动轮期服务Test {
 
     private static final String AUTO_USER = "auto-wallet-test-user";
@@ -38,10 +41,14 @@ class 自动轮期服务Test {
 
     @BeforeEach
     void clean() {
+        jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM game_bet");
+        jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
         jdbcTemplate.update("DELETE FROM game_issue_event");
         jdbcTemplate.update("DELETE FROM game_odds");
         jdbcTemplate.update("DELETE FROM game_issue");
+        jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'MULTI_%')");
+        jdbcTemplate.update("DELETE FROM game_definition WHERE game_code LIKE 'MULTI_%'");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", AUTO_USER);
         jdbcTemplate.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
@@ -49,6 +56,27 @@ class 自动轮期服务Test {
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", AUTO_USER);
         jdbcTemplate.update("DELETE FROM sys_user WHERE username = ?", AUTO_USER);
+    }
+
+    @Test
+    void scheduledAdvanceCreatesIssueForEveryActiveGame() {
+        jdbcTemplate.update("""
+                INSERT INTO game_definition
+                    (id, game_code, display_name, ball_indexes, draw_source_url, sort_order,
+                     algorithm, play_prefix, switch_enabled, special_enabled, special_model,
+                     keyboard_enabled, status, version, created_at, updated_at)
+                VALUES (9001, 'MULTI_AUTO', '自动多彩种', '1,2,3,4,5,6,7,8', NULL, 99,
+                        'SUM', NULL, FALSE, TRUE, 'MODEL_ONE', TRUE, 'ACTIVE', 0,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """);
+
+        automationService.advanceAllActive(Instant.parse("2026-01-01T00:00:00Z"));
+
+        assertThat(gameRepository.findCurrentIssue(GameDataRepository.DEFAULT_GAME_CODE)).isPresent();
+        assertThat(gameRepository.findCurrentIssue("MULTI_AUTO")).get().satisfies(issue -> {
+            assertThat(issue.issueNumber()).isEqualTo("MULTI_AUTO-3000000");
+            assertThat(issue.phase()).isEqualTo(自动轮期服务.BETTING);
+        });
     }
 
     @Test

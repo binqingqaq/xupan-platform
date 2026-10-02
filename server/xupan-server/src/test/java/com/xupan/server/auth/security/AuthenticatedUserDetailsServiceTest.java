@@ -6,12 +6,14 @@ import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PermissionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -27,6 +29,7 @@ class AuthenticatedUserDetailsServiceTest {
         UserAccount account = new UserAccount(7L, "alice", "Alice", null, "password-hash", "ACTIVE",
                 0, null, 2L, null, null);
         when(users.findByUsername("alice")).thenReturn(Optional.of(account));
+        when(users.isLoginWindowOpen(org.mockito.ArgumentMatchers.eq(7L), any())).thenReturn(true);
         when(permissions.findPermissionCodes(7L)).thenReturn(Set.of("CHAT_ROOM_READ"),
                 Set.of("GAME_CURRENT_READ"));
         when(permissions.toAuthorities(any())).thenAnswer(invocation -> {
@@ -49,11 +52,27 @@ class AuthenticatedUserDetailsServiceTest {
     }
 
     @Test
+    void expiredBy220SubAccountIsRejectedForExistingSessionReload() {
+        UserRepository users = mock(UserRepository.class);
+        PermissionService permissions = mock(PermissionService.class);
+        UserAccount account = new UserAccount(7L, "expired-sub", "Expired", null, "password-hash",
+                "ACTIVE", 0, null, 0L, null, null);
+        when(users.findById(7L)).thenReturn(Optional.of(account));
+        when(users.isLoginWindowOpen(org.mockito.ArgumentMatchers.eq(7L), any())).thenReturn(false);
+        AuthenticatedUserDetailsService service = new AuthenticatedUserDetailsService(users, permissions);
+
+        assertThatThrownBy(() -> service.loadUserById(7L))
+                .isInstanceOf(UsernameNotFoundException.class)
+                .hasMessage("子账号已过期");
+    }
+
+    @Test
     void preservesDisabledAndDeletedStatusForSecurityToReject() {
         UserRepository users = mock(UserRepository.class);
         PermissionService permissions = mock(PermissionService.class);
         when(permissions.findPermissionCodes(7L)).thenReturn(Set.of());
         when(permissions.toAuthorities(any())).thenReturn(Set.of());
+        when(users.isLoginWindowOpen(org.mockito.ArgumentMatchers.eq(7L), any())).thenReturn(true);
         when(users.findById(7L)).thenReturn(Optional.of(new UserAccount(7L, "disabled", "Disabled", null,
                 "password-hash", "DISABLED", 0, null, 0L, null, null)),
                 Optional.of(new UserAccount(7L, "deleted", "Deleted", null,

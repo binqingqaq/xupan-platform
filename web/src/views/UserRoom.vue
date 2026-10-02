@@ -20,12 +20,15 @@ import type {
   ChatMessage,
   ChatRoomView,
   CurrentUserView,
+  GameCatalogItem,
   GameView,
   MyBetSummaryResponse,
   PlayType,
   WalletSummaryResponse,
 } from '../types'
 import type { ChatSocketState } from '../types/chat'
+import type { AdminNoticeMessage } from '../types/platformAdmin'
+import type { PublicPlatformSettings } from '../types/platformAdmin'
 import type { RobotDrawPayload } from '../robotDrawMessage'
 
 const ROOM_CODE = 'main'
@@ -58,10 +61,14 @@ interface OddsCard {
 }
 
 const current = ref<GameView | null>(null)
+const gameCatalog = ref<GameCatalogItem[]>([])
+const selectedGameCode = ref('AU8')
 const wallet = ref<WalletSummaryResponse | null>(null)
 const currentUser = ref<CurrentUserView | null>(null)
 const room = ref<ChatRoomView | null>(null)
 const chatMessages = ref<ChatMessage[]>([])
+const adminNotices = ref<ChatMessage[]>([])
+const platformSettings = ref<PublicPlatformSettings | null>(null)
 const pendingChatMessage = ref<PendingChatMessage | null>(null)
 const chatUnread = ref(0)
 const chatLoading = ref(false)
@@ -117,6 +124,7 @@ const keyboardFlat = ref(false)
 const voiceEnabled = ref(false)
 let gameRefreshTimer: number | undefined
 let chatRefreshTimer: number | undefined
+let adminNoticeTimer: number | undefined
 let countdownTimer: number | undefined
 const chatSocket = new ChatSocket()
 
@@ -253,7 +261,10 @@ function ledgerOperationLabel(operationType: string) {
   return operationType
 }
 
-const messages = computed<RoomMessage[]>(() => chatMessages.value.map(toRoomMessage))
+const messages = computed<RoomMessage[]>(() => [
+  ...chatMessages.value.map(toRoomMessage),
+  ...adminNotices.value.map(toRoomMessage),
+])
 const chatOldestSequence = computed(() => chatMessages.value[0]?.sequenceNo ?? null)
 const displayMessages = computed<RoomMessage[]>(() => {
   const pending = pendingChatMessage.value
@@ -315,6 +326,57 @@ function mergeChatMessages(incoming: ChatMessage[]) {
   const latestSequence = merged.length ? merged[merged.length - 1].sequenceNo : 0
   chatLastSequence.value = Math.max(chatLastSequence.value, latestSequence)
   return added
+}
+
+function adminNoticeMessage(notice: AdminNoticeMessage): ChatMessage {
+  const content = [notice.title, notice.content].filter(Boolean).join("\n")
+  return {
+    id: -notice.id,
+    sequenceNo: 0,
+    clientMessageId: `admin-notice:${notice.id}`,
+    messageType: 'ADMIN',
+    senderType: 'ADMIN',
+    senderId: null,
+    senderName: notice.senderName || '管理员',
+    avatarKey: null,
+    content,
+    payloadJson: null,
+    status: 'ACTIVE',
+    createdAt: notice.createdAt,
+    updatedAt: notice.createdAt,
+  }
+}
+
+async function pollAdminNotices() {
+  if (!authenticated.value) return
+  try {
+    const notices = await api.getUnreadAdminNotices()
+    if (notices.length === 0) return
+    const existing = new Set(adminNotices.value.map(message => message.clientMessageId))
+    const incoming = notices
+      .filter(notice => !existing.has(`admin-notice:${notice.id}`))
+      .map(adminNoticeMessage)
+    if (incoming.length === 0) return
+    const shouldStickToBottom = isNearChatBottom()
+    adminNotices.value = [...adminNotices.value, ...incoming]
+    if (shouldStickToBottom) scrollToBottom()
+    else chatUnread.value += incoming.length
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return
+  }
+}
+
+function startAdminNoticePolling() {
+  if (adminNoticeTimer !== undefined) return
+  void pollAdminNotices()
+  adminNoticeTimer = window.setInterval(() => { void pollAdminNotices() }, 10000)
+}
+
+function stopAdminNoticePolling() {
+  if (adminNoticeTimer !== undefined) {
+    window.clearInterval(adminNoticeTimer)
+    adminNoticeTimer = undefined
+  }
 }
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
@@ -523,6 +585,7 @@ async function pollChatMessages() {
     if (error instanceof ApiError && error.status === 401) {
       chatSocket.disconnect()
       stopChatPolling()
+  stopAdminNoticePolling()
       authenticated.value = false
       loginError.value = '登录状态已失效，请重新登录'
     }
@@ -532,7 +595,7 @@ async function pollChatMessages() {
 }
 
 async function loadGame() {
-  const [next, nextWallet] = await Promise.all([api.current(), api.getMyWallet()])
+  const [next, nextWallet] = await Promise.all([api.current(selectedGameCode.value), api.getMyWallet()])
   current.value = next
   wallet.value = nextWallet
   serverOffsetMs.value = Date.now() - Date.parse(next.serverNow)
@@ -543,18 +606,36 @@ async function load() {
   try {
     chatSocket.disconnect()
     stopChatPolling()
+    stopAdminNoticePolling()
+    adminNotices.value = []
+
     const user = await api.me()
+    gameCatalog.value = await api.getGameCatalog()
+    const savedGameCode = window.localStorage.getItem('xupan.selectedGameCode')
+    if (savedGameCode && gameCatalog.value.some(game => game.gameCode === savedGameCode)) {
+      selectedGameCode.value = savedGameCode
+    } else if (!gameCatalog.value.some(game => game.gameCode === selectedGameCode.value) && gameCatalog.value.length > 0) {
+      selectedGameCode.value = gameCatalog.value[0]!.gameCode
+    }
     await loadGame()
     currentUser.value = user
     authenticated.value = true
+    const platformConfig = await api.getPublicPlatformSettings()
+    platformSettings.value = platformConfig
+    document.title = platformConfig.siteTitle
+    interfaceMode.value = platformConfig.keyboardMode ? 'ui2' : 'ui1'
+    keyboardOpen.value = platformConfig.keyboardMode
+
     await loadQuickBetPreferences()
     await loadChatHistory()
     connectChatSocket()
+    startAdminNoticePolling()
     scrollToBottom()
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
       chatSocket.disconnect()
       stopChatPolling()
+  stopAdminNoticePolling()
       authenticated.value = false
       loginError.value = '登录状态已失效，请重新登录'
     } else {
@@ -822,9 +903,9 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
   const shouldRefreshAccount = mayAffectBetAccount(body)
   pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'sending' }
   scrollToBottom()
-  if (chatSocket.sendMessage(clientMessageId, body)) return true
+  if (selectedGameCode.value === 'AU8' && chatSocket.sendMessage(clientMessageId, body)) return true
   try {
-    const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body })
+    const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body, gameCode: selectedGameCode.value })
     mergeChatMessages([sent])
     pendingChatMessage.value = null
     if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
@@ -936,6 +1017,11 @@ function createChatClientMessageId() {
   return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+async function switchGame() {
+  window.localStorage.setItem('xupan.selectedGameCode', selectedGameCode.value)
+  await loadGame()
+}
+
 onMounted(() => {
   document.body.classList.add('reference-room-body')
   updateComposerHeight()
@@ -961,6 +1047,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateComposerHeight)
   if (gameRefreshTimer) window.clearInterval(gameRefreshTimer)
   stopChatPolling()
+  stopAdminNoticePolling()
   chatSocket.disconnect()
   if (countdownTimer) window.clearInterval(countdownTimer)
 })
@@ -969,8 +1056,11 @@ onUnmounted(() => {
 <template>
   <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" />
   <div v-else class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2' }">
-    <header class="reference-header">
+    <header v-show="platformSettings?.headerEnabled !== false" class="reference-header">
       <div class="reference-toolbar">
+        <select v-if="gameCatalog.length > 1" v-model="selectedGameCode" class="game-select" aria-label="选择彩种" @change="switchGame">
+          <option v-for="game in gameCatalog" :key="game.gameCode" :value="game.gameCode">{{ game.displayName }}</option>
+        </select>
         <strong class="balance-text">余额:{{ balance }}</strong>
         <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
         <div class="header-actions">
@@ -985,7 +1075,7 @@ onUnmounted(() => {
           <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')"><span class="interface-check">{{ interfaceMode === 'ui2' ? '✓' : '' }}</span>界面2</button>
         </div>
       </div>
-      <div class="reference-issuebar">
+      <div v-show="platformSettings?.statusBarEnabled !== false" class="reference-issuebar">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
         <div class="reference-ball-row" :aria-label="ballNumbersLabel">
           <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8 }">
@@ -1245,6 +1335,7 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.game-select { margin-right: 8px; max-width: 140px; border: 0; border-radius: 4px; padding: 5px 8px; background: #fff; color: #222; font-weight: 600; }
 .account-summary {
   width: calc(100% - 24px);
   max-width: 720px;

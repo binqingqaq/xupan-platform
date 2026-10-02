@@ -194,24 +194,35 @@ public class ChatMessageService {
 
     public ChatMessage sendUserMessage(long userId, String roomCode, String clientMessageId,
                                        String content, Instant now) {
-        return sendUserMessageWithOutcome(userId, roomCode, clientMessageId, content, now).message();
+        return sendUserMessage(userId, roomCode, clientMessageId, content, "AU8", now);
+    }
+
+    public ChatMessage sendUserMessage(long userId, String roomCode, String clientMessageId,
+                                       String content, String gameCode, Instant now) {
+        return sendUserMessageWithOutcome(userId, roomCode, clientMessageId, content, gameCode, now).message();
     }
 
     public ChatMessageSendOutcome sendUserMessageWithOutcome(long userId, String roomCode,
                                                               String clientMessageId, String content,
                                                               Instant now) {
+        return sendUserMessageWithOutcome(userId, roomCode, clientMessageId, content, "AU8", now);
+    }
+
+    public ChatMessageSendOutcome sendUserMessageWithOutcome(long userId, String roomCode,
+                                                              String clientMessageId, String content,
+                                                              String gameCode, Instant now) {
         try {
-            return inTransaction(() -> processNewUserMessage(userId, roomCode, clientMessageId, content, now));
+            return inTransaction(() -> processNewUserMessage(userId, roomCode, clientMessageId, content, gameCode, now));
         } catch (BetRejectedException rejected) {
             // DemoGameService deliberately rolls back its bet/wallet transaction on a business rejection.
             // Persist the original input and its public feedback in a fresh transaction afterwards.
-            return inTransaction(() -> persistRejectedBet(userId, roomCode, clientMessageId, content, now,
+            return inTransaction(() -> persistRejectedBet(userId, roomCode, clientMessageId, content, gameCode, now,
                     rejected.cause()));
         }
     }
 
     private ChatMessageSendOutcome processNewUserMessage(long userId, String roomCode,
-                                                         String clientMessageId, String content,
+                                                         String clientMessageId, String content, String gameCode,
                                                          Instant now) {
         requirePositiveUser(userId);
         UserAccount user = requireActiveUser(userId);
@@ -255,7 +266,7 @@ public class ChatMessageService {
                             ? "CHAT-" + clientId
                             : "CHAT-" + clientId + "-" + (index + 1);
                     placedBets.add(gameService.placeBet(userId, new PlaceBetRequest(
-                            1, bet.playType(), bet.parameters(), bet.stake(), idempotencyKey)));
+                            1, bet.playType(), bet.parameters(), bet.stake(), idempotencyKey, gameCode)));
                 } catch (BetLimitExceededException rejection) {
                     // Only the offending item is dropped; the remaining items keep their normal path.
                     rejectedBets.add(rejection);
@@ -382,8 +393,9 @@ public class ChatMessageService {
     }
 
     private ChatMessageSendOutcome persistRejectedBet(long userId, String roomCode,
-                                                       String clientMessageId, String content,
-                                                       Instant now, BusinessException rejection) {
+                                                         String clientMessageId, String content,
+                                                         String gameCode, Instant now,
+                                                         BusinessException rejection) {
         requirePositiveUser(userId);
         UserAccount user = requireActiveUser(userId);
         String clientId = contentPolicy.requireClientMessageId(clientMessageId);

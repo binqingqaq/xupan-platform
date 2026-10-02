@@ -19,9 +19,10 @@ public class GameIssueEventRepository {
     public boolean appendOnce(String issueNumber, String eventType, String message, Instant createdAt) {
         try {
             return jdbcTemplate.update("""
-                    INSERT INTO game_issue_event (issue_number, event_type, message, created_at)
-                    VALUES (?, ?, ?, ?)
-                    """, issueNumber, eventType, message, java.sql.Timestamp.from(createdAt)) == 1;
+                    INSERT INTO game_issue_event (game_code, issue_number, event_type, message, created_at)
+                    VALUES ((SELECT game_code FROM game_issue WHERE issue_number = ?), ?, ?, ?, ?)
+                    """, issueNumber, issueNumber, eventType, message,
+                    java.sql.Timestamp.from(createdAt)) == 1;
         } catch (DuplicateKeyException duplicate) {
             return false;
         }

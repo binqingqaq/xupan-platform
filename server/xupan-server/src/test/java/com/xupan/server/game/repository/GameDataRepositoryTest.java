@@ -42,7 +42,7 @@ class GameDataRepositoryTest {
         long accountId = legacyDemoAccountId();
 
         long betId = repository.saveBetWithOddsSnapshot(accountId, "BET-TEST-0001", "REPO-REQUEST-001", "TEST-0001", 1,
-                PlayType.FAN, List.of(2), new BigDecimal("15.00"), new BigDecimal("3.850"));
+                PlayType.FAN, List.of(2), new BigDecimal("15.00"), new BigDecimal("3.850"), new BigDecimal("0.1000"), new BigDecimal("0.2000"));
 
         assertThat(repository.findCurrentIssue()).get().satisfies(issue -> {
             assertThat(issue.issueNumber()).isEqualTo("TEST-0001");

@@ -2,48 +2,59 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
-import type { BallView, CurrentUserView, GameHistoryView, GameView } from '../types'
+import type { DrawHistoryItem } from '../types/platformAdmin'
+import type { CurrentUserView, GameCatalogItem } from '../types'
 
-type NavItem = { label: string; to?: string; href?: string; disabled?: boolean }
+type NavItem = { label: string; to?: string; href?: string; permission?: string }
 
 const router = useRouter()
 const currentUser = ref<CurrentUserView | null>(null)
-const game = ref<GameView | null>(null)
+const history = ref<DrawHistoryItem[]>([])
+const gameCatalog = ref<GameCatalogItem[]>([])
+const selectedGameCode = ref('AU8')
 const loading = ref(true)
 const error = ref('')
 let refreshTimer: number | undefined
 
 const navItems: NavItem[] = [
-  { label: '开奖信息', to: '/platform-admin' },
-  { label: '子账号', to: '/console/agents' },
-  { label: '机器管理', to: '/console/agents' },
-  { label: '报表统计', to: '/console/players' },
-  { label: '开奖历史', href: '#history' },
-  { label: '未结订单', disabled: true },
-  { label: '订单改单', disabled: true },
-  { label: '在线玩家', to: '/console/players' },
-  { label: '设置', disabled: true },
-  { label: '网盘设置', disabled: true },
-  { label: '游戏设置', to: '/console' },
-  { label: '修改密码', to: '/console/users' },
+  { label: '开奖信息', to: '/platform-admin', permission: 'PLATFORM_HOME_READ' },
+  { label: '子账号', to: '/platform-admin/sub-accounts', permission: 'SUB_ACCOUNT_MANAGE' },
+  { label: '机器管理', to: '/platform-admin/machines', permission: 'MACHINE_MANAGE' },
+  { label: '报表统计', to: '/platform-admin/reports', permission: 'REPORT_READ' },
+  { label: '开奖历史', to: '/platform-admin/draw-history', permission: 'DRAW_HISTORY_READ' },
+  { label: '未结订单', to: '/platform-admin/unsettled-orders', permission: 'UNSETTLED_ORDER_READ' },
+  { label: '订单改单', to: '/platform-admin/order-corrections', permission: 'ORDER_CORRECTION_READ' },
+  { label: '在线玩家', to: '/platform-admin/online-players', permission: 'ONLINE_PLAYER_READ' },
+  { label: '设置', to: '/platform-admin/settings', permission: 'PLATFORM_SETTINGS_READ' },
+  { label: '网盘设置', to: '/platform-admin/report-networks', permission: 'REPORT_NETWORK_READ' },
+  { label: '游戏设置', to: '/platform-admin/games', permission: 'GAME_SETTINGS_READ' },
+  { label: '修改密码', to: '/platform-admin/password', permission: 'PLATFORM_PASSWORD_MANAGE' },
 ]
+const visibleNavItems = computed(() => navItems.filter(item => currentUser.value?.permissions.includes(item.permission || '')))
 
-const lastDraw = computed<GameHistoryView | null>(() => game.value?.history[0] ?? null)
-const displayedBalls = computed<BallView[]>(() => lastDraw.value?.balls ?? game.value?.previousBalls ?? [])
-const historyRows = computed(() => game.value?.history?.slice(0, 12) ?? [])
-const specialFan = computed(() => displayedBalls.value[7]?.fan ?? null)
+const lastDraw = computed<DrawHistoryItem | null>(() => history.value[0] ?? null)
+const historyRows = computed(() => history.value.slice(0, 12))
+const specialFan = computed(() => {
+  const number = lastDraw.value?.balls?.[7]
+  return typeof number === 'number' ? fan(number) : null
+})
 
 function issueTail(issueNumber: string) { return issueNumber.length > 4 ? issueNumber.slice(-4) : issueNumber }
 function formatDateTime(value: string | null | undefined) { if (!value) return '--'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false }) }
 function formatShortTime(value: string | null | undefined) { if (!value) return '--'; const date = new Date(value); return Number.isNaN(date.getTime()) ? '--' : date.toLocaleTimeString('zh-CN', { hour12: false }) }
-function ballClass(ball: BallView) { return ball.parity === 'ODD' ? 'is-odd' : ball.parity === 'EVEN' ? 'is-even' : '' }
+function fan(number: number) { return number % 4 === 0 ? 4 : number % 4 }
+function ballClass(number: number) { return fan(number) % 2 === 1 ? 'is-odd' : 'is-even' }
+function displayBall(number: number) { return String(number).padStart(2, '0') }
 
 async function load() {
   error.value = ''
   try {
-    const [user, currentGame] = await Promise.all([api.me(), api.current()])
+    const [user, page] = await Promise.all([
+      api.me(),
+      api.listDrawHistory({ gameCode: selectedGameCode.value, pageSize: 12 }),
+    ])
     currentUser.value = user
-    game.value = currentGame
+    history.value = page.items
   } catch (cause) {
     error.value = apiErrorMessage(cause, '开奖信息加载失败')
   } finally { loading.value = false }
@@ -51,14 +62,22 @@ async function load() {
 
 async function logout() { try { await api.logout() } finally { await router.replace('/platform-admin/login') } }
 
-onMounted(() => { document.title = 'XUPAN 超级管理后台'; void load(); refreshTimer = window.setInterval(load, 5000) })
+onMounted(async () => {
+  document.title = 'XUPAN 超级管理后台'
+  gameCatalog.value = await api.getGameCatalog()
+  if (gameCatalog.value.length > 0 && !gameCatalog.value.some(game => game.gameCode === selectedGameCode.value)) {
+    selectedGameCode.value = gameCatalog.value[0]!.gameCode
+  }
+  await load()
+  refreshTimer = window.setInterval(load, 5000)
+})
 onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(refreshTimer) })
 </script>
 
 <template>
   <main class="platform-admin-page">
     <nav class="platform-admin-nav" aria-label="超级管理菜单">
-      <RouterLink v-for="item in navItems" :key="item.label" :to="item.to || item.href || ''" :class="{ active: item.label === '开奖信息', disabled: item.disabled }" @click="item.disabled && $event.preventDefault()">{{ item.label }}</RouterLink>
+      <RouterLink v-for="item in visibleNavItems" :key="item.label" :to="item.to || item.href || ''" :class="{ active: item.label === '开奖信息' }">{{ item.label }}</RouterLink>
       <button type="button" class="platform-admin-logout" @click="logout">安全退出</button>
       <span class="platform-admin-welcome">欢迎您：{{ currentUser?.displayName || currentUser?.username || '超级管理员' }}，超级管理员</span>
     </nav>
@@ -66,21 +85,23 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
     <p v-if="error" class="platform-admin-alert">{{ error }}</p>
 
     <section class="platform-admin-content">
-      <select class="platform-admin-game-select" aria-label="选择游戏" disabled><option>澳8番摊</option></select>
+      <select v-model="selectedGameCode" class="platform-admin-game-select" aria-label="选择游戏" @change="load">
+        <option v-for="game in gameCatalog" :key="game.gameCode" :value="game.gameCode">{{ game.displayName }}</option>
+      </select>
       <p class="platform-admin-section-label">上期开奖结果：</p>
 
       <article v-if="loading" class="platform-admin-draw-card"><p>正在加载开奖结果...</p></article>
       <article v-else-if="lastDraw" class="platform-admin-draw-card">
         <header><h1>开盘结果</h1><strong>第{{ lastDraw.issueNumber }}期</strong></header>
         <div class="platform-admin-draw-meta"><span>{{ formatDateTime(lastDraw.settledAt) }}</span><b v-if="specialFan !== null">{{ specialFan }}番</b></div>
-        <div class="platform-admin-ball-row"><span v-for="ball in displayedBalls" :key="ball.ballNumber" :class="['platform-admin-ball', ballClass(ball)]">{{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}</span></div>
+        <div class="platform-admin-ball-row"><span v-for="(number,index) in lastDraw.balls" :key="index" :class="['platform-admin-ball', ballClass(number)]">{{ displayBall(number) }}</span></div>
       </article>
 
       <p class="platform-admin-section-label">历史开奖结果：</p>
       <section id="history" class="platform-admin-history">
         <table>
           <thead><tr><th>期数</th><th>时间</th><th>结果</th><th>番</th></tr></thead>
-          <tbody><tr v-for="row in historyRows" :key="row.issueNumber"><td>{{ issueTail(row.issueNumber) }}</td><td>{{ formatShortTime(row.settledAt) }}</td><td><span class="platform-admin-history-balls"><i v-for="ball in row.balls" :key="ball.ballNumber">{{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}</i></span></td><td><span class="platform-admin-history-fan">{{ row.balls[7]?.fan ?? '--' }}番</span></td></tr></tbody>
+          <tbody><tr v-for="row in historyRows" :key="row.gameCode + row.issueNumber"><td>{{ issueTail(row.issueNumber) }}</td><td>{{ formatShortTime(row.settledAt) }}</td><td><span class="platform-admin-history-balls"><i v-for="(number,index) in row.balls" :key="index">{{ displayBall(number) }}</i></span></td><td><span class="platform-admin-history-fan">{{ row.balls[7] !== undefined ? fan(row.balls[7]) : '--' }}番</span></td></tr></tbody>
         </table>
       </section>
     </section>
@@ -92,7 +113,6 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .platform-admin-nav { display: flex; flex-wrap: wrap; align-items: center; min-height: 48px; padding: 0 18px; background: #202938; color: #fff; }
 .platform-admin-nav a, .platform-admin-logout { padding: 15px 12px; border: 0; background: transparent; color: #fff; text-decoration: none; font-size: 14px; cursor: pointer; }
 .platform-admin-nav a.active { color: #ffb6a4; }
-.platform-admin-nav a.disabled { color: #89909a; cursor: not-allowed; }
 .platform-admin-welcome { margin-left: auto; padding: 0 18px; color: #ffc6b8; font-size: 14px; }
 .platform-admin-content { padding: 8px 10px 28px; }
 .platform-admin-game-select { width: 100%; margin: 0 0 8px; padding: 9px; border: 1px solid #a8c8dc; background: #fff; }

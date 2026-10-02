@@ -15,6 +15,7 @@ import type {
   ChatRoomView,
   CurrentUserView,
   GameView,
+  GameCatalogItem,
   MyBetSummaryResponse,
   OddsView,
   PlayType,
@@ -66,6 +67,40 @@ import type {
   CreateAgentGroupRequest,
   CreateAgentRequest,
 } from './types/agent'
+import type {
+  Machine,
+  MachineInput,
+  MachinePlayer,
+  DrawHistoryBet,
+  OrderCorrectionDetail,
+  OrderCorrectionInput,
+  OrderCorrectionPage,
+  OrderCorrectionResult,
+  AdminNoticeMessage,
+  OnlinePlayerItem,
+  OnlinePlayerMessageInput,
+  PlatformSettings,
+  PlatformSettingsInput,
+  PublicPlatformSettings,
+  DeleteAllAccountsResult,
+  GameSettings,
+  GameSettingsInput,
+  PlatformPasswordForm,
+  PlatformPasswordChangeInput,
+  PlatformPasswordChangeResult,
+  ReportNetworkInput,
+  ReportNetworkItem,
+  UnsettledOrderCancellation,
+  UnsettledOrderPage,
+  DrawHistoryPage,
+  DrawHistorySettlementResult,
+  DrawHistorySupplementResult,
+  ProfitReport,
+  ScoreFlow,
+  SubAccount,
+  SubAccountInput,
+} from './types/platformAdmin'
+
 import type {
   ChangeRobotStatusRequest,
   CreateRobotRequest,
@@ -172,6 +207,11 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AVATAR_OPERATION_FORBIDDEN') return '玩家和托只能在头像池中选择头像'
   if (error.code === 'PLAYER_AVATAR_FORBIDDEN') return '已删除玩家不能更换头像'
   if (error.code === 'AUTH_INVALID_CREDENTIALS') return '用户名或密码错误'
+  if (error.code === 'AUTH_SUB_ACCOUNT_EXPIRED') return '账号已过期'
+  if (error.code === 'GAME_SETTINGS_CODE_EXISTS') return '彩种键名已存在'
+  if (error.code === 'GAME_SETTINGS_CODE_IMMUTABLE') return '彩种键名创建后不能修改'
+  if (error.code === 'GAME_PRIMARY_DELETE_FORBIDDEN') return '主彩种不能删除'
+  if (error.code === 'GAME_SETTINGS_NOT_FOUND') return '彩种不存在'
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
   if (error.code === 'PLAYER_LINK_INVALID') return '玩家链接无效、已过期或已撤销'
@@ -189,8 +229,22 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'WALLET_OPERATION_REPLAYED') return '该操作已经处理，请刷新查看最新结果'
   if (error.code === 'GAME_BET_TEXT_INVALID') return '下注无效：下注格式暂不支持'
   if (error.code === 'GAME_BETTING_CLOSED') return '下注无效：本期已封盘'
-  if (error.code === 'GAME_BALL_NOT_SUPPORTED') return '下注无效：当前只支持第1球'
+  if (error.code === 'GAME_BALL_NOT_SUPPORTED') return '下注无效：球号必须在 1 到 8 之间'
   if (error.code === 'BETTING_CONFIG_INVALID') return '配置未保存：请检查赔率、返水和限额是否为有效整数'
+  if (error.code === 'PLATFORM_PASSWORD_OLD_MISMATCH') return '旧密码错误'
+  if (error.code === 'PLATFORM_PASSWORD_CONFIRM_MISMATCH') return '新密码与确认密码不一致'
+  if (error.code === 'PLATFORM_PASSWORD_NO_CHANGE') return '未做任何更改'
+  if (error.code === 'PLATFORM_PASSWORD_FORBIDDEN') return '当前账号没有修改密码权限'
+  if (error.code === 'USER_USERNAME_INVALID') return '登录账号格式无效'
+  if (error.code === 'DRAW_HISTORY_SUPPLEMENT_FORBIDDEN') return '当前账号没有补期权限'
+  if (error.code === 'DRAW_HISTORY_NUMBERS_INVALID') return '开奖号码必须是 8 个 1 到 20 的数字'
+  if (error.code === 'DRAW_HISTORY_ALREADY_DRAWN') return '此期数已经有开奖号码'
+  if (error.code === 'DRAW_HISTORY_FORCE_FORBIDDEN') return '当前账号没有强制结算权限'
+  if (error.code === 'DRAW_HISTORY_NOT_FOUND') return '未找到对应开奖记录'
+  if (error.code === 'DRAW_HISTORY_NOT_DRAWN') return '该期还没有开奖号码，不能强制结算'
+  if (error.code === 'DRAW_HISTORY_CONFIRM_REQUIRED') return '缺少强制结算确认参数'
+  if (error.code === 'DRAW_HISTORY_FORCE_CONFLICT') return '注单已被其他操作结算，请刷新后重试'
+  if (error.code === 'DRAW_HISTORY_QUERY_INVALID') return '开奖历史查询参数不合法'
   if (error.code === 'USER_USERNAME_EXISTS') return '登录名已存在，请换一个登录名'
   if (error.code === 'USER_NOT_FOUND') return '用户不存在，请刷新列表后重试'
   if (error.code === 'USER_STATUS_INVALID') return '用户状态不合法'
@@ -431,9 +485,110 @@ export const api = {
     search.set('page', String(params.page || 1))
     search.set('pageSize', String(params.pageSize || 20))
     return request<AgentPlayerPage>(`/api/agent/players?${search.toString()}`)
-  },  current: () => request<GameView>('/api/demo/game/current'),
+  },
+  listSubAccounts: () => request<SubAccount[]>('/api/admin/sub-accounts'),
+  createSubAccount: (payload: SubAccountInput) => request<SubAccount>('/api/admin/sub-accounts', { method: 'POST', body: JSON.stringify(payload) }),
+  updateSubAccount: (id: number, payload: SubAccountInput) => request<SubAccount>(`/api/admin/sub-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteSubAccount: (id: number) => request<void>(`/api/admin/sub-accounts/${id}`, { method: 'DELETE' }),
+  changeSubAccountStatus: (id: number, status: 'ACTIVE' | 'DISABLED') => request<void>(`/api/admin/sub-accounts/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  listMachines: () => request<Machine[]>('/api/admin/machines'),
+  createMachine: (payload: MachineInput) => request<Machine>('/api/admin/machines', { method: 'POST', body: JSON.stringify(payload) }),
+  updateMachine: (id: number, payload: MachineInput) => request<Machine>(`/api/admin/machines/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteMachine: (id: number) => request<void>(`/api/admin/machines/${id}`, { method: 'DELETE' }),
+  changeMachineStatus: (id: number, status: 'ACTIVE' | 'DISABLED') => request<void>(`/api/admin/machines/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  listMachinePlayers: (id: number) => request<MachinePlayer[]>(`/api/admin/machines/${id}/players`),
+  listDrawHistory: (params: { gameCode?: string; issueNumber?: string; page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.gameCode) search.set('gameCode', params.gameCode)
+    if (params.issueNumber) search.set('issueNumber', params.issueNumber)
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 30))
+    return request<DrawHistoryPage>(`/api/admin/draw-history?${search.toString()}`)
+  },
+  listDrawHistoryBets: (issueNumber: string) => request<DrawHistoryBet[]>(`/api/admin/draw-history/${encodeURIComponent(issueNumber)}/bets`),
+  forceSettleDrawIssue: (issueNumber: string) =>
+    request<DrawHistorySettlementResult>(`/api/admin/draw-history/${encodeURIComponent(issueNumber)}/force-settle`, { method: 'POST' }),
+  supplementDrawHistory: (payload: { gameCode: string; issueNumber: string; numbers: number[]; openedAt: string | null }) =>
+    request<DrawHistorySupplementResult>('/api/admin/draw-history/supplement', { method: 'POST', body: JSON.stringify(payload) }),
+  forceSettleAllDrawHistory: (payload: { confirm: string; preview: boolean }) =>
+    request<DrawHistorySettlementResult>('/api/admin/draw-history/force-settle-all', { method: 'POST', body: JSON.stringify(payload) }),
+  listUnsettledOrders: (params: { page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 30))
+    return request<UnsettledOrderPage>(`/api/admin/unsettled-orders?${search.toString()}`)
+  },
+  cancelUnsettledOrder: (id: number) =>
+    request<UnsettledOrderCancellation>(`/api/admin/unsettled-orders/${id}`, { method: 'DELETE' }),
+  listOrderCorrections: (params: { page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 30))
+    return request<OrderCorrectionPage>(`/api/admin/order-corrections?${search.toString()}`)
+  },
+  getOrderCorrection: (id: number) => request<OrderCorrectionDetail>(`/api/admin/order-corrections/${id}`),
+  correctOrder: (id: number, payload: OrderCorrectionInput) =>
+    request<OrderCorrectionResult>(`/api/admin/order-corrections/${id}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  listOnlinePlayers: () => request<OnlinePlayerItem[]>('/api/admin/online-players'),
+  disconnectOnlinePlayer: (userId: number) =>
+    request<{ disconnectedSessions: number }>(`/api/admin/online-players/${userId}/disconnect`, { method: 'POST' }),
+  sendOnlinePlayerMessage: (userId: number, payload: OnlinePlayerMessageInput) =>
+    request<void>(`/api/admin/online-players/${userId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getUnreadAdminNotices: () => request<AdminNoticeMessage[]>('/api/me/admin-notices/unread'),
+  getGameSettings: () => request<GameSettings[]>('/api/admin/game-settings'),
+  getGameSetting: (id: number) => request<GameSettings>(`/api/admin/game-settings/${id}`),
+  createGameSettings: (payload: GameSettingsInput) =>
+    request<GameSettings>('/api/admin/game-settings', { method: 'POST', body: JSON.stringify(payload) }),
+  updateGameSettings: (id: number, version: number, payload: GameSettingsInput) =>
+    request<GameSettings>(`/api/admin/game-settings/${id}?version=${version}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteGameSettings: (id: number) => request<void>(`/api/admin/game-settings/${id}`, { method: 'DELETE' }),
+  getPlatformPasswordForm: () => request<PlatformPasswordForm>('/api/admin/password'),
+  changePlatformPassword: (payload: PlatformPasswordChangeInput) =>
+    request<PlatformPasswordChangeResult>('/api/admin/password', { method: 'PUT', body: JSON.stringify(payload) }),
+  getPlatformSettings: () => request<PlatformSettings>('/api/admin/settings'),
+  updatePlatformSettings: (payload: PlatformSettingsInput) =>
+    request<PlatformSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  previewDeleteAllAccounts: (confirm: string) =>
+    request<DeleteAllAccountsResult>('/api/admin/settings/delete-all-accounts', {
+      method: 'POST', body: JSON.stringify({ confirm, preview: true }),
+    }),
+  deleteAllAccounts: (confirm: string) =>
+    request<DeleteAllAccountsResult>('/api/admin/settings/delete-all-accounts', {
+      method: 'POST', body: JSON.stringify({ confirm, preview: false }),
+    }),
+  getPublicPlatformSettings: () => request<PublicPlatformSettings>('/api/platform/public-settings'),
+  listReportNetworks: () => request<ReportNetworkItem[]>('/api/admin/report-networks'),
+  createReportNetwork: (payload: ReportNetworkInput) =>
+    request<ReportNetworkItem>('/api/admin/report-networks', { method: 'POST', body: JSON.stringify(payload) }),
+  updateReportNetwork: (id: number, version: number, payload: ReportNetworkInput) =>
+    request<ReportNetworkItem>(`/api/admin/report-networks/${id}?version=${version}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  changeReportNetworkStatus: (id: number, version: number, status: 'ACTIVE' | 'DISABLED') =>
+    request<ReportNetworkItem>(`/api/admin/report-networks/${id}/status?version=${version}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  deleteReportNetwork: (id: number, version: number) =>
+    request<void>(`/api/admin/report-networks/${id}?version=${version}`, { method: 'DELETE' }),
+  getScoreFlow: (params: { day?: string; day3?: string; subAccountId?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.day) search.set('day', params.day)
+    if (params.day3) search.set('day3', params.day3)
+    if (params.subAccountId) search.set('subAccountId', String(params.subAccountId))
+    return request<ScoreFlow[]>(`/api/admin/reports/score-flow?${search.toString()}`)
+  },
+  getProfitReport: (params: { day?: string; day3?: string; subAccountId?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.day) search.set('day', params.day)
+    if (params.day3) search.set('day3', params.day3)
+    if (params.subAccountId) search.set('subAccountId', String(params.subAccountId))
+    return request<ProfitReport>(`/api/admin/reports/profit?${search.toString()}`)
+  },  getGameCatalog: () => request<GameCatalogItem[]>('/api/demo/game/catalog'),
+  current: (gameCode = 'AU8') => request<GameView>(`/api/demo/game/current?gameCode=${encodeURIComponent(gameCode)}`),
   getMyBetSummary: () => request<MyBetSummaryResponse>('/api/demo/game/bets/summary'),
-  placeBet: (payload: { ballNumber: 1; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string }) =>
+  placeBet: (payload: { ballNumber: number; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string; gameCode?: string }) =>
     request<BetView>('/api/demo/game/bets', { method: 'POST', body: JSON.stringify(payload) }),
   updateOdds: (playType: PlayType, odds: number) =>
     request<OddsView>(`/api/demo/game/admin/odds/${playType}`, {
@@ -463,7 +618,7 @@ export const api = {
     const queryString = query.toString()
     return request<ChatMessagePage>(`/api/chat/rooms/${encodeURIComponent(roomCode)}/messages${queryString ? `?${queryString}` : ''}`)
   },
-  sendChatMessage: (roomCode: string, payload: { clientMessageId: string; content: string }) =>
+  sendChatMessage: (roomCode: string, payload: { clientMessageId: string; content: string; gameCode?: string }) =>
     request<ChatMessage>(`/api/chat/rooms/${encodeURIComponent(roomCode)}/messages`, {
       method: 'POST',
       body: JSON.stringify(payload),

@@ -24,9 +24,28 @@ class PermissionServiceTest {
 
     @AfterEach
     void clean() {
+        jdbcTemplate.update("DELETE FROM agent_group WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'permission-test-%')");
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'permission-test-%')");
         jdbcTemplate.update("DELETE FROM sys_user WHERE username LIKE 'permission-test-%'");
+    }
+
+    @Test
+    void subAccountMachinePermissionFollowsBy220MachineManageFlag() {
+        long userId = insertUser("permission-test-sub");
+        assign(userId, "SUB_ACCOUNT");
+        jdbcTemplate.update("""
+                INSERT INTO agent_group
+                    (group_code, display_name, status, sys_user_id, machine_manage, sub_account_manage)
+                VALUES ('permission_test_sub', '权限测试子账号', 'ACTIVE', ?, FALSE, FALSE)
+                """, userId);
+
+        assertThat(service.findPermissionCodes(userId)).contains("PLATFORM_HOME_READ")
+                .doesNotContain("MACHINE_MANAGE");
+
+        jdbcTemplate.update("UPDATE agent_group SET machine_manage = TRUE WHERE sys_user_id = ?", userId);
+        assertThat(service.findPermissionCodes(userId)).contains("MACHINE_MANAGE");
     }
 
     @Test

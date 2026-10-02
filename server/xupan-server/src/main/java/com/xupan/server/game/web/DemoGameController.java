@@ -4,6 +4,7 @@ import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.PlayerBetLock;
+import com.xupan.server.platformadmin.service.GameSettingsService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,10 +14,12 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.core.Authentication;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -25,15 +28,24 @@ public class DemoGameController {
 
     private final DemoGameService gameService;
     private final PlayerBetLock playerBetLock;
+    private final GameSettingsService gameSettingsService;
 
-    public DemoGameController(DemoGameService gameService, PlayerBetLock playerBetLock) {
+    public DemoGameController(DemoGameService gameService, PlayerBetLock playerBetLock,
+                              GameSettingsService gameSettingsService) {
         this.gameService = gameService;
         this.playerBetLock = playerBetLock;
+        this.gameSettingsService = gameSettingsService;
     }
 
     @GetMapping("/current")
-    public DemoGameService.GameView current(Authentication authentication) {
-        return gameService.current(authenticatedUser(authentication).getUserId());
+    public DemoGameService.GameView current(Authentication authentication,
+                                            @RequestParam(defaultValue = "AU8") String gameCode) {
+        return gameService.current(authenticatedUser(authentication).getUserId(), gameCode);
+    }
+
+    @GetMapping("/catalog")
+    public List<GameSettingsService.GameCatalogItem> catalog() {
+        return gameSettingsService.activeCatalog();
     }
 
     @PostMapping("/bets")

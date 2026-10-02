@@ -86,7 +86,9 @@ public class AuthenticationExceptionHandler implements AuthenticationEntryPoint,
     }
 
     private static String loginMessage(String code) {
-        return "AUTH_INVALID_CREDENTIALS".equals(code) ? "用户名或密码错误" : "认证状态已失效";
+        if ("AUTH_INVALID_CREDENTIALS".equals(code)) return "用户名或密码错误";
+        if ("AUTH_SUB_ACCOUNT_EXPIRED".equals(code)) return "账号已过期";
+        return "认证状态已失效";
     }
 
     private static void write(HttpServletRequest request, HttpServletResponse response,

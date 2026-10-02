@@ -119,6 +119,22 @@ public class VirtualWalletService {
     }
 
     @Transactional
+    public WalletOperationResult adjustForBetEdit(long operatorUserId, long targetUserId, long betId,
+                                                  String issueNumber, BigDecimal delta,
+                                                  String reason, String idempotencyKey) {
+        requireActiveUser(operatorUserId);
+        requireActiveUser(targetUserId);
+        BigDecimal normalizedDelta = adjustmentAmount(delta);
+        String normalizedIssue = requiredText(issueNumber, "期号不能为空", 64);
+        String normalizedReason = requiredText(reason, "改单原因不能为空", 255);
+        String normalizedKey = requiredText(idempotencyKey, "幂等键不能为空", 128);
+        WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendBetEditAdjustment(
+                operatorUserId, targetUserId, betId, normalizedIssue, normalizedDelta,
+                normalizedReason, normalizedKey));
+        return resultFor(targetUserId, ledger);
+    }
+
+    @Transactional
     public WalletOperationResult creditForSettlement(long targetUserId, long betId,
                                                      String issueNumber, BigDecimal amount,
                                                      String reason) {

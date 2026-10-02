@@ -36,10 +36,31 @@ class FlywayAuthMigrationTest {
             "ROBOT_WRITE",
             "ROBOT_TEMPLATE_WRITE",
             "USER_MANAGE",
+            "PLATFORM_HOME_READ",
             "ROLE_MANAGE",
             "PERMISSION_MANAGE",
             "AUDIT_READ",
             "AGENT_MANAGE",
+            "SUB_ACCOUNT_MANAGE",
+            "MACHINE_MANAGE",
+            "REPORT_READ",
+            "DRAW_HISTORY_READ",
+            "DRAW_HISTORY_FORCE_SETTLE",
+            "DRAW_HISTORY_SUPPLEMENT",
+            "UNSETTLED_ORDER_READ",
+            "UNSETTLED_ORDER_DELETE",
+            "ORDER_CORRECTION_READ",
+            "ORDER_CORRECTION_MANAGE",
+            "ONLINE_PLAYER_READ",
+            "ONLINE_PLAYER_DISCONNECT",
+            "ONLINE_PLAYER_MESSAGE",
+            "PLATFORM_SETTINGS_READ",
+            "PLATFORM_SETTINGS_WRITE",
+            "REPORT_NETWORK_READ",
+            "REPORT_NETWORK_WRITE",
+            "GAME_SETTINGS_READ",
+            "GAME_SETTINGS_WRITE",
+            "PLATFORM_PASSWORD_MANAGE",
             "AGENT_CONSOLE_READ",
             "WALLET_READ",
             "WALLET_GRANT",
@@ -72,7 +93,7 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53");
     }
 
     @Test
@@ -146,7 +167,7 @@ class FlywayAuthMigrationTest {
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_user", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM auth_session", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM auth_ws_ticket", Integer.class)).isZero();
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_role", Integer.class)).isEqualTo(5);
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_role", Integer.class)).isEqualTo(6);
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_permission", Integer.class))
                 .isEqualTo(PERMISSION_CODES.size());
 

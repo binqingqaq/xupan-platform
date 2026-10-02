@@ -19,7 +19,7 @@ public class PermissionService {
     }
 
     public Set<String> findPermissionCodes(long userId) {
-        return new LinkedHashSet<>(jdbcTemplate.queryForList("""
+        Set<String> codes = new LinkedHashSet<>(jdbcTemplate.queryForList("""
                 SELECT DISTINCT p.permission_code
                   FROM sys_user u
                   JOIN sys_user_role ur ON ur.user_id = u.id
@@ -32,6 +32,19 @@ public class PermissionService {
                    AND p.status = 'ACTIVE'
                  ORDER BY p.permission_code
                 """, String.class, userId));
+        List<SubAccountFlags> flags = jdbcTemplate.query("""
+                SELECT machine_manage, sub_account_manage
+                  FROM agent_group
+                 WHERE sys_user_id = ?
+                   AND deleted_at IS NULL
+                """, (rs, rowNum) -> new SubAccountFlags(
+                        rs.getBoolean("machine_manage"), rs.getBoolean("sub_account_manage")), userId);
+        if (!flags.isEmpty()) {
+            SubAccountFlags access = flags.get(0);
+            if (!access.machineManage()) codes.remove("MACHINE_MANAGE");
+            if (!access.subAccountManage()) codes.remove("SUB_ACCOUNT_MANAGE");
+        }
+        return codes;
     }
 
     public List<String> findRoleCodes(long userId) {
@@ -61,4 +74,5 @@ public class PermissionService {
     public boolean hasPermission(long userId, String permissionCode) {
         return permissionCode != null && findPermissionCodes(userId).contains(permissionCode);
     }
+    private record SubAccountFlags(boolean machineManage, boolean subAccountManage) {}
 }

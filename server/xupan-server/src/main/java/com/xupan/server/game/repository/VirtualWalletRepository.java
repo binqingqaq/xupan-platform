@@ -220,6 +220,25 @@ public class VirtualWalletRepository {
                 betId, issue, "下注扣款:" + code);
     }
 
+    public WalletLedgerEntry appendBetEditAdjustment(long operatorUserId, long targetUserId, long betId,
+                                                       String issueNumber, BigDecimal delta,
+                                                       String reason, String idempotencyKey) {
+        BigDecimal value = nonZeroMoney(delta, "WALLET_AMOUNT_INVALID");
+        String safeReason = reason(reason);
+        String key = "BET_EDIT:" + idempotencyKey(idempotencyKey);
+        VirtualWallet wallet = lockWallet(targetUserId);
+        requireBetIdentity(betId, wallet.accountId(), issueNumber);
+        WalletOperationType type = value.signum() < 0
+                ? WalletOperationType.BET_EDIT_DEBIT : WalletOperationType.BET_EDIT_REFUND;
+        Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
+        if (replay.isPresent()) {
+            return replayOrConflict(replay.get(), type, value, targetUserId, safeReason, betId);
+        }
+        String operatorName = operatorName(operatorUserId);
+        return append(wallet, type, value, operatorUserId, operatorName, key,
+                betId, issueNumber, safeReason);
+    }
+
     public WalletLedgerEntry appendSettlementCredit(long targetUserId, long betId,
                                                       String issueNumber, BigDecimal amount,
                                                       String reason) {
@@ -364,6 +383,21 @@ public class VirtualWalletRepository {
                 .orElseThrow(() -> new IllegalStateException("WALLET_BET_NOT_FOUND: 注单不存在"));
         if (bet.accountId() != accountId || (betCode != null && !betCode.equals(bet.betCode()))
                 || !issueNumber.equals(bet.issueNumber()) || money(bet.stake()).compareTo(stake) != 0) {
+            throw new IllegalStateException("WALLET_BET_MISMATCH: 注单与钱包操作不匹配");
+        }
+        return bet;
+    }
+
+    private BetReference requireBetIdentity(long betId, long accountId, String issueNumber) {
+        BetReference bet = jdbcTemplate.query("""
+                SELECT user_id, bet_code, issue_number, stake
+                  FROM game_bet
+                 WHERE id = ?
+                """, (rs, rowNum) -> new BetReference(rs.getLong("user_id"),
+                rs.getString("bet_code"), rs.getString("issue_number"), rs.getBigDecimal("stake")), betId)
+                .stream().findFirst()
+                .orElseThrow(() -> new IllegalStateException("WALLET_BET_NOT_FOUND: 注单不存在"));
+        if (bet.accountId() != accountId || !issueNumber.equals(bet.issueNumber())) {
             throw new IllegalStateException("WALLET_BET_MISMATCH: 注单与钱包操作不匹配");
         }
         return bet;

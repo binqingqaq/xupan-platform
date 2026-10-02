@@ -11,7 +11,9 @@ const busy = ref(false)
 const error = ref('')
 
 function canEnter(user: CurrentUserView) {
-  return user.permissions.includes('USER_MANAGE') || user.permissions.includes('AGENT_MANAGE')
+  return user.permissions.includes('PLATFORM_HOME_READ')
+      || user.permissions.includes('USER_MANAGE')
+      || user.permissions.includes('AGENT_MANAGE')
 }
 
 async function submit() {

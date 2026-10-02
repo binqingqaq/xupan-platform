@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
 @Repository
 public class GameDataRepository {
 
+    public static final String DEFAULT_GAME_CODE = "AU8";
+
     private final JdbcTemplate jdbcTemplate;
 
     public GameDataRepository(JdbcTemplate jdbcTemplate) {
@@ -28,6 +30,11 @@ public class GameDataRepository {
     }
 
     public void saveIssue(String issueNumber, String status, List<Integer> numbers) {
+        saveIssue(DEFAULT_GAME_CODE, issueNumber, status, numbers);
+    }
+
+    public void saveIssue(String gameCode, String issueNumber, String status, List<Integer> numbers) {
+        if (gameCode == null || gameCode.isBlank()) throw new IllegalArgumentException("彩种键名不能为空");
         if (numbers != null && numbers.size() != 8) {
             throw new IllegalArgumentException("期号结果必须包含 8 个号码");
         }
@@ -40,35 +47,41 @@ public class GameDataRepository {
                        updated_at = CURRENT_TIMESTAMP,
                        closed_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE closed_at END,
                        settled_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE settled_at END
-                 WHERE issue_number = ?
+                 WHERE game_code = ? AND issue_number = ?
                 """, status, values.get(0), values.get(1), values.get(2), values.get(3),
-                values.get(4), values.get(5), values.get(6), values.get(7), status, status, status, issueNumber);
+                values.get(4), values.get(5), values.get(6), values.get(7), status, status, status,
+                gameCode, issueNumber);
         if (updated == 0) {
             jdbcTemplate.update("""
                     INSERT INTO game_issue
-                        (issue_number, status, number_1, number_2, number_3, number_4,
+                        (game_code, issue_number, status, number_1, number_2, number_3, number_4,
                          number_5, number_6, number_7, number_8, phase, opened_at, issue_started_at,
                          closed_at, settled_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                             CASE WHEN ? = 'OPEN' THEN 'BETTING' ELSE 'SETTLED' END,
                             CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                             CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END,
                             CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END)
-                    """, issueNumber, status, values.get(0), values.get(1), values.get(2), values.get(3),
+                    """, gameCode, issueNumber, status, values.get(0), values.get(1), values.get(2), values.get(3),
                     values.get(4), values.get(5), values.get(6), values.get(7), status, status, status);
         }
     }
 
     public void saveBettingIssue(String issueNumber, Instant startedAt) {
+        saveBettingIssue(DEFAULT_GAME_CODE, issueNumber, startedAt);
+    }
+
+    public void saveBettingIssue(String gameCode, String issueNumber, Instant startedAt) {
+        if (gameCode == null || gameCode.isBlank()) throw new IllegalArgumentException("彩种键名不能为空");
         Instant bettingEndsAt = startedAt.plusSeconds(180);
         Instant drawEndsAt = startedAt.plusSeconds(300);
         try {
             jdbcTemplate.update("""
                     INSERT INTO game_issue
-                        (issue_number, status, phase, opened_at, issue_started_at,
+                        (game_code, issue_number, status, phase, opened_at, issue_started_at,
                          betting_ends_at, draw_ends_at)
-                    VALUES (?, 'OPEN', 'BETTING', ?, ?, ?, ?)
-                    """, issueNumber, timestamp(startedAt), timestamp(startedAt),
+                    VALUES (?, ?, 'OPEN', 'BETTING', ?, ?, ?, ?)
+                    """, gameCode, issueNumber, timestamp(startedAt), timestamp(startedAt),
                     timestamp(bettingEndsAt), timestamp(drawEndsAt));
         } catch (DuplicateKeyException duplicate) {
             // A reset request and the scheduled finalizer can create the same next issue concurrently.
@@ -116,46 +129,56 @@ public class GameDataRepository {
     }
 
     public Optional<IssueRecord> findCurrentIssue() {
+        return findCurrentIssue(DEFAULT_GAME_CODE);
+    }
+
+    public Optional<IssueRecord> findCurrentIssue(String gameCode) {
         return findIssue("""
                 SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
-                 WHERE phase IN ('BETTING', 'DRAWING')
+                 WHERE game_code = ? AND phase IN ('BETTING', 'DRAWING')
                  ORDER BY id DESC
                  LIMIT 1
-                """);
+                """, gameCode);
     }
 
     public Optional<IssueRecord> findLatestIssue() {
+        return findLatestIssue(DEFAULT_GAME_CODE);
+    }
+
+    public Optional<IssueRecord> findLatestIssue(String gameCode) {
         return findIssue("""
                 SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
+                 WHERE game_code = ?
                  ORDER BY id DESC
                  LIMIT 1
-                """);
+                """, gameCode);
     }
 
     public Optional<IssueRecord> findLatestSettledIssue() {
+        return findLatestSettledIssue(DEFAULT_GAME_CODE);
+    }
+
+    public Optional<IssueRecord> findLatestSettledIssue(String gameCode) {
         return findIssue("""
                 SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
-                 WHERE phase = 'SETTLED'
-                   AND number_1 IS NOT NULL
-                   AND number_2 IS NOT NULL
-                   AND number_3 IS NOT NULL
-                   AND number_4 IS NOT NULL
-                   AND number_5 IS NOT NULL
-                   AND number_6 IS NOT NULL
-                   AND number_7 IS NOT NULL
-                   AND number_8 IS NOT NULL
+                 WHERE game_code = ?
+                   AND phase = 'SETTLED'
+                   AND number_1 IS NOT NULL AND number_2 IS NOT NULL
+                   AND number_3 IS NOT NULL AND number_4 IS NOT NULL
+                   AND number_5 IS NOT NULL AND number_6 IS NOT NULL
+                   AND number_7 IS NOT NULL AND number_8 IS NOT NULL
                  ORDER BY id DESC
                  LIMIT 1
-                """);
+                """, gameCode);
     }
 
     public Optional<IssueRecord> findIssueByIssueNumber(String issueNumber) {
@@ -172,6 +195,10 @@ public class GameDataRepository {
     }
 
     public List<IssueRecord> findSettledIssues(int limit) {
+        return findSettledIssues(DEFAULT_GAME_CODE, limit);
+    }
+
+    public List<IssueRecord> findSettledIssues(String gameCode, int limit) {
         if (limit < 1 || limit > 100) {
             throw new IllegalArgumentException("开奖历史查询数量必须在 1 到 100 之间");
         }
@@ -180,14 +207,15 @@ public class GameDataRepository {
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
-                 WHERE phase = 'SETTLED' AND settled_at IS NOT NULL
+                 WHERE game_code = ?
+                   AND phase = 'SETTLED' AND settled_at IS NOT NULL
                    AND number_1 IS NOT NULL AND number_2 IS NOT NULL
                    AND number_3 IS NOT NULL AND number_4 IS NOT NULL
                    AND number_5 IS NOT NULL AND number_6 IS NOT NULL
                    AND number_7 IS NOT NULL AND number_8 IS NOT NULL
                  ORDER BY settled_at DESC, id DESC
                  LIMIT ?
-                """, limit);
+                """, gameCode, limit);
     }
 
     /**
@@ -196,18 +224,23 @@ public class GameDataRepository {
      * currently visible in a bounded trend chart.
      */
     public List<IssueRecord> findLatestSettledBlock(int blockSize) {
+        return findLatestSettledBlock(DEFAULT_GAME_CODE, blockSize);
+    }
+
+    public List<IssueRecord> findLatestSettledBlock(String gameCode, int blockSize) {
         if (blockSize < 1 || blockSize > 100) {
             throw new IllegalArgumentException("开奖走势分组数量必须在 1 到 100 之间");
         }
         Long total = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                   FROM game_issue
-                 WHERE phase = 'SETTLED' AND settled_at IS NOT NULL
+                 WHERE game_code = ?
+                   AND phase = 'SETTLED' AND settled_at IS NOT NULL
                    AND number_1 IS NOT NULL AND number_2 IS NOT NULL
                    AND number_3 IS NOT NULL AND number_4 IS NOT NULL
                    AND number_5 IS NOT NULL AND number_6 IS NOT NULL
                    AND number_7 IS NOT NULL AND number_8 IS NOT NULL
-                """, Long.class);
+                """, Long.class, gameCode);
         if (total == null || total == 0) {
             return List.of();
         }
@@ -215,7 +248,7 @@ public class GameDataRepository {
         if (currentBlockSize == 0) {
             currentBlockSize = blockSize;
         }
-        List<IssueRecord> currentBlock = new ArrayList<>(findSettledIssues(currentBlockSize));
+        List<IssueRecord> currentBlock = new ArrayList<>(findSettledIssues(gameCode, currentBlockSize));
         Collections.reverse(currentBlock);
         return List.copyOf(currentBlock);
     }
@@ -258,29 +291,75 @@ public class GameDataRepository {
      * The account id is deliberately mandatory so a game request cannot fall
      * back to the historical DEMO-USER account.
      */
+    public boolean isPrimaryGameEnabled() {
+        return isGameEnabled(DEFAULT_GAME_CODE);
+    }
+
+    public boolean isGameEnabled(String gameCode) {
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_definition
+                 WHERE game_code = ? AND status = 'ACTIVE' AND deleted_at IS NULL
+                """, Long.class, gameCode);
+        return count != null && count > 0;
+    }
+
+    public boolean gameExists(String gameCode) {
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_definition
+                 WHERE game_code = ? AND deleted_at IS NULL
+                """, Long.class, gameCode);
+        return count != null && count > 0;
+    }
+
+    public BettingRates findBettingRatesByAccountId(long accountId) {
+        List<BettingRates> rows = jdbcTemplate.query("""
+                SELECT COALESCE(a.rebate_rate, 0) rebate_rate,
+                       COALESCE(a.special_rebate_rate, 0) special_rebate_rate
+                  FROM demo_user_account d
+                  LEFT JOIN agent a ON a.id = d.agent_id
+                 WHERE d.id = ?
+                """, (rs, rowNum) -> new BettingRates(rs.getBigDecimal("rebate_rate"),
+                rs.getBigDecimal("special_rebate_rate")), accountId);
+        return rows.isEmpty() ? BettingRates.ZERO : rows.get(0);
+    }
     public long saveBetWithOddsSnapshot(long accountId, String betCode, String idempotencyKey,
                                         String issueNumber, int ballNumber,
                                         PlayType playType, List<Integer> parameters,
-                                        BigDecimal stake, BigDecimal odds) {
-        requireFirstBall(ballNumber);
+                                        BigDecimal stake, BigDecimal odds, BigDecimal rebateRate,
+                                        BigDecimal specialRebateRate) {
+        return saveBetWithOddsSnapshot(DEFAULT_GAME_CODE, accountId, betCode, idempotencyKey,
+                issueNumber, ballNumber, playType, parameters, stake, odds, rebateRate, specialRebateRate);
+    }
+
+    public long saveBetWithOddsSnapshot(String gameCode, long accountId, String betCode, String idempotencyKey,
+                                        String issueNumber, int ballNumber,
+                                        PlayType playType, List<Integer> parameters,
+                                        BigDecimal stake, BigDecimal odds, BigDecimal rebateRate,
+                                        BigDecimal specialRebateRate) {
+        if (gameCode == null || gameCode.isBlank()) throw new IllegalArgumentException("彩种键名不能为空");
+        requireBallNumber(ballNumber);
         String parameterText = parameters == null ? "" : parameters.stream()
                 .map(String::valueOf).collect(Collectors.joining(","));
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO game_bet
-                        (user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
-                         stake, odds_snapshot)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                         play_type, parameters_text, stake, odds_snapshot, rebate_rate_snapshot,
+                         special_rebate_rate_snapshot)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """);
-            statement.setLong(1, accountId);
-            statement.setString(2, betCode);
-            statement.setString(3, idempotencyKey);
-            statement.setString(4, issueNumber);
-            statement.setInt(5, ballNumber);
-            statement.setString(6, playType.name());
-            statement.setString(7, parameterText);
-            statement.setBigDecimal(8, stake);
-            statement.setBigDecimal(9, odds);
+            statement.setString(1, gameCode);
+            statement.setLong(2, accountId);
+            statement.setString(3, betCode);
+            statement.setString(4, idempotencyKey);
+            statement.setString(5, issueNumber);
+            statement.setInt(6, ballNumber);
+            statement.setString(7, playType.name());
+            statement.setString(8, parameterText);
+            statement.setBigDecimal(9, stake);
+            statement.setBigDecimal(10, odds);
+            statement.setBigDecimal(11, rebateRate == null ? BigDecimal.ZERO : rebateRate);
+            statement.setBigDecimal(12, specialRebateRate == null ? BigDecimal.ZERO : specialRebateRate);
             return statement;
         });
         Long id = jdbcTemplate.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
@@ -311,9 +390,9 @@ public class GameDataRepository {
                 """, Timestamp.from(canceledAt), Timestamp.from(canceledAt), betId) == 1;
     }
 
-    private static void requireFirstBall(int ballNumber) {
-        if (ballNumber != 1) {
-            throw new IllegalArgumentException("下注无效：当前只支持第1球");
+    private static void requireBallNumber(int ballNumber) {
+        if (ballNumber < 1 || ballNumber > 8) {
+            throw new IllegalArgumentException("下注无效：球号必须在 1 到 8 之间");
         }
     }
 
@@ -348,6 +427,23 @@ public class GameDataRepository {
                 """, (rs, rowNum) -> new BetUsage(
                 PlayType.valueOf(rs.getString("play_type")),
                 rs.getBigDecimal("stake")), accountId, issueNumber.trim());
+    }
+
+    public List<BetUsage> findBetUsageByIssueExcludingBet(long accountId, String issueNumber, long excludedBetId) {
+        if (accountId <= 0 || issueNumber == null || issueNumber.isBlank() || excludedBetId <= 0) {
+            throw new IllegalArgumentException("下注额度查询参数无效");
+        }
+        return jdbcTemplate.query("""
+                SELECT play_type, COALESCE(SUM(stake), 0) AS stake
+                  FROM game_bet
+                 WHERE user_id = ?
+                   AND issue_number = ?
+                   AND id <> ?
+                   AND settlement_status <> 'CANCELED'
+                 GROUP BY play_type
+                """, (rs, rowNum) -> new BetUsage(
+                PlayType.valueOf(rs.getString("play_type")),
+                rs.getBigDecimal("stake")), accountId, issueNumber.trim(), excludedBetId);
     }
 
     public List<BetAuditRecord> findBetAuditByIssue(String issueNumber) {
@@ -539,6 +635,13 @@ public class GameDataRepository {
                 : Optional.empty(), args);
     }
 
+    private List<IssueRecord> findIssues(String sql, Object... args) {
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new IssueRecord(
+                rs.getString("issue_number"), rs.getString("status"), rs.getString("phase"),
+                numbers(rs), instant(rs, "issue_started_at"), instant(rs, "betting_ends_at"),
+                instant(rs, "draw_ends_at"), instant(rs, "settled_at")), args);
+    }
+
     private List<IssueRecord> findIssues(String sql, int limit) {
         return jdbcTemplate.query(sql, (rs, rowNum) -> new IssueRecord(
                 rs.getString("issue_number"), rs.getString("status"), rs.getString("phase"),
@@ -594,6 +697,9 @@ public class GameDataRepository {
         }
     }
 
+    public record BettingRates(BigDecimal rebateRate, BigDecimal specialRebateRate) {
+        static final BettingRates ZERO = new BettingRates(BigDecimal.ZERO, BigDecimal.ZERO);
+    }
     public record WinnerRecord(long betId, String userCode, String displayName, int ballNumber,
                                String playType, BigDecimal stake, BigDecimal netProfit) {
     }

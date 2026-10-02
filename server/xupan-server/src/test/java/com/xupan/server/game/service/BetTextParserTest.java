@@ -64,6 +64,17 @@ class BetTextParserTest {
         assertStatus("not-a-bet", BetTextParser.Status.INVALID);
     }
 
+    @Test
+    void acceptsExplicitTargetBallForAdminCorrection() {
+        BetTextParser.ParseResult result = BetTextParser.parse("1番100", 8);
+
+        assertThat(result.status()).isEqualTo(BetTextParser.Status.ACCEPTED);
+        assertThat(result.bet()).isNotNull();
+        assertThat(result.bet().ballNumber()).isEqualTo(8);
+        assertThat(result.bet().playType()).isEqualTo(PlayType.FAN);
+        assertThat(BetTextParser.parse("1番100", 0).status()).isEqualTo(BetTextParser.Status.INVALID);
+        assertThat(BetTextParser.parse("1番100", 9).status()).isEqualTo(BetTextParser.Status.INVALID);
+    }
     private void assertBet(String text, PlayType playType, List<Integer> parameters, String stake) {
         BetTextParser.ParseResult result = BetTextParser.parse(text);
 

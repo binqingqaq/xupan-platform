@@ -52,6 +52,21 @@ public class UserRepository {
                 this::mapUser, status);
     }
 
+    public boolean isLoginWindowOpen(long userId, Instant now) {
+        Boolean allowed = jdbcTemplate.queryForObject("""
+                SELECT NOT EXISTS (
+                           SELECT 1 FROM agent_group g WHERE g.sys_user_id = ? AND g.deleted_at IS NULL
+                       )
+                    OR EXISTS (
+                           SELECT 1 FROM agent_group g
+                            WHERE g.sys_user_id = ?
+                              AND g.deleted_at IS NULL
+                              AND g.status = 'ACTIVE'
+                              AND (g.expires_at IS NULL OR g.expires_at >= ?)
+                       )
+                """, Boolean.class, userId, userId, timestamp(now));
+        return Boolean.TRUE.equals(allowed);
+    }
     @Transactional
     public int updateManagedStatus(long userId, String status) {
         return jdbcTemplate.update("""

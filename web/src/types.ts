@@ -515,7 +515,7 @@ export interface CreateTestPlayerRequest {
 }
 
 export interface TestPlayerBetRequest {
-  ballNumber: 1
+  ballNumber: number
   playType: PlayType
   parameters: number[]
   stake: number
@@ -640,7 +640,14 @@ export interface WalletOperationResponse extends VirtualWallet {
   ledger: WalletLedgerEntry[]
 }
 
+export interface GameCatalogItem {
+  gameCode: string
+  displayName: string
+  sortOrder: number
+}
+
 export interface GameView {
+  gameCode: string
   issueNumber: string
   status: 'OPEN' | 'CLOSED'
   phase: 'BETTING' | 'DRAWING' | 'SETTLED'
