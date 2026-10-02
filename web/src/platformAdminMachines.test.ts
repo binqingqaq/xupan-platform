@@ -13,6 +13,7 @@ vi.mock('./api', () => ({
     deleteMachine: vi.fn(),
     changeMachineStatus: vi.fn(),
     listMachinePlayers: vi.fn(),
+    getGameSettings: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
@@ -68,6 +69,10 @@ beforeEach(() => {
   vi.mocked(api.deleteMachine).mockResolvedValue(undefined)
   vi.mocked(api.changeMachineStatus).mockResolvedValue(undefined)
   vi.mocked(api.listMachinePlayers).mockResolvedValue([] as never)
+  vi.mocked(api.getGameSettings).mockResolvedValue([
+    { gameCode: 'AU8', displayName: '澳8番摊', status: 'ACTIVE' },
+    { gameCode: 'K28', displayName: 'K28', status: 'ACTIVE' },
+  ] as never)
 })
 
 afterEach(() => {
@@ -148,5 +153,39 @@ describe('platform admin machines', () => {
     container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
     await nextTick()
     expect(rebateModeSelect()?.value).toBe('SINGLE')
+  })
+
+  /**
+   * 回归：编辑机器必须回显并保留该机器已配置的彩种。
+   *
+   * 以前 openEdit 硬编码 games: ['AU8']，配合后端"先 DELETE agent_game 再回插"，
+   * 导致编辑机器任何字段都会把彩种清成只剩 AU8（静默丢数据）。
+   */
+  it('keeps the stored games when editing a machine', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([machine({ id: 7, games: ['AU8', 'K28'] })] as never)
+
+    await mountMachines()
+    container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
+    await nextTick()
+
+    const checked = Array.from(container?.querySelectorAll<HTMLInputElement>('.games-checks input:checked') ?? [])
+      .map(input => input.value)
+      .sort()
+    expect(checked).toEqual(['AU8', 'K28'])
+
+    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    await settle()
+    expect(api.updateMachine).toHaveBeenCalledWith(7, expect.objectContaining({ games: ['AU8', 'K28'] }))
+  })
+
+  it('renders an empty games selection for machines without games', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([machine({ id: 9, games: [] })] as never)
+
+    await mountMachines()
+    container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
+    await nextTick()
+
+    expect(container?.querySelectorAll('.games-checks input:checked').length).toBe(0)
+    expect(container?.querySelector('.games-checks')?.textContent).toContain('澳8番摊')
   })
 })

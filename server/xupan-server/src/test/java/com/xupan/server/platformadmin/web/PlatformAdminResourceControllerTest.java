@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -157,6 +158,96 @@ class PlatformAdminResourceControllerTest {
         mockMvc.perform(get("/api/admin/draw-history")
                         .header("Authorization", bearer(token)).param("pageSize", "10"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items").isArray());
+    }
+
+    /**
+     * 回归：机器彩种（BY220 {@code x_robot.game}）必须能回显，且不指定彩种时不能清空已有配置。
+     *
+     * <p>以前 {@code updateMachine} 无条件 {@code DELETE FROM agent_game} 后只回插请求里的彩种，
+     * 配合前端硬编码 {@code games:["AU8"]}，编辑机器任何字段都会把彩种清成只剩 AU8（静默丢数据）。</p>
+     */
+    @Test
+    void keepsMachineGamesWhenUpdatingWithoutGamesField() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+        String base = "{\"rawPassword\":\"MachineGamesPassword1\",\"displayName\":\"彩种测试机器\","
+                + "\"score\":500,\"boardOpen\":true,\"robotManage\":false,\"chaseEnabled\":false,"
+                + "\"botCount\":0,\"closeSeconds\":10,\"cancelSeconds\":5,\"rebateRate\":0.1,"
+                + "\"oddsRate\":1.95,\"specialRebateRate\":0.2,\"specialOddsRate\":18,"
+                + "\"totalLimit\":10000,\"positiveLimit\":1000,\"angleLimit\":1000,"
+                + "\"strictLimit\":1000,\"tongLimit\":1000,\"carLimit\":1000,"
+                + "\"specialLimit\":1000,\"oddEvenLimit\":1000,\"bigSmallLimit\":1000,"
+                + "\"fanLimit\":1000,\"addLimit\":1000,\"playerMaxStake\":500,\"playerMinStake\":10";
+
+        MvcResult created = mockMvc.perform(post("/api/admin/machines")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(base + ",\"username\":\"platform_test_games_machine\",\"games\":[\"AU8\",\"K28\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.games", containsInAnyOrder("AU8", "K28")))
+                .andReturn();
+        long machineId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
+
+        // 不传 games（等价于前端只改其它字段）：必须保留原有彩种
+        mockMvc.perform(put("/api/admin/machines/" + machineId)
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(base + ",\"username\":\"platform_test_games_machine\",\"displayName\":\"改名后的机器\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.games", containsInAnyOrder("AU8", "K28")));
+
+        MvcResult listed = mockMvc.perform(get("/api/admin/machines").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<List<String>> listedGames = JsonPath.read(listed.getResponse().getContentAsString(),
+                "$[?(@.id == " + machineId + ")].games");
+        assertThat(listedGames).hasSize(1);
+        assertThat(listedGames.get(0)).containsExactlyInAnyOrder("AU8", "K28");
+
+        // 显式传空列表表示"清空彩种"，此时才真的清空
+        mockMvc.perform(put("/api/admin/machines/" + machineId)
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(base + ",\"username\":\"platform_test_games_machine\",\"games\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.games").isEmpty());
+    }
+
+    /**
+     * 回归：子账号飞单账号（BY220 {@code x_admin.feidanname}）必须能回显。
+     *
+     * <p>以前 {@code SubAccountResponse} 不含 {@code reportUsername}，前端 openEdit 固定置空，
+     * 导致"编辑子账号"会把已保存的飞单账号清掉（静默丢数据）。</p>
+     */
+    @Test
+    void keepsSubAccountReportUsernameWhenUpdating() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+        MvcResult created = mockMvc.perform(post("/api/admin/sub-accounts")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("""
+                                {"username":"platform_test_report_sub","rawPassword":"SubReportPassword1",
+                                 "displayName":"飞单账号子账号","score":1000,"subAccountManage":false,
+                                 "machineManage":false,"unifiedReportEnabled":true,
+                                 "reportUsername":"feidan-user","reportNetworkCode":"K28","reportRouteCode":"A"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportUsername").value("feidan-user"))
+                .andReturn();
+        long subId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
+
+        // 列表必须返回该字段，否则前端无法回显
+        mockMvc.perform(get("/api/admin/sub-accounts").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportUsername").value("feidan-user"));
+
+        // 未改动飞单账号的更新：值必须保留
+        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("""
+                                {"username":"platform_test_report_sub","rawPassword":"",
+                                 "displayName":"改名后的飞单子账号","score":1000,"subAccountManage":false,
+                                 "machineManage":false,"unifiedReportEnabled":true,
+                                 "reportUsername":"feidan-user","reportNetworkCode":"K28","reportRouteCode":"A"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reportUsername").value("feidan-user"))
+                .andExpect(jsonPath("$.displayName").value("改名后的飞单子账号"));
     }
 
     @Test

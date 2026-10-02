@@ -131,12 +131,12 @@ public class PlatformAdminResourceController {
     public record SubAccountResponse(long id, String code, String username, String displayName, BigDecimal score,
                                      Instant expiresAt, String status, boolean subAccountManage,
                                      boolean machineManage, boolean unifiedReportEnabled,
-                                     String reportNetworkCode, String reportRouteCode, long machineCount,
-                                     Instant createdAt) {
+                                     String reportUsername, String reportNetworkCode, String reportRouteCode,
+                                     long machineCount, Instant createdAt) {
         static SubAccountResponse from(PlatformAdminService.SubAccountRow row) {
             return new SubAccountResponse(row.id(), row.groupCode(), row.username(), row.displayName(), row.score(),
                     row.expiresAt(), row.status(), row.subAccountManage(), row.machineManage(),
-                    row.unifiedReportEnabled(), row.reportNetworkCode(), row.reportRouteCode(),
+                    row.unifiedReportEnabled(), row.reportUsername(), row.reportNetworkCode(), row.reportRouteCode(),
                     row.machineCount(), row.createdAt());
         }
     }
@@ -151,7 +151,7 @@ public class PlatformAdminResourceController {
                                   BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                   BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
                                   BigDecimal playerMaxStake, BigDecimal playerMinStake, long normalCount,
-                                  long botCount, String rebateMode) {
+                                  long botCount, String rebateMode, List<String> games) {
         static MachineResponse from(PlatformAdminService.MachineRow row) {
             return new MachineResponse(row.id(), row.code(), row.displayName(), row.accountUsername(),
                     row.accountUserId(), row.groupId(), row.groupUsername(), row.score(), row.expiresAt(),
@@ -160,7 +160,7 @@ public class PlatformAdminResourceController {
                     row.specialRebateRate(), row.specialOddsRate(), row.totalLimit(), row.positiveLimit(),
                     row.angleLimit(), row.strictLimit(), row.tongLimit(), row.carLimit(), row.specialLimit(),
                     row.oddEvenLimit(), row.bigSmallLimit(), row.fanLimit(), row.addLimit(), row.playerMaxStake(),
-                    row.playerMinStake(), row.normalCount(), row.botCount(), row.rebateMode());
+                    row.playerMinStake(), row.normalCount(), row.botCount(), row.rebateMode(), row.games());
         }
     }
 

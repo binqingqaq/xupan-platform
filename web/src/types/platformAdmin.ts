@@ -9,6 +9,8 @@ export interface SubAccount {
   subAccountManage: boolean
   machineManage: boolean
   unifiedReportEnabled: boolean
+  /** 子账号飞单账号（BY220 `x_admin.feidanname`）；编辑时必须回显，否则保存会清空。 */
+  reportUsername: string | null
   reportNetworkCode: string | null
   reportRouteCode: string | null
   machineCount: number
@@ -29,6 +31,8 @@ export interface Machine {
   boardOpen: boolean
   robotManage: boolean
   chaseEnabled: boolean
+  /** 该机器已配置的彩种（BY220 `x_robot.game` 逗号串）；编辑时必须回显，不能覆盖。 */
+  games: string[]
   requestedBotCount: number
   closeSeconds: number
   cancelSeconds: number

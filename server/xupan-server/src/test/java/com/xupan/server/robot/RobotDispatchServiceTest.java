@@ -163,6 +163,63 @@ class RobotDispatchServiceTest {
                 .noneMatch(payload -> payload.contains("WINNER_LIST"));
     }
 
+    /**
+     * 回归：封盘公告里"核对列表:(...)"的数字必须是**该期注单金额合计**。
+     *
+     * <p>对应 BY220 {@code common.php:2761-2765}（逐单 {@code $count += $value['score']}）。
+     * 此前 xupan 用 {@code issueNumber.hashCode()} 生成四位占位数字，界面上显示的是编造值。</p>
+     */
+    @Test
+    void bettingAuditChecklistShowsRealStakeTotalInsteadOfPlaceholder() {
+        long accountId = insertAuditAccount();
+        insertAuditBet(accountId, "audit-a", "10.00");
+        insertAuditBet(accountId, "audit-b", "20.50");
+        insertEvent("audit-total", "BETTING_CLOSED", "封盘公告");
+
+        assertThat(dispatchService.scanPendingEvents(NOW, 50)).isEqualTo(1);
+
+        String audit = jdbcTemplate.queryForObject("""
+                SELECT content FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT' AND content LIKE '%核对列表%'
+                 """, String.class, ISSUE_PREFIX + "audit-total");
+        assertThat(audit).contains("核对列表:(30.5)");
+        // 占位实现会产生一个四位随机数字，这里同时确认没有退化成哈希
+        assertThat(audit).doesNotContain(String.format("%04d",
+                Math.floorMod((ISSUE_PREFIX + "audit-total").hashCode(), 10000)));
+    }
+
+    @Test
+    void bettingAuditChecklistShowsZeroWhenIssueHasNoBets() {
+        insertEvent("audit-empty", "BETTING_CLOSED", "封盘公告");
+
+        dispatchService.scanPendingEvents(NOW, 50);
+
+        String audit = jdbcTemplate.queryForObject("""
+                SELECT content FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT' AND content LIKE '%核对列表%'
+                """, String.class, ISSUE_PREFIX + "audit-empty");
+        assertThat(audit).contains("核对列表:(0)");
+    }
+
+    private long insertAuditAccount() {
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account (user_code, display_name, member_code, balance, status)
+                VALUES (?, '核对列表测试玩家', ?, 1000.00, 'ACTIVE')
+                """, ISSUE_PREFIX + "account", ISSUE_PREFIX + "member");
+        return jdbcTemplate.queryForObject("SELECT id FROM demo_user_account WHERE user_code = ?",
+                Long.class, ISSUE_PREFIX + "account");
+    }
+
+    private void insertAuditBet(long accountId, String suffix, String stake) {
+        String code = ISSUE_PREFIX + suffix;
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status)
+                VALUES (?, ?, ?, ?, 1, 'FAN', '1', ?, 3.850, 'PENDING')
+                """, accountId, code, code, ISSUE_PREFIX + "audit-total", new java.math.BigDecimal(stake));
+    }
+
     private long insertEvent(String suffix, String eventType, String message) {
         String issue = ISSUE_PREFIX + suffix;
         jdbcTemplate.update("""
@@ -187,6 +244,7 @@ class RobotDispatchServiceTest {
         jdbcTemplate.update("DELETE FROM chat_message WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM game_issue_event WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM game_bet WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code LIKE ?", ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
     }
 

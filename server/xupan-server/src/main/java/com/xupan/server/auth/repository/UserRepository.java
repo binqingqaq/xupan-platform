@@ -52,10 +52,25 @@ public class UserRepository {
                 this::mapUser, status);
     }
 
+    /**
+     * 登录窗口校验：子账号（{@code agent_group}）与机器账号（{@code agent}）的失效日期都必须生效。
+     *
+     * <p>BY220 在 {@code rbt/controller/Login.php:63} 拒绝过期机器登录，并在 {@code Rb.php:159-184}
+     * 把过期机器回写为下线/封盘。这里采用更严格的等价做法：读时判定，过期即视为窗口关闭，
+     * 登录与每个已认证请求（{@link com.xupan.server.auth.security.AuthenticatedUserDetailsService}）都会命中。</p>
+     *
+     * <p>语义：既不是子账号也不是机器账号（普通玩家、平台管理员）不受此限；是子账号或机器账号时，
+     * 必须至少有一条未删除、未停用且未过期的记录。</p>
+     */
     public boolean isLoginWindowOpen(long userId, Instant now) {
         Boolean allowed = jdbcTemplate.queryForObject("""
-                SELECT NOT EXISTS (
-                           SELECT 1 FROM agent_group g WHERE g.sys_user_id = ? AND g.deleted_at IS NULL
+                SELECT (
+                           NOT EXISTS (
+                               SELECT 1 FROM agent_group g WHERE g.sys_user_id = ? AND g.deleted_at IS NULL
+                           )
+                           AND NOT EXISTS (
+                               SELECT 1 FROM agent a WHERE a.account_user_id = ? AND a.deleted_at IS NULL
+                           )
                        )
                     OR EXISTS (
                            SELECT 1 FROM agent_group g
@@ -64,7 +79,14 @@ public class UserRepository {
                               AND g.status = 'ACTIVE'
                               AND (g.expires_at IS NULL OR g.expires_at >= ?)
                        )
-                """, Boolean.class, userId, userId, timestamp(now));
+                    OR EXISTS (
+                           SELECT 1 FROM agent a
+                            WHERE a.account_user_id = ?
+                              AND a.deleted_at IS NULL
+                              AND a.status = 'ACTIVE'
+                              AND (a.expires_at IS NULL OR a.expires_at >= ?)
+                       )
+                """, Boolean.class, userId, userId, userId, timestamp(now), userId, timestamp(now));
         return Boolean.TRUE.equals(allowed);
     }
     @Transactional

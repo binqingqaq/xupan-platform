@@ -227,21 +227,42 @@ public class RobotDispatchService {
                 payload(dispatch, robot, template, event), now);
     }
 
+    /**
+     * 封盘时的"核对列表"公告文本。
+     *
+     * <p>括号里的数字是**该期注单金额合计**，对应 BY220 {@code common.php:2761-2765}：
+     * 取该机器该期 {@code type=3} 的全部注单，逐个 {@code $count += $value['score']} 后写进
+     * {@code 核对列表:(...)}。此前 xupan 用 {@code issueNumber.hashCode()} 生成一个四位占位数字，
+     * 界面上显示的是编造值，已改为真实合计。</p>
+     */
     private String bettingAuditText(String issueNumber) {
         Map<String, List<String>> grouped = new LinkedHashMap<>();
+        BigDecimal total = BigDecimal.ZERO;
         for (GameDataRepository.BetAuditRecord bet : gameDataRepository.findBetAuditByIssue(issueNumber)) {
             grouped.computeIfAbsent(normalizeDisplayName(bet.displayName()), ignored -> new ArrayList<>())
                     .add(formatBetText(bet.playType(), bet.parameters(), bet.stake()));
+            if (bet.stake() != null) {
+                total = total.add(bet.stake());
+            }
         }
         StringBuilder content = new StringBuilder("-----------\n")
                 .append(issueNumber).append('\n')
-                .append("核对列表:(").append(String.format("%04d", Math.floorMod(issueNumber.hashCode(), 10000)))
+                .append("核对列表:(").append(plainAmount(total))
                 .append(")\n");
         grouped.forEach((name, bets) -> content.append('(').append(name).append(") \"")
                 .append(String.join("，", bets)).append("\"\n"));
         return content.append("-----------\n")
                 .append("不在核对列表无效,在核对列表的以开奖前是否公告退单为准!")
                 .toString();
+    }
+
+    /** 金额去掉多余的零（25.00 → 25），与注单文本里的金额写法保持一致。 */
+    private static String plainAmount(BigDecimal amount) {
+        BigDecimal value = amount == null ? BigDecimal.ZERO : amount;
+        if (value.signum() == 0) {
+            return "0";
+        }
+        return value.stripTrailingZeros().toPlainString();
     }
 
     private static String normalizeDisplayName(String displayName) {

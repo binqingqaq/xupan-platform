@@ -54,7 +54,7 @@ public class PlatformAdminService {
         return jdbc.query("""
                 SELECT g.id, g.group_code, g.username, g.display_name, g.score, g.expires_at, g.status,
                        g.sub_account_manage, g.machine_manage, g.unified_report_enabled,
-                       g.report_network_code, g.report_route_code, g.created_at,
+                       g.report_username, g.report_network_code, g.report_route_code, g.created_at,
                        (SELECT COUNT(*) FROM agent a WHERE a.group_id = g.id AND a.system_owned = FALSE AND a.deleted_at IS NULL) machine_count
                   FROM agent_group g
                  WHERE g.deleted_at IS NULL
@@ -63,7 +63,8 @@ public class PlatformAdminService {
                 rs.getString("username"), rs.getString("display_name"), rs.getBigDecimal("score"),
                 instant(rs.getTimestamp("expires_at")), rs.getString("status"),
                 rs.getBoolean("sub_account_manage"), rs.getBoolean("machine_manage"),
-                rs.getBoolean("unified_report_enabled"), rs.getString("report_network_code"),
+                rs.getBoolean("unified_report_enabled"), rs.getString("report_username"),
+                rs.getString("report_network_code"),
                 rs.getString("report_route_code"), rs.getLong("machine_count"),
                 instant(rs.getTimestamp("created_at"))));
     }
@@ -188,7 +189,8 @@ public class PlatformAdminService {
                        a.add_limit, a.player_max_stake, a.player_min_stake,
                        COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
                        (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='NORMAL' AND d.status <> 'DELETED') normal_count,
-                       (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='BOT' AND d.status <> 'DELETED') bot_count
+                       (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='BOT' AND d.status <> 'DELETED') bot_count,
+                       (SELECT GROUP_CONCAT(ag.game_code ORDER BY ag.game_code) FROM agent_game ag WHERE ag.agent_id=a.id) games
                   FROM agent a
                   LEFT JOIN sys_user u ON u.id=a.account_user_id
                   LEFT JOIN agent_group g ON g.id=a.group_id
@@ -206,7 +208,7 @@ public class PlatformAdminService {
                 rs.getBigDecimal("special_limit"), rs.getBigDecimal("odd_even_limit"), rs.getBigDecimal("big_small_limit"),
                 rs.getBigDecimal("fan_limit"), rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"),
                 rs.getBigDecimal("player_min_stake"), rs.getLong("normal_count"), rs.getLong("bot_count"),
-                rs.getString("rebate_mode")));
+                rs.getString("rebate_mode"), splitGames(rs.getString("games"))));
         Long scope = accessService.subAccountGroupId(operator).orElse(null);
         return scope == null ? rows : rows.stream().filter(row -> scope.equals(row.groupId())).toList();
     }
@@ -341,8 +343,11 @@ public class PlatformAdminService {
                 amount(input.specialLimit()), amount(input.oddEvenLimit()), amount(input.bigSmallLimit()),
                 amount(input.fanLimit()), amount(input.addLimit()), amount(input.playerMaxStake()),
                 amount(input.playerMinStake()), normalizeRebateMode(input.rebateMode()), id);
-        jdbc.update("DELETE FROM agent_game WHERE agent_id=?", id);
+        // BY220 由超管在机器表单里勾选彩种（rb/form.html:42-50 写 x_robot.game）。
+        // games 为 null 表示"本次不指定彩种"，必须保留已有配置；
+        // 只有显式传入列表时才整体替换，避免编辑机器其它字段时把彩种清成只剩 AU8。
         if (input.games() != null) {
+            jdbc.update("DELETE FROM agent_game WHERE agent_id=?", id);
             for (String game : input.games()) {
                 if (game == null || game.isBlank()) continue;
                 jdbc.update("INSERT INTO agent_game(agent_id, game_code) VALUES (?, ?)", id, game.trim());
@@ -366,14 +371,15 @@ public class PlatformAdminService {
         return jdbc.query("""
                 SELECT g.id, g.group_code, g.username, g.display_name, g.score, g.expires_at, g.status,
                        g.sub_account_manage, g.machine_manage, g.unified_report_enabled,
-                       g.report_network_code, g.report_route_code, g.created_at,
+                       g.report_username, g.report_network_code, g.report_route_code, g.created_at,
                        (SELECT COUNT(*) FROM agent a WHERE a.group_id=g.id AND a.system_owned=FALSE AND a.deleted_at IS NULL) machine_count
                   FROM agent_group g WHERE g.id=? AND g.deleted_at IS NULL
                 """, (rs, n) -> new SubAccountRow(rs.getLong("id"), rs.getString("group_code"),
                 rs.getString("username"), rs.getString("display_name"), rs.getBigDecimal("score"),
                 instant(rs.getTimestamp("expires_at")), rs.getString("status"), rs.getBoolean("sub_account_manage"),
                 rs.getBoolean("machine_manage"), rs.getBoolean("unified_report_enabled"),
-                rs.getString("report_network_code"), rs.getString("report_route_code"),
+                rs.getString("report_username"), rs.getString("report_network_code"),
+                rs.getString("report_route_code"),
                 rs.getLong("machine_count"), instant(rs.getTimestamp("created_at"))), id);
     }
 
@@ -382,8 +388,27 @@ public class PlatformAdminService {
                 .orElseThrow(() -> BusinessException.notFound("MACHINE_NOT_FOUND", "机器账号不存在"));
     }
 
-    private List<MachineRow> listMachinesInternal(long id) {
-        return jdbc.query("""
+    /**
+     * 把 {@code GROUP_CONCAT(agent_game.game_code)} 的结果拆成彩种列表（BY220 {@code x_robot.game} 逗号串语义）。
+     *
+     * <p>{@code null} 表示该机器没有任何彩种配置，此时返回空列表；保存时"空列表"与"未指定"由
+     * {@link MachineInput#games()} 的 {@code null} 与否区分，避免编辑机器时误删已有彩种。</p>
+     */
+    private static List<String> splitGames(String games) {
+        if (games == null || games.isBlank()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (String part : games.split(",")) {
+            String trimmed = part.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private List<MachineRow> listMachinesInternal(long id) {        return jdbc.query("""
                 SELECT a.id, a.agent_code, a.display_name, u.username account_username, a.account_user_id, a.group_id,
                        g.username group_username, a.score, a.expires_at, a.status, a.board_open, a.robot_manage,
                        a.chase_enabled, a.bot_count, a.close_seconds, a.cancel_seconds, a.rebate_rate, a.odds_rate,
@@ -392,7 +417,8 @@ public class PlatformAdminService {
                        a.big_small_limit, a.fan_limit, a.add_limit, a.player_max_stake, a.player_min_stake,
                        COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
                        (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='NORMAL' AND d.status <> 'DELETED') normal_count,
-                       (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='BOT' AND d.status <> 'DELETED') bot_count
+                       (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='BOT' AND d.status <> 'DELETED') bot_count,
+                       (SELECT GROUP_CONCAT(ag.game_code ORDER BY ag.game_code) FROM agent_game ag WHERE ag.agent_id=a.id) games
                   FROM agent a
                   LEFT JOIN sys_user u ON u.id=a.account_user_id
                   LEFT JOIN agent_group g ON g.id=a.group_id
@@ -409,7 +435,8 @@ public class PlatformAdminService {
                 rs.getBigDecimal("tong_limit"), rs.getBigDecimal("car_limit"), rs.getBigDecimal("special_limit"),
                 rs.getBigDecimal("odd_even_limit"), rs.getBigDecimal("big_small_limit"), rs.getBigDecimal("fan_limit"),
                 rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"), rs.getBigDecimal("player_min_stake"),
-                rs.getLong("normal_count"), rs.getLong("bot_count"), rs.getString("rebate_mode")), id);
+                rs.getLong("normal_count"), rs.getLong("bot_count"), rs.getString("rebate_mode"),
+                splitGames(rs.getString("games"))), id);
     }
 
     private void require(long operator, String permission) {
@@ -480,8 +507,8 @@ public class PlatformAdminService {
                                   String reportNetworkCode, String reportRouteCode) {}
     public record SubAccountRow(long id, String groupCode, String username, String displayName, BigDecimal score,
                                 Instant expiresAt, String status, boolean subAccountManage, boolean machineManage,
-                                boolean unifiedReportEnabled, String reportNetworkCode, String reportRouteCode,
-                                long machineCount, Instant createdAt) {}
+                                boolean unifiedReportEnabled, String reportUsername, String reportNetworkCode,
+                                String reportRouteCode, long machineCount, Instant createdAt) {}
     public record MachineInput(String username, String rawPassword, String displayName, Long groupId,
                                BigDecimal score, Instant expiresAt, boolean boardOpen, boolean robotManage,
                                boolean chaseEnabled, int botCount, int closeSeconds, int cancelSeconds,
@@ -501,7 +528,12 @@ public class PlatformAdminService {
                              BigDecimal tongLimit, BigDecimal carLimit, BigDecimal specialLimit,
                              BigDecimal oddEvenLimit, BigDecimal bigSmallLimit, BigDecimal fanLimit,
                              BigDecimal addLimit, BigDecimal playerMaxStake, BigDecimal playerMinStake,
-                             long normalCount, long botCount, String rebateMode) {}
+                             long normalCount, long botCount, String rebateMode, List<String> games) {
+        /** BY220 {@code x_robot.game} 是逗号串；这里统一转成列表，null 表示"未指定"（保存时不改动已有彩种）。 */
+        public MachineRow {
+            games = games == null ? List.of() : List.copyOf(games);
+        }
+    }
 }
 
 

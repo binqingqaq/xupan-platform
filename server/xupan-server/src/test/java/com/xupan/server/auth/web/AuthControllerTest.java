@@ -37,6 +37,8 @@ class AuthControllerTest {
     private static final String ADMIN_PASSWORD = "AdminPassword123";
     private static final String SUB_ACCOUNT_USERNAME = "auth-test-sub-account";
     private static final String SUB_ACCOUNT_PASSWORD = "SubAccountPassword123";
+    private static final String MACHINE_USERNAME = "auth-test-machine";
+    private static final String MACHINE_PASSWORD = "MachinePassword123";
 
     @Autowired
     private MockMvc mockMvc;
@@ -131,6 +133,50 @@ class AuthControllerTest {
                         .content("{\"username\":\"" + USERNAME + "\",\"password\":\"" + USER_PASSWORD + "\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH_INVALID_CREDENTIALS"));
+    }
+
+    /**
+     * 回归：机器账号（{@code agent.expires_at}）的失效日期必须真的生效。
+     *
+     * <p>BY220 在 {@code rbt/controller/Login.php:63} 拒绝过期机器登录；此前 xupan 只校验子账号
+     * （{@code agent_group.expires_at}），机器的失效日期"填了但没人管"。</p>
+     */
+    @Test
+    void expiredBy220MachineAccountCannotLoginUntilExpirationIsExtended() throws Exception {
+        long userId = insertUser(MACHINE_USERNAME, MACHINE_PASSWORD, "AGENT");
+        jdbcTemplate.update("""
+                INSERT INTO agent
+                    (agent_code, display_name, account_user_id, status, system_owned, expires_at)
+                VALUES ('AUTH_TEST_MACHINE', '登录过期测试机器', ?, 'ACTIVE', FALSE, ?)
+                """, userId, Timestamp.from(Instant.now().minusSeconds(60)));
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + MACHINE_USERNAME + "\",\"password\":\""
+                                + MACHINE_PASSWORD + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_SUB_ACCOUNT_EXPIRED"));
+
+        jdbcTemplate.update("UPDATE agent SET expires_at = ? WHERE agent_code = 'AUTH_TEST_MACHINE'",
+                Timestamp.from(Instant.now().plusSeconds(3600)));
+        loginResult(MACHINE_USERNAME, MACHINE_PASSWORD);
+    }
+
+    @Test
+    void rejectsMachineAccountDisabledByStatusEvenWithoutExpiration() throws Exception {
+        long userId = insertUser(MACHINE_USERNAME, MACHINE_PASSWORD, "AGENT");
+        jdbcTemplate.update("""
+                INSERT INTO agent
+                    (agent_code, display_name, account_user_id, status, system_owned, expires_at)
+                VALUES ('AUTH_TEST_MACHINE', '停用测试机器', ?, 'DISABLED', FALSE, NULL)
+                """, userId);
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + MACHINE_USERNAME + "\",\"password\":\""
+                                + MACHINE_PASSWORD + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_SUB_ACCOUNT_EXPIRED"));
     }
 
     @Test
@@ -273,6 +319,10 @@ class AuthControllerTest {
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code <> 'DEMO-USER'");
         jdbcTemplate.update("DELETE FROM agent_group WHERE sys_user_id IN (SELECT id FROM sys_user)");
+        // 本类新建的机器账号（agent 行）必须先删，否则 sys_user 会被 agent.account_user_id 外键挡住。
+        jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code LIKE 'AUTH_TEST_%')");
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code LIKE 'AUTH_TEST_%'");
         jdbcTemplate.update("DELETE FROM sys_user_role");
         jdbcTemplate.update("DELETE FROM sys_user");
     }
