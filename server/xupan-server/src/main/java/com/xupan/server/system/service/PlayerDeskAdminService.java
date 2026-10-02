@@ -33,6 +33,7 @@ public class PlayerDeskAdminService {
     private final UserAdminService userAdminService;
     private final TestPlayerAdminService testPlayerAdminService;
     private final VirtualWalletService walletService;
+    private final com.xupan.server.agent.service.AgentConsoleService agentConsoleService;
     private final OperationAuditRepository auditRepository;
     private final TestPlayerBehaviorService behaviorService;
     private final ChatMessageService chatMessageService;
@@ -53,7 +54,8 @@ public class PlayerDeskAdminService {
                                   UserRepository userRepository, SessionRepository sessionRepository,
                                   PlayerAccessLinkRepository accessLinkRepository,
                                   PlayerLinkAuthenticationService playerLinkAuthenticationService,
-                                  AvatarPresetService avatarPresetService) {
+                                  AvatarPresetService avatarPresetService,
+                                  com.xupan.server.agent.service.AgentConsoleService agentConsoleService) {
         this.repository = repository;
         this.permissionService = permissionService;
         this.scopeService = scopeService;
@@ -70,6 +72,7 @@ public class PlayerDeskAdminService {
         this.accessLinkRepository = accessLinkRepository;
         this.playerLinkAuthenticationService = playerLinkAuthenticationService;
         this.avatarPresetService = avatarPresetService;
+        this.agentConsoleService = agentConsoleService;
     }
 
     @Transactional(readOnly = true)
@@ -161,6 +164,13 @@ public class PlayerDeskAdminService {
     public long createBot(String userCode, String displayName, Long machineId, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         long targetAgentId = scopeService.requireTargetAgentId(scope, machineId);
+        if (scope instanceof PlayerDeskScopeService.Scope.Machine machine) {
+            // BY220 robot.php：机器账号创建托受自己机器托上限约束，复用代理后台同一实现与同一错误语义。
+            long userId = agentConsoleService.createBot(operator, userCode, displayName).userId();
+            audit(operator, "POST", "/api/admin/player-desk/players/bot", Long.toString(userId),
+                    "playerKind=BOT,agentId=" + machine.agentId());
+            return userId;
+        }
         TestPlayerAdminService.TestPlayerAdminView view = scope.global()
                 ? testPlayerAdminService.create(userCode, displayName, operator)
                 : testPlayerAdminService.createForAgent(userCode, displayName, operator);
@@ -216,7 +226,12 @@ public class PlayerDeskAdminService {
     public Detail grant(long userId, BigDecimal amount, String reason, String key, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         row(userId, false, scope);
-        walletService.grant(operator, userId, amount, reason, key);
+        if (scope instanceof PlayerDeskScopeService.Scope.Machine) {
+            // BY220 robot.php：机器账号给普通玩家上分要先扣自己的代理积分；托不联动（由共用服务判定）。
+            agentConsoleService.changeScore(operator, userId, "TOP_UP", amount, key);
+        } else {
+            walletService.grant(operator, userId, amount, reason, key);
+        }
         return detail(userId, false, scope);
     }
 
@@ -224,7 +239,13 @@ public class PlayerDeskAdminService {
     public Detail adjust(long userId, BigDecimal amount, String reason, String key, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         row(userId, false, scope);
-        walletService.adjust(operator, userId, amount, reason, key);
+        if (scope instanceof PlayerDeskScopeService.Scope.Machine) {
+            // 下分接口按协议接收负数金额；代理积分只对普通玩家回补，托不联动。
+            BigDecimal magnitude = amount == null ? BigDecimal.ZERO : amount.abs();
+            agentConsoleService.changeScore(operator, userId, "DOWN", magnitude, key);
+        } else {
+            walletService.adjust(operator, userId, amount, reason, key);
+        }
         return detail(userId, false, scope);
     }
 
