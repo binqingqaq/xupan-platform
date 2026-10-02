@@ -1,22 +1,432 @@
+<script setup lang="ts">
+/**
+ * 报网控制面板（BY220 `robot.php` 报网栏，`x_robot.flyers_*`）。
+ *
+ * 用户 2026-10-02 确认按 A 方案做完整闭环：报网状态真实影响订单与玩家余额。
+ * 合规边界（强制）：本项目**不接入任何真实外部上游**。"登录"是本地模拟（后端只置在线状态与登录时间，
+ * 不发起任何网络请求）；密码只在保存时上传，界面永不回显（只显示是否已设置）。
+ *
+ * 层级：机器账号固定操作自己那台；管理员/子账号必须先选择机器。未选机器时本面板只读并提示。
+ */
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { api, apiErrorMessage } from '../../api'
+import {
+  REPORT_ROUTE_OPTIONS,
+  REPORT_TYPE_OPTIONS,
+  type PlayerDeskScope,
+  type ReportConfigUpdateRequest,
+  type ReportConfigView,
+  type ReportOrderItem,
+  type ReportStatus,
+} from '../../types'
+
+const props = defineProps<{
+  /** 当前身份范围；未就绪时为 null，此时不允许任何写操作。 */
+  scope?: PlayerDeskScope | null
+  /** 管理员选中的机器；机器账号忽略该值（后端强制自己那台）。 */
+  machineId?: number | null
+}>()
+
+const emit = defineEmits<{ (event: 'changed', config: ReportConfigView): void }>()
+
+const config = ref<ReportConfigView | null>(null)
+const orders = ref<ReportOrderItem[]>([])
+const orderTotal = ref(0)
+const orderStatusFilter = ref<ReportStatus | ''>('')
+const loading = ref(false)
+const saving = ref(false)
+const loggingIn = ref(false)
+const resubmittingBetId = ref<number | null>(null)
+const notice = ref('')
+const noticeKind = ref<'ok' | 'error'>('ok')
+
+/** "设置账号"弹窗。密码单独输入，保存后即清空，永不回显。 */
+const accountDialogOpen = ref(false)
+const accountDraft = reactive({
+  reportUsername: '',
+  reportPassword: '',
+  reportUrl: '',
+  reportNetworkCode: '',
+  reportRouteCode: 'A' as string,
+})
+
+/** 机器账号固定自己那台；管理员/子账号必须显式选择机器，否则不允许写。 */
+const effectiveMachineId = computed<number | null>(() => {
+  if (props.scope?.mode === 'MACHINE') return props.scope.machineId ?? null
+  return props.machineId ?? null
+})
+
+const machineReady = computed(() => effectiveMachineId.value !== null)
+const readOnlyHint = computed(() => {
+  if (!props.scope) return '身份范围尚未就绪，报网配置暂不可编辑'
+  if (!machineReady.value) return '请先在上方选择机器：报网配置属于每台机器自己的设置'
+  return ''
+})
+
+const reportTypeLabel = computed(() => {
+  const value = config.value?.reportType
+  if (!value) return '未设置'
+  return REPORT_TYPE_OPTIONS.find(option => option.value === value)?.label ?? value
+})
+
+const onlineText = computed(() => (config.value?.reportOnline ? '在线' : '离线'))
+const loginButtonDisabled = computed(() => !machineReady.value || loggingIn.value || saving.value)
+const orderStatusLabel = (status: ReportStatus): string => {
+  if (status === 'REPORTED') return '已报'
+  if (status === 'FAILED') return '失败'
+  if (status === 'TIMEOUT') return '超时'
+  return '未报'
+}
+
+function setNotice(message: string, kind: 'ok' | 'error' = 'ok') {
+  notice.value = message
+  noticeKind.value = kind
+}
+
+async function load() {
+  if (!machineReady.value) {
+    config.value = null
+    orders.value = []
+    orderTotal.value = 0
+    return
+  }
+  loading.value = true
+  try {
+    config.value = await api.getReportConfig(effectiveMachineId.value)
+    emit('changed', config.value)
+    await loadOrders()
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '报网配置加载失败，请刷新重试'), 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadOrders() {
+  const page = await api.listReportOrders({
+    machineId: effectiveMachineId.value,
+    status: orderStatusFilter.value || null,
+    page: 1,
+    pageSize: 20,
+  })
+  orders.value = page.items
+  orderTotal.value = page.total
+}
+
+/** 保存报网类型/开关等基础配置（不动账号密码）。 */
+async function saveBase(payload: Partial<ReportConfigUpdateRequest>, okText: string) {
+  if (!machineReady.value) {
+    setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  saving.value = true
+  try {
+    config.value = await api.updateReportConfig({
+      machineId: effectiveMachineId.value ?? undefined,
+      ...payload,
+    })
+    emit('changed', config.value)
+    setNotice(okText)
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '报网配置保存失败'), 'error')
+  } finally {
+    saving.value = false
+  }
+}
+
+function onReportTypeChange(event: Event) {
+  const value = (event.target as HTMLSelectElement).value
+  void saveBase({ reportType: value }, `报网类型已保存为 ${reportTypeLabelOf(value)}`)
+}
+
+function reportTypeLabelOf(value: string): string {
+  return REPORT_TYPE_OPTIONS.find(option => option.value === value)?.label ?? value
+}
+
+function onToggleAuto() {
+  const next = !config.value?.reportAuto
+  void saveBase({ reportAuto: next }, next ? '已开启自动上报网盘' : '已关闭自动上报网盘')
+}
+
+function onToggleWithdraw() {
+  const next = !config.value?.reportWithdraw
+  void saveBase(
+    { reportWithdraw: next },
+    next ? '已开启失败自动退单（上报失败将取消订单并退还玩家积分）' : '已关闭失败自动退单',
+  )
+}
+
+function openAccountDialog() {
+  if (!machineReady.value) {
+    setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  accountDraft.reportUsername = config.value?.reportUsername ?? ''
+  accountDraft.reportPassword = ''
+  accountDraft.reportUrl = config.value?.reportUrl ?? ''
+  accountDraft.reportNetworkCode = config.value?.reportNetworkCode ?? ''
+  accountDraft.reportRouteCode = config.value?.reportRouteCode ?? 'A'
+  accountDialogOpen.value = true
+}
+
+function closeAccountDialog() {
+  accountDialogOpen.value = false
+  accountDraft.reportPassword = ''
+}
+
+async function saveAccount() {
+  if (!machineReady.value) {
+    setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  saving.value = true
+  try {
+    config.value = await api.updateReportConfig({
+      machineId: effectiveMachineId.value ?? undefined,
+      reportUsername: accountDraft.reportUsername.trim(),
+      // 密码为空表示不修改；非空才覆盖（后端只存密文）
+      reportPassword: accountDraft.reportPassword.trim() || null,
+      reportUrl: accountDraft.reportUrl.trim(),
+      reportNetworkCode: accountDraft.reportNetworkCode.trim(),
+      reportRouteCode: accountDraft.reportRouteCode,
+    })
+    emit('changed', config.value)
+    setNotice('报网账号已保存（密码只存密文，界面不回显）')
+    closeAccountDialog()
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '报网账号保存失败'), 'error')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function login() {
+  if (!machineReady.value) {
+    setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  loggingIn.value = true
+  try {
+    config.value = await api.loginReport(effectiveMachineId.value)
+    emit('changed', config.value)
+    setNotice('报网登录成功（本地模拟，未连接任何外部平台）')
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '报网登录失败'), 'error')
+  } finally {
+    loggingIn.value = false
+  }
+}
+
+async function logout() {
+  if (!machineReady.value) {
+    setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  saving.value = true
+  try {
+    config.value = await api.logoutReport(effectiveMachineId.value)
+    emit('changed', config.value)
+    setNotice('已退出报网（在线状态置为离线）')
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '退出报网失败'), 'error')
+  } finally {
+    saving.value = false
+  }
+}
+
+async function resubmit(order: ReportOrderItem) {
+  if (!machineReady.value) {
+    setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  resubmittingBetId.value = order.betId
+  try {
+    const result = await api.resubmitReportOrder(order.betId, effectiveMachineId.value)
+    config.value = result.config
+    emit('changed', result.config)
+    setNotice(`单号 ${order.betCode ?? order.betId} 重报结果：${orderStatusLabel(result.reportStatus)}`)
+    await loadOrders()
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '重报失败'), 'error')
+  } finally {
+    resubmittingBetId.value = null
+  }
+}
+
+function canResubmit(order: ReportOrderItem): boolean {
+  return order.reportStatus === 'UNREPORTED' || order.reportStatus === 'FAILED' || order.reportStatus === 'TIMEOUT'
+}
+
+onMounted(() => {
+  void load()
+})
+
+watch(
+  () => [props.scope?.mode, props.scope?.machineId, props.machineId],
+  () => {
+    void load()
+  },
+)
+
+watch(orderStatusFilter, () => {
+  void loadOrders()
+})
+
+defineExpose({ load })
+</script>
+
 <template>
-  <section class="report-control-panel" aria-label="报网控制静态区域">
+  <section class="report-control-panel" aria-label="报网控制">
     <div class="report-control-row report-control-main-row">
       <strong class="report-control-label">报网类型:</strong>
-      <span class="report-type-select">TT</span>
-      <span class="report-control-button report-control-account">设置账号</span>
-      <span class="report-control-button report-control-logout">退出</span>
-      <span class="report-control-button report-control-login">登录</span>
-      <span class="report-control-metric">押注: <b>0</b></span>
-      <span class="report-control-metric">网盘余额: <b>0</b></span>
-      <span class="report-control-button report-control-move"><i aria-hidden="true">↓</i>移下</span>
+      <select
+        class="report-type-select"
+        :value="config?.reportType ?? ''"
+        :disabled="!machineReady || saving"
+        aria-label="报网类型"
+        @change="onReportTypeChange"
+      >
+        <option value="">未设置</option>
+        <option v-for="option in REPORT_TYPE_OPTIONS" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
+      <button type="button" class="report-control-button report-control-account" :disabled="!machineReady || saving" @click="openAccountDialog">
+        设置账号
+      </button>
+      <button type="button" class="report-control-button report-control-logout" :disabled="loginButtonDisabled || !config?.reportOnline" @click="logout">
+        退出
+      </button>
+      <button type="button" class="report-control-button report-control-login" :disabled="loginButtonDisabled" @click="login">
+        {{ loggingIn ? '登录中' : '登录' }}
+      </button>
+      <span class="report-control-metric">押注: <b>{{ config?.reportStake ?? 0 }}</b></span>
+      <span class="report-control-metric">网盘余额: <b>{{ config?.reportBalance ?? 0 }}</b></span>
+      <span class="report-control-metric">账号: <b>{{ config?.reportUsername || '未设置' }}</b></span>
+      <span class="report-control-metric">密码: <b>{{ config?.hasPassword ? '已设置' : '未设置' }}</b></span>
     </div>
+
     <div class="report-control-row report-control-status-row">
       <strong class="report-control-label">报网状态:</strong>
-      <span class="report-control-check report-control-offline"><i aria-hidden="true"></i>离线</span>
-      <span class="report-control-check"><i aria-hidden="true"></i>失败自动退单</span>
-      <span class="report-control-check"><i aria-hidden="true"></i>自动上报网盘</span>
-      <span class="report-control-metric">超时订单: <b>0</b></span>
-      <span class="report-control-button report-control-refresh">刷新</span>
+      <span class="report-control-state" :class="config?.reportOnline ? 'is-online' : 'is-offline'">
+        {{ onlineText }}
+      </span>
+      <label class="report-control-check" :class="{ 'is-disabled': !machineReady }">
+        <input type="checkbox" :checked="config?.reportWithdraw ?? false" :disabled="!machineReady || saving" @change="onToggleWithdraw" />
+        失败自动退单
+      </label>
+      <label class="report-control-check" :class="{ 'is-disabled': !machineReady }">
+        <input type="checkbox" :checked="config?.reportAuto ?? false" :disabled="!machineReady || saving" @change="onToggleAuto" />
+        自动上报网盘
+      </label>
+      <span class="report-control-metric">超时订单: <b>{{ config?.timeoutOrderCount ?? 0 }}</b></span>
+      <span class="report-control-metric">未报: <b>{{ config?.unreportedCount ?? 0 }}</b></span>
+      <span class="report-control-metric">失败: <b>{{ config?.failedOrderCount ?? 0 }}</b></span>
+      <span class="report-control-metric">盘口: <b>{{ config?.reportRouteCode || '未设置' }}</b></span>
+      <span class="report-control-metric">网盘: <b>{{ config?.reportNetworkCode || '未设置' }}</b></span>
+      <button type="button" class="report-control-button report-control-refresh" :disabled="!machineReady || loading" @click="load">
+        {{ loading ? '刷新中' : '刷新' }}
+      </button>
+    </div>
+
+    <p v-if="readOnlyHint" class="report-control-hint">{{ readOnlyHint }}</p>
+    <p v-else-if="notice" class="report-control-notice" :class="noticeKind === 'error' ? 'is-error' : 'is-ok'" role="status">
+      {{ notice }}
+    </p>
+
+    <div class="report-control-row report-control-orders">
+      <strong class="report-control-label">上报订单:</strong>
+      <select v-model="orderStatusFilter" class="report-order-filter" :disabled="!machineReady" aria-label="按上报状态筛选">
+        <option value="">全部</option>
+        <option value="UNREPORTED">未报</option>
+        <option value="REPORTED">已报</option>
+        <option value="FAILED">失败</option>
+        <option value="TIMEOUT">超时</option>
+      </select>
+      <span class="report-control-metric">共 <b>{{ orderTotal }}</b> 条</span>
+    </div>
+
+    <div v-if="machineReady" class="report-order-list">
+      <p v-if="!orders.length" class="report-order-empty">当前没有符合条件的上报订单</p>
+      <table v-else class="report-order-table">
+        <thead>
+          <tr>
+            <th>单号</th>
+            <th>期号</th>
+            <th>玩家</th>
+            <th>内容</th>
+            <th>金额</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="order in orders" :key="order.betId">
+            <td>{{ order.betCode ?? order.betId }}</td>
+            <td>{{ order.issueNumber }}</td>
+            <td>{{ order.displayName ?? order.memberCode ?? order.accountId }}</td>
+            <td>{{ order.playType }} {{ order.parametersText ?? '' }}</td>
+            <td>{{ order.stake }}</td>
+            <td :class="`report-status is-${order.reportStatus.toLowerCase()}`">{{ orderStatusLabel(order.reportStatus) }}</td>
+            <td>
+              <button
+                type="button"
+                class="report-control-button report-resubmit"
+                :disabled="!canResubmit(order) || resubmittingBetId === order.betId"
+                :title="canResubmit(order) ? '重新提交到上游' : '已上报的订单不能重报'"
+                @click="resubmit(order)"
+              >
+                {{ resubmittingBetId === order.betId ? '重报中' : '重报' }}
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div v-if="accountDialogOpen" class="report-account-mask" role="dialog" aria-label="设置报网账号">
+      <div class="report-account-dialog">
+        <div class="report-account-head">
+          <strong>设置报网账号</strong>
+          <button type="button" class="report-control-button" @click="closeAccountDialog">关闭</button>
+        </div>
+        <label class="report-account-field">
+          <span>飞单账号</span>
+          <input v-model="accountDraft.reportUsername" type="text" maxlength="128" placeholder="上游飞单账号" />
+        </label>
+        <label class="report-account-field">
+          <span>飞单密码</span>
+          <input
+            v-model="accountDraft.reportPassword"
+            type="password"
+            maxlength="128"
+            :placeholder="config?.hasPassword ? '留空表示不修改' : '上游飞单密码'"
+          />
+        </label>
+        <label class="report-account-field">
+          <span>上游地址</span>
+          <input v-model="accountDraft.reportUrl" type="text" maxlength="512" placeholder="仅保存，不发起请求" />
+        </label>
+        <label class="report-account-field">
+          <span>网盘编码</span>
+          <input v-model="accountDraft.reportNetworkCode" type="text" maxlength="64" placeholder="如 K28" />
+        </label>
+        <label class="report-account-field">
+          <span>盘口线路</span>
+          <select v-model="accountDraft.reportRouteCode">
+            <option v-for="route in REPORT_ROUTE_OPTIONS" :key="route" :value="route">{{ route }}</option>
+          </select>
+        </label>
+        <p class="report-account-note">
+          密码只保存密文、界面不回显；本项目不连接任何外部平台，登录为本地模拟。
+        </p>
+        <div class="report-account-actions">
+          <button type="button" class="report-control-button report-control-login" :disabled="saving" @click="saveAccount">
+            {{ saving ? '保存中' : '保存' }}
+          </button>
+          <button type="button" class="report-control-button" @click="closeAccountDialog">取消</button>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -53,16 +463,21 @@
   white-space: nowrap;
 }
 
-.report-type-select {
-  display: inline-flex;
-  min-width: 46px;
+.report-type-select,
+.report-order-filter {
   height: 23px;
-  align-items: center;
-  justify-content: center;
+  min-width: 74px;
   border: 1px solid var(--ops-line, #8eb7e6);
   background: #fff;
   color: var(--ops-blue-deep, #15599d);
   font-weight: 700;
+  font-size: 12px;
+}
+
+.report-type-select:disabled,
+.report-order-filter:disabled {
+  background: #eef2f6;
+  color: #93a4b3;
 }
 
 .report-control-button {
@@ -75,6 +490,15 @@
   color: var(--ops-text, #243b53);
   padding: 0 8px;
   white-space: nowrap;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.report-control-button:disabled {
+  border-color: #c8d4de;
+  background: #f2f5f8;
+  color: #9aa9b6;
+  cursor: not-allowed;
 }
 
 .report-control-account {
@@ -95,17 +519,12 @@
   color: #fff;
 }
 
-.report-control-move {
-  min-width: 48px;
-  border-color: #b9c7d5;
-  background: linear-gradient(#fff, #edf2f6);
-  color: #6d7f8d;
-}
-
-.report-control-move i {
-  margin-right: 2px;
-  font-style: normal;
-  font-size: 13px;
+.report-control-refresh {
+  min-width: 46px;
+  border-color: var(--ops-blue, #2d7bcd);
+  background: linear-gradient(#5aa8e7, var(--ops-blue, #2d7bcd));
+  color: #fff;
+  font-weight: 700;
 }
 
 .report-control-metric {
@@ -118,36 +537,180 @@
   font-weight: 800;
 }
 
+.report-control-state {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  height: 20px;
+  border: 1px solid #8faec1;
+  background: #fff;
+  font-weight: 700;
+}
+
+.report-control-state.is-online {
+  border-color: #5c9f55;
+  color: #2f7a2a;
+}
+
+.report-control-state.is-offline {
+  border-color: #d48b8b;
+  color: #d63333;
+}
+
 .report-control-check {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--ops-blue-deep, #15599d);
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.report-control-check i {
-  display: block;
-  width: 11px;
-  height: 11px;
-  border: 1px solid #8faec1;
-  background: #fff;
+.report-control-check.is-disabled {
+  color: #9aa9b6;
+  cursor: not-allowed;
 }
 
-.report-control-offline {
+.report-control-check input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+}
+
+.report-control-hint,
+.report-control-notice {
+  margin: 0;
+  padding: 3px 8px;
+  border-top: 1px solid var(--ops-line, #8eb7e6);
+  font-size: 12px;
+}
+
+.report-control-hint {
+  color: #8a6d1f;
+  background: #fff8e1;
+}
+
+.report-control-notice.is-ok {
+  color: #2f7a2a;
+  background: #eefaf0;
+}
+
+.report-control-notice.is-error {
+  color: #b02a2a;
+  background: #fdeeee;
+}
+
+.report-order-list {
+  max-height: 190px;
+  overflow: auto;
+  border-top: 1px solid var(--ops-line, #8eb7e6);
+}
+
+.report-order-empty {
+  margin: 0;
+  padding: 10px 8px;
+  color: #7d8d9c;
+  text-align: center;
+}
+
+.report-order-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.report-order-table th,
+.report-order-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid #dce7f2;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.report-order-table th {
+  position: sticky;
+  top: 0;
+  background: var(--ops-panel-soft, #f3f8ff);
+  color: var(--ops-blue-deep, #15599d);
+}
+
+.report-status.is-reported {
+  color: #2f7a2a;
+  font-weight: 700;
+}
+
+.report-status.is-failed,
+.report-status.is-timeout {
   color: #d63333;
   font-weight: 700;
 }
 
-.report-control-offline i {
-  border-color: #d48b8b;
+.report-status.is-unreported {
+  color: #8a6d1f;
 }
 
-.report-control-refresh {
-  min-width: 46px;
-  border-color: var(--ops-blue, #2d7bcd);
-  background: linear-gradient(#5aa8e7, var(--ops-blue, #2d7bcd));
-  color: #fff;
+.report-resubmit {
+  min-width: 42px;
+}
+
+.report-account-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(20 35 50 / 45%);
+}
+
+.report-account-dialog {
+  width: 360px;
+  border: 1px solid var(--ops-line-strong, #4b8ed3);
+  background: #fff;
+  padding: 10px 12px;
+  box-shadow: 0 6px 20px rgb(20 35 50 / 30%);
+}
+
+.report-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--ops-blue-deep, #15599d);
+}
+
+.report-account-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.report-account-field span {
+  width: 66px;
+  color: var(--ops-blue-deep, #15599d);
   font-weight: 700;
+}
+
+.report-account-field input,
+.report-account-field select {
+  flex: 1;
+  height: 24px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.report-account-note {
+  margin: 6px 0;
+  color: #8a6d1f;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.report-account-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
 }
 </style>

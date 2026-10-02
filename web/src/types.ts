@@ -805,3 +805,88 @@ export interface MobileDisplayLotteryCardView {
   numberColors: string[]
   summary: string[]
 }
+
+/**
+ * 机器报网配置（BY220 `robot.php` 报网栏 / `x_robot.flyers_*`）。
+ *
+ * 密码永不回显：只返回 `hasPassword` 布尔。
+ */
+export interface ReportConfigView {
+  machineId: number
+  reportType: string | null
+  reportAuto: boolean
+  reportOnline: boolean
+  reportWithdraw: boolean
+  reportUsername: string | null
+  hasPassword: boolean
+  reportUrl: string | null
+  reportNetworkCode: string | null
+  reportRouteCode: string | null
+  reportBalance: number
+  reportStake: number
+  reportLastLoginAt: string | null
+  timeoutOrderCount: number
+  unreportedCount: number
+  failedOrderCount: number
+}
+
+/** 报网配置保存请求；null 表示保持原值，密码仅在非空时覆盖。 */
+export interface ReportConfigUpdateRequest {
+  machineId?: number
+  reportType?: string | null
+  reportAuto?: boolean | null
+  reportWithdraw?: boolean | null
+  reportUsername?: string | null
+  reportPassword?: string | null
+  reportUrl?: string | null
+  reportNetworkCode?: string | null
+  reportRouteCode?: string | null
+}
+
+/** 报网上报状态；TIMEOUT 与 FAILED 分开，便于"超时订单"计数与重报。 */
+export type ReportStatus = 'UNREPORTED' | 'REPORTED' | 'FAILED' | 'TIMEOUT'
+
+export interface ReportOrderItem {
+  betId: number
+  betCode: string | null
+  accountId: number
+  memberCode: string | null
+  displayName: string | null
+  issueNumber: string
+  ballNumber: number
+  playType: string
+  parametersText: string | null
+  stake: number
+  odds: number
+  settlementStatus: string
+  reportStatus: ReportStatus
+  createdAt: string
+}
+
+export interface ReportOrderPage {
+  items: ReportOrderItem[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface ReportResubmitResult {
+  betId: number
+  reportStatus: ReportStatus
+  config: ReportConfigView
+}
+
+/** 报网类型选项，与后端 ck_agent_report_type 允许值一致（BY220 flyers_type）。 */
+export const REPORT_TYPE_OPTIONS = [
+  { value: 'NONE', label: '无' },
+  { value: 'TT', label: 'TT' },
+  { value: 'K28', label: 'K28' },
+  { value: 'LS8899', label: 'ls8899' },
+  { value: 'WNS', label: 'wns' },
+  { value: 'LX', label: 'lx' },
+  { value: 'HY', label: 'hy' },
+  { value: 'CENTER', label: '中心上游' },
+] as const
+
+/** 盘口线路 A-D（BY220 上游内部线路）。 */
+export const REPORT_ROUTE_OPTIONS = ['A', 'B', 'C', 'D'] as const

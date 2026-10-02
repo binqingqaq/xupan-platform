@@ -4,7 +4,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
 import { createMachineConfigConsoleStore } from '../machineConfigConsole'
 import { scopeIdentityText } from '../consoleScope'
-import type { CurrentUserView, GameView, PlayerDeskScope } from '../types'
+import type { BetBoardView, CurrentUserView, PlayerDeskScope } from '../types'
 import type { Machine } from '../types/platformAdmin'
 import PlayerWorkbenchModule from '../components/admin/PlayerWorkbenchModule.vue'
 import BetBoardPanel from '../components/admin/BetBoardPanel.vue'
@@ -17,7 +17,9 @@ import RecentPointsRecordsPanel from '../components/admin/RecentPointsRecordsPan
 
 const router = useRouter()
 const currentUser = ref<CurrentUserView | null>(null)
-const currentGame = ref<GameView | null>(null)
+/** 期号与阶段来自代理后台自己的下注榜接口（不再用玩家侧 game/current，避免机器账号无钱包报错）。 */
+const currentBoard = ref<BetBoardView | null>(null)
+const boardError = ref('')
 const loading = ref(true)
 const error = ref('')
 const pointsRefreshToken = ref(0)
@@ -61,14 +63,14 @@ const systemStatus = computed(() => {
 })
 
 const issueStatus = computed(() => {
-  if (!currentGame.value) return '暂无数据'
-  return currentGame.value.status === 'OPEN' ? '开放下注' : '当前期已封盘'
+  if (!currentBoard.value) return '暂无数据'
+  return currentBoard.value.phase === 'BETTING' ? '开放下注' : '当前期已封盘'
 })
 
 const phaseLabel = computed(() => {
-  if (!currentGame.value) return '等待状态'
-  if (currentGame.value.phase === 'BETTING') return '下注阶段'
-  if (currentGame.value.phase === 'DRAWING') return '开奖阶段'
+  if (!currentBoard.value) return '等待状态'
+  if (currentBoard.value.phase === 'BETTING') return '下注阶段'
+  if (currentBoard.value.phase === 'DRAWING') return '开奖阶段'
   return '已结算'
 })
 
@@ -76,13 +78,26 @@ async function loadState() {
   loading.value = true
   error.value = ''
   try {
-    const [user, game] = await Promise.all([api.me(), api.current()])
-    currentUser.value = user
-    currentGame.value = game
+    currentUser.value = await api.me()
   } catch (cause) {
     error.value = apiErrorMessage(cause, '后台状态加载失败，请刷新重试')
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 期号与阶段取自代理后台自己的下注榜接口（BY220 `robot.php` 左栏同源）。
+ *
+ * <p>不再调用玩家侧 `/api/demo/game/current`：那个接口会读取**登录用户自己的钱包**并返回玩家余额，
+ * 代理/机器账号没有钱包，会返回 `WALLET_NOT_FOUND`，导致顶部状态与倒计时为空、并弹出权限/错误提示。</p>
+ */
+async function loadBoardState() {
+  boardError.value = ''
+  try {
+    currentBoard.value = await api.getBetBoard('NORMAL', 1)
+  } catch (cause) {
+    boardError.value = apiErrorMessage(cause, '期号状态加载失败，请刷新重试')
   }
 }
 
@@ -114,6 +129,7 @@ async function loadScope() {
 
 function reload() {
   void loadState()
+  void loadBoardState()
   void loadScope()
 }
 
@@ -129,7 +145,7 @@ function refreshRecentPoints() {
   pointsRefreshToken.value++
 }
 
-onMounted(() => { void loadState(); void loadScope() })
+onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
 </script>
 
 <template>
@@ -191,7 +207,11 @@ onMounted(() => { void loadState(); void loadScope() })
           :machine-console="machineConsole"
         />
 
-        <ReportControlPanel class="unified-content-report" />
+        <ReportControlPanel
+          class="unified-content-report"
+          :scope="scope"
+          :machine-id="selectedMachineId"
+        />
 
         <div v-if="error || scopeError || machineError" class="unified-alert" role="alert"><span>{{ error || scopeError || machineError }}</span><button type="button" @click="reload">重试</button></div>
 

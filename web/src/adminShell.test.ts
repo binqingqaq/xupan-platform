@@ -89,7 +89,10 @@ describe('unified admin routes', () => {
     const stashSource = readFileSync(resolve(process.cwd(), 'src/views/AdminStashView.vue'), 'utf8')
 
     expect(unifiedSource).toContain('<RouterLink to="/console/stash">查看备用模块</RouterLink>')
-    expect(unifiedSource).toContain('<ReportControlPanel class="unified-content-report" />')
+    // 报网栏已从静态占位改为真实面板：需要把身份范围与选中的机器传下去
+    expect(unifiedSource).toContain('<ReportControlPanel')
+    expect(unifiedSource).toContain(':scope="scope"')
+    expect(unifiedSource).toContain(':machine-id="selectedMachineId"')
     expect(unifiedSource).not.toContain('aria-label="当前运行状态"')
     expect(stashSource).toContain('<h1>备用模块</h1>')
     expect(stashSource).toContain('aria-label="当前运行状态"')

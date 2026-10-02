@@ -56,6 +56,11 @@ import type {
   BettingLimits,
   MachineConfigUpdateRequest,
   MachineConfigView,
+  ReportConfigUpdateRequest,
+  ReportConfigView,
+  ReportOrderPage,
+  ReportResubmitResult,
+  ReportStatus,
   QuickBetPreference,
   MobileDisplayHomeResponse,
 } from './types'
@@ -841,6 +846,53 @@ export const api = {
     })
   },
   getMobileDisplayHome: () => request<MobileDisplayHomeResponse>('/api/display/mobile/home'),
+  /**
+   * 报网配置与状态（BY220 `robot.php` 报网栏）。
+   *
+   * `machineId` 可省略：机器账号固定读自己那台；管理员/子账号必须显式选择机器。
+   */
+  getReportConfig: (machineId?: number | null) => {
+    const query = new URLSearchParams()
+    if (machineId !== null && machineId !== undefined) query.set('machineId', String(machineId))
+    const suffix = query.toString()
+    return request<ReportConfigView>(`/api/admin/player-desk/report${suffix ? `?${suffix}` : ''}`)
+  },
+  /** 保存报网配置；字段为 `null` 时后端保持原值，密码仅在非空时覆盖。 */
+  updateReportConfig: (payload: ReportConfigUpdateRequest) => {
+    const body: Record<string, unknown> = { ...payload }
+    if (body.machineId === null || body.machineId === undefined) delete body.machineId
+    return request<ReportConfigView>('/api/admin/player-desk/report', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+  },
+  /** 本地模拟登录上游（不发起任何外部请求）：成功后机器报网状态为在线。 */
+  loginReport: (machineId?: number | null) =>
+    request<ReportConfigView>('/api/admin/player-desk/report/login', {
+      method: 'POST',
+      body: JSON.stringify(machineId === null || machineId === undefined ? {} : { machineId }),
+    }),
+  /** 退出上游：机器报网状态置为离线，保留上次登录时间。 */
+  logoutReport: (machineId?: number | null) =>
+    request<ReportConfigView>('/api/admin/player-desk/report/logout', {
+      method: 'POST',
+      body: JSON.stringify(machineId === null || machineId === undefined ? {} : { machineId }),
+    }),
+  /** 按上报状态列出注单（BY220 未报/失败/超时订单）。 */
+  listReportOrders: (params: { machineId?: number | null; status?: ReportStatus | null; page?: number; pageSize?: number }) => {
+    const query = new URLSearchParams()
+    if (params.machineId !== null && params.machineId !== undefined) query.set('machineId', String(params.machineId))
+    if (params.status) query.set('status', params.status)
+    query.set('page', String(params.page ?? 1))
+    query.set('pageSize', String(params.pageSize ?? 20))
+    return request<ReportOrderPage>(`/api/admin/player-desk/report/orders?${query.toString()}`)
+  },
+  /** 重报单笔注单（BY220 `reFeidan`）：仅未报/失败/超时且属于当前机器。 */
+  resubmitReportOrder: (betId: number, machineId?: number | null) =>
+    request<ReportResubmitResult>(`/api/admin/player-desk/report/orders/${betId}/resubmit`, {
+      method: 'POST',
+      body: JSON.stringify(machineId === null || machineId === undefined ? {} : { machineId }),
+    }),
   getPlayerBehavior: (userId: number) => request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`),
   updatePlayerBehavior: (userId: number, payload: TestPlayerBehaviorRequest) =>
     request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`, {

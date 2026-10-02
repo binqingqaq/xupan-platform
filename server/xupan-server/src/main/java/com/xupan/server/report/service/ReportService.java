@@ -2,6 +2,8 @@ package com.xupan.server.report.service;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.playerauth.service.PlayerLinkTokenCipher;
 import com.xupan.server.report.domain.ReportCommand;
 import com.xupan.server.report.domain.ReportOutcome;
@@ -69,16 +71,21 @@ public class ReportService {
     private final OperationAuditRepository auditRepository;
     private final ReportAdapter reportAdapter;
     private final PlayerLinkTokenCipher passwordCipher;
+    private final GameDataRepository gameDataRepository;
+    private final VirtualWalletService walletService;
 
     public ReportService(ReportConfigRepository repository, PlayerDeskScopeService scopeService,
                          PermissionService permissionService, OperationAuditRepository auditRepository,
-                         ReportAdapter reportAdapter, PlayerLinkTokenCipher passwordCipher) {
+                         ReportAdapter reportAdapter, PlayerLinkTokenCipher passwordCipher,
+                         GameDataRepository gameDataRepository, VirtualWalletService walletService) {
         this.repository = repository;
         this.scopeService = scopeService;
         this.permissionService = permissionService;
         this.auditRepository = auditRepository;
         this.reportAdapter = reportAdapter;
         this.passwordCipher = passwordCipher;
+        this.gameDataRepository = gameDataRepository;
+        this.walletService = walletService;
     }
 
     /** 读取机器报网配置 + 上报状态统计（超时 / 未报 / 失败）。密码只返回 {@code hasPassword}。 */
@@ -217,12 +224,54 @@ public class ReportService {
             return Optional.empty();
         }
         ReportConfigRepository.ReportConfigRow config = repository.findConfig(bet.agentId()).orElse(null);
+        // 前置条件只判断"这台机器是否应该上报"：自动上报 + 在线 + 报网类型已配置。
+        // 网盘编码/盘口线路缺失属于"配置不完整"，要交给适配器判为失败，
+        // 这样 BY220 的"上报失败 → 失败自动退单"路径才走得通（否则会被静默跳过）。
         if (config == null || !config.reportAuto() || !config.reportOnline() || !configured(config.reportType())) {
             return Optional.empty();
         }
         String newStatus = submit(bet, config);
+        if ("FAILED".equals(newStatus) && withdrawOnFailure(bet, config)) {
+            // 已按 BY220 失败退单：注单被物理删除并退还本金，不再回写状态
+            return Optional.of("WITHDRAWN");
+        }
         int updated = repository.updateReportStatus(betId, bet.agentId(), newStatus, SUBMIT_FROM_STATUSES);
         return updated == 1 ? Optional.of(newStatus) : Optional.empty();
+    }
+
+    /**
+     * 批量上报（BY220 {@code Websocket.php:658-673} 的飞单轮询）。
+     *
+     * <p>BY220 每 2.4 秒捞出"未报/失败"的订单重新飞单；xupan 由 {@code ReportDispatchScheduler}
+     * 以可配置间隔调用本方法，只处理已开启自动上报、在线且报网类型已配置的机器。</p>
+     *
+     * @param includeRetry true 时一并重报 {@code FAILED/TIMEOUT}（对应 BY220 轮询捞 {@code flyers_status=3}）
+     * @return 处理条数与退单条数
+     */
+    @Transactional
+    public DispatchResult dispatchPending(boolean includeRetry, int limit) {
+        List<String> statuses = includeRetry
+                ? List.of("UNREPORTED", "FAILED", "TIMEOUT")
+                : SUBMIT_FROM_STATUSES;
+        List<ReportConfigRepository.BetRow> bets = repository.findSubmittableBets(statuses, limit);
+        int submitted = 0;
+        int withdrawn = 0;
+        for (ReportConfigRepository.BetRow bet : bets) {
+            Optional<String> result = submitForBet(bet.betId());
+            if (result.isEmpty()) {
+                continue;
+            }
+            if ("WITHDRAWN".equals(result.get())) {
+                withdrawn++;
+            } else {
+                submitted++;
+            }
+        }
+        return new DispatchResult(bets.size(), submitted, withdrawn);
+    }
+
+    /** 一次上报轮询的处理结果。 */
+    public record DispatchResult(int scanned, int submitted, int withdrawn) {
     }
 
     private String submit(ReportConfigRepository.BetRow bet, ReportConfigRepository.ReportConfigRow config) {
@@ -230,6 +279,37 @@ public class ReportService {
                 bet.playType(), bet.parametersText(), bet.stake(), bet.odds(), config.reportType(),
                 config.reportNetworkCode(), config.reportRouteCode(), config.reportOnline());
         return mapOutcome(reportAdapter.submit(command));
+    }
+
+    /**
+     * 失败自动退单（BY220 {@code common.php:1627-1641}）。
+     *
+     * <p>BY220 的时序：{@code $make == 3}（上报失败）且机器开启 {@code flyers_withdraw} 时，
+     * 先给玩家 {@code setInc('score', $order['score'])}（退还本金）、发一条"注单取消"消息，
+     * 最后 {@code db('record')->delete($id)} 物理删除注单；未开启时只把 {@code flyers_status} 标成 3。</p>
+     *
+     * <p>xupan 复用 V55 已确认的撤单路径：同一事务内物理删除注单 + 幂等退款
+     * （幂等键 {@code CANCEL_REFUND:<betId>}）+ 审计。{@code TIMEOUT} 一律只标记不退款
+     * （BY220 的超时状态未知，不能当失败处理）。</p>
+     *
+     * @return true 表示已退单（注单被物理删除）
+     */
+    private boolean withdrawOnFailure(ReportConfigRepository.BetRow bet,
+                                      ReportConfigRepository.ReportConfigRow config) {
+        if (!config.reportWithdraw()) {
+            return false;
+        }
+        if (!gameDataRepository.deletePendingBetById(bet.betId())) {
+            // 注单已被结算或已被其它路径删除：不重复退款
+            return false;
+        }
+        walletService.refundForCancellation(bet.sysUserId(), bet.betId(), bet.accountId(),
+                bet.issueNumber(), bet.stake());
+        auditRepository.record(0L, AUDIT_ACTION, "POST", "/api/admin/player-desk/report/withdraw",
+                Long.toString(bet.betId()), "SUCCESS", null,
+                "machineId=" + bet.agentId() + ",reason=REPORT_FAILED,refunded=" + bet.stake()
+                        + ",betDeleted=true", null, Instant.now());
+        return true;
     }
 
     private static String mapOutcome(ReportOutcome outcome) {

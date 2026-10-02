@@ -7,6 +7,8 @@ import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -164,7 +166,7 @@ public class ReportConfigRepository {
     /** 按注单 id 读取快照与其所属机器（供重报与下注链路使用）。 */
     public Optional<BetRow> findBet(long betId) {
         List<BetRow> rows = jdbc.query("""
-                SELECT b.id, b.user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
+                SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
                        b.stake, b.odds_snapshot, b.report_status, b.settlement_status
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
@@ -176,13 +178,59 @@ public class ReportConfigRepository {
     /** 按注单 id + 机器范围读取快照；范围外的注单按"不存在"处理。 */
     public Optional<BetRow> findBetForAgent(long betId, long agentId) {
         List<BetRow> rows = jdbc.query("""
-                SELECT b.id, b.user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
+                SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
                        b.stake, b.odds_snapshot, b.report_status, b.settlement_status
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
                  WHERE b.id = ? AND a.agent_id = ?
                 """, (rs, rowNum) -> betRow(rs), betId, agentId);
         return rows.stream().findFirst();
+    }
+
+    /**
+     * 捞出待上报的注单（BY220 {@code Websocket.php:658-673} 的飞单轮询：捞 {@code flyers_status=3} 的订单重报）。
+     *
+     * <p>只取"已开启自动上报且当前在线且报网类型已配置"的机器名下的订单；未结算完成的订单同样会被取到，
+     * 因为它们仍需要上报（BY220 的上报与结算是两条线）。</p>
+     *
+     * @param statuses 允许上报的状态集合（首次上报为 {@code UNREPORTED}，重报含 {@code FAILED/TIMEOUT}）
+     * @param limit    单次上限，避免一次任务处理过多订单
+     */
+    public List<BetRow> findSubmittableBets(Collection<String> statuses, int limit) {
+        if (statuses == null || statuses.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        String placeholders = String.join(",", Collections.nCopies(statuses.size(), "?"));
+        List<Object> args = new ArrayList<>(statuses);
+        args.add(limit);
+        return jdbc.query("""
+                SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
+                       b.stake, b.odds_snapshot, b.report_status, b.settlement_status
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                  JOIN agent ag ON ag.id = a.agent_id
+                 WHERE b.report_status IN (""" + placeholders + """
+                       )
+                   AND ag.deleted_at IS NULL
+                   AND ag.report_auto = TRUE
+                   AND ag.report_online = TRUE
+                   AND ag.report_type IS NOT NULL
+                   AND ag.report_type <> 'NONE'
+                 ORDER BY b.id
+                 LIMIT ?
+                """, (rs, rowNum) -> betRow(rs), args.toArray());
+    }
+
+    /** 读取机器的报网配置（供上报任务判断是否满足上报条件）。 */
+    public Optional<ReportConfigRow> findConfigByAgent(long agentId) {
+        return findConfig(agentId);
+    }
+
+    /** 注单是否仍未结算（失败退单时用于审计留痕）。 */
+    public String findSettlementStatus(long betId) {
+        List<String> rows = jdbc.queryForList("SELECT settlement_status FROM game_bet WHERE id = ?",
+                String.class, betId);
+        return rows.stream().findFirst().orElse(null);
     }
 
     /**
@@ -209,7 +257,7 @@ public class ReportConfigRepository {
     }
 
     private static BetRow betRow(java.sql.ResultSet rs) throws java.sql.SQLException {
-        return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("agent_id"),
+        return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("sys_user_id"), rs.getLong("agent_id"),
                 rs.getString("issue_number"), rs.getString("play_type"), rs.getString("parameters_text"),
                 rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("report_status"),
                 rs.getString("settlement_status"));
@@ -242,7 +290,7 @@ public class ReportConfigRepository {
     }
 
     /** 注单快照（含所属机器），供重报与下注链路使用。 */
-    public record BetRow(long betId, long accountId, long agentId, String issueNumber, String playType,
+    public record BetRow(long betId, long accountId, long sysUserId, long agentId, String issueNumber, String playType,
                          String parametersText, BigDecimal stake, BigDecimal odds, String reportStatus,
                          String settlementStatus) {
     }
