@@ -83,6 +83,7 @@ import type {
   PlatformSettingsInput,
   PublicPlatformSettings,
   DeleteAllAccountsResult,
+  ClearDataResult,
   GameSettings,
   GameSettingsInput,
   PlatformPasswordForm,
@@ -561,6 +562,14 @@ export const api = {
   deleteAllAccounts: (confirm: string) =>
     request<DeleteAllAccountsResult>('/api/admin/settings/delete-all-accounts', {
       method: 'POST', body: JSON.stringify({ confirm, preview: false }),
+    }),
+  previewClearData: (time: string, confirm: string) =>
+    request<ClearDataResult>('/api/admin/settings/clear-data', {
+      method: 'POST', body: JSON.stringify({ time, confirm, preview: true }),
+    }),
+  clearData: (time: string, confirm: string) =>
+    request<ClearDataResult>('/api/admin/settings/clear-data', {
+      method: 'POST', body: JSON.stringify({ time, confirm, preview: false }),
     }),
   getPublicPlatformSettings: () => request<PublicPlatformSettings>('/api/platform/public-settings'),
   listReportNetworks: () => request<ReportNetworkItem[]>('/api/admin/report-networks'),

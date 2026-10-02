@@ -346,6 +346,30 @@ export interface DeleteAllAccountsResult {
   counts: DeleteAllAccountsCounts
   message: string
 }
+
+export interface ClearDataCounts {
+  orders: number
+  botActions: number
+  pointRequests: number
+  balanceLedger: number
+  drawIssues: number
+  drawEvents: number
+  orderEdits: number
+  adminNotices: number
+  loginLogs: number
+  chatMessages: number
+  chatOutbox: number
+  robotDispatches: number
+}
+
+export interface ClearDataResult {
+  preview: boolean
+  time: string
+  counts: ClearDataCounts
+  data: number
+  message: string
+}
+
 export interface PublicPlatformSettings {
   siteTitle: string
   announcement: string | null

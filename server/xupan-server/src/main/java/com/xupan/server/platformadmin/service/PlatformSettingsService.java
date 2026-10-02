@@ -8,6 +8,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Service
@@ -16,6 +20,8 @@ public class PlatformSettingsService {
     private static final String READ_PERMISSION = "PLATFORM_SETTINGS_READ";
     private static final String WRITE_PERMISSION = "PLATFORM_SETTINGS_WRITE";
     private static final String DELETE_ALL_ACCOUNTS_CONFIRM = "DELETE_ALL_ACCOUNTS";
+    private static final String CLEAR_DATA_CONFIRM = "CONFIRM_CLEAR";
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final JdbcTemplate jdbc;
     private final PermissionService permissionService;
@@ -127,6 +133,83 @@ public class PlatformSettingsService {
                         + " 个，玩家/托 " + counts.players() + " 个");
     }
 
+    @Transactional(readOnly = true)
+    public ClearDataResult previewClearData(String time, String confirm, long operator) {
+        requirePermission(operator, WRITE_PERMISSION);
+        requireClearDataConfirm(confirm);
+        Instant cutoff = parseCutoff(time);
+        ClearDataCounts counts = clearDataCounts(cutoff);
+        return new ClearDataResult(true, cutoff, counts, counts.total(), "预检完成");
+    }
+
+    @Transactional
+    public ClearDataResult clearData(String time, String confirm, long operator) {
+        requirePermission(operator, WRITE_PERMISSION);
+        requireClearDataConfirm(confirm);
+        Instant cutoff = parseCutoff(time);
+        Timestamp timestamp = Timestamp.from(cutoff);
+        ClearDataCounts counts = clearDataCounts(cutoff);
+        long deleted = 0;
+
+        deleted += jdbc.update("""
+                DELETE FROM test_player_action
+                 WHERE created_at < ?
+                    OR bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                """, timestamp, timestamp);
+        deleted += jdbc.update("""
+                DELETE FROM chat_robot_dispatch
+                 WHERE created_at < ?
+                    OR game_event_id IN (
+                        SELECT e.id
+                          FROM game_issue_event e
+                         WHERE e.created_at < ?
+                            OR e.issue_number IN (
+                                SELECT i.issue_number FROM game_issue i
+                                 WHERE COALESCE(i.opened_at, i.created_at) < ?
+                            )
+                    )
+                    OR message_id IN (SELECT id FROM chat_message WHERE created_at < ?)
+                """, timestamp, timestamp, timestamp, timestamp);
+        deleted += jdbc.update("""
+                DELETE FROM chat_outbox
+                 WHERE created_at < ?
+                    OR message_id IN (SELECT id FROM chat_message WHERE created_at < ?)
+                """, timestamp, timestamp);
+        deleted += jdbc.update("""
+                DELETE FROM game_bet_edit_record
+                 WHERE created_at < ?
+                    OR bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                    OR ledger_id IN (
+                        SELECT id FROM demo_balance_ledger
+                         WHERE created_at < ?
+                            OR related_bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                    )
+                """, timestamp, timestamp, timestamp, timestamp);
+        deleted += jdbc.update("""
+                DELETE FROM demo_balance_ledger
+                 WHERE created_at < ?
+                    OR related_bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                """, timestamp, timestamp);
+        deleted += jdbc.update("DELETE FROM game_bet WHERE created_at < ?", timestamp);
+        deleted += jdbc.update("DELETE FROM player_point_request WHERE requested_at < ?", timestamp);
+        deleted += jdbc.update("DELETE FROM player_admin_notice WHERE created_at < ?", timestamp);
+        deleted += jdbc.update("DELETE FROM sys_login_log WHERE created_at < ?", timestamp);
+        deleted += jdbc.update("DELETE FROM chat_message WHERE created_at < ?", timestamp);
+        deleted += jdbc.update("""
+                DELETE FROM game_issue_event
+                 WHERE created_at < ?
+                    OR issue_number IN (
+                        SELECT issue_number FROM game_issue
+                         WHERE COALESCE(opened_at, created_at) < ?
+                    )
+                """, timestamp, timestamp);
+        deleted += jdbc.update("DELETE FROM game_issue WHERE COALESCE(opened_at, created_at) < ?", timestamp);
+
+        auditClearData(operator, cutoff, counts, deleted);
+        return new ClearDataResult(false, cutoff, counts, deleted,
+                "已清理 " + cutoff + " 之前的数据，共 " + deleted + " 条");
+    }
+
     private DeleteAllAccountsCounts deleteAllAccountsCounts() {
         return new DeleteAllAccountsCounts(
                 count("SELECT COUNT(*) FROM agent_group WHERE deleted_at IS NULL"),
@@ -138,15 +221,106 @@ public class PlatformSettingsService {
                         """));
     }
 
-    private long count(String sql) {
-        Long count = jdbc.queryForObject(sql, Long.class);
+    private long count(String sql, Object... args) {
+        Long count = jdbc.queryForObject(sql, Long.class, args);
         return count == null ? 0L : count;
+    }
+
+    private ClearDataCounts clearDataCounts(Instant cutoff) {
+        Timestamp timestamp = Timestamp.from(cutoff);
+        return new ClearDataCounts(
+                count("SELECT COUNT(*) FROM game_bet WHERE created_at < ?", timestamp),
+                count("""
+                        SELECT COUNT(*) FROM test_player_action
+                         WHERE created_at < ?
+                            OR bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                        """, timestamp, timestamp),
+                count("SELECT COUNT(*) FROM player_point_request WHERE requested_at < ?", timestamp),
+                count("""
+                        SELECT COUNT(*) FROM demo_balance_ledger
+                         WHERE created_at < ?
+                            OR related_bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                        """, timestamp, timestamp),
+                count("SELECT COUNT(*) FROM game_issue WHERE COALESCE(opened_at, created_at) < ?", timestamp),
+                count("""
+                        SELECT COUNT(*) FROM game_issue_event
+                         WHERE created_at < ?
+                            OR issue_number IN (
+                                SELECT issue_number FROM game_issue
+                                 WHERE COALESCE(opened_at, created_at) < ?
+                            )
+                        """, timestamp, timestamp),
+                count("""
+                        SELECT COUNT(*) FROM game_bet_edit_record
+                         WHERE created_at < ?
+                            OR bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                            OR ledger_id IN (
+                                SELECT id FROM demo_balance_ledger
+                                 WHERE created_at < ?
+                                    OR related_bet_id IN (SELECT id FROM game_bet WHERE created_at < ?)
+                            )
+                        """, timestamp, timestamp, timestamp, timestamp),
+                count("SELECT COUNT(*) FROM player_admin_notice WHERE created_at < ?", timestamp),
+                count("SELECT COUNT(*) FROM sys_login_log WHERE created_at < ?", timestamp),
+                count("SELECT COUNT(*) FROM chat_message WHERE created_at < ?", timestamp),
+                count("""
+                        SELECT COUNT(*) FROM chat_outbox
+                         WHERE created_at < ?
+                            OR message_id IN (SELECT id FROM chat_message WHERE created_at < ?)
+                        """, timestamp, timestamp),
+                count("""
+                        SELECT COUNT(*) FROM chat_robot_dispatch
+                         WHERE created_at < ?
+                            OR game_event_id IN (
+                                SELECT e.id
+                                  FROM game_issue_event e
+                                 WHERE e.created_at < ?
+                                    OR e.issue_number IN (
+                                        SELECT i.issue_number FROM game_issue i
+                                         WHERE COALESCE(i.opened_at, i.created_at) < ?
+                                    )
+                            )
+                            OR message_id IN (SELECT id FROM chat_message WHERE created_at < ?)
+                        """, timestamp, timestamp, timestamp, timestamp));
     }
 
     private static void requireDeleteAllAccountsConfirm(String confirm) {
         if (!DELETE_ALL_ACCOUNTS_CONFIRM.equals(confirm)) {
             throw BusinessException.badRequest("DELETE_ALL_ACCOUNTS_CONFIRM_REQUIRED",
                     "缺少全量账号删除确认参数");
+        }
+    }
+
+    private static void requireClearDataConfirm(String confirm) {
+        if (!CLEAR_DATA_CONFIRM.equals(confirm)) {
+            throw BusinessException.badRequest("PLATFORM_CLEAR_DATA_CONFIRM_REQUIRED",
+                    "缺少清空数据确认参数");
+        }
+    }
+
+    private static Instant parseCutoff(String value) {
+        String trimmed = required(value, "请选择有效的清理时间", 64);
+        try {
+            return Instant.parse(trimmed);
+        } catch (RuntimeException ignored) {
+            // Continue with local-date formats accepted by BY220 laydate and HTML datetime-local.
+        }
+        try {
+            return LocalDateTime.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    .atZone(BUSINESS_ZONE).toInstant();
+        } catch (RuntimeException ignored) {
+            // Continue with a date-only value.
+        }
+        try {
+            return LocalDateTime.parse(trimmed, DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+                    .atZone(BUSINESS_ZONE).toInstant();
+        } catch (RuntimeException ignored) {
+            // Continue with a date-only value.
+        }
+        try {
+            return LocalDate.parse(trimmed).atStartOfDay(BUSINESS_ZONE).toInstant();
+        } catch (RuntimeException exception) {
+            throw BusinessException.badRequest("PLATFORM_CLEAR_DATA_TIME_INVALID", "清理时间格式不正确");
         }
     }
 
@@ -159,6 +333,17 @@ public class PlatformSettingsService {
                         'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
                 """, operator, WRITE_PERMISSION, "admins=" + counts.admins() + ",robots=" + counts.robots()
                 + ",players=" + counts.players() + ",flyers=" + counts.flyers());
+    }
+
+    private void auditClearData(long operator, Instant cutoff, ClearDataCounts counts, long deleted) {
+        jdbc.update("""
+                INSERT INTO sys_operation_log
+                    (operator_user_id, permission_code, http_method, request_path, resource_id,
+                     result, error_code, request_summary, ip_digest, created_at)
+                VALUES (?, ?, 'POST', '/api/admin/settings/clear-data', '1',
+                        'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
+                """, operator, WRITE_PERMISSION, "time=" + cutoff + ",previewTotal=" + counts.total()
+                + ",deleted=" + deleted);
     }
     private SettingsView requireSettings() {
         List<SettingsView> rows = jdbc.query("""
@@ -228,6 +413,19 @@ public class PlatformSettingsService {
     }
 
     public record DeleteAllAccountsCounts(long admins, long robots, long players, long flyers) {
+    }
+
+    public record ClearDataResult(boolean preview, Instant time, ClearDataCounts counts,
+                                  long data, String message) {
+    }
+
+    public record ClearDataCounts(long orders, long botActions, long pointRequests, long balanceLedger,
+                                  long drawIssues, long drawEvents, long orderEdits, long adminNotices,
+                                  long loginLogs, long chatMessages, long chatOutbox, long robotDispatches) {
+        public long total() {
+            return orders + botActions + pointRequests + balanceLedger + drawIssues + drawEvents
+                    + orderEdits + adminNotices + loginLogs + chatMessages + chatOutbox + robotDispatches;
+        }
     }
     public record PublicSettingsView(String siteTitle, String announcement, String chatWarning,
                                      boolean headerEnabled, boolean statusBarEnabled,

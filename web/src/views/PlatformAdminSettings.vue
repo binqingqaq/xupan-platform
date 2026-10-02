@@ -18,6 +18,7 @@ const form = ref<PlatformSettingsInput>({
 const loading = ref(false)
 const saving = ref(false)
 const dangerSaving = ref(false)
+const clearing = ref(false)
 const error = ref('')
 const feedback = ref('')
 const currentUser = ref('超级管理员')
@@ -85,6 +86,30 @@ async function deleteAllAccounts() {
     dangerSaving.value = false
   }
 }
+
+async function clearData() {
+  if (clearing.value) return
+  if (!clearTime.value) {
+    error.value = '请选择清理时间'
+    feedback.value = ''
+    return
+  }
+  const confirm = 'CONFIRM_CLEAR'
+  clearing.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    const preview = await api.previewClearData(clearTime.value, confirm)
+    if (!window.confirm(`将清理该时间之前的 ${preview.data} 条数据，是否继续？`)) return
+    const result = await api.clearData(clearTime.value, confirm)
+    feedback.value = result.message
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '清空数据失败')
+  } finally {
+    clearing.value = false
+  }
+}
+
 onMounted(async () => {
   currentUser.value = (await api.me()).displayName || '超级管理员'
   await load()
@@ -103,8 +128,8 @@ onMounted(async () => {
         <section class="danger-zone">
           <h2>数据操作</h2>
           <div class="inline-row">
-            <label>时间<input v-model="clearTime" type="date" /></label>
-            <button type="button" class="danger" disabled title="需要先完成备份、预检和删除专项">清空数据</button>
+            <label>时间<input v-model="clearTime" type="datetime-local" /></label>
+            <button type="button" class="danger" :disabled="clearing" @click="clearData">{{ clearing ? '处理中...' : '清空数据' }}</button>
           </div>
           <div class="inline-row">
             <strong>危险操作</strong>

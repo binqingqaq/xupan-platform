@@ -10,6 +10,8 @@ vi.mock('./api', () => ({
     updatePlatformSettings: vi.fn(),
     previewDeleteAllAccounts: vi.fn(),
     deleteAllAccounts: vi.fn(),
+    previewClearData: vi.fn(),
+    clearData: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
@@ -55,6 +57,28 @@ beforeEach(() => {
     counts: { admins: 1, robots: 2, players: 3, flyers: 0 },
     message: '已软删除子账号 1 个，机器 2 个，玩家/托 3 个',
   })
+  vi.mocked(api.previewClearData).mockResolvedValue({
+    preview: true,
+    time: '2026-09-01T00:00:00Z',
+    counts: {
+      orders: 2, botActions: 1, pointRequests: 1, balanceLedger: 3,
+      drawIssues: 2, drawEvents: 2, orderEdits: 1, adminNotices: 1,
+      loginLogs: 2, chatMessages: 4, chatOutbox: 3, robotDispatches: 2,
+    },
+    data: 24,
+    message: '预检完成',
+  })
+  vi.mocked(api.clearData).mockResolvedValue({
+    preview: false,
+    time: '2026-09-01T00:00:00Z',
+    counts: {
+      orders: 2, botActions: 1, pointRequests: 1, balanceLedger: 3,
+      drawIssues: 2, drawEvents: 2, orderEdits: 1, adminNotices: 1,
+      loginLogs: 2, chatMessages: 4, chatOutbox: 3, robotDispatches: 2,
+    },
+    data: 24,
+    message: '已清理 2026-09-01T00:00:00Z 之前的数据，共 24 条',
+  })
 })
 
 afterEach(() => {
@@ -66,7 +90,7 @@ afterEach(() => {
 })
 
 describe('platform admin settings', () => {
-  it('renders BY220 fields, keeps clear disabled and saves settings', async () => {
+  it('renders BY220 fields, exposes clear data and saves settings', async () => {
     await mountSettings()
 
     expect(container?.textContent).toContain('群聊标题')
@@ -78,7 +102,7 @@ describe('platform admin settings', () => {
     expect(container?.textContent).toContain('键盘模式')
     const dangerous = container?.querySelectorAll<HTMLButtonElement>('.danger')
     expect(dangerous?.length).toBe(2)
-    expect(dangerous?.[0]?.disabled).toBe(true)
+    expect(dangerous?.[0]?.disabled).toBe(false)
     expect(dangerous?.[1]?.disabled).toBe(false)
 
     const title = container?.querySelector<HTMLInputElement>('.settings-form > label input')
@@ -110,5 +134,23 @@ describe('platform admin settings', () => {
     expect(api.previewDeleteAllAccounts).toHaveBeenCalledWith('DELETE_ALL_ACCOUNTS')
     expect(api.deleteAllAccounts).toHaveBeenCalledWith('DELETE_ALL_ACCOUNTS')
     expect(container?.textContent).toContain('已软删除子账号 1 个，机器 2 个，玩家/托 3 个')
+  })
+
+  it('previews and confirms the BY220 clear-data operation', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await mountSettings()
+
+    const timeInput = container?.querySelector<HTMLInputElement>('input[type="datetime-local"]')
+    if (!timeInput) throw new Error('missing clear time input')
+    timeInput.value = '2026-09-01T00:00'
+    timeInput.dispatchEvent(new Event('input'))
+    await nextTick()
+    container?.querySelectorAll<HTMLButtonElement>('.danger')[0]?.click()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.previewClearData).toHaveBeenCalledWith('2026-09-01T00:00', 'CONFIRM_CLEAR')
+    expect(api.clearData).toHaveBeenCalledWith('2026-09-01T00:00', 'CONFIRM_CLEAR')
+    expect(container?.textContent).toContain('共 24 条')
   })
 })

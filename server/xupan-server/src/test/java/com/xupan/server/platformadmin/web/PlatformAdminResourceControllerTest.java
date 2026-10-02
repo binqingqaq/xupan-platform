@@ -649,6 +649,117 @@ class PlatformAdminResourceControllerTest {
 
     @Test
     @Transactional
+    void clearsDataBeforeCutoffWithBy220ConfirmationAndAudit() throws Exception {
+        long playerUserId = userRepository.insert("platform_test_clear_player", "清空数据玩家",
+                passwordPolicy.encode(PASSWORD), "ACTIVE");
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account
+                    (user_code, display_name, balance, status, sys_user_id, identity_type, player_kind, member_code)
+                VALUES ('PLATFORM_TEST_CLEAR_PLAYER', '清空数据玩家', 100.00, 'ACTIVE', ?,
+                        'REAL', 'NORMAL', 'TP-CLEAR-PLAYER')
+                """, playerUserId);
+        long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, opened_at, created_at)
+                VALUES ('AU8', 'CLEAR-OLD-ISSUE', 'CLOSED', 'SETTLED', 1, 2, 3, 4, 5, 6, 7, 8,
+                        '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, opened_at, created_at)
+                VALUES ('AU8', 'CLEAR-NEW-ISSUE', 'CLOSED', 'SETTLED', 1, 2, 3, 4, 5, 6, 7, 8,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status, created_at)
+                VALUES ('AU8', ?, 'CLEAR-OLD-BET', 'platform-test-clear-old', 'CLEAR-OLD-ISSUE', 1,
+                        'FAN', '1', 10.00, 3.850, 'WIN', '2026-01-01 01:00:00')
+                """, accountId);
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status, created_at)
+                VALUES ('AU8', ?, 'CLEAR-NEW-BET', 'platform-test-clear-new', 'CLEAR-NEW-ISSUE', 1,
+                        'FAN', '1', 10.00, 3.850, 'WIN', CURRENT_TIMESTAMP)
+                """, accountId);
+        jdbcTemplate.update("""
+                INSERT INTO demo_balance_ledger
+                    (user_id, operation_type, amount, balance_before, balance_after, reason,
+                     operator_name, created_at)
+                VALUES (?, 'ADMIN_GRANT', 10.00, 0.00, 10.00, '清空测试旧流水', '测试管理员',
+                        '2026-01-01 02:00:00')
+                """, accountId);
+        jdbcTemplate.update("""
+                INSERT INTO demo_balance_ledger
+                    (user_id, operation_type, amount, balance_before, balance_after, reason,
+                     operator_name, created_at)
+                VALUES (?, 'ADMIN_GRANT', 10.00, 10.00, 20.00, '清空测试新流水', '测试管理员',
+                        CURRENT_TIMESTAMP)
+                """, accountId);
+        long adminUserId = jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_user WHERE username = ?", Long.class, ADMIN);
+        jdbcTemplate.update("""
+                INSERT INTO sys_login_log (username_snapshot, user_id, result, created_at)
+                VALUES (?, ?, 'SUCCESS', '2026-01-01 03:00:00')
+                """, ADMIN, adminUserId);
+        jdbcTemplate.update("""
+                INSERT INTO sys_login_log (username_snapshot, user_id, result, created_at)
+                VALUES (?, ?, 'SUCCESS', CURRENT_TIMESTAMP)
+                """, ADMIN, adminUserId);
+
+        String token = login(ADMIN, PASSWORD);
+        mockMvc.perform(post("/api/admin/settings/clear-data")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"time\":\"2026-07-01T00:00:00Z\",\"confirm\":\"WRONG\",\"preview\":true}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("PLATFORM_CLEAR_DATA_CONFIRM_REQUIRED"));
+
+        mockMvc.perform(post("/api/admin/settings/clear-data")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"time\":\"2026-07-01T00:00:00Z\",\"confirm\":\"CONFIRM_CLEAR\",\"preview\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.preview").value(true))
+                .andExpect(jsonPath("$.counts.orders").value(1))
+                .andExpect(jsonPath("$.counts.drawIssues").value(1))
+                .andExpect(jsonPath("$.counts.balanceLedger").value(1))
+                .andExpect(jsonPath("$.counts.loginLogs").value(1))
+                .andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.greaterThanOrEqualTo(4)));
+
+        mockMvc.perform(post("/api/admin/settings/clear-data")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"time\":\"2026-07-01T00:00:00Z\",\"confirm\":\"CONFIRM_CLEAR\",\"preview\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.preview").value(false))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("已清理")));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE bet_code = 'CLEAR-OLD-BET'", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE bet_code = 'CLEAR-NEW-BET'", Long.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE issue_number = 'CLEAR-OLD-ISSUE'", Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE issue_number = 'CLEAR-NEW-ISSUE'", Long.class)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger
+                 WHERE reason = '清空测试旧流水'
+                """, Long.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM sys_operation_log
+                 WHERE permission_code = 'PLATFORM_SETTINGS_WRITE'
+                   AND request_path = '/api/admin/settings/clear-data'
+                   AND operator_user_id = ?
+                """, Long.class, adminUserId)).isEqualTo(1);
+    }
+
+    @Test
+    @Transactional
     void previewsAndSoftDeletesAllNonRootAccountsWithBy220Confirmation() throws Exception {
         String token = login(ADMIN, PASSWORD);
         MvcResult subResult = mockMvc.perform(post("/api/admin/sub-accounts")

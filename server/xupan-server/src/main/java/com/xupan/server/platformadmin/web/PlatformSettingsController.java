@@ -46,6 +46,16 @@ public class PlatformSettingsController {
                 : service.deleteAllAccounts(request.confirm(), operator);
         return DeleteAllAccountsResponse.from(result);
     }
+
+    @PostMapping("/admin/settings/clear-data")
+    public ClearDataResponse clearData(Authentication authentication,
+                                       @Valid @RequestBody ClearDataRequest request) {
+        long operator = operator(authentication).getUserId();
+        PlatformSettingsService.ClearDataResult result = request.preview()
+                ? service.previewClearData(request.time(), request.confirm(), operator)
+                : service.clearData(request.time(), request.confirm(), operator);
+        return ClearDataResponse.from(result);
+    }
     @GetMapping("/platform/public-settings")
     public PublicSettingsResponse publicSettings(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser)) {
@@ -94,6 +104,28 @@ public class PlatformSettingsController {
             static Counts from(PlatformSettingsService.DeleteAllAccountsCounts counts) {
                 return new Counts(counts.admins(), counts.robots(), counts.players(), counts.flyers());
             }
+        }
+    }
+
+    public record ClearDataRequest(@NotBlank String time, @NotBlank String confirm, boolean preview) {
+    }
+
+    public record ClearDataResponse(boolean preview, Instant time, ClearDataCounts counts,
+                                    long data, String message) {
+        static ClearDataResponse from(PlatformSettingsService.ClearDataResult result) {
+            return new ClearDataResponse(result.preview(), result.time(), ClearDataCounts.from(result.counts()),
+                    result.data(), result.message());
+        }
+    }
+
+    public record ClearDataCounts(long orders, long botActions, long pointRequests, long balanceLedger,
+                                  long drawIssues, long drawEvents, long orderEdits, long adminNotices,
+                                  long loginLogs, long chatMessages, long chatOutbox, long robotDispatches) {
+        static ClearDataCounts from(PlatformSettingsService.ClearDataCounts counts) {
+            return new ClearDataCounts(counts.orders(), counts.botActions(), counts.pointRequests(),
+                    counts.balanceLedger(), counts.drawIssues(), counts.drawEvents(), counts.orderEdits(),
+                    counts.adminNotices(), counts.loginLogs(), counts.chatMessages(), counts.chatOutbox(),
+                    counts.robotDispatches());
         }
     }
     public record PublicSettingsResponse(String siteTitle, String announcement, String chatWarning,
