@@ -131,12 +131,12 @@ public class AgentAdminController {
     public record AgentPageResponse(List<AgentResponse> items, int page, int pageSize, long total) {
     }
 
-    public record AgentResponse(long id, String code, String displayName, Long groupId, String groupCode,
+    public record AgentResponse(long id, String code, String displayName, BigDecimal score, Long groupId, String groupCode,
                                 String groupDisplayName, Long accountUserId, String accountUsername,
                                 boolean systemOwned, String status, long normalCount, long botCount,
                                 BigDecimal totalBalance, Instant createdAt, Instant updatedAt) {
         static AgentResponse from(AgentRepository.AgentRow row) {
-            return new AgentResponse(row.id(), row.code(), row.displayName(), row.groupId(), row.groupCode(),
+            return new AgentResponse(row.id(), row.code(), row.displayName(), row.score(), row.groupId(), row.groupCode(),
                     row.groupDisplayName(), row.accountUserId(), row.accountUsername(), row.systemOwned(),
                     row.status(), row.normalCount(), row.botCount(), row.totalBalance(),
                     row.createdAt(), row.updatedAt());

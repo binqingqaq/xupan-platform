@@ -64,6 +64,7 @@ import type {
   AgentPage,
   AgentPlayer,
   AgentPlayerAssignmentPage,
+  AgentScoreChange,
   AgentPlayerPage,
   CreateAgentGroupRequest,
   CreateAgentRequest,
@@ -496,6 +497,11 @@ export const api = {
     request<AgentPlayer>('/api/agent/players/bot', {
       method: 'POST', body: JSON.stringify(payload),
     }),
+  changeAgentPlayerScore: (userId: number, payload: {
+    direction: 'TOP_UP' | 'DOWN'; amount: number; idempotencyKey: string
+  }) => request<AgentScoreChange>(`/api/agent/players/${userId}/score`, {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
   listSubAccounts: () => request<SubAccount[]>('/api/admin/sub-accounts'),
   createSubAccount: (payload: SubAccountInput) => request<SubAccount>('/api/admin/sub-accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateSubAccount: (id: number, payload: SubAccountInput) => request<SubAccount>(`/api/admin/sub-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

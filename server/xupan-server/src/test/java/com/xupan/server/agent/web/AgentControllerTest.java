@@ -66,7 +66,7 @@ class AgentControllerTest {
     @Test
     void agentCanReadOwnConsoleButCannotUsePlatformManagement() throws Exception {
         String agentToken = login(AGENT_USER, AGENT_PASSWORD);
-        jdbcTemplate.update("UPDATE agent SET bot_count = 1 WHERE id = ?", agentId);
+        jdbcTemplate.update("UPDATE agent SET bot_count = 1, score = 100.00 WHERE id = ?", agentId);
 
         mockMvc.perform(get("/api/agent/me").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isOk())
@@ -75,18 +75,22 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/agent/players").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(0));
-        mockMvc.perform(post("/api/agent/players/normal")
+        MvcResult normalResult = mockMvc.perform(post("/api/agent/players/normal")
                         .header("Authorization", bearer(agentToken)).contentType("application/json")
                         .content("{\"displayName\":\"agent-controller-player\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.playerKind").value("NORMAL"))
-                .andExpect(jsonPath("$.displayName").value("agent-controller-player"));
-        mockMvc.perform(post("/api/agent/players/bot")
+                .andExpect(jsonPath("$.displayName").value("agent-controller-player"))
+                .andReturn();
+        long normalUserId = ((Number) JsonPath.read(normalResult.getResponse().getContentAsString(), "$.userId")).longValue();
+        MvcResult botResult = mockMvc.perform(post("/api/agent/players/bot")
                         .header("Authorization", bearer(agentToken)).contentType("application/json")
                         .content("{\"userCode\":\"agent-controller-bot\",\"displayName\":\"agent-controller-bot\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.playerKind").value("BOT"))
-                .andExpect(jsonPath("$.displayName").value("agent-controller-bot"));
+                .andExpect(jsonPath("$.displayName").value("agent-controller-bot"))
+                .andReturn();
+        long botUserId = ((Number) JsonPath.read(botResult.getResponse().getContentAsString(), "$.userId")).longValue();
         mockMvc.perform(post("/api/agent/players/bot")
                         .header("Authorization", bearer(agentToken)).contentType("application/json")
                         .content("{\"userCode\":\"agent-controller-bot-2\",\"displayName\":\"agent-controller-bot-2\"}"))
@@ -102,6 +106,37 @@ class AgentControllerTest {
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT auth_mode FROM sys_user WHERE username = 'agent-controller-bot'
                 """, String.class)).isEqualTo("PLAYER_LINK");
+        mockMvc.perform(post("/api/agent/players/" + normalUserId + "/score")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"direction\":\"TOP_UP\",\"amount\":50.00,\"idempotencyKey\":\"agent-topup-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agentScore").value(50.00))
+                .andExpect(jsonPath("$.playerBalance").value(50.00))
+                .andExpect(jsonPath("$.replay").value(false));
+        mockMvc.perform(post("/api/agent/players/" + normalUserId + "/score")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"direction\":\"TOP_UP\",\"amount\":50.00,\"idempotencyKey\":\"agent-topup-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agentScore").value(50.00))
+                .andExpect(jsonPath("$.playerBalance").value(50.00))
+                .andExpect(jsonPath("$.replay").value(true));
+        mockMvc.perform(post("/api/agent/players/" + normalUserId + "/score")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"direction\":\"DOWN\",\"amount\":20.00,\"idempotencyKey\":\"agent-down-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agentScore").value(70.00))
+                .andExpect(jsonPath("$.playerBalance").value(30.00));
+        mockMvc.perform(post("/api/agent/players/" + botUserId + "/score")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"direction\":\"TOP_UP\",\"amount\":10.00,\"idempotencyKey\":\"agent-bot-topup-1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.agentScore").value(70.00))
+                .andExpect(jsonPath("$.playerBalance").value(10.00));
+        mockMvc.perform(post("/api/agent/players/" + normalUserId + "/score")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"direction\":\"TOP_UP\",\"amount\":1000.00,\"idempotencyKey\":\"agent-topup-too-much\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("AGENT_SCORE_INSUFFICIENT"));
         mockMvc.perform(get("/api/admin/agents").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));

@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 @Service
@@ -184,6 +185,11 @@ public class VirtualWalletService {
     public WalletStatistics statisticsForAdminHistory(long targetUserId) {
         VirtualWallet wallet = requireWallet(targetUserId);
         return walletRepository.findStatisticsByAccountId(wallet.accountId());
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<WalletLedgerEntry> findLedgerByIdempotencyKey(String idempotencyKey) {
+        return walletRepository.findLedgerByIdempotencyKey(idempotencyKey);
     }
 
     @Transactional

@@ -13,6 +13,7 @@ vi.mock('./api', () => ({
     listAgentPlayers: vi.fn(),
     createAgentPlayer: vi.fn(),
     createAgentBot: vi.fn(),
+    changeAgentPlayerScore: vi.fn(),
     logout: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -34,7 +35,7 @@ async function mountConsole() {
 beforeEach(() => {
   vi.mocked(api.getAgentOverview).mockResolvedValue({
     id: 1, code: 'AGENT_TEST', displayName: '代理测试账号', groupCode: null,
-    groupDisplayName: null, status: 'ACTIVE', normalCount: 0, botCount: 0,
+    score: 1000, groupDisplayName: null, status: 'ACTIVE', normalCount: 0, botCount: 0,
     totalBalance: 0, createdAt: '2026-10-02T00:00:00Z',
   })
   vi.mocked(api.listAgentPlayers).mockResolvedValue({ items: [], page: 1, pageSize: 100, total: 0 })
@@ -47,6 +48,9 @@ beforeEach(() => {
     userId: 102, accountId: 202, internalCode: 'agent-test-bot', displayName: '新托',
     memberCode: 'T-102', playerKind: 'BOT', userStatus: 'ACTIVE', accountStatus: 'ACTIVE',
     balance: 0, createdAt: '2026-10-02T00:00:00Z', lastLoginAt: null,
+  })
+  vi.mocked(api.changeAgentPlayerScore).mockResolvedValue({
+    direction: 'TOP_UP', amount: 50, agentScore: 950, playerBalance: 50, ledgerId: 9, replay: false,
   })
 })
 
@@ -89,5 +93,33 @@ describe('agent console', () => {
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.createAgentBot).toHaveBeenCalledWith({ userCode: 'agent-test-bot', displayName: '新托' })
+  })
+
+  it('tops up an agent-owned player with an idempotency key', async () => {
+    vi.mocked(api.listAgentPlayers).mockResolvedValue({
+      items: [{
+        userId: 101, accountId: 201, internalCode: 'P-101', displayName: '玩家甲',
+        memberCode: 'V-101', playerKind: 'NORMAL', userStatus: 'ACTIVE', accountStatus: 'ACTIVE',
+        balance: 0, createdAt: '2026-10-02T00:00:00Z', lastLoginAt: null,
+      }],
+      page: 1, pageSize: 100, total: 1,
+    })
+    await mountConsole()
+
+    const topUp = [...container!.querySelectorAll<HTMLButtonElement>('.agent-console-row-actions button')]
+      .find(button => button.textContent?.includes('上分'))
+    topUp?.click()
+    await nextTick()
+    const amount = container!.querySelector<HTMLInputElement>('.agent-console-modal input[type="number"]')
+    if (!amount) throw new Error('missing score amount input')
+    amount.value = '50'
+    amount.dispatchEvent(new Event('input'))
+    container!.querySelector<HTMLFormElement>('.agent-console-modal')?.dispatchEvent(new Event('submit'))
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(api.changeAgentPlayerScore).toHaveBeenCalledWith(101, expect.objectContaining({
+      direction: 'TOP_UP', amount: 50, idempotencyKey: expect.any(String),
+    }))
   })
 })

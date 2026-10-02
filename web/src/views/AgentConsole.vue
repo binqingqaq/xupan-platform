@@ -17,6 +17,11 @@ const createKind = ref<'NORMAL' | 'BOT'>('NORMAL')
 const createDisplayName = ref('')
 const createUserCode = ref('')
 const creating = ref(false)
+const scoreOpen = ref(false)
+const scoreDirection = ref<'TOP_UP' | 'DOWN'>('TOP_UP')
+const scoreTarget = ref<AgentPlayer | null>(null)
+const scoreAmount = ref<number | null>(null)
+const scoring = ref(false)
 
 async function load() {
   loading.value = true
@@ -73,6 +78,36 @@ async function submitCreate() {
   }
 }
 
+function openScore(player: AgentPlayer, direction: 'TOP_UP' | 'DOWN') {
+  scoreTarget.value = player
+  scoreDirection.value = direction
+  scoreAmount.value = null
+  scoreOpen.value = true
+}
+
+async function submitScore() {
+  const player = scoreTarget.value
+  const amount = scoreAmount.value
+  if (!player || amount === null || amount <= 0 || scoring.value) return
+  scoring.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    const result = await api.changeAgentPlayerScore(player.userId, {
+      direction: scoreDirection.value,
+      amount,
+      idempotencyKey: crypto.randomUUID(),
+    })
+    feedback.value = `${player.displayName} ${scoreDirection.value === 'TOP_UP' ? '上分' : '下分'} ${result.amount.toFixed(2)}`
+    scoreOpen.value = false
+    await load()
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, scoreDirection.value === 'TOP_UP' ? '上分失败' : '下分失败')
+  } finally {
+    scoring.value = false
+  }
+}
+
 onMounted(() => { void load() })
 </script>
 
@@ -95,6 +130,7 @@ onMounted(() => { void load() })
     <p v-if="feedback" class="agent-console-feedback" role="status">{{ feedback }}</p>
 
     <section v-if="overview" class="agent-console-stats">
+      <article><span>代理积分</span><strong>{{ overview.score.toFixed(2) }}</strong></article>
       <article><span>普通玩家</span><strong>{{ overview.normalCount }}</strong></article>
       <article><span>托</span><strong>{{ overview.botCount }}</strong></article>
       <article><span>虚拟积分合计</span><strong>{{ overview.totalBalance.toFixed(2) }}</strong></article>
@@ -114,7 +150,7 @@ onMounted(() => { void load() })
 
       <div v-if="loading" class="agent-console-empty">正在加载...</div>
       <table v-else class="agent-console-table">
-        <thead><tr><th>昵称</th><th>内部编号</th><th>会员编号</th><th>类型</th><th>虚拟积分</th><th>状态</th></tr></thead>
+        <thead><tr><th>昵称</th><th>内部编号</th><th>会员编号</th><th>类型</th><th>虚拟积分</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="player in players" :key="player.userId">
             <td>{{ player.displayName }}</td>
@@ -123,8 +159,9 @@ onMounted(() => { void load() })
             <td>{{ player.playerKind === 'BOT' ? '托' : '普通玩家' }}</td>
             <td>{{ player.balance.toFixed(2) }}</td>
             <td>{{ player.userStatus === 'ACTIVE' && player.accountStatus === 'ACTIVE' ? '正常' : player.userStatus }}</td>
+            <td class="agent-console-row-actions"><button type="button" @click="openScore(player, 'TOP_UP')">上分</button><button type="button" @click="openScore(player, 'DOWN')">下分</button></td>
           </tr>
-          <tr v-if="players.length === 0"><td colspan="6" class="agent-console-empty">当前没有符合条件的数据</td></tr>
+          <tr v-if="players.length === 0"><td colspan="7" class="agent-console-empty">当前没有符合条件的数据</td></tr>
         </tbody>
       </table>
     </section>
@@ -137,6 +174,14 @@ onMounted(() => { void load() })
         <footer><button type="button" @click="createOpen = false">取消</button><button type="submit" :disabled="creating">{{ creating ? '创建中...' : '确认' }}</button></footer>
       </form>
     </div>
+
+    <div v-if="scoreOpen" class="agent-console-modal-mask" @click.self="scoreOpen = false">
+      <form class="agent-console-modal" @submit.prevent="submitScore">
+        <header><h2>{{ scoreDirection === 'TOP_UP' ? '上分' : '下分' }} · {{ scoreTarget?.displayName }}</h2><button type="button" @click="scoreOpen = false">×</button></header>
+        <label>积分<input v-model.number="scoreAmount" type="number" min="0.01" step="0.01" required /></label>
+        <footer><button type="button" @click="scoreOpen = false">取消</button><button type="submit" :disabled="scoring">{{ scoring ? '处理中...' : '确认' }}</button></footer>
+      </form>
+    </div>
   </main>
 </template>
 
@@ -147,7 +192,7 @@ onMounted(() => { void load() })
 .agent-console-header button { padding: 8px 14px; border: 1px solid #6f8177; background: #fff; cursor: pointer; }
 .agent-console-actions { display: flex; gap: 8px; }
 .agent-console-meta { margin: 0; color: #68756e; }
-.agent-console-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; max-width: 1080px; margin: 0 auto 16px; }
+.agent-console-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; max-width: 1080px; margin: 0 auto 16px; }
 .agent-console-stats article { padding: 14px; border: 1px solid #bdc8c2; background: #fff; }
 .agent-console-stats span { display: block; color: #68756e; font-size: 12px; }
 .agent-console-stats strong { display: block; margin-top: 6px; font-size: 22px; }
@@ -159,6 +204,8 @@ onMounted(() => { void load() })
 .agent-console-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .agent-console-table th, .agent-console-table td { padding: 9px; border: 1px solid #d6ded9; text-align: left; }
 .agent-console-table th { background: #e8eeea; }
+.agent-console-row-actions { display: flex; gap: 6px; }
+.agent-console-row-actions button { padding: 4px 8px; border: 1px solid #476356; background: #eef4f0; cursor: pointer; }
 .agent-console-alert { max-width: 1048px; margin: 0 auto 12px; padding: 10px; background: #f1dcdc; }
 .agent-console-feedback { max-width: 1048px; margin: 0 auto 12px; padding: 10px; background: #dcecdf; color: #1f6437; }
 .agent-console-empty { padding: 18px; color: #68756e; text-align: center; }

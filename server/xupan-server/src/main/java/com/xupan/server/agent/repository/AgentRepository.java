@@ -16,7 +16,7 @@ import java.util.Optional;
 public class AgentRepository {
 
     private static final String AGENT_SELECT = """
-            SELECT ag.id, ag.agent_code, ag.display_name, ag.group_id, ag.account_user_id,
+            SELECT ag.id, ag.agent_code, ag.display_name, ag.score, ag.group_id, ag.account_user_id,
                    ag.system_owned, ag.status, ag.created_by, ag.created_at, ag.updated_at,
                    g.group_code, g.display_name group_display_name, u.username account_username,
                    COALESCE(SUM(CASE WHEN a.player_kind = 'NORMAL' AND a.status <> 'DELETED' THEN 1 ELSE 0 END), 0) normal_count,
@@ -220,6 +220,27 @@ public class AgentRepository {
         return limit == null ? 0L : limit;
     }
 
+    public BigDecimal findScore(long agentId) {
+        return jdbc.queryForObject("SELECT score FROM agent WHERE id = ? AND deleted_at IS NULL",
+                BigDecimal.class, agentId);
+    }
+
+    public int debitScore(long agentId, BigDecimal amount) {
+        return jdbc.update("""
+                UPDATE agent
+                   SET score = score - ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND deleted_at IS NULL AND score >= ?
+                """, amount, agentId, amount);
+    }
+
+    public int creditScore(long agentId, BigDecimal amount) {
+        return jdbc.update("""
+                UPDATE agent
+                   SET score = score + ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND deleted_at IS NULL
+                """, amount, agentId);
+    }
+
     public int assignPlatformDirectPlayer(long userId, long targetAgentId) {
         long defaultAgentId = defaultAgentId();
         return jdbc.update("""
@@ -351,7 +372,8 @@ public class AgentRepository {
 
     private AgentRow mapAgentRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         return new AgentRow(rs.getLong("id"), rs.getString("agent_code"), rs.getString("display_name"),
-                nullableLong(rs, "group_id"), rs.getString("group_code"), rs.getString("group_display_name"),
+                rs.getBigDecimal("score"), nullableLong(rs, "group_id"), rs.getString("group_code"),
+                rs.getString("group_display_name"),
                 nullableLong(rs, "account_user_id"), rs.getString("account_username"),
                 rs.getBoolean("system_owned"), rs.getString("status"),
                 rs.getLong("normal_count"), rs.getLong("bot_count"), rs.getBigDecimal("total_balance"),
@@ -382,7 +404,7 @@ public class AgentRepository {
         return value == null ? null : value.toInstant();
     }
 
-    public record AgentRow(long id, String code, String displayName, Long groupId, String groupCode,
+    public record AgentRow(long id, String code, String displayName, BigDecimal score, Long groupId, String groupCode,
                            String groupDisplayName, Long accountUserId, String accountUsername,
                            boolean systemOwned, String status, long normalCount, long botCount,
                            BigDecimal totalBalance, Instant createdAt, Instant updatedAt) {

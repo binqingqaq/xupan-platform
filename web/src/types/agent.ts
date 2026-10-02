@@ -11,6 +11,7 @@ export interface Agent {
   id: number
   code: string
   displayName: string
+  score: number
   groupId: number | null
   groupCode: string | null
   groupDisplayName: string | null
@@ -70,6 +71,7 @@ export interface AgentOverview {
   id: number
   code: string
   displayName: string
+  score: number
   groupCode: string | null
   groupDisplayName: string | null
   status: 'ACTIVE' | 'DISABLED'
@@ -98,4 +100,13 @@ export interface AgentPlayerPage {
   page: number
   pageSize: number
   total: number
+}
+
+export interface AgentScoreChange {
+  direction: 'TOP_UP' | 'DOWN'
+  amount: number
+  agentScore: number
+  playerBalance: number
+  ledgerId: number
+  replay: boolean
 }

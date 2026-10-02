@@ -5,10 +5,13 @@ import com.xupan.server.agent.service.AgentConsoleService;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -63,6 +66,14 @@ public class AgentConsoleController {
                 principal(authentication).getUserId(), request.userCode(), request.displayName()));
     }
 
+    @PostMapping("/players/{userId}/score")
+    @ResponseStatus(HttpStatus.OK)
+    public ScoreChangeResponse changeScore(Authentication authentication, @PathVariable long userId,
+                                           @Valid @RequestBody ScoreChangeRequest request) {
+        return ScoreChangeResponse.from(service.changeScore(principal(authentication).getUserId(), userId,
+                request.direction(), request.amount(), request.idempotencyKey()));
+    }
+
     private static AuthenticatedUser principal(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
             throw new AuthenticationService.AuthenticationFailure("AUTH_UNAUTHENTICATED");
@@ -70,11 +81,11 @@ public class AgentConsoleController {
         return user;
     }
 
-    public record AgentOverviewResponse(long id, String code, String displayName, String groupCode,
+    public record AgentOverviewResponse(long id, String code, String displayName, BigDecimal score, String groupCode,
                                         String groupDisplayName, String status, long normalCount, long botCount,
                                         BigDecimal totalBalance, Instant createdAt) {
         static AgentOverviewResponse from(AgentRepository.AgentRow row) {
-            return new AgentOverviewResponse(row.id(), row.code(), row.displayName(), row.groupCode(),
+            return new AgentOverviewResponse(row.id(), row.code(), row.displayName(), row.score(), row.groupCode(),
                     row.groupDisplayName(), row.status(), row.normalCount(), row.botCount(),
                     row.totalBalance(), row.createdAt());
         }
@@ -98,5 +109,18 @@ public class AgentConsoleController {
     }
 
     public record CreateBotRequest(String userCode, @NotBlank String displayName) {
+    }
+
+    public record ScoreChangeRequest(@NotBlank String direction,
+                                     @NotNull @DecimalMin(value = "0.01") BigDecimal amount,
+                                     @NotBlank String idempotencyKey) {
+    }
+
+    public record ScoreChangeResponse(String direction, BigDecimal amount, BigDecimal agentScore,
+                                      BigDecimal playerBalance, long ledgerId, boolean replay) {
+        static ScoreChangeResponse from(AgentConsoleService.ScoreChange change) {
+            return new ScoreChangeResponse(change.direction(), change.amount(), change.agentScore(),
+                    change.playerBalance(), change.ledgerId(), change.replay());
+        }
     }
 }
