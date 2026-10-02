@@ -2,11 +2,13 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
-import type { AgentOverview, AgentPlayer, AgentPlayerLink } from '../types/agent'
+import type { AgentOperations, AgentOverview, AgentPlayer, AgentPlayerLink } from '../types/agent'
 
 const router = useRouter()
 const overview = ref<AgentOverview | null>(null)
 const players = ref<AgentPlayer[]>([])
+const operations = ref<AgentOperations | null>(null)
+const operationsDay = ref(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()))
 const kind = ref<'' | 'NORMAL' | 'BOT'>('')
 const keyword = ref('')
 const loading = ref(true)
@@ -31,12 +33,14 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [me, page] = await Promise.all([
+    const [me, page, summary] = await Promise.all([
       api.getAgentOverview(),
       api.listAgentPlayers({ kind: kind.value || undefined, keyword: keyword.value.trim() || undefined, pageSize: 100 }),
+      api.getAgentOperations(operationsDay.value),
     ])
     overview.value = me
     players.value = page.items
+    operations.value = summary
   } catch (cause) {
     error.value = apiErrorMessage(cause, '代理后台加载失败')
   } finally {
@@ -208,6 +212,18 @@ onMounted(() => { void load() })
       <article><span>状态</span><strong>{{ overview.status === 'ACTIVE' ? '启用' : '停用' }}</strong></article>
     </section>
 
+    <section v-if="operations" class="agent-console-operations">
+      <div class="agent-console-operations-head"><h2>运营数据</h2><label>业务日<input v-model="operationsDay" type="date" @change="load" /></label></div>
+      <div class="agent-console-operation-grid">
+        <article><span>下注笔数</span><strong>{{ operations.betCount }}</strong></article>
+        <article><span>总流水</span><strong>{{ operations.turnover.toFixed(2) }}</strong></article>
+        <article><span>净盈亏</span><strong>{{ operations.netProfit.toFixed(2) }}</strong></article>
+        <article><span>待结算</span><strong>{{ operations.pendingBetCount }}</strong></article>
+        <article><span>活跃玩家</span><strong>{{ operations.activePlayerCount }}</strong></article>
+        <article><span>普/托流水</span><strong>{{ operations.normalTurnover.toFixed(2) }} / {{ operations.botTurnover.toFixed(2) }}</strong></article>
+      </div>
+    </section>
+
     <section class="agent-console-content">
       <div class="agent-console-toolbar">
         <input v-model="keyword" placeholder="搜索昵称或会员编号" @keyup.enter="search" />
@@ -287,6 +303,15 @@ onMounted(() => { void load() })
 .agent-console-stats article { padding: 14px; border: 1px solid #bdc8c2; background: #fff; }
 .agent-console-stats span { display: block; color: #68756e; font-size: 12px; }
 .agent-console-stats strong { display: block; margin-top: 6px; font-size: 22px; }
+.agent-console-operations { max-width: 1080px; margin: 0 auto 16px; padding: 16px; border: 1px solid #bdc8c2; background: #fff; }
+.agent-console-operations-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.agent-console-operations-head h2 { margin: 0; font-size: 18px; }
+.agent-console-operations-head label { display: flex; align-items: center; gap: 8px; color: #68756e; font-size: 13px; }
+.agent-console-operations-head input { padding: 6px; border: 1px solid #bdc8c2; }
+.agent-console-operation-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-top: 12px; }
+.agent-console-operation-grid article { padding: 10px; background: #f4f7f5; }
+.agent-console-operation-grid span { display: block; color: #68756e; font-size: 12px; }
+.agent-console-operation-grid strong { display: block; margin-top: 5px; font-size: 18px; }
 .agent-console-content { max-width: 1080px; margin: 0 auto; padding: 16px; border: 1px solid #bdc8c2; background: #fff; }
 .agent-console-toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .agent-console-toolbar input, .agent-console-toolbar select { padding: 8px; border: 1px solid #bdc8c2; }
@@ -309,5 +334,6 @@ onMounted(() => { void load() })
 .agent-console-link-body { padding: 16px; }
 .agent-console-link-url { overflow-wrap: anywhere; padding: 10px; background: #f4f7f5; font-family: ui-monospace, monospace; font-size: 12px; }
 .agent-console-modal footer { justify-content: flex-end; gap: 8px; margin-top: 16px; background: #fff; }
-@media (max-width: 720px) { .agent-console-page { padding: 12px; } .agent-console-stats { grid-template-columns: repeat(2, 1fr); } .agent-console-table { display: block; overflow-x: auto; } }
+@media (max-width: 900px) { .agent-console-operation-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 720px) { .agent-console-page { padding: 12px; } .agent-console-stats { grid-template-columns: repeat(2, 1fr); } .agent-console-operation-grid { grid-template-columns: repeat(2, 1fr); } .agent-console-table { display: block; overflow-x: auto; } }
 </style>

@@ -156,6 +156,31 @@ class AgentControllerTest {
         mockMvc.perform(post("/api/agent/players/" + normalUserId + "/link/" + rotatedLinkId + "/restore")
                         .header("Authorization", bearer(agentToken)))
                 .andExpect(status().isOk());
+        long normalAccountId = ((Number) JsonPath.read(
+                normalResult.getResponse().getContentAsString(), "$.accountId")).longValue();
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status, net_profit,
+                     created_at, settled_at)
+                VALUES ('AU8', ?, 'AGENT_CONTROLLER_SETTLED', 'agent-controller-settled', '3000000', 1,
+                        'FAN', '1', 10.00, 3.850, 'WIN', 5.00, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, normalAccountId);
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status, created_at)
+                VALUES ('AU8', ?, 'AGENT_CONTROLLER_PENDING', 'agent-controller-pending', '3000000', 1,
+                        'FAN', '1', 20.00, 3.850, 'PENDING', CURRENT_TIMESTAMP)
+                """, normalAccountId);
+        mockMvc.perform(get("/api/agent/operations")
+                        .header("Authorization", bearer(agentToken)).param("day", "2026-10-02"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.betCount").value(2))
+                .andExpect(jsonPath("$.turnover").value(30.00))
+                .andExpect(jsonPath("$.netProfit").value(5.00))
+                .andExpect(jsonPath("$.pendingBetCount").value(1))
+                .andExpect(jsonPath("$.normalTurnover").value(30.00));
         mockMvc.perform(get("/api/admin/agents").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
@@ -192,6 +217,9 @@ class AgentControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN ('agent-controller-admin', 'agent-controller-user'))");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
+                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
+        jdbcTemplate.update("DELETE FROM game_bet WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
         jdbcTemplate.update("DELETE FROM test_player_action WHERE account_id IN "

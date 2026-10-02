@@ -118,3 +118,14 @@ export interface AgentPlayerLink {
   expiresAt: string
   accessUrl: string
 }
+
+export interface AgentOperations {
+  day: string
+  betCount: number
+  turnover: number
+  netProfit: number
+  pendingBetCount: number
+  normalTurnover: number
+  botTurnover: number
+  activePlayerCount: number
+}

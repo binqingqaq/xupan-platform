@@ -17,12 +17,18 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
 @Service
 public class AgentConsoleService {
+
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final AgentRepository agentRepository;
     private final PermissionService permissionService;
@@ -153,6 +159,38 @@ public class AgentConsoleService {
         return playerLinkAuthenticationService.currentForAgent(playerUserId, accountUserId);
     }
 
+    @Transactional(readOnly = true)
+    public OperationsSummary operations(long accountUserId, String day) {
+        Agent agent = requireActiveAgent(accountUserId);
+        LocalDate businessDay = day == null || day.isBlank()
+                ? LocalDate.now(BUSINESS_ZONE)
+                : parseBusinessDay(day);
+        Instant from = businessDay.atTime(6, 0).atZone(BUSINESS_ZONE).toInstant();
+        Instant to = businessDay.plusDays(1).atTime(6, 0).atZone(BUSINESS_ZONE).toInstant();
+        List<OperationsSummary> rows = jdbc.query("""
+                SELECT COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' THEN 1 ELSE 0 END), 0) bet_count,
+                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' THEN b.stake ELSE 0 END), 0) turnover,
+                       COALESCE(SUM(CASE WHEN b.settlement_status NOT IN ('PENDING', 'CANCELED')
+                                         THEN b.net_profit ELSE 0 END), 0) net_profit,
+                       COALESCE(SUM(CASE WHEN b.settlement_status = 'PENDING' THEN 1 ELSE 0 END), 0) pending_bet_count,
+                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' AND a.player_kind = 'NORMAL'
+                                         THEN b.stake ELSE 0 END), 0) normal_turnover,
+                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' AND a.player_kind = 'BOT'
+                                         THEN b.stake ELSE 0 END), 0) bot_turnover,
+                       COUNT(DISTINCT CASE WHEN b.settlement_status <> 'CANCELED' THEN b.user_id END) active_player_count
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE a.agent_id = ? AND b.created_at >= ? AND b.created_at < ?
+                """, (rs, rowNum) -> new OperationsSummary(
+                businessDay.toString(), rs.getLong("bet_count"), rs.getBigDecimal("turnover"),
+                rs.getBigDecimal("net_profit"), rs.getLong("pending_bet_count"),
+                rs.getBigDecimal("normal_turnover"), rs.getBigDecimal("bot_turnover"),
+                rs.getLong("active_player_count")), agent.id(), Timestamp.from(from), Timestamp.from(to));
+        return rows.isEmpty() ? new OperationsSummary(businessDay.toString(), 0, BigDecimal.ZERO.setScale(2),
+                BigDecimal.ZERO.setScale(2), 0, BigDecimal.ZERO.setScale(2), BigDecimal.ZERO.setScale(2), 0)
+                : rows.get(0);
+    }
+
     @Transactional
     public PlayerLinkAuthenticationService.IssuedLink rotateLink(long accountUserId, long playerUserId) {
         Agent agent = requireManagedPlayerAgent(accountUserId, playerUserId);
@@ -263,10 +301,27 @@ public class AgentConsoleService {
         return idempotencyKey.trim();
     }
 
+    private static LocalDate parseBusinessDay(String value) {
+        try {
+            LocalDate parsed = LocalDate.parse(value.trim());
+            if (parsed.isAfter(LocalDate.now(BUSINESS_ZONE))) {
+                throw BusinessException.badRequest("AGENT_OPERATIONS_DAY_INVALID", "不能查询未来业务日");
+            }
+            return parsed;
+        } catch (java.time.format.DateTimeParseException exception) {
+            throw BusinessException.badRequest("AGENT_OPERATIONS_DAY_INVALID", "业务日格式必须为 yyyy-MM-dd");
+        }
+    }
+
     public record AgentPlayerPage(List<AgentRepository.AgentPlayerRow> items, int page, int pageSize, long total) {
     }
 
     public record ScoreChange(String direction, BigDecimal amount, BigDecimal agentScore,
                               BigDecimal playerBalance, long ledgerId, boolean replay) {
+    }
+
+    public record OperationsSummary(String day, long betCount, BigDecimal turnover, BigDecimal netProfit,
+                                    long pendingBetCount, BigDecimal normalTurnover, BigDecimal botTurnover,
+                                    long activePlayerCount) {
     }
 }

@@ -18,6 +18,7 @@ vi.mock('./api', () => ({
     rotateAgentPlayerLink: vi.fn(),
     revokeAgentPlayerLink: vi.fn(),
     restoreAgentPlayerLink: vi.fn(),
+    getAgentOperations: vi.fn(),
     logout: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -64,6 +65,10 @@ beforeEach(() => {
     linkId: 7, userId: 101, scope: 'PLAYER_FULL', expiresAt: '2026-10-09T00:00:00Z',
     accessUrl: 'http://127.0.0.1:18080/33/rotated-token',
   })
+  vi.mocked(api.getAgentOperations).mockResolvedValue({
+    day: '2026-10-02', betCount: 12, turnover: 1250, netProfit: 88.5,
+    pendingBetCount: 3, normalTurnover: 1000, botTurnover: 250, activePlayerCount: 5,
+  })
 })
 
 afterEach(() => {
@@ -77,6 +82,8 @@ afterEach(() => {
 describe('agent console', () => {
   it('creates normal players and bots from the BY220 agent console', async () => {
     await mountConsole()
+    expect(container?.textContent).toContain('运营数据')
+    expect(container?.textContent).toContain('1250.00')
 
     const addPlayer = [...container!.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.includes('添加玩家'))

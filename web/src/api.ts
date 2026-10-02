@@ -66,6 +66,7 @@ import type {
   AgentPlayerAssignmentPage,
   AgentScoreChange,
   AgentPlayerLink,
+  AgentOperations,
   AgentPlayerPage,
   CreateAgentGroupRequest,
   CreateAgentRequest,
@@ -510,6 +511,12 @@ export const api = {
     request<void>(`/api/agent/players/${userId}/link/${linkId}/revoke`, { method: 'POST' }),
   restoreAgentPlayerLink: (userId: number, linkId: number) =>
     request<void>(`/api/agent/players/${userId}/link/${linkId}/restore`, { method: 'POST' }),
+  getAgentOperations: (day?: string) => {
+    const search = new URLSearchParams()
+    if (day) search.set('day', day)
+    const suffix = search.toString()
+    return request<AgentOperations>(`/api/agent/operations${suffix ? `?${suffix}` : ''}`)
+  },
   listSubAccounts: () => request<SubAccount[]>('/api/admin/sub-accounts'),
   createSubAccount: (payload: SubAccountInput) => request<SubAccount>('/api/admin/sub-accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateSubAccount: (id: number, payload: SubAccountInput) => request<SubAccount>(`/api/admin/sub-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

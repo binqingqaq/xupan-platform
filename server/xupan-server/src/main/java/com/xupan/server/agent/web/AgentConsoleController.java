@@ -54,6 +54,12 @@ public class AgentConsoleController {
                 result.page(), result.pageSize(), result.total());
     }
 
+    @GetMapping("/operations")
+    public OperationsResponse operations(Authentication authentication,
+                                         @RequestParam(required = false) String day) {
+        return OperationsResponse.from(service.operations(principal(authentication).getUserId(), day));
+    }
+
     @PostMapping("/players/normal")
     @ResponseStatus(HttpStatus.CREATED)
     public AgentPlayerResponse createNormal(Authentication authentication,
@@ -118,6 +124,16 @@ public class AgentConsoleController {
     }
 
     public record AgentPlayerPageResponse(List<AgentPlayerResponse> items, int page, int pageSize, long total) {
+    }
+
+    public record OperationsResponse(String day, long betCount, BigDecimal turnover, BigDecimal netProfit,
+                                     long pendingBetCount, BigDecimal normalTurnover, BigDecimal botTurnover,
+                                     long activePlayerCount) {
+        static OperationsResponse from(AgentConsoleService.OperationsSummary summary) {
+            return new OperationsResponse(summary.day(), summary.betCount(), summary.turnover(),
+                    summary.netProfit(), summary.pendingBetCount(), summary.normalTurnover(),
+                    summary.botTurnover(), summary.activePlayerCount());
+        }
     }
 
     public record AgentPlayerResponse(long userId, long accountId, String internalCode, String displayName,
