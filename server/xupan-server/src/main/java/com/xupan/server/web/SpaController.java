@@ -19,6 +19,9 @@ public class SpaController {
             "/platform-admin/settings", "/platform-admin/settings/",
             "/platform-admin/report-networks", "/platform-admin/report-networks/",
             "/platform-admin/games", "/platform-admin/games/",
+            // 中心上游管理（阶段 B）：SPA 路由是逐个白名单，新增页面必须同步登记，
+            // 否则直接访问/刷新该路径会落到静态资源解析并返回 500。
+            "/platform-admin/center", "/platform-admin/center/",
             "/platform-admin/password", "/platform-admin/password/",
             "/platform-admin/login", "/platform-admin/login/",
             "/forbidden", "/forbidden/",

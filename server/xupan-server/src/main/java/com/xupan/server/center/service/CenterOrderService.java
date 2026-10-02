@@ -105,6 +105,17 @@ public class CenterOrderService {
                     row.frozenAmount());
         }
 
+        // 代理已停用：这是"确认未受理"，必须在中心留下一条拒绝单。
+        // 只抛异常会让代理侧只看到 REJECTED 却在中心查不到任何记录，
+        // 事后无法解释这笔订单为什么没被受理（对账时表现为"本地有、中心无"）。
+        if (!"ACTIVE".equals(agent.status())) {
+            long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
+                    issueNumber, playType, playText, odds, amount, "REJECTED", "CENTER_AGENT_DISABLED",
+                    rejectReason("CENTER_AGENT_DISABLED"), BigDecimal.ZERO, null);
+            return new Accepted(id, "REJECTED", "CENTER_AGENT_DISABLED",
+                    rejectReason("CENTER_AGENT_DISABLED"), false, BigDecimal.ZERO);
+        }
+
         String rejectCode = validate(agent, gameCode, issueNumber, playType, odds, amount);
         if (rejectCode != null) {
             long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
@@ -221,6 +232,7 @@ public class CenterOrderService {
             case "CENTER_ODDS_INVALID" -> "赔率必须大于零";
             case "CENTER_ISSUE_EXPOSURE_EXCEEDED" -> "该期敞口超过中心上限";
             case "CENTER_AVAILABLE_INSUFFICIENT" -> "中心可用额度不足";
+            case "CENTER_AGENT_DISABLED" -> "中心代理已停用";
             default -> code;
         };
     }

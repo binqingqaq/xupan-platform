@@ -906,3 +906,132 @@ export const REPORT_TYPE_OPTIONS = [
 
 /** 盘口线路 A-D（BY220 上游内部线路）。 */
 export const REPORT_ROUTE_OPTIONS = ['A', 'B', 'C', 'D'] as const
+/** 中心上游代理（额度三层是三个不同事实，见账本原则 1）。 */
+export interface CenterAgent {
+  id: number
+  agentCode: string
+  agentName: string
+  upstreamAccount: string
+  /** Token 只保存哈希，这里只有可展示前缀 */
+  tokenPrefix: string
+  status: 'ACTIVE' | 'DISABLED'
+  creditLimit: number
+  availableBalance: number
+  frozenBalance: number
+  upstreamUnsettled: number
+  createdAt: string
+  updatedAt: string
+}
+
+/** 创建中心代理的响应：token 是**唯一一次**返回的原文。 */
+export interface CenterAgentCreated {
+  agent: CenterAgent
+  token: string
+}
+
+export interface CenterAgentLedgerEntry {
+  id: number
+  bucket: 'AVAILABLE' | 'FROZEN' | 'UPSTREAM_UNSETTLED' | 'CREDIT_LIMIT'
+  entryType: string
+  direction: 'IN' | 'OUT'
+  amount: number
+  balanceBefore: number
+  balanceAfter: number
+  reason: string | null
+  referenceType: string | null
+  referenceId: string | null
+  createdAt: string
+}
+
+export interface CenterAgentLedgerPage {
+  items: CenterAgentLedgerEntry[]
+  page: number
+  pageSize: number
+  total: number
+  /** 账本与额度三层是否一致（对账标志） */
+  balanced: boolean
+}
+
+export interface CenterOrderItem {
+  id: number
+  centerAgentId: number
+  agentOrderNo: string
+  localBetId: number | null
+  gameCode: string
+  issueNumber: string
+  playType: string
+  playText: string | null
+  odds: number
+  amount: number
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'TIMEOUT' | 'SETTLED' | 'CANCELLED' | 'REFUNDED'
+  rejectCode: string | null
+  rejectReason: string | null
+  frozenAmount: number
+  settleResult: 'AGENT_WIN' | 'AGENT_LOSE' | 'VOID' | null
+  settleAmount: number | null
+  drawNumbers: string | null
+  acceptedAt: string | null
+  settledAt: string | null
+  createdAt: string
+}
+
+export interface CenterOrderPage {
+  items: CenterOrderItem[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface CenterOrderSummary {
+  status: string
+  total: number
+  amount: number
+}
+
+export interface CenterSettledOrder {
+  orderId: number
+  centerAgentId: number
+  agentOrderNo: string
+  settleResult: string
+  settleAmount: number
+  stake: number
+  label: string
+}
+
+export interface CenterSettlementResult {
+  gameCode: string
+  issueNumber: string
+  settledCount: number
+  skippedCount: number
+  agentWinTotal: number
+  agentLoseTotal: number
+  orders: CenterSettledOrder[]
+}
+
+export interface CenterReconciliationDifference {
+  type: 'MISSING_IN_CENTER' | 'MISSING_IN_LOCAL' | 'STATUS_MISMATCH' | 'AMOUNT_MISMATCH'
+  betId: number
+  localStatus: string | null
+  centerStatus: string | null
+  localAmount: number | null
+  centerAmount: number | null
+}
+
+export interface CenterReconciliation {
+  counts: {
+    localTotal: number
+    centerTotal: number
+    localUnresolved: number
+    centerUnresolved: number
+    activeCenterAgents: number
+  }
+  differenceCount: number
+  balanced: boolean
+  differences: CenterReconciliationDifference[]
+  missingInCenterCount: number
+  missingInLocalCount: number
+  statusMismatchCount: number
+  amountMismatchCount: number
+  inconsistentCenterBuckets: number
+  inconsistentAgentBuckets: number
+}

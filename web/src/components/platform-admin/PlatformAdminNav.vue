@@ -17,6 +17,7 @@ const items = [
   { label: '订单改单', to: '/platform-admin/order-corrections', permission: 'ORDER_CORRECTION_READ' },
   { label: '在线玩家', to: '/platform-admin/online-players', permission: 'ONLINE_PLAYER_READ' },
   { label: '设置', to: '/platform-admin/settings', permission: 'PLATFORM_SETTINGS_READ' },
+  { label: '中心上游', to: '/platform-admin/center', permission: 'CENTER_AGENT_MANAGE' },
   { label: '网盘设置', to: '/platform-admin/report-networks', permission: 'REPORT_NETWORK_READ' },
   { label: '游戏设置', to: '/platform-admin/games', permission: 'GAME_SETTINGS_READ' },
   { label: '修改密码', to: '/platform-admin/password', permission: 'PLATFORM_PASSWORD_MANAGE' },

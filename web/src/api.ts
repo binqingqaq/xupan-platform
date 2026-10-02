@@ -63,6 +63,13 @@ import type {
   ReportStatus,
   QuickBetPreference,
   MobileDisplayHomeResponse,
+  CenterAgent,
+  CenterAgentCreated,
+  CenterAgentLedgerPage,
+  CenterOrderPage,
+  CenterOrderSummary,
+  CenterSettlementResult,
+  CenterReconciliation,
 } from './types'
 import type { ChatWsTicketResponse } from './types/chat'
 import type {
@@ -584,6 +591,55 @@ export const api = {
     search.set('page', String(params.page || 1))
     search.set('pageSize', String(params.pageSize || 30))
     return request<UnsettledOrderPage>(`/api/admin/unsettled-orders?${search.toString()}`)
+  },
+  // ---- 中心上游（阶段 B）----
+  listCenterAgents: () => request<CenterAgent[]>('/api/admin/center/agents'),
+  createCenterAgent: (body: { agentCode: string; agentName: string; upstreamAccount: string; creditLimit: number }) =>
+    request<CenterAgentCreated>('/api/admin/center/agents', { method: 'POST', body: JSON.stringify(body) }),
+  changeCenterAgentStatus: (id: number, status: 'ACTIVE' | 'DISABLED') =>
+    request<CenterAgent>(`/api/admin/center/agents/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    }),
+  grantCenterAgent: (id: number, body: { amount: number; reason?: string; idempotencyKey: string }) =>
+    request<CenterAgent>(`/api/admin/center/agents/${id}/grants`, { method: 'POST', body: JSON.stringify(body) }),
+  setCenterAgentCreditLimit: (id: number, body: { creditLimit: number; idempotencyKey: string }) =>
+    request<CenterAgent>(`/api/admin/center/agents/${id}/credit-limit`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  centerAgentLedger: (id: number, params: { page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 20))
+    return request<CenterAgentLedgerPage>(`/api/admin/center/agents/${id}/ledger?${search.toString()}`)
+  },
+  listCenterOrders: (params: { centerAgentId?: number; status?: string; page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.centerAgentId) search.set('centerAgentId', String(params.centerAgentId))
+    if (params.status) search.set('status', params.status)
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 20))
+    return request<CenterOrderPage>(`/api/admin/center/agents/orders?${search.toString()}`)
+  },
+  centerOrderSummary: () => request<CenterOrderSummary[]>('/api/admin/center/agents/orders/summary'),
+  settleCenterIssue: (body: {
+    gameCode: string
+    issueNumber: string
+    number: number
+    fan: number
+    parity: string
+    size: string
+    drawNumbers?: string
+  }) => request<CenterSettlementResult>('/api/admin/center/agents/settlements', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  centerReconciliation: (params: { machineId?: number; limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    if (params.machineId) search.set('machineId', String(params.machineId))
+    search.set('limit', String(params.limit || 50))
+    return request<CenterReconciliation>(`/api/admin/center/agents/reconciliation?${search.toString()}`)
   },
   cancelUnsettledOrder: (id: number) =>
     request<UnsettledOrderCancellation>(`/api/admin/unsettled-orders/${id}`, { method: 'DELETE' }),

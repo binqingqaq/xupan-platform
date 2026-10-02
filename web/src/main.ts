@@ -11,6 +11,7 @@ import PlatformAdminUnsettledOrders from './views/PlatformAdminUnsettledOrders.v
 import PlatformAdminOrderCorrections from './views/PlatformAdminOrderCorrections.vue'
 import PlatformAdminOnlinePlayers from './views/PlatformAdminOnlinePlayers.vue'
 import PlatformAdminSettings from './views/PlatformAdminSettings.vue'
+import PlatformAdminCenter from './views/PlatformAdminCenter.vue'
 import PlatformAdminReportNetworks from './views/PlatformAdminReportNetworks.vue'
 import PlatformAdminGames from './views/PlatformAdminGames.vue'
 import PlatformAdminPassword from './views/PlatformAdminPassword.vue'
@@ -52,6 +53,7 @@ const router = createRouter({
     { path: '/platform-admin/order-corrections', component: PlatformAdminOrderCorrections, meta: { requiresAuth: true, requiredPermission: 'ORDER_CORRECTION_READ', title: '订单改单' } },
     { path: '/platform-admin/online-players', component: PlatformAdminOnlinePlayers, meta: { requiresAuth: true, requiredPermission: 'ONLINE_PLAYER_READ', title: '在线玩家' } },
     { path: '/platform-admin/settings', component: PlatformAdminSettings, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_SETTINGS_READ', title: '设置' } },
+    { path: '/platform-admin/center', component: PlatformAdminCenter, meta: { requiresAuth: true, requiredPermission: 'CENTER_AGENT_MANAGE', title: '中心上游' } },
     { path: '/platform-admin/report-networks', component: PlatformAdminReportNetworks, meta: { requiresAuth: true, requiredPermission: 'REPORT_NETWORK_READ', title: '网盘设置' } },
     { path: '/platform-admin/games', component: PlatformAdminGames, meta: { requiresAuth: true, requiredPermission: 'GAME_SETTINGS_READ', title: '游戏设置' } },
     { path: '/platform-admin/password', component: PlatformAdminPassword, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_PASSWORD_MANAGE', title: '修改密码' } },
