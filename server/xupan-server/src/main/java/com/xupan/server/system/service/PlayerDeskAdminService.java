@@ -186,6 +186,11 @@ public class PlayerDeskAdminService {
 
     private long machineIdOf(PlayerDeskScopeService.Scope scope, Long machineId) {
         if (scope instanceof PlayerDeskScopeService.Scope.Machine machine) {
+            // 机器账号只能操作自己那台；显式传了别人的机器按"不存在"处理，既不静默改成自己，
+            // 也不通过 403 暴露别的机器是否存在（与报网 /report 的范围语义保持一致）。
+            if (machineId != null && machineId != machine.agentId()) {
+                throw BusinessException.notFound("MACHINE_NOT_FOUND", "机器不存在或已停用");
+            }
             return machine.agentId();
         }
         if (machineId == null) {

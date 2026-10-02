@@ -106,7 +106,7 @@ class MachineConfigConsoleTest {
 
         mockMvc.perform(put("/api/admin/player-desk/machine-config")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(configBody(machineBId, "95", "18", "5", "1", "DOUBLE", 100, 10, "2000")))
+                        .content(configBody(null, "95", "18", "5", "1", "DOUBLE", 100, 10, "2000")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.machineId").value((int) machineAId))
                 .andExpect(jsonPath("$.oddsRate").value(95.0000))
@@ -115,7 +115,12 @@ class MachineConfigConsoleTest {
                 .andExpect(jsonPath("$.closeSeconds").value(100))
                 .andExpect(jsonPath("$.cancelSeconds").value(10));
 
-        // 传了别的机器 id 也只改自己那台
+        // 显式传别人的 machineId 被按“不存在”拒绝，绝不落到别的机器
+        mockMvc.perform(put("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(configBody(machineBId, "11", "11", "1", "1", "SINGLE", 5, 5, "10")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("MACHINE_NOT_FOUND"));
         assertThat(oddsRateOf(machineAId)).isEqualByComparingTo("95.0000");
         assertThat(oddsRateOf(machineBId)).isEqualByComparingTo("0.0000");
 
@@ -186,9 +191,14 @@ class MachineConfigConsoleTest {
     @Test
     void machineAccountCannotReadAnotherMachineConfig() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
-        // 机器账号传别人的 machineId 时固定读自己，不会泄露别的机器
+        // 机器账号显式传别人的 machineId 时按“不存在”处理：既不静默读成自己，也不暴露别的机器
         mockMvc.perform(get("/api/admin/player-desk/machine-config").param("machineId", String.valueOf(machineBId))
                         .header("Authorization", bearer(token)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("MACHINE_NOT_FOUND"));
+
+        // 不传 machineId 时仍固定读自己
+        mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.machineId").value((int) machineAId))
                 .andExpect(jsonPath("$.machineCode").value(MACHINE_A_CODE));
