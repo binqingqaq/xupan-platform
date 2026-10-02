@@ -236,6 +236,10 @@ public class ReportService {
             return Optional.of("WITHDRAWN");
         }
         int updated = repository.updateReportStatus(betId, bet.agentId(), newStatus, SUBMIT_FROM_STATUSES);
+        if (updated == 1 && "REPORTED".equals(newStatus)) {
+            // 押注为本地模拟值：累计"已成功上报"的投注额（BY220 本地登录时 betting 也为 0，真值来自真实上游）
+            repository.addReportedStake(bet.agentId(), bet.stake());
+        }
         return updated == 1 ? Optional.of(newStatus) : Optional.empty();
     }
 

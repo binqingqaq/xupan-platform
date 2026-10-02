@@ -256,6 +256,23 @@ public class ReportConfigRepository {
                 args.toArray());
     }
 
+    /**
+     * 累加机器的"押注"本地模拟值（BY220 {@code x_rbfly.betting}）。
+     *
+     * <p>BY220 本地环境登录时把 {@code betting} 写 0（{@code rbt/Index.php:803}），真值只由真实上游返回。
+     * 本项目不接真实上游，因此这里用"已成功上报的投注额累计"作为本地模拟值：它是本项目可算的真实事实，
+     * 不会被误当成上游数据。界面已标注"本地模拟"。</p>
+     */
+    public void addReportedStake(long agentId, java.math.BigDecimal stake) {
+        if (stake == null || stake.signum() <= 0) {
+            return;
+        }
+        jdbc.update("""
+                UPDATE agent SET report_stake = report_stake + ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND deleted_at IS NULL
+                """, stake, agentId);
+    }
+
     private static BetRow betRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("sys_user_id"), rs.getLong("agent_id"),
                 rs.getString("issue_number"), rs.getString("play_type"), rs.getString("parameters_text"),

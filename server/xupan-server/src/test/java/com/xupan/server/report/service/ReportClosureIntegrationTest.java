@@ -98,6 +98,8 @@ class ReportClosureIntegrationTest {
         ReportService.DispatchResult first = reportService.dispatchPending(true, 50);
         assertThat(first.scanned()).isGreaterThanOrEqualTo(1);
         assertThat(reportStatusOf(acceptedBet)).isEqualTo("REPORTED");
+        // 押注为本地模拟值（BY220 本地登录时 betting 也为 0）：累计已成功上报的投注额
+        assertThat(reportStakeOf()).isEqualByComparingTo("10.00");
 
         // ④ 盘口切到 D（本地模拟超时分支）→ 新订单上报后为 TIMEOUT，且**不退款、不删单**
         long timeoutBet = insertBet("CLOSURE-TIMEOUT-1", "UNREPORTED");
@@ -206,6 +208,11 @@ class ReportClosureIntegrationTest {
     private boolean betExists(long betId) {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM game_bet WHERE id = ?", Long.class, betId);
         return count != null && count > 0;
+    }
+
+    /** 机器报网的"押注"本地模拟值（累计已成功上报的投注额）。 */
+    private BigDecimal reportStakeOf() {
+        return jdbc.queryForObject("SELECT report_stake FROM agent WHERE id = ?", BigDecimal.class, machineId);
     }
 
     private BigDecimal balanceOf() {

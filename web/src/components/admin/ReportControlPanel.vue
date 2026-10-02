@@ -300,8 +300,10 @@ defineExpose({ load })
       <button type="button" class="report-control-button report-control-login" :disabled="loginButtonDisabled" @click="login">
         {{ loggingIn ? '登录中' : '登录' }}
       </button>
-      <span class="report-control-metric">押注: <b>{{ config?.reportStake ?? 0 }}</b></span>
-      <span class="report-control-metric">网盘余额: <b>{{ config?.reportBalance ?? 0 }}</b></span>
+      <!-- BY220 本地环境登录时同样把 money/betting 写 0（rbt/Index.php:801-803），真值只由真实上游返回；
+           本项目不接真实上游，因此这两项固定为本地模拟值 0，界面如实标注，不伪装成上游实时数据。 -->
+      <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">押注: <b>{{ config?.reportStake ?? 0 }}</b></span>
+      <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">网盘余额: <b>{{ config?.reportBalance ?? 0 }}</b>（本地模拟）</span>
       <span class="report-control-metric">账号: <b>{{ config?.reportUsername || '未设置' }}</b></span>
       <span class="report-control-metric">密码: <b>{{ config?.hasPassword ? '已设置' : '未设置' }}</b></span>
     </div>
