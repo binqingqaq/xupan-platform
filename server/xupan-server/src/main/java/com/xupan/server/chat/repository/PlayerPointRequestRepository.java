@@ -1,5 +1,6 @@
 package com.xupan.server.chat.repository;
 
+import com.xupan.server.system.service.PlayerDeskScopeService.Scope;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -43,10 +44,12 @@ public class PlayerPointRequestRepository {
                 .orElseThrow(() -> new IllegalStateException("创建积分申请后未找到申请记录"));
     }
 
-    public List<Request> findPending(int limit) {
+    public List<Request> findPending(int limit, Scope scope) {
         if (limit < 1 || limit > 200) {
             throw new IllegalArgumentException("积分申请查询数量必须在 1 到 200 之间");
         }
+        List<Object> args = new java.util.ArrayList<>(scope.agentIdParameters());
+        args.add(limit);
         return jdbcTemplate.query("""
                 SELECT r.id, r.user_id, r.request_type, r.amount, r.status, r.client_message_id,
                        r.source_message_id, r.requested_at, u.display_name,
@@ -55,15 +58,19 @@ public class PlayerPointRequestRepository {
                   JOIN sys_user u ON u.id = r.user_id
                   LEFT JOIN demo_user_account a ON a.sys_user_id = u.id
                  WHERE r.status = 'PENDING'
+                """ + scope.agentIdCondition() + """
                  ORDER BY r.requested_at, r.id
                  LIMIT ?
-                """, this::mapRequest, limit);
+                """, this::mapRequest, args.toArray());
     }
 
-    public Optional<Request> findByIdForUpdate(long requestId) {
+    public Optional<Request> findByIdForUpdate(long requestId, Scope scope) {
         if (requestId <= 0) {
             throw new IllegalArgumentException("积分申请编号无效");
         }
+        List<Object> args = new java.util.ArrayList<>();
+        args.add(requestId);
+        args.addAll(scope.agentIdParameters());
         return jdbcTemplate.query("""
                 SELECT r.id, r.user_id, r.request_type, r.amount, r.status, r.client_message_id,
                        r.source_message_id, r.requested_at, u.display_name,
@@ -72,8 +79,9 @@ public class PlayerPointRequestRepository {
                   JOIN sys_user u ON u.id = r.user_id
                   LEFT JOIN demo_user_account a ON a.sys_user_id = u.id
                  WHERE r.id = ?
+                """ + scope.agentIdCondition() + """
                   FOR UPDATE
-                """, this::mapRequest, requestId).stream().findFirst();
+                """, this::mapRequest, args.toArray()).stream().findFirst();
     }
 
     public boolean markReviewed(long requestId, String status, long reviewerUserId,

@@ -13,8 +13,16 @@ const userManageRoute = {
   title: 'AI模型房间管理',
 } as const
 
+// `/console` 是 BY220 `robot.php` 的统一入口：平台管理员（USER_MANAGE）
+// 与机器账号（AGENT_CONSOLE_READ）都能进入，其余子路由仍各自保留原权限。
+const consoleRoute = {
+  requiresAuth: true,
+  requiredAnyPermission: ['USER_MANAGE', 'AGENT_CONSOLE_READ'],
+  title: 'AI模型房间管理',
+} as const
+
 export const adminRoutes: RouteRecordRaw[] = [
-  { path: '/console', component: UnifiedAdminPanel, meta: userManageRoute },
+  { path: '/console', component: UnifiedAdminPanel, meta: consoleRoute },
   { path: '/console/stash', component: AdminStashView, meta: userManageRoute },
   {
     path: '/console/agents',

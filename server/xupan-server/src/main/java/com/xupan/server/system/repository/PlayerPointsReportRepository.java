@@ -1,11 +1,13 @@
 package com.xupan.server.system.repository;
 
+import com.xupan.server.system.service.PlayerDeskScopeService.Scope;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 @Repository
@@ -17,7 +19,10 @@ public class PlayerPointsReportRepository {
         this.jdbc = jdbc;
     }
 
-    public List<PlayerAccount> findPlayers(String playerKind, Instant fromInclusive, Instant toExclusive) {
+    public List<PlayerAccount> findPlayers(String playerKind, Instant fromInclusive, Instant toExclusive,
+                                           Scope scope) {
+        List<Object> args = new ArrayList<>(List.of(timestamp(fromInclusive), timestamp(toExclusive), playerKind));
+        args.addAll(scope.agentIdParameters());
         return jdbc.query("""
                 SELECT u.id AS user_id, a.id AS account_id, a.member_code, a.user_code,
                        u.display_name, a.player_kind,
@@ -41,16 +46,19 @@ public class PlayerPointsReportRepository {
                    AND a.player_kind = ?
                    AND u.status <> 'DELETED'
                    AND a.status <> 'DELETED'
-                 ORDER BY a.id
-                """, (rs, rowNum) -> new PlayerAccount(
+                """ + scope.agentIdCondition() + " ORDER BY a.id",
+                (rs, rowNum) -> new PlayerAccount(
                 rs.getLong("user_id"), rs.getLong("account_id"), rs.getString("member_code"),
                 rs.getString("user_code"), rs.getString("display_name"), rs.getString("player_kind"),
                 money(rs.getBigDecimal("opening_balance")), money(rs.getBigDecimal("closing_balance"))),
-                timestamp(fromInclusive), timestamp(toExclusive), playerKind);
+                args.toArray());
     }
 
     public List<BetEvent> findBetEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
-                                        int perPlayerLimit) {
+                                        int perPlayerLimit, Scope scope) {
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive),
+                perPlayerLimit));
+        args.addAll(scope.agentIdParameters());
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.bet_code, x.issue_number, x.ball_number, x.play_type,
                        x.parameters_text, x.stake, x.odds_snapshot, x.settlement_status,
@@ -71,6 +79,7 @@ public class PlayerPointsReportRepository {
                            AND u.status <> 'DELETED'
                            AND a.status <> 'DELETED'
                            AND b.created_at >= ? AND b.created_at < ?
+                """ + scope.agentIdCondition() + """
                   ) x
                  WHERE x.row_no <= ?
                  ORDER BY x.account_id, x.created_at DESC, x.id DESC
@@ -81,11 +90,14 @@ public class PlayerPointsReportRepository {
                 money(rs.getBigDecimal("odds_snapshot")), rs.getString("settlement_status"),
                 money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at"))),
-                playerKind, timestamp(fromInclusive), timestamp(toExclusive), perPlayerLimit);
+                args.toArray());
     }
 
     public List<LedgerEvent> findLedgerEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
-                                               int perPlayerLimit) {
+                                               int perPlayerLimit, Scope scope) {
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive),
+                perPlayerLimit));
+        args.addAll(scope.agentIdParameters());
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.operation_type, x.amount, x.balance_before,
                        x.balance_after, x.operator_user_id, x.operator_name, x.idempotency_key,
@@ -106,6 +118,7 @@ public class PlayerPointsReportRepository {
                            AND u.status <> 'DELETED'
                            AND a.status <> 'DELETED'
                            AND l.created_at >= ? AND l.created_at < ?
+                """ + scope.agentIdCondition() + """
                   ) x
                  WHERE x.row_no <= ?
                  ORDER BY x.account_id, x.created_at DESC, x.id DESC
@@ -116,11 +129,14 @@ public class PlayerPointsReportRepository {
                 rs.getString("operator_name"), rs.getString("idempotency_key"),
                 rs.getObject("related_bet_id", Long.class), rs.getString("issue_number"),
                 rs.getString("reason"), instant(rs.getTimestamp("created_at"))),
-                playerKind, timestamp(fromInclusive), timestamp(toExclusive), perPlayerLimit);
+                args.toArray());
     }
 
     public List<ActionEvent> findActionEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
-                                               int perPlayerLimit) {
+                                               int perPlayerLimit, Scope scope) {
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive),
+                perPlayerLimit));
+        args.addAll(scope.agentIdParameters());
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.issue_number, x.action_no, x.action_type,
                        x.source_text, x.status, x.attempts, x.error_code, x.error_message,
@@ -140,6 +156,7 @@ public class PlayerPointsReportRepository {
                            AND s.status <> 'DELETED'
                            AND u.status <> 'DELETED'
                            AND a.created_at >= ? AND a.created_at < ?
+                """ + scope.agentIdCondition("u") + """
                   ) x
                  WHERE x.row_no <= ?
                  ORDER BY x.account_id, x.created_at DESC, x.id DESC
@@ -150,7 +167,7 @@ public class PlayerPointsReportRepository {
                 rs.getString("error_message"), rs.getObject("message_id", Long.class),
                 rs.getObject("bet_id", Long.class), instant(rs.getTimestamp("created_at")),
                 instant(rs.getTimestamp("updated_at"))),
-                playerKind, timestamp(fromInclusive), timestamp(toExclusive), perPlayerLimit);
+                args.toArray());
     }
 
     private static Timestamp timestamp(Instant value) {

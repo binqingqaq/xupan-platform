@@ -15,7 +15,11 @@ describe('unified admin routes', () => {
     const players = route('/console/players')
 
     expect(consoleRoute.component).toBeDefined()
-    expect(consoleRoute.meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE', title: 'AI模型房间管理' })
+    expect(consoleRoute.meta).toMatchObject({
+      requiresAuth: true,
+      requiredAnyPermission: ['USER_MANAGE', 'AGENT_CONSOLE_READ'],
+      title: 'AI模型房间管理',
+    })
     expect(players.component).toBeDefined()
     expect(players.meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE' })
     expect(route('/console/stash').meta).toMatchObject({ requiresAuth: true, requiredPermission: 'USER_MANAGE' })
@@ -60,7 +64,11 @@ describe('unified admin routes', () => {
     expect(reportSource).toContain('失败自动退单')
     expect(reportSource).toContain('自动上报网盘')
     expect(reportSource).toContain('刷新')
-    expect(welcomeSource).toContain('过期时间：2026/12/31 00:00:00')
+    expect(welcomeSource).toContain('机器编码：')
+    expect(welcomeSource).toContain('全部机器')
+    expect(welcomeSource).not.toContain('过期时间：2026/12/31 00:00:00')
+    expect(welcomeSource).not.toContain('vip168')
+    expect(welcomeSource).not.toContain('4987892')
     expect(welcomeSource).toContain('当前状态:')
     expect(welcomeSource).toContain('特码返水:')
     expect(footerSource).toContain('线路域名:')

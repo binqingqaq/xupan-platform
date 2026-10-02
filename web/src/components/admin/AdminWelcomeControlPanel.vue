@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../../api'
+import { botQuotaText, machineOptionLabel, machineStatusLabel } from '../../consoleScope'
 import {
   LIMIT_FIELDS,
   createDisplayDraft,
@@ -10,9 +11,92 @@ import {
   type BettingDisplayDraft,
   type BettingDisplayField,
 } from '../../bettingConfig'
-import type { BettingConfigView, BettingLimits } from '../../types'
+import { formatPoints } from '../../playerDesk'
+import type { BettingConfigView, BettingLimits, PlayerDeskScope } from '../../types'
+import type { Machine } from '../../types/platformAdmin'
 
-const props = withDefaults(defineProps<{ part?: 'all' | 'welcome' | 'game' }>(), { part: 'all' })
+const props = defineProps<{
+  part?: 'all' | 'welcome' | 'game'
+  /** 由 `/console` 传入的身份范围；未传入时本组件自行加载（独立使用时也能工作）。 */
+  scope?: PlayerDeskScope | null
+  machines?: Machine[] | null
+  machineId?: number | null
+  operatorName?: string
+  scopeError?: string
+  machineError?: string
+}>()
+const emit = defineEmits<{ scopeChanged: [scope: PlayerDeskScope]; machineChanged: [machineId: number | null] }>()
+
+const part = computed<'all' | 'welcome' | 'game'>(() => props.part ?? 'all')
+
+const internalScope = ref<PlayerDeskScope | null>(null)
+const internalMachines = ref<Machine[]>([])
+const internalMachineId = ref<number | null>(null)
+const internalScopeError = ref('')
+const internalMachineError = ref('')
+const scopeLoading = ref(false)
+
+const scope = computed(() => props.scope ?? internalScope.value)
+const machineOptions = computed(() => props.machines ?? internalMachines.value)
+const machineId = computed<number | null>(() => props.machineId === undefined ? internalMachineId.value : (props.machineId ?? null))
+const scopeErrorText = computed(() => props.scopeError || internalScopeError.value)
+const machineErrorText = computed(() => props.machineError || internalMachineError.value)
+// 机器账号固定在自己机器上下文，只有平台管理员提供机器选择器。
+const canSwitchMachine = computed(() => scope.value?.mode === 'GLOBAL')
+const operatorLabel = computed(() => props.operatorName?.trim() || '当前账号')
+const machineProfile = computed(() => {
+  const current = scope.value
+  if (!current || current.mode !== 'MACHINE') return null
+  return {
+    name: current.machineName || current.machineCode || '机器账号',
+    code: current.machineCode || '未设置',
+    group: current.groupName || '平台直属',
+    status: machineStatusLabel(current.machineStatus),
+    botQuota: botQuotaText(current),
+    playerCount: current.playerCount ?? 0,
+  }
+})
+const machineSwitchHint = computed(() => {
+  if (!canSwitchMachine.value) return ''
+  const machine = machineOptions.value.find(item => item.id === machineId.value)
+  return machine ? `当前按机器创建（${machineOptionLabel(machine)}）` : '未选择机器：创建按平台默认归属'
+})
+const pointsText = computed(() => {
+  const value = scope.value?.score
+  return value === null || value === undefined ? '--' : formatPoints(value)
+})
+
+function changeMachine(event: Event) {
+  const raw = (event.target as HTMLSelectElement).value
+  const next = raw ? Number(raw) : null
+  internalMachineId.value = next
+  emit('machineChanged', next)
+}
+
+async function loadOwnMachines() {
+  internalMachineError.value = ''
+  try {
+    internalMachines.value = await api.listMachines()
+  } catch (cause) {
+    internalMachines.value = []
+    internalMachineError.value = apiErrorMessage(cause, '机器列表加载失败，创建玩家/托前请确认机器归属')
+  }
+}
+
+async function loadOwnScope() {
+  scopeLoading.value = true
+  internalScopeError.value = ''
+  try {
+    const next = await api.getPlayerDeskScope()
+    internalScope.value = next
+    emit('scopeChanged', next)
+    if (next.mode !== 'MACHINE' && props.machines === undefined) await loadOwnMachines()
+  } catch (cause) {
+    internalScopeError.value = apiErrorMessage(cause, '当前身份范围加载失败，请刷新重试')
+  } finally {
+    scopeLoading.value = false
+  }
+}
 
 const DISPLAY_FIELDS: BettingDisplayField[] = ['displayOdds', 'specialOdds', 'specialRebate']
 
@@ -128,23 +212,52 @@ async function saveLimits() {
 }
 
 onMounted(() => {
-  if (props.part !== 'welcome') void loadConfig()
+  if (part.value !== 'welcome') void loadConfig()
+  if (part.value !== 'game' && props.scope === undefined) void loadOwnScope()
 })
 </script>
 
 <template>
-  <section v-if="props.part !== 'game'" class="admin-welcome-bar" aria-label="欢迎与账户状态静态区域">
+  <section v-if="part !== 'game'" class="admin-welcome-bar" aria-label="欢迎与账户状态区域">
     <span class="welcome-label">欢迎您:</span>
-    <span class="welcome-user">vip168，</span>
-    <span class="welcome-meta">托：10，</span>
-    <span class="welcome-meta">过期时间：2026/12/31 00:00:00</span>
+    <span v-if="scopeLoading && !scope" class="welcome-meta">身份范围加载中...</span>
+    <template v-if="machineProfile">
+      <span class="welcome-user">{{ machineProfile.name }}，</span>
+      <span class="welcome-meta">机器编码：{{ machineProfile.code }}，</span>
+      <span class="welcome-meta">代理积分：{{ formatPoints(scope?.score) }}，</span>
+      <span class="welcome-meta">普：{{ machineProfile.playerCount }}，</span>
+      <span class="welcome-meta">托：{{ machineProfile.botQuota }}，</span>
+      <span class="welcome-meta">所属子账号：{{ machineProfile.group }}，</span>
+      <span class="welcome-meta">状态：{{ machineProfile.status }}</span>
+    </template>
+    <template v-else-if="scope">
+      <span class="welcome-user">{{ scope.mode === 'GROUP' ? (scope.groupName || operatorLabel) : operatorLabel }}，</span>
+      <span class="welcome-meta">身份：{{ scope.mode === 'GROUP' ? '子账号' : '平台管理员' }}，</span>
+      <span class="welcome-meta">范围：{{ scope.mode === 'GROUP' ? `分组 ${scope.groupName || '未设置'}` : '全部机器与玩家' }}</span>
+    </template>
+    <span v-else-if="!scopeLoading" class="welcome-meta">身份范围暂不可用</span>
+    <label v-if="canSwitchMachine" class="welcome-machine">
+      <span class="welcome-meta">机器：</span>
+      <select
+        class="welcome-machine-select"
+        aria-label="机器选择"
+        :value="machineId === null ? '' : String(machineId)"
+        @change="changeMachine"
+      >
+        <option value="">全部机器</option>
+        <option v-for="machine in machineOptions" :key="machine.id" :value="String(machine.id)">{{ machineOptionLabel(machine) }}</option>
+      </select>
+    </label>
+    <span v-if="canSwitchMachine" class="welcome-hint">{{ machineSwitchHint }}</span>
+    <span v-if="scopeErrorText" class="welcome-error" role="alert">{{ scopeErrorText }}</span>
+    <span v-else-if="machineErrorText" class="welcome-error" role="alert">{{ machineErrorText }}</span>
     <span class="welcome-action">退出登录</span>
     <span class="welcome-spacer"></span>
-    <span class="welcome-points">剩余积分:<b>4987892</b></span>
+    <span class="welcome-points">剩余积分:<b>{{ pointsText }}</b></span>
     <span class="welcome-password">修改密码</span>
   </section>
 
-  <section v-if="props.part !== 'welcome'" class="admin-game-control-bar" aria-label="状态与赔率配置区域">
+  <section v-if="part !== 'welcome'" class="admin-game-control-bar" aria-label="状态与赔率配置区域">
     <span class="game-control-label">当前状态:</span>
     <span class="game-control-value game-control-status">开盘</span>
     <label class="game-control-label" for="admin-display-odds">赔率:</label>
@@ -200,7 +313,7 @@ onMounted(() => {
   </section>
 
   <Teleport to="body">
-    <div v-if="props.part !== 'welcome' && limitOpen && limitDraft" class="limit-config-layer" role="presentation" @click.self="closeLimits">
+    <div v-if="part !== 'welcome' && limitOpen && limitDraft" class="limit-config-layer" role="presentation" @click.self="closeLimits">
       <section class="limit-config-dialog" role="dialog" aria-modal="true" aria-labelledby="limit-config-title">
         <header>
           <h3 id="limit-config-title">限额配置</h3>
@@ -304,6 +417,38 @@ onMounted(() => {
   margin-left: 24px;
   color: var(--ops-red, #d94747);
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.welcome-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 12px;
+  white-space: nowrap;
+}
+
+.welcome-machine-select {
+  height: 22px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: #fff;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 4px;
+  font: inherit;
+  font-size: 11px;
+}
+
+.welcome-hint {
+  margin-left: 8px;
+  color: var(--ops-muted, #6d8093);
+  white-space: nowrap;
+}
+
+.welcome-error {
+  margin-left: 10px;
+  color: var(--ops-red, #d94747);
+  font-weight: 700;
   white-space: nowrap;
 }
 

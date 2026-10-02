@@ -13,6 +13,7 @@ import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.media.AvatarPresetService;
 import com.xupan.server.system.service.PlayerDeskAdminService;
+import com.xupan.server.system.service.PlayerDeskScopeService;
 import com.xupan.server.system.service.PlayerPointOperationService;
 import com.xupan.server.system.service.PlayerPointRequestService;
 import com.xupan.server.system.service.PlayerPointsReportService;
@@ -36,14 +37,23 @@ public class PlayerDeskAdminController {
     private final PlayerPointsReportService pointsReportService;
     private final PlayerPointRequestService pointRequestService;
     private final PlayerPointOperationService pointOperationService;
+    private final PlayerDeskScopeService scopeService;
 
     public PlayerDeskAdminController(PlayerDeskAdminService service, PlayerPointsReportService pointsReportService,
                                      PlayerPointRequestService pointRequestService,
-                                     PlayerPointOperationService pointOperationService) {
+                                     PlayerPointOperationService pointOperationService,
+                                     PlayerDeskScopeService scopeService) {
         this.service = service;
         this.pointsReportService = pointsReportService;
         this.pointRequestService = pointRequestService;
         this.pointOperationService = pointOperationService;
+        this.scopeService = scopeService;
+    }
+
+    /** 当前登录身份的运营后台范围与档案，供前端渲染头部。 */
+    @GetMapping("/scope")
+    public ScopeResponse scope(Authentication auth) {
+        return ScopeResponse.from(scopeService.requireAccess(user(auth)));
     }
 
     @GetMapping("/summary")
@@ -106,13 +116,13 @@ public class PlayerDeskAdminController {
 
     @PostMapping("/players/normal")
     public Detail createNormal(Authentication auth, @Valid @RequestBody CreateNormal request) {
-        long id = service.createNormal(request.displayName(), user(auth));
+        long id = service.createNormal(request.displayName(), request.machineId(), user(auth));
         return Detail.from(service.detail(id, user(auth)));
     }
 
     @PostMapping("/players/bot")
     public Detail createBot(Authentication auth, @Valid @RequestBody CreateBot request) {
-        long id = service.createBot(request.userCode(), request.displayName(), user(auth));
+        long id = service.createBot(request.userCode(), request.displayName(), request.machineId(), user(auth));
         return Detail.from(service.detail(id, user(auth)));
     }
 
@@ -189,6 +199,24 @@ public class PlayerDeskAdminController {
 
     public record Summary(BigDecimal totalPoints, long normalCount, long botCount) {
         static Summary from(PlayerDeskRepository.Summary x) { return new Summary(x.totalPoints(), x.normalCount(), x.botCount()); }
+    }
+    /** 当前身份的范围与档案；GLOBAL 与 GROUP 模式下机器字段为 null。 */
+    public record ScopeResponse(String mode, Long machineId, String machineCode, String machineName,
+                                String machineStatus, BigDecimal score, Long botLimit, Long playerCount,
+                                Long botCount, Long groupId, String groupName) {
+        static ScopeResponse from(PlayerDeskScopeService.Scope scope) {
+            if (scope instanceof PlayerDeskScopeService.Scope.Machine machine) {
+                return new ScopeResponse(machine.mode(), machine.agentId(), machine.agentCode(),
+                        machine.agentName(), machine.status(), machine.score(), machine.botLimit(),
+                        machine.playerCount(), machine.botCount(), machine.groupId(), machine.groupName());
+            }
+            if (scope instanceof PlayerDeskScopeService.Scope.Group group) {
+                return new ScopeResponse(group.mode(), null, null, null, null, null, null, null, null,
+                        group.groupId(), group.groupName());
+            }
+            return new ScopeResponse(PlayerDeskScopeService.Scope.Global.INSTANCE.mode(),
+                    null, null, null, null, null, null, null, null, null, null);
+        }
     }
     public record Page(List<Item> items, int page, int pageSize, long total) {
         static Page from(PlayerDeskAdminService.Page x) { return new Page(x.items().stream().map(Item::from).toList(), x.page(), x.pageSize(), x.total()); }
@@ -300,8 +328,8 @@ public class PlayerDeskAdminController {
                     x.odds(), x.settlementStatus(), x.netProfit(), x.explanation());
         }
     }
-    public record CreateNormal(@NotBlank String displayName) {}
-    public record CreateBot(String userCode, @NotBlank String displayName) {}
+    public record CreateNormal(@NotBlank String displayName, Long machineId) {}
+    public record CreateBot(String userCode, @NotBlank String displayName, Long machineId) {}
     public record StatusRequest(@NotBlank String status) {}
     public record AvatarUpdate(@NotBlank String avatarKey) {}
     public record BalanceRequest(@NotNull BigDecimal amount, @NotBlank String reason, @NotBlank String idempotencyKey) {}

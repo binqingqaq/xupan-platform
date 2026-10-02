@@ -116,7 +116,7 @@ public class TestPlayerAdminService {
 
     @Transactional
     public TestPlayerAdminView changeStatus(String userCode, String status, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        requireConsolePlayerWrite(operatorUserId);
         DemoAccountRepository.TestPlayerRecord player = requirePlayer(userCode);
         String normalizedStatus = normalizeStatus(status);
         if (!List.of("ACTIVE", "DISABLED").contains(normalizedStatus)) {
@@ -203,6 +203,18 @@ public class TestPlayerAdminService {
     private void requirePermission(long operatorUserId, String permission, String code, String message) {
         if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, permission)) {
             throw BusinessException.forbidden(code, message);
+        }
+    }
+
+    /**
+     * 运营后台（{@code /console}，BY220 {@code robot.php}）对托的写操作授权：管理员用 {@code USER_MANAGE}，
+     * 机器账号与子账号用 {@code AGENT_PLAYER_MANAGE}；目标托是否在可见范围内由调用方按范围校验。
+     */
+    private void requireConsolePlayerWrite(long operatorUserId) {
+        if (operatorUserId <= 0
+                || (!permissionService.hasPermission(operatorUserId, "USER_MANAGE")
+                && !permissionService.hasPermission(operatorUserId, "AGENT_PLAYER_MANAGE"))) {
+            throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有玩家管理权限");
         }
     }
 

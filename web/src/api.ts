@@ -37,6 +37,7 @@ import type {
   PlayerDeskBehavior,
   PlayerDeskDetail,
   PlayerDeskPage,
+  PlayerDeskScope,
   PlayerDeskSummary,
   AvatarPresetOption,
   PlayerDeskItem,
@@ -401,6 +402,16 @@ async function request<T>(url: string, options: RequestInit = {}, retryOnUnautho
   return body as T
 }
 
+/**
+ * 创建玩家/托的请求体：`machineId` 是可选机器归属，
+ * 未选择机器时不发送该字段（机器账号由后端强制成自己）。
+ */
+function playerCreateBody<T extends { machineId?: number | null }>(payload: T): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...payload }
+  if (body.machineId === null || body.machineId === undefined) delete body.machineId
+  return body
+}
+
 function isPresetAvatarKey(avatarKey: string) {
   return /^preset-\d{2}\.(jpg|png)$/i.test(avatarKey)
 }
@@ -703,6 +714,7 @@ export const api = {
     request<void>(`/api/admin/users/${userId}/password`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUserRoles: (userId: number, payload: UpdateAdminUserRolesRequest) =>
     request<AdminUserDetail>(`/api/admin/users/${userId}/roles`, { method: 'PUT', body: JSON.stringify(payload) }),
+  getPlayerDeskScope: () => request<PlayerDeskScope>('/api/admin/player-desk/scope'),
   getPlayerDeskSummary: (params: { kind?: string; status?: string; keyword?: string; includeDeleted?: boolean } = {}) => {
     const query = new URLSearchParams()
     query.set('kind', params.kind ?? '')
@@ -740,9 +752,9 @@ export const api = {
   restorePlayerAccessLink: (userId: number, linkId: number) => request<void>(`/api/admin/player-desk/players/${userId}/access-links/${linkId}/restore`, { method: 'POST' }),
   updatePlayerLinkExpiration: (userId: number, days: number) => request<{ linkId: number; expiresAt: string | null; days: number }>(`/api/admin/player-desk/players/${userId}/access-links/expiration`, { method: 'PATCH', body: JSON.stringify({ days }) }),
   createNormalPlayer: (payload: CreateNormalPlayerRequest) =>
-    request<PlayerDeskDetail>('/api/admin/player-desk/players/normal', { method: 'POST', body: JSON.stringify(payload) }),
+    request<PlayerDeskDetail>('/api/admin/player-desk/players/normal', { method: 'POST', body: JSON.stringify(playerCreateBody(payload)) }),
   createBotPlayer: (payload: CreateBotPlayerRequest) =>
-    request<PlayerDeskDetail>('/api/admin/player-desk/players/bot', { method: 'POST', body: JSON.stringify(payload) }),
+    request<PlayerDeskDetail>('/api/admin/player-desk/players/bot', { method: 'POST', body: JSON.stringify(playerCreateBody(payload)) }),
   changePlayerDeskStatus: (userId: number, status: PlayerDeskStatus) =>
     request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/status`, {
       method: 'PATCH',

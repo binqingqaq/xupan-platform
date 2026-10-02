@@ -2,7 +2,9 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
-import type { CurrentUserView, GameView } from '../types'
+import { scopeIdentityText } from '../consoleScope'
+import type { CurrentUserView, GameView, PlayerDeskScope } from '../types'
+import type { Machine } from '../types/platformAdmin'
 import PlayerWorkbenchModule from '../components/admin/PlayerWorkbenchModule.vue'
 import BetBoardPanel from '../components/admin/BetBoardPanel.vue'
 import AdminWelcomeControlPanel from '../components/admin/AdminWelcomeControlPanel.vue'
@@ -19,6 +21,15 @@ const loading = ref(true)
 const error = ref('')
 const pointsRefreshToken = ref(0)
 const bottomControlRaised = ref(false)
+const scope = ref<PlayerDeskScope | null>(null)
+const scopeError = ref('')
+const machineError = ref('')
+const machines = ref<Machine[]>([])
+const selectedMachineId = ref<number | null>(null)
+
+const operatorName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '当前账号')
+const isPlatformAdmin = computed(() => (currentUser.value?.permissions ?? []).includes('USER_MANAGE'))
+const identityText = computed(() => scopeIdentityText(scope.value, operatorName.value))
 
 function toggleBottomControlPosition() {
   bottomControlRaised.value = !bottomControlRaised.value
@@ -63,6 +74,37 @@ async function loadState() {
   }
 }
 
+async function loadMachines() {
+  machineError.value = ''
+  try {
+    machines.value = await api.listMachines()
+  } catch (cause) {
+    machines.value = []
+    machineError.value = apiErrorMessage(cause, '机器列表加载失败，创建玩家/托前请确认机器归属')
+  }
+}
+
+// 身份范围（机器账号 / 子账号分组 / 平台管理员全局）由后端 scope 接口给出，
+// 机器账号拿不到全局列表也不会白屏，这里只按现有 apiErrorMessage 风格提示。
+async function loadScope() {
+  scopeError.value = ''
+  try {
+    const next = await api.getPlayerDeskScope()
+    scope.value = next
+    selectedMachineId.value = null
+    if (next.mode === 'GLOBAL') await loadMachines()
+    else machines.value = []
+  } catch (cause) {
+    scope.value = null
+    scopeError.value = apiErrorMessage(cause, '当前身份范围加载失败，请刷新重试')
+  }
+}
+
+function reload() {
+  void loadState()
+  void loadScope()
+}
+
 async function logout() {
   try {
     await api.logout()
@@ -75,7 +117,7 @@ function refreshRecentPoints() {
   pointsRefreshToken.value++
 }
 
-onMounted(() => { void loadState() })
+onMounted(() => { void loadState(); void loadScope() })
 </script>
 
 <template>
@@ -86,14 +128,23 @@ onMounted(() => { void loadState() })
         <div><strong>AI模型房间管理</strong></div>
       </div>
       <div class="unified-topbar-status">
-        <span class="unified-admin-identity">管理员：{{ currentUser?.displayName || currentUser?.username || '当前账号' }}</span>
+        <span class="unified-admin-identity">{{ identityText }}</span>
         <span class="system-status"><i :class="{ danger: Boolean(error) }" aria-hidden="true"></i>{{ systemStatus }}</span>
         <button type="button" @click="logout">退出登录</button>
       </div>
     </header>
 
     <section class="unified-control-strip" aria-label="运营控制区">
-      <AdminWelcomeControlPanel part="welcome" />
+      <AdminWelcomeControlPanel
+        part="welcome"
+        :scope="scope"
+        :machines="machines"
+        :machine-id="selectedMachineId"
+        :operator-name="operatorName"
+        :scope-error="scopeError"
+        :machine-error="machineError"
+        @machine-changed="selectedMachineId = $event"
+      />
     </section>
 
     <div class="unified-admin-layout">
@@ -103,17 +154,20 @@ onMounted(() => { void loadState() })
           <div class="unified-nav-heading"><strong>模块预留</strong><span>未接入</span></div>
           <p>其他后台区域保留位置，后续按独立计划逐块接入。</p>
         </section>
-        <section class="unified-stash-entry" aria-label="备用模块入口">
-          <div class="unified-nav-heading"><strong>备用模块</strong><span>移出项</span></div>
-          <RouterLink to="/console/stash">查看备用模块</RouterLink>
-        </section>
-        <section class="unified-compat-links" aria-label="兼容入口">
-          <span>现有兼容入口</span>
-          <RouterLink to="/console/operations">旧运营页</RouterLink>
-          <RouterLink to="/console/users">用户管理</RouterLink>
-          <RouterLink to="/console/agents">代理管理</RouterLink>
-          <RouterLink to="/console/robots">服务端机器人</RouterLink>
-        </section>
+        <!-- 机器账号没有这些子路由的权限，不给入口，保持各子路由原权限边界不变。 -->
+        <template v-if="isPlatformAdmin">
+          <section class="unified-stash-entry" aria-label="备用模块入口">
+            <div class="unified-nav-heading"><strong>备用模块</strong><span>移出项</span></div>
+            <RouterLink to="/console/stash">查看备用模块</RouterLink>
+          </section>
+          <section class="unified-compat-links" aria-label="兼容入口">
+            <span>现有兼容入口</span>
+            <RouterLink to="/console/operations">旧运营页</RouterLink>
+            <RouterLink to="/console/users">用户管理</RouterLink>
+            <RouterLink to="/console/agents">代理管理</RouterLink>
+            <RouterLink to="/console/robots">服务端机器人</RouterLink>
+          </section>
+        </template>
       </aside>
 
       <section class="unified-admin-content">
@@ -121,7 +175,7 @@ onMounted(() => { void loadState() })
 
         <ReportControlPanel class="unified-content-report" />
 
-        <div v-if="error" class="unified-alert" role="alert"><span>{{ error }}</span><button type="button" @click="loadState">重试</button></div>
+        <div v-if="error || scopeError || machineError" class="unified-alert" role="alert"><span>{{ error || scopeError || machineError }}</span><button type="button" @click="reload">重试</button></div>
 
         <section class="unified-reserved-grid" aria-label="后续功能预留">
           <PointsApprovalPanel @points-changed="refreshRecentPoints" />
@@ -129,7 +183,7 @@ onMounted(() => { void loadState() })
         </section>
 
         <section class="unified-player-workbench" aria-label="玩家工作台">
-          <PlayerWorkbenchModule embedded @points-changed="refreshRecentPoints" />
+          <PlayerWorkbenchModule embedded :machine-id="selectedMachineId" @points-changed="refreshRecentPoints" />
         </section>
         <template v-if="bottomControlRaised">
           <AdminBottomControlPanel @raise="toggleBottomControlPosition" />

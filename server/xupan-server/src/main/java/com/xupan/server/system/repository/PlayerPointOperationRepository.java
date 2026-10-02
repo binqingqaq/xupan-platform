@@ -1,5 +1,6 @@
 package com.xupan.server.system.repository;
 
+import com.xupan.server.system.service.PlayerDeskScopeService.Scope;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -19,7 +20,7 @@ public class PlayerPointOperationRepository {
     }
 
     public List<Operation> findRecent(String playerKind, Instant fromInclusive, Instant toExclusive,
-                                      Long beforeId, int limit) {
+                                      Long beforeId, int limit, Scope scope) {
         StringBuilder sql = new StringBuilder("""
                 SELECT l.id, u.id AS user_id, a.member_code, u.display_name, a.player_kind,
                        l.operation_type, l.amount, l.balance_after, l.reason, l.created_at
@@ -38,6 +39,8 @@ public class PlayerPointOperationRepository {
             sql.append("   AND l.id < ?\n");
             arguments.add(beforeId);
         }
+        sql.append(scope.agentIdCondition()).append('\n');
+        arguments.addAll(scope.agentIdParameters());
         sql.append(" ORDER BY l.created_at DESC, l.id DESC LIMIT ?");
         arguments.add(limit);
 

@@ -1,6 +1,5 @@
 package com.xupan.server.system.service;
 
-import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.BetBoardRepository;
@@ -24,18 +23,18 @@ public class BetBoardService {
 
     private final BetBoardRepository repository;
     private final GameDataRepository gameRepository;
-    private final PermissionService permissionService;
+    private final PlayerDeskScopeService scopeService;
 
     public BetBoardService(BetBoardRepository repository, GameDataRepository gameRepository,
-                           PermissionService permissionService) {
+                           PlayerDeskScopeService scopeService) {
         this.repository = repository;
         this.gameRepository = gameRepository;
-        this.permissionService = permissionService;
+        this.scopeService = scopeService;
     }
 
     @Transactional(readOnly = true)
     public Board board(String kind, int limit, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operatorUserId);
         String playerKind = normalizeKind(kind);
         int safeLimit = normalizeLimit(limit);
         GameDataRepository.IssueRecord issue = gameRepository.findCurrentIssue()
@@ -46,8 +45,8 @@ public class BetBoardService {
                     money("0"), List.of(), List.of());
         }
 
-        BetBoardRepository.AggregateSummary summary = repository.summarize(issue.issueNumber());
-        List<BetItem> items = repository.findBets(issue.issueNumber(), playerKind, safeLimit).stream()
+        BetBoardRepository.AggregateSummary summary = repository.summarize(issue.issueNumber(), scope);
+        List<BetItem> items = repository.findBets(issue.issueNumber(), playerKind, safeLimit, scope).stream()
                 .map(BetBoardService::toItem)
                 .toList();
         List<DrawHistory> history = gameRepository.findSettledIssues(HISTORY_SIZE).stream()
@@ -57,12 +56,6 @@ public class BetBoardService {
                 summary.normal().count(), summary.bot().count(),
                 money(summary.normal().totalStake()), money(summary.bot().totalStake()),
                 items, history);
-    }
-
-    private void requireAdmin(long operatorUserId) {
-        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, "USER_MANAGE")) {
-            throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有用户管理权限");
-        }
     }
 
     private static String normalizeKind(String kind) {

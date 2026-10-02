@@ -91,8 +91,13 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/users", "/api/admin/users/**").hasAuthority("PERM_USER_MANAGE")
                         .requestMatchers("/api/admin/test-players", "/api/admin/test-players/**")
                         .hasAuthority("PERM_USER_MANAGE")
-                        .requestMatchers("/api/admin/player-desk", "/api/admin/player-desk/**")
+                        // 投注赔率/限额当前仍是全局配置：只读可以展示，写入只允许平台管理员（机器级配置留到阶段 3）。
+                        .requestMatchers(HttpMethod.PUT, "/api/admin/player-desk/betting-config",
+                                "/api/admin/player-desk/betting-config/**")
                         .hasAuthority("PERM_USER_MANAGE")
+                        // 运营后台（/console，BY220 robot.php）：平台管理员全局，机器账号按 agent_id 收敛在服务层。
+                        .requestMatchers("/api/admin/player-desk", "/api/admin/player-desk/**")
+                        .hasAnyAuthority("PERM_USER_MANAGE", "PERM_AGENT_CONSOLE_READ")
                         .requestMatchers("/api/admin/roles").hasAuthority("PERM_USER_MANAGE")
                         .requestMatchers(HttpMethod.GET, "/api/chat/rooms/*", "/api/chat/rooms/*/messages")
                         .hasAnyAuthority("PERM_CHAT_ROOM_READ", "SCOPE_CHAT_ONLY")

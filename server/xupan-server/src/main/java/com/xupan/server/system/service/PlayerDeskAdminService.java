@@ -29,6 +29,7 @@ import java.util.List;
 public class PlayerDeskAdminService {
     private final PlayerDeskRepository repository;
     private final PermissionService permissionService;
+    private final PlayerDeskScopeService scopeService;
     private final UserAdminService userAdminService;
     private final TestPlayerAdminService testPlayerAdminService;
     private final VirtualWalletService walletService;
@@ -44,6 +45,7 @@ public class PlayerDeskAdminService {
     private final AvatarPresetService avatarPresetService;
 
     public PlayerDeskAdminService(PlayerDeskRepository repository, PermissionService permissionService,
+                                  PlayerDeskScopeService scopeService,
                                   UserAdminService userAdminService, TestPlayerAdminService testPlayerAdminService,
                                   VirtualWalletService walletService, OperationAuditRepository auditRepository,
                                   TestPlayerBehaviorService behaviorService, ChatMessageService chatMessageService,
@@ -54,6 +56,7 @@ public class PlayerDeskAdminService {
                                   AvatarPresetService avatarPresetService) {
         this.repository = repository;
         this.permissionService = permissionService;
+        this.scopeService = scopeService;
         this.userAdminService = userAdminService;
         this.testPlayerAdminService = testPlayerAdminService;
         this.walletService = walletService;
@@ -71,21 +74,24 @@ public class PlayerDeskAdminService {
 
     @Transactional(readOnly = true)
     public List<AvatarPresetService.AvatarPresetOption> avatarPresets(Long selectedUserId, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        if (selectedUserId != null) {
+            row(selectedUserId, false, scope);
+        }
         return avatarPresetService.list(selectedUserId);
     }
 
     @Transactional
     public Detail replaceAvatar(long userId, String avatarKey, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
         if ("DELETED".equals(player.userStatus()) || "DELETED".equals(player.accountStatus())) {
             throw BusinessException.conflict("PLAYER_AVATAR_FORBIDDEN", "已删除玩家不能更换头像");
         }
         avatarPresetService.replaceForUser(userId, avatarKey);
         audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/avatar",
                 Long.toString(userId), "avatarKey=" + avatarKey);
-        return detail(userId, operator);
+        return detail(userId, false, scope);
     }
     @Transactional(readOnly = true)
     public Page page(String kind, String status, String keyword, int page, int pageSize, long operator) {
@@ -95,11 +101,11 @@ public class PlayerDeskAdminService {
     @Transactional(readOnly = true)
     public Page page(String kind, String status, String keyword, int page, int pageSize,
                      boolean includeDeleted, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         if (page < 1 || pageSize < 1 || pageSize > 100) throw BusinessException.badRequest("PLAYER_QUERY_INVALID", "分页参数无效");
         validateDeletedQuery(status, includeDeleted);
-        return new Page(repository.findPage(normalize(kind), normalize(status), normalize(keyword), page, pageSize, includeDeleted), page, pageSize,
-                repository.count(normalize(kind), normalize(status), normalize(keyword), includeDeleted));
+        return new Page(repository.findPage(normalize(kind), normalize(status), normalize(keyword), page, pageSize, includeDeleted, scope), page, pageSize,
+                repository.count(normalize(kind), normalize(status), normalize(keyword), includeDeleted, scope));
     }
 
     @Transactional(readOnly = true)
@@ -110,9 +116,9 @@ public class PlayerDeskAdminService {
     @Transactional(readOnly = true)
     public PlayerDeskRepository.Summary summary(String kind, String status, String keyword,
                                                 boolean includeDeleted, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         validateDeletedQuery(status, includeDeleted);
-        return repository.summary(normalize(kind), normalize(status), normalize(keyword), includeDeleted);
+        return repository.summary(normalize(kind), normalize(status), normalize(keyword), includeDeleted, scope);
     }
 
     @Transactional(readOnly = true)
@@ -122,8 +128,11 @@ public class PlayerDeskAdminService {
 
     @Transactional(readOnly = true)
     public Detail detail(long userId, boolean includeDeleted, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId, includeDeleted);
+        return detail(userId, includeDeleted, scopeService.requireAccess(operator));
+    }
+
+    private Detail detail(long userId, boolean includeDeleted, PlayerDeskScopeService.Scope scope) {
+        PlayerDeskRepository.PlayerRow player = row(userId, includeDeleted, scope);
         VirtualWallet wallet = walletService.getForAdminHistory(userId);
         WalletStatistics statistics = walletService.statisticsForAdminHistory(userId);
         List<WalletLedgerEntry> ledger = walletService.ledgerForAdminHistory(userId, 20);
@@ -137,51 +146,59 @@ public class PlayerDeskAdminService {
     }
 
     @Transactional
-    public long createNormal(String displayName, long operator) {
-        requireAdmin(operator);
+    public long createNormal(String displayName, Long machineId, long operator) {
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        long targetAgentId = scopeService.requireTargetAgentId(scope, machineId);
         long id = userAdminService.createPlayerLinkUser(displayName, operator);
+        assignToAgent(id, targetAgentId);
         playerLinkAuthenticationService.issue(id, operator);
-        audit(operator, "POST", "/api/admin/player-desk/players/normal", Long.toString(id), "playerKind=NORMAL");
+        audit(operator, "POST", "/api/admin/player-desk/players/normal", Long.toString(id),
+                "playerKind=NORMAL,agentId=" + targetAgentId);
         return id;
     }
 
     @Transactional
-    public long createBot(String userCode, String displayName, long operator) {
-        requireAdmin(operator);
-        TestPlayerAdminService.TestPlayerAdminView view = testPlayerAdminService.create(userCode, displayName, operator);
-        jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE sys_user_id=?", view.player().userId());
+    public long createBot(String userCode, String displayName, Long machineId, long operator) {
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        long targetAgentId = scopeService.requireTargetAgentId(scope, machineId);
+        TestPlayerAdminService.TestPlayerAdminView view = scope.global()
+                ? testPlayerAdminService.create(userCode, displayName, operator)
+                : testPlayerAdminService.createForAgent(userCode, displayName, operator);
+        jdbc.update("UPDATE demo_user_account SET player_kind='BOT', agent_id=? WHERE sys_user_id=?",
+                targetAgentId, view.player().userId());
         jdbc.update("UPDATE sys_user SET auth_mode='BOT_SERVICE' WHERE id=?", view.player().userId());
         playerLinkAuthenticationService.issue(view.player().userId(), operator);
         repository.ensureBehavior(view.player().id());
-        audit(operator, "POST", "/api/admin/player-desk/players/bot", Long.toString(view.player().userId()), "playerKind=BOT");
+        audit(operator, "POST", "/api/admin/player-desk/players/bot", Long.toString(view.player().userId()),
+                "playerKind=BOT,agentId=" + targetAgentId);
         return view.player().userId();
     }
 
     @Transactional
     public Detail status(long userId, String status, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
         if ("BOT".equals(player.playerKind())) {
             testPlayerAdminService.changeStatus(player.userCode(), status, operator);
         } else {
             userAdminService.changeStatus(userId, status, operator);
         }
-        return detail(userId, operator);
+        return detail(userId, false, scope);
     }
 
     @Transactional
     public Detail delete(long userId, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         if (userId == operator) {
             throw BusinessException.conflict("PLAYER_SELF_OPERATION_FORBIDDEN", "不能删除当前登录管理员");
         }
-        PlayerDeskRepository.PlayerRow player = row(userId, true);
+        PlayerDeskRepository.PlayerRow player = row(userId, true, scope);
         if (permissionService.hasPermission(userId, "USER_MANAGE")) {
             throw BusinessException.forbidden("PLAYER_DELETE_FORBIDDEN", "不能通过玩家工作台删除管理员");
         }
         avatarPresetService.release(userId);
         if ("DELETED".equals(player.userStatus()) && "DELETED".equals(player.accountStatus())) {
-            return detail(userId, true, operator);
+            return detail(userId, true, scope);
         }
         userRepository.softDelete(userId);
         repository.softDelete(userId);
@@ -192,32 +209,34 @@ public class PlayerDeskAdminService {
         audit(operator, "DELETE", "/api/admin/player-desk/players/" + userId,
                 player.internalCode(), "userId=" + userId + ",internalCode=" + player.internalCode()
                         + ",memberCode=" + player.memberCode() + ",displayName=" + player.displayName() + ",status=DELETED");
-        return detail(userId, true, operator);
+        return detail(userId, true, scope);
     }
 
     @Transactional
     public Detail grant(long userId, BigDecimal amount, String reason, String key, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        row(userId, false, scope);
         walletService.grant(operator, userId, amount, reason, key);
-        return detail(userId, operator);
+        return detail(userId, false, scope);
     }
 
     @Transactional
     public Detail adjust(long userId, BigDecimal amount, String reason, String key, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        row(userId, false, scope);
         walletService.adjust(operator, userId, amount, reason, key);
-        return detail(userId, operator);
+        return detail(userId, false, scope);
     }
 
     @Transactional
     public Detail updateNickname(long userId, String displayName, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
         String nextName = displayName == null ? "" : displayName.trim();
         if (nextName.isBlank() || nextName.length() > 128) {
             throw BusinessException.badRequest("PLAYER_NICKNAME_INVALID", "昵称不能为空且不能超过128个字符");
         }
-        if (nextName.equals(player.displayName())) return detail(userId, operator);
+        if (nextName.equals(player.displayName())) return detail(userId, false, scope);
         long changesToday = jdbc.queryForObject("SELECT COUNT(*) FROM player_name_change_record WHERE user_id=? AND changed_at >= CURRENT_DATE", Long.class, userId);
         if (changesToday >= 3) {
             throw BusinessException.badRequest("PLAYER_NICKNAME_DAILY_LIMIT", "今日换名次数已用完");
@@ -231,13 +250,13 @@ public class PlayerDeskAdminService {
                 userId, player.displayName(), nextName);
         audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/nickname", Long.toString(userId),
                 "oldName=" + player.displayName() + ",newName=" + nextName);
-        return detail(userId, operator);
+        return detail(userId, false, scope);
     }
 
     @Transactional(readOnly = true)
     public NameHistory nameHistory(long userId, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId, true);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, true, scope);
         long changesToday = jdbc.queryForObject("SELECT COUNT(*) FROM player_name_change_record WHERE user_id=? AND changed_at >= CURRENT_DATE", Long.class, userId);
         List<NameChange> records = jdbc.query("SELECT id, old_display_name, new_display_name, changed_at FROM player_name_change_record WHERE user_id=? ORDER BY id DESC LIMIT 30",
                 (rs, n) -> new NameChange(rs.getLong("id"), rs.getString("old_display_name"), rs.getString("new_display_name"), rs.getTimestamp("changed_at").toInstant()), userId);
@@ -246,8 +265,8 @@ public class PlayerDeskAdminService {
 
     @Transactional(readOnly = true)
     public BehaviorConfig behavior(long userId, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
         if (!"BOT".equals(player.playerKind())) return null;
         PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId)
                 .orElseGet(() -> repository.ensureBehavior(player.accountId()));
@@ -259,8 +278,8 @@ public class PlayerDeskAdminService {
                                          String stakeRoundTen, int activityPercent, boolean playRandom,
                                          List<String> playTypes, int topupProbabilityPercent,
                                          BigDecimal topupMin, BigDecimal topupMax, long operator) {
-        requireAdmin(operator);
-        PlayerDeskRepository.PlayerRow player = row(userId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
         if (!"BOT".equals(player.playerKind())) throw BusinessException.badRequest("PLAYER_BEHAVIOR_NOT_APPLICABLE", "普通玩家不支持托行为配置");
         BigDecimal[] bounds = stakeBounds(stakeRangeCode);
         List<String> selected = playTypes == null ? List.of() : playTypes.stream().distinct().toList();
@@ -283,34 +302,40 @@ public class PlayerDeskAdminService {
 
     @Transactional
     public List<PlayerDeskRepository.ActionRow> runNow(long userId, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        row(userId, false, scope);
         List<PlayerDeskRepository.ActionRow> result = behaviorService.dispatch(userId, true);
         audit(operator, "POST", "/api/admin/player-desk/players/" + userId + "/behavior/run-now", Long.toString(userId), "actions=" + result.size());
         return result;
     }
 
+    @Transactional(readOnly = true)
     public List<PlayerDeskRepository.ActionRow> actions(long userId, int limit, long operator) {
-        requireAdmin(operator);
-        row(userId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        row(userId, false, scope);
         return repository.actions(userId, limit);
     }
 
     @Transactional
     public ChatMessageService.ChatMessageSendOutcome sendMessage(long userId, String content, String clientMessageId, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        row(userId, false, scope);
         return behaviorService.sendManualMessage(userId, clientMessageId, content);
     }
 
-    private PlayerDeskRepository.PlayerRow row(long id) {
-        return row(id, false);
+    /** 把新建玩家/托归属到解析出来的机器；平台直属代理是默认值，跳过多余写入。 */
+    private void assignToAgent(long userId, long agentId) {
+        Long current = jdbc.queryForObject("SELECT agent_id FROM demo_user_account WHERE sys_user_id=?", Long.class, userId);
+        if (current != null && current == agentId) {
+            return;
+        }
+        jdbc.update("UPDATE demo_user_account SET agent_id=?, updated_at=CURRENT_TIMESTAMP WHERE sys_user_id=?",
+                agentId, userId);
     }
 
-    private PlayerDeskRepository.PlayerRow row(long id, boolean includeDeleted) {
-        return repository.findByUserId(id, includeDeleted).orElseThrow(() -> BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在"));
-    }
-
-    private void requireAdmin(long userId) {
-        if (userId <= 0 || !permissionService.hasPermission(userId, "USER_MANAGE")) throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有用户管理权限");
+    private PlayerDeskRepository.PlayerRow row(long id, boolean includeDeleted, PlayerDeskScopeService.Scope scope) {
+        return repository.findByUserId(id, includeDeleted, scope)
+                .orElseThrow(() -> BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在"));
     }
 
     private void audit(long operator, String method, String path, String resource, String summary) {

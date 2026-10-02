@@ -1,5 +1,6 @@
 package com.xupan.server.system.repository;
 
+import com.xupan.server.system.service.PlayerDeskScopeService.Scope;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Repository;
@@ -18,13 +19,10 @@ public class PlayerDeskRepository {
         this.jdbc = jdbc;
     }
 
-    public Summary summary(String kind, String status, String keyword) {
-        return summary(kind, status, keyword, false);
-    }
-
-    public Summary summary(String kind, String status, String keyword, boolean includeDeleted) {
-        String where = where(kind, status, keyword, includeDeleted);
-        Object[] args = args(kind, status, keyword, includeDeleted);
+    /** 全局汇总；调用方必须先解析 {@code Scope}，禁止再暴露“默认全局”的无范围重载。 */
+    public Summary summary(String kind, String status, String keyword, boolean includeDeleted, Scope scope) {
+        String where = where(kind, status, keyword, includeDeleted, scope);
+        Object[] args = args(kind, status, keyword, includeDeleted, scope);
         return jdbc.queryForObject("SELECT COALESCE(SUM(a.balance),0) total_points, "
                         + "COALESCE(SUM(CASE WHEN a.player_kind='NORMAL' THEN 1 ELSE 0 END),0) normal_count, "
                         + "COALESCE(SUM(CASE WHEN a.player_kind='BOT' THEN 1 ELSE 0 END),0) bot_count "
@@ -32,46 +30,45 @@ public class PlayerDeskRepository {
                 (rs, rowNum) -> new Summary(rs.getBigDecimal("total_points"), rs.getLong("normal_count"), rs.getLong("bot_count")), args);
     }
 
-    public List<PlayerRow> findPage(String kind, String status, String keyword, int page, int pageSize) {
-        return findPage(kind, status, keyword, page, pageSize, false);
-    }
-
     public List<PlayerRow> findPage(String kind, String status, String keyword, int page, int pageSize,
-                                    boolean includeDeleted) {
-        String where = where(kind, status, keyword, includeDeleted);
+                                    boolean includeDeleted, Scope scope) {
+        String where = where(kind, status, keyword, includeDeleted, scope);
         String sql = "SELECT u.id user_id, u.username, u.internal_code, u.display_name, u.avatar_key, u.status user_status, "
                 + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.member_code, a.display_name account_display_name, "
                 + "u.auth_mode, "
                 + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
                 + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
                 + from() + where + " ORDER BY a.balance DESC, a.id DESC LIMIT ? OFFSET ?";
-        Object[] base = args(kind, status, keyword, includeDeleted);
+        Object[] base = args(kind, status, keyword, includeDeleted, scope);
         Object[] all = java.util.Arrays.copyOf(base, base.length + 2);
         all[base.length] = pageSize;
         all[base.length + 1] = (page - 1L) * pageSize;
         return jdbc.query(sql, this::map, all);
     }
 
-    public long count(String kind, String status, String keyword) {
-        return count(kind, status, keyword, false);
+    public long count(String kind, String status, String keyword, boolean includeDeleted, Scope scope) {
+        return jdbc.queryForObject("SELECT COUNT(*) " + from() + where(kind, status, keyword, includeDeleted, scope), Long.class,
+                args(kind, status, keyword, includeDeleted, scope));
     }
 
-    public long count(String kind, String status, String keyword, boolean includeDeleted) {
-        return jdbc.queryForObject("SELECT COUNT(*) " + from() + where(kind, status, keyword, includeDeleted), Long.class,
-                args(kind, status, keyword, includeDeleted));
-    }
-
+    /**
+     * 内部路径（机器人调度、{@code /agent} 兼容接口）使用的全局读取。
+     * 运营后台（{@code /console}）必须调用带 {@link Scope} 的重载，禁止用它绕过机器隔离。
+     */
     public Optional<PlayerRow> findByUserId(long userId) {
-        return findByUserId(userId, false);
+        return findByUserId(userId, false, Scope.Global.INSTANCE);
     }
 
-    public Optional<PlayerRow> findByUserId(long userId, boolean includeDeleted) {
+    public Optional<PlayerRow> findByUserId(long userId, boolean includeDeleted, Scope scope) {
+        java.util.ArrayList<Object> values = new java.util.ArrayList<>(scope.agentIdParameters());
+        values.add(userId);
         return jdbc.query("SELECT u.id user_id, u.username, u.internal_code, u.display_name, u.avatar_key, u.status user_status, "
                         + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.member_code, a.display_name account_display_name, "
                         + "u.auth_mode, "
                         + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
                         + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
-                        + from() + " AND u.id=?" + (includeDeleted ? "" : " AND u.status <> 'DELETED' AND a.status <> 'DELETED'"), this::map, userId).stream().findFirst();
+                        + from() + scope.agentIdCondition() + " AND u.id=?" + (includeDeleted ? "" : " AND u.status <> 'DELETED' AND a.status <> 'DELETED'"),
+                this::map, values.toArray()).stream().findFirst();
     }
 
     public Optional<Behavior> findBehavior(long userId) {
@@ -160,12 +157,8 @@ public class PlayerDeskRepository {
                 + "AND a.player_kind IN ('NORMAL','BOT')";
     }
 
-    private String where(String kind, String status, String keyword) {
-        return where(kind, status, keyword, false);
-    }
-
-    private String where(String kind, String status, String keyword, boolean includeDeleted) {
-        StringBuilder sql = new StringBuilder();
+    private String where(String kind, String status, String keyword, boolean includeDeleted, Scope scope) {
+        StringBuilder sql = new StringBuilder(scope.agentIdCondition());
         if (!includeDeleted) sql.append(" AND u.status <> 'DELETED' AND a.status <> 'DELETED'");
         if (kind != null && !kind.isBlank()) sql.append(" AND a.player_kind=?");
         if (status != null && !status.isBlank()) sql.append(" AND u.status=? AND a.status=?");
@@ -173,12 +166,8 @@ public class PlayerDeskRepository {
         return sql.toString();
     }
 
-    private Object[] args(String kind, String status, String keyword) {
-        return args(kind, status, keyword, false);
-    }
-
-    private Object[] args(String kind, String status, String keyword, boolean includeDeleted) {
-        java.util.ArrayList<Object> args = new java.util.ArrayList<>();
+    private Object[] args(String kind, String status, String keyword, boolean includeDeleted, Scope scope) {
+        java.util.ArrayList<Object> args = new java.util.ArrayList<>(scope.agentIdParameters());
         if (kind != null && !kind.isBlank()) args.add(kind);
         if (status != null && !status.isBlank()) { args.add(status); args.add(status); }
         if (keyword != null && !keyword.isBlank()) {

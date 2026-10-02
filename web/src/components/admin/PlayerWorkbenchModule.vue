@@ -4,8 +4,14 @@ import { api } from '../../api'
 import { BOT_PLAY_TYPES, BOT_PLAY_TYPE_CODES, STAKE_RANGE_CODES, STAKE_RANGE_LABELS, STAKE_ROUND_TEN_LABELS, STAKE_ROUND_TEN_OPTIONS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation } from '../../playerDesk'
 import type { AvatarPresetOption, PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskPointRecords, PlayerDeskSummary, PlayerNameHistory } from '../../types'
 
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const props = withDefaults(defineProps<{ embedded?: boolean; machineId?: number | null }>(), { embedded: false, machineId: null })
 const emit = defineEmits<{ pointsChanged: [] }>()
+
+// 机器归属：机器账号不传（后端强制成自己），平台管理员按机器选择器传值，
+// 未选择机器时不发送该字段。列表接口暂不支持 machineId 过滤，选择值只用于创建。
+function machineIdPayload(): { machineId?: number } {
+  return props.machineId == null ? {} : { machineId: props.machineId }
+}
 
 const summary = ref<PlayerDeskSummary>({ totalPoints: 0, normalCount: 0, botCount: 0 })
 const kindSummary = ref<PlayerDeskSummary>({ totalPoints: 0, normalCount: 0, botCount: 0 })
@@ -204,13 +210,13 @@ function syncBehavior(behavior: PlayerDeskBehavior | null) {
 async function createNormal() {
   createError.value = ''; const errors = validateNormalPlayerDraft(normalDraft); if (errors.length) { createError.value = errors[0]; return }
   saving.value = true
-  try { const created = await api.createNormalPlayer({ displayName: normalDraft.displayName.trim() }); const id = created.userId; Object.assign(normalDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '普通玩家已创建，登录链接已生成' }
+  try { const created = await api.createNormalPlayer({ displayName: normalDraft.displayName.trim(), ...machineIdPayload() }); const id = created.userId; Object.assign(normalDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '普通玩家已创建，登录链接已生成' }
   catch (cause) { createError.value = cause instanceof Error ? cause.message : '普通玩家创建失败' } finally { saving.value = false }
 }
 async function createBot() {
   createError.value = ''; const errors = validateBotPlayerDraft(botDraft); if (errors.length) { createError.value = errors[0]; return }
   saving.value = true
-  try { const created = await api.createBotPlayer({ displayName: botDraft.displayName.trim() }); const id = created.userId; Object.assign(botDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '托已创建，登录链接已生成，默认未启用自动行为' }
+  try { const created = await api.createBotPlayer({ displayName: botDraft.displayName.trim(), ...machineIdPayload() }); const id = created.userId; Object.assign(botDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '托已创建，登录链接已生成，默认未启用自动行为' }
   catch (cause) { createError.value = cause instanceof Error ? cause.message : '托创建失败' } finally { saving.value = false }
 }
 async function openAvatarPicker() {
@@ -466,8 +472,8 @@ onBeforeUnmount(() => {
       <div v-if="createMode" class="create-modal-layer" role="presentation" @click.self="closeCreate">
         <section class="create-modal" role="dialog" aria-modal="true" :aria-labelledby="`${createMode}-player-title`">
           <header class="create-modal-header"><div><span class="eyebrow">CREATE PLAYER</span><h2 :id="`${createMode}-player-title`">{{ createMode === 'normal' ? '创建普通玩家' : '创建托' }}</h2></div><button class="modal-close" type="button" aria-label="关闭" :disabled="saving" @click="closeCreate">×</button></header>
-          <form v-if="createMode === 'normal'" class="create-form" @submit.prevent="createNormal"><p class="form-hint">普通玩家使用专属链接免密进入完整前台，创建后自动生成 7 天有效链接。</p><label>昵称<input v-model="normalDraft.displayName" autofocus /></label><p v-if="createError" class="field-error">{{ createError }}</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeCreate">取消</button><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确定' }}</button></div></form>
-          <form v-else class="create-form" @submit.prevent="createBot"><label>昵称<input v-model="botDraft.displayName" autofocus /></label><p v-if="createError" class="field-error">{{ createError }}</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeCreate">取消</button><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确定' }}</button></div></form>
+          <form v-if="createMode === 'normal'" class="create-form" @submit.prevent="createNormal"><p class="form-hint">普通玩家使用专属链接免密进入完整前台，创建后自动生成 7 天有效链接。</p><p v-if="machineId" class="form-hint">当前按机器创建：新玩家会归属到选中的机器。</p><label>昵称<input v-model="normalDraft.displayName" autofocus /></label><p v-if="createError" class="field-error">{{ createError }}</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeCreate">取消</button><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确定' }}</button></div></form>
+          <form v-else class="create-form" @submit.prevent="createBot"><p v-if="machineId" class="form-hint">当前按机器创建：新托会归属到选中的机器。</p><label>昵称<input v-model="botDraft.displayName" autofocus /></label><p v-if="createError" class="field-error">{{ createError }}</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeCreate">取消</button><button class="primary-button" :disabled="saving" type="submit">{{ saving ? '创建中...' : '确定' }}</button></div></form>
         </section>
       </div>
     </Teleport>

@@ -1,6 +1,5 @@
 package com.xupan.server.system.service;
 
-import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.system.repository.PlayerPointsReportRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.stereotype.Service;
@@ -30,43 +29,43 @@ public class PlayerPointsReportService {
     private static final int MAX_DETAIL_LIMIT = 1000;
 
     private final PlayerPointsReportRepository repository;
-    private final PermissionService permissionService;
+    private final PlayerDeskScopeService scopeService;
 
-    public PlayerPointsReportService(PlayerPointsReportRepository repository, PermissionService permissionService) {
+    public PlayerPointsReportService(PlayerPointsReportRepository repository, PlayerDeskScopeService scopeService) {
         this.repository = repository;
-        this.permissionService = permissionService;
+        this.scopeService = scopeService;
     }
 
     @Transactional(readOnly = true)
     public Report report(String kind, String date, int detailLimit, long operator) {
-        requireAdmin(operator);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         String playerKind = normalizeKind(kind);
         int safeDetailLimit = normalizeDetailLimit(detailLimit);
         BusinessDay businessDay = resolveBusinessDay(date);
 
         List<PlayerPointsReportRepository.PlayerAccount> players = repository.findPlayers(
-                playerKind, businessDay.fromInclusive(), businessDay.toExclusive());
+                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), scope);
         Map<Long, CardBuilder> cards = new LinkedHashMap<>();
         for (PlayerPointsReportRepository.PlayerAccount player : players) {
             cards.put(player.accountId(), new CardBuilder(player));
         }
 
         List<PlayerPointsReportRepository.BetEvent> bets = repository.findBetEvents(
-                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit);
+                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit, scope);
         for (PlayerPointsReportRepository.BetEvent bet : bets) {
             CardBuilder card = cards.get(bet.accountId());
             if (card != null) card.addBet(bet);
         }
 
         List<PlayerPointsReportRepository.LedgerEvent> ledgers = repository.findLedgerEvents(
-                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit);
+                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit, scope);
         for (PlayerPointsReportRepository.LedgerEvent ledger : ledgers) {
             CardBuilder card = cards.get(ledger.accountId());
             if (card != null) card.addLedger(ledger);
         }
 
         List<PlayerPointsReportRepository.ActionEvent> actions = repository.findActionEvents(
-                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit);
+                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit, scope);
         for (PlayerPointsReportRepository.ActionEvent action : actions) {
             CardBuilder card = cards.get(action.accountId());
             if (card != null) card.addAction(action);
@@ -125,12 +124,6 @@ public class PlayerPointsReportService {
             throw BusinessException.badRequest("POINTS_REPORT_KIND_INVALID", "玩家类型必须是 NORMAL 或 BOT");
         }
         return value;
-    }
-
-    private void requireAdmin(long operator) {
-        if (operator <= 0 || !permissionService.hasPermission(operator, "USER_MANAGE")) {
-            throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有用户管理权限");
-        }
     }
 
     private static Summary summary(List<Card> cards) {

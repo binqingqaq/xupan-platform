@@ -10,6 +10,8 @@ import com.xupan.server.auth.service.TokenService;
 import com.xupan.server.playerauth.domain.PlayerAccessLink;
 import com.xupan.server.playerauth.domain.PlayerLinkTarget;
 import com.xupan.server.playerauth.repository.PlayerAccessLinkRepository;
+import com.xupan.server.system.repository.PlayerDeskRepository;
+import com.xupan.server.system.service.PlayerDeskScopeService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +37,8 @@ public class PlayerLinkAuthenticationService {
     private final UserRepository userRepository;
     private final SessionRepository sessionRepository;
     private final PermissionService permissionService;
+    private final PlayerDeskScopeService scopeService;
+    private final PlayerDeskRepository playerDeskRepository;
     private final TokenService tokenService;
     private final AuthenticationService authenticationService;
     private final LoginAuditRepository loginAuditRepository;
@@ -50,21 +54,25 @@ public class PlayerLinkAuthenticationService {
                                            UserRepository userRepository,
                                            SessionRepository sessionRepository,
                                            PermissionService permissionService,
+                                           PlayerDeskScopeService scopeService,
+                                           PlayerDeskRepository playerDeskRepository,
                                            TokenService tokenService,
                                            AuthenticationService authenticationService,
                                            LoginAuditRepository loginAuditRepository,
                                            OperationAuditRepository operationAuditRepository,
                                            PlayerLinkTokenCipher tokenCipher,
                                            @Value("${xupan.auth.player-link-lifetime:168h}") Duration linkLifetime) {
-        this(linkRepository, userRepository, sessionRepository, permissionService, tokenService,
-                authenticationService, loginAuditRepository, operationAuditRepository, tokenCipher, linkLifetime,
-                new SecureRandom(), Clock.systemUTC());
+        this(linkRepository, userRepository, sessionRepository, permissionService, scopeService, playerDeskRepository,
+                tokenService, authenticationService, loginAuditRepository, operationAuditRepository, tokenCipher,
+                linkLifetime, new SecureRandom(), Clock.systemUTC());
     }
 
     PlayerLinkAuthenticationService(PlayerAccessLinkRepository linkRepository,
                                     UserRepository userRepository,
                                     SessionRepository sessionRepository,
                                     PermissionService permissionService,
+                                    PlayerDeskScopeService scopeService,
+                                    PlayerDeskRepository playerDeskRepository,
                                     TokenService tokenService,
                                     AuthenticationService authenticationService,
                                     LoginAuditRepository loginAuditRepository,
@@ -75,6 +83,8 @@ public class PlayerLinkAuthenticationService {
         this.userRepository = userRepository;
         this.sessionRepository = sessionRepository;
         this.permissionService = permissionService;
+        this.scopeService = scopeService;
+        this.playerDeskRepository = playerDeskRepository;
         this.tokenService = tokenService;
         this.authenticationService = authenticationService;
         this.loginAuditRepository = loginAuditRepository;
@@ -88,9 +98,9 @@ public class PlayerLinkAuthenticationService {
 
     @Transactional
     public IssuedLink issue(long userId, long operatorUserId) {
-        return issueWithPermission(userId, operatorUserId, "USER_MANAGE",
+        return issueAfterValidation(userId, operatorUserId, "USER_MANAGE",
                 "/api/admin/player-desk/players/" + userId + "/access-links",
-                "PLAYER_LINK_OPERATION_FORBIDDEN", "当前账号没有玩家链接管理权限");
+                requirePlayerInScope(userId, operatorUserId));
     }
 
     @Transactional
@@ -103,6 +113,16 @@ public class PlayerLinkAuthenticationService {
     private IssuedLink issueWithPermission(long userId, long operatorUserId, String permission,
                                            String auditPath, String errorCode, String errorMessage) {
         requirePermission(operatorUserId, permission, errorCode, errorMessage);
+        return issueAfterValidation(userId, operatorUserId, permission, auditPath, null);
+    }
+
+    /**
+     * 创建/复用玩家链接。{@code scope} 非空时表示已按运营后台范围校验过归属，
+     * 审计权限码按范围取值（管理员 {@code USER_MANAGE}，机器账号/子账号 {@code AGENT_CONSOLE_READ}）。
+     */
+    private IssuedLink issueAfterValidation(long userId, long operatorUserId, String permission,
+                                            String auditPath, PlayerDeskScopeService.Scope scope) {
+        String auditPermission = scope == null ? permission : auditPermission(scope, permission);
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         Instant now = clock.instant();
@@ -118,7 +138,7 @@ public class PlayerLinkAuthenticationService {
         linkRepository.insert(link);
         userRepository.updateAuthMode(userId, PLAYER_LINK_AUTH_MODE);
         sessionRepository.revokeAllActiveByUserId(userId, now);
-        audit(operatorUserId, permission, "POST", auditPath,
+        audit(operatorUserId, auditPermission, "POST", auditPath,
                 Long.toString(userId), "scope=" + SCOPE_PLAYER_FULL);
         long linkId = jdbcLinkId(link.tokenHash());
         return new IssuedLink(linkId, userId, SCOPE_PLAYER_FULL, link.expiresAt(), rawToken);
@@ -126,7 +146,7 @@ public class PlayerLinkAuthenticationService {
 
     @Transactional
     public IssuedLink current(long userId, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        requirePlayerInScope(userId, operatorUserId);
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         PlayerAccessLink link = linkRepository.findLatestByUserId(userId)
@@ -139,18 +159,19 @@ public class PlayerLinkAuthenticationService {
 
     @Transactional
     public IssuedLink rotate(long userId, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        PlayerDeskScopeService.Scope scope = requirePlayerInScope(userId, operatorUserId);
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         Instant now = clock.instant();
         linkRepository.revokeAllByUserId(userId, now);
         sessionRepository.revokeAllActiveByUserId(userId, now);
-        return issueInternal(userId, operatorUserId, now);
+        return issueInternal(userId, operatorUserId, now, auditPermission(scope, "USER_MANAGE"),
+                "/api/admin/player-desk/players/" + userId + "/access-links/rotate");
     }
 
     @Transactional
     public void revoke(long userId, long linkId, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        PlayerDeskScopeService.Scope scope = requirePlayerInScope(userId, operatorUserId);
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         if (linkRepository.findByIdAndUserId(linkId, userId).isEmpty()
@@ -158,13 +179,14 @@ public class PlayerLinkAuthenticationService {
             throw BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在");
         }
         sessionRepository.revokeAllActiveByUserId(userId, clock.instant());
-        audit(operatorUserId, "POST", "/api/admin/player-desk/players/" + userId + "/access-links/" + linkId + "/revoke",
+        audit(operatorUserId, auditPermission(scope, "USER_MANAGE"), "POST",
+                "/api/admin/player-desk/players/" + userId + "/access-links/" + linkId + "/revoke",
                 Long.toString(linkId), "revoked=true");
     }
 
     @Transactional
     public void restore(long userId, long linkId, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        PlayerDeskScopeService.Scope scope = requirePlayerInScope(userId, operatorUserId);
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         linkRepository.findByIdAndUserId(linkId, userId)
@@ -172,7 +194,8 @@ public class PlayerLinkAuthenticationService {
         if (linkRepository.restore(linkId, userId) != 1) {
             throw BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在");
         }
-        audit(operatorUserId, "POST", "/api/admin/player-desk/players/" + userId + "/access-links/" + linkId + "/restore",
+        audit(operatorUserId, auditPermission(scope, "USER_MANAGE"), "POST",
+                "/api/admin/player-desk/players/" + userId + "/access-links/" + linkId + "/restore",
                 Long.toString(linkId), "revoked=false");
     }
 
@@ -233,7 +256,7 @@ public class PlayerLinkAuthenticationService {
 
     @Transactional
     public Expiration updateExpiration(long userId, int days, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        PlayerDeskScopeService.Scope scope = requirePlayerInScope(userId, operatorUserId);
         if (days < 1 || days > 3650) {
             throw BusinessException.badRequest("PLAYER_LINK_EXPIRATION_INVALID", "链接有效期必须为 1 到 3650 天");
         }
@@ -241,7 +264,8 @@ public class PlayerLinkAuthenticationService {
         ensureIssuable(target);
         PlayerAccessLink link = linkRepository.findLatestByUserId(userId).orElse(null);
         linkRepository.saveConfiguredDays(userId, days);
-        audit(operatorUserId, "PATCH", "/api/admin/player-desk/players/" + userId + "/access-links/expiration",
+        audit(operatorUserId, auditPermission(scope, "USER_MANAGE"), "PATCH",
+                "/api/admin/player-desk/players/" + userId + "/access-links/expiration",
                 Long.toString(userId), "nextRefreshDays=" + days);
         return new Expiration(link == null ? 0 : link.id(), link == null ? null : link.expiresAt(), days);
     }
@@ -263,11 +287,6 @@ public class PlayerLinkAuthenticationService {
         loginAuditRepository.recordSuccess("player-link", link.userId(),
                 metadata == null ? null : metadata.ipAddress(), metadata == null ? null : metadata.userAgent(), now);
         return new ExchangeResult(tokens, user);
-    }
-
-    private IssuedLink issueInternal(long userId, long operatorUserId, Instant now) {
-        return issueInternal(userId, operatorUserId, now, "USER_MANAGE",
-                "/api/admin/player-desk/players/" + userId + "/access-links/rotate");
     }
 
     private IssuedLink issueInternal(long userId, long operatorUserId, Instant now, String permission,
@@ -310,10 +329,21 @@ public class PlayerLinkAuthenticationService {
         }
     }
 
-    private void requireAdmin(long operatorUserId) {
-        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, "USER_MANAGE")) {
-            throw BusinessException.forbidden("PLAYER_LINK_OPERATION_FORBIDDEN", "当前账号没有玩家链接管理权限");
+    /**
+     * 运营后台链接操作的范围校验：解析登录身份，玩家不在范围内按“不存在”处理（404），
+     * 避免通过 403 暴露跨机器玩家的存在性。
+     */
+    private PlayerDeskScopeService.Scope requirePlayerInScope(long userId, long operatorUserId) {
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operatorUserId);
+        if (playerDeskRepository.findByUserId(userId, true, scope).isEmpty()) {
+            throw BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家不存在");
         }
+        return scope;
+    }
+
+    /** 审计权限码：平台管理员记 {@code USER_MANAGE}，机器账号/子账号记 {@code AGENT_CONSOLE_READ}。 */
+    private static String auditPermission(PlayerDeskScopeService.Scope scope, String globalPermission) {
+        return scope != null && scope.global() ? globalPermission : "AGENT_CONSOLE_READ";
     }
 
     private void requirePermission(long operatorUserId, String permission, String code, String message) {

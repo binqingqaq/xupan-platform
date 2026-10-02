@@ -1,6 +1,5 @@
 package com.xupan.server.system.service;
 
-import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.system.repository.PlayerPointOperationRepository;
 import com.xupan.server.web.BusinessException;
 import org.junit.jupiter.api.Test;
@@ -26,13 +25,13 @@ class PlayerPointOperationServiceTest {
     private PlayerPointOperationRepository repository;
 
     @Mock
-    private PermissionService permissionService;
+    private PlayerDeskScopeService scopeService;
 
     @Test
     void mapsDirectionsAndReturnsCursorWhenMoreRowsExist() {
-        when(permissionService.hasPermission(7L, "USER_MANAGE")).thenReturn(true);
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
         Instant createdAt = Instant.parse("2026-09-23T08:00:00Z");
-        when(repository.findRecent(eq("NORMAL"), any(Instant.class), any(Instant.class), isNull(), eq(3)))
+        when(repository.findRecent(eq("NORMAL"), any(Instant.class), any(Instant.class), isNull(), eq(3), any()))
                 .thenReturn(List.of(
                         operation(31L, 100, "100.00", createdAt),
                         operation(30L, -25, "75.00", createdAt.minusSeconds(60)),
@@ -40,7 +39,7 @@ class PlayerPointOperationServiceTest {
                 ));
 
         PlayerPointOperationService.Recent recent = new PlayerPointOperationService(
-                repository, permissionService).recent("normal", null, 2, 7L);
+                repository, scopeService).recent("normal", null, 2, 7L);
 
         assertThat(recent.items()).hasSize(2);
         assertThat(recent.items().get(0).direction()).isEqualTo("TOP_UP");
@@ -53,8 +52,10 @@ class PlayerPointOperationServiceTest {
 
     @Test
     void rejectsInvalidKindCursorLimitAndMissingPermission() {
-        when(permissionService.hasPermission(7L, "USER_MANAGE")).thenReturn(true);
-        PlayerPointOperationService service = new PlayerPointOperationService(repository, permissionService);
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
+        when(scopeService.requireAccess(8L)).thenThrow(BusinessException.forbidden(
+                "PLAYER_DESK_FORBIDDEN", "没有运营后台访问权限"));
+        PlayerPointOperationService service = new PlayerPointOperationService(repository, scopeService);
 
         assertThatThrownBy(() -> service.recent("ALL", null, 50, 7L))
                 .isInstanceOf(BusinessException.class)
@@ -67,7 +68,7 @@ class PlayerPointOperationServiceTest {
                 .hasMessage("POINT_OPERATION_LIMIT_INVALID");
         assertThatThrownBy(() -> service.recent("NORMAL", null, 50, 8L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("USER_OPERATION_FORBIDDEN");
+                .hasMessage("PLAYER_DESK_FORBIDDEN");
     }
 
     private static PlayerPointOperationRepository.Operation operation(long id, long amount, String balanceAfter,

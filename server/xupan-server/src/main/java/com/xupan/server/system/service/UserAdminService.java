@@ -89,7 +89,7 @@ public class UserAdminService {
 
     @Transactional
     public long createPlayerLinkUser(String displayName, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        requireConsolePlayerWrite(operatorUserId);
         return createPlayerLinkUserInternal(displayName, operatorUserId,
                 "USER_MANAGE", "/api/admin/player-desk/players/normal");
     }
@@ -151,7 +151,7 @@ public class UserAdminService {
 
     @Transactional
     public UserDetail changeStatus(long targetUserId, String status, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        requireConsolePlayerWrite(operatorUserId);
         List<Long> administratorIds = roleRepository.findActiveAdminUserIdsForUpdate();
         String normalizedStatus = required(status, "USER_STATUS_INVALID", "用户状态不能为空");
         if (!MANAGED_STATUSES.contains(normalizedStatus)) {
@@ -227,7 +227,7 @@ public class UserAdminService {
 
     @Transactional
     public void updateAvatar(long targetUserId, String avatarKey, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        requireConsolePlayerWrite(operatorUserId);
         if (userRepository.findById(targetUserId).isEmpty()) {
             throw BusinessException.notFound("USER_NOT_FOUND", "用户不存在");
         }
@@ -288,6 +288,21 @@ public class UserAdminService {
     private void requireAdmin(long operatorUserId) {
         if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, "USER_MANAGE")) {
             throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有用户管理权限");
+        }
+    }
+
+    /**
+     * 运营后台（{@code /console}，BY220 {@code robot.php}）对玩家/托的写操作授权。
+     *
+     * <p>平台管理员用 {@code USER_MANAGE}；机器账号与子账号用 {@code AGENT_PLAYER_MANAGE}。
+     * 目标玩家是否在当前身份的可见范围内，由 {@code PlayerDeskAdminService} 在调用前按
+     * {@code PlayerDeskScopeService} 解析出的范围校验，本方法只负责"有没有玩家管理权限"。</p>
+     */
+    private void requireConsolePlayerWrite(long operatorUserId) {
+        if (operatorUserId <= 0
+                || (!permissionService.hasPermission(operatorUserId, "USER_MANAGE")
+                && !permissionService.hasPermission(operatorUserId, "AGENT_PLAYER_MANAGE"))) {
+            throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有玩家管理权限");
         }
     }
 

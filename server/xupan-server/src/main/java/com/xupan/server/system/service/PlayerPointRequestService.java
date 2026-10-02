@@ -1,7 +1,6 @@
 package com.xupan.server.system.service;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
-import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.chat.repository.PlayerPointRequestRepository;
 import com.xupan.server.game.domain.WalletOperationResult;
 import com.xupan.server.game.service.VirtualWalletService;
@@ -18,29 +17,29 @@ public class PlayerPointRequestService {
 
     private final PlayerPointRequestRepository repository;
     private final VirtualWalletService walletService;
-    private final PermissionService permissionService;
+    private final PlayerDeskScopeService scopeService;
     private final OperationAuditRepository auditRepository;
 
     public PlayerPointRequestService(PlayerPointRequestRepository repository,
                                      VirtualWalletService walletService,
-                                     PermissionService permissionService,
+                                     PlayerDeskScopeService scopeService,
                                      OperationAuditRepository auditRepository) {
         this.repository = repository;
         this.walletService = walletService;
-        this.permissionService = permissionService;
+        this.scopeService = scopeService;
         this.auditRepository = auditRepository;
     }
 
     @Transactional(readOnly = true)
     public List<PlayerPointRequestRepository.Request> pending(long operatorUserId, int limit) {
-        requirePermission(operatorUserId);
-        return repository.findPending(limit);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operatorUserId);
+        return repository.findPending(limit, scope);
     }
 
     @Transactional
     public ReviewResult approve(long requestId, long operatorUserId, String reason) {
-        requirePermission(operatorUserId);
-        PlayerPointRequestRepository.Request request = requireRequest(requestId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operatorUserId);
+        PlayerPointRequestRepository.Request request = requireRequest(requestId, scope);
         if (!"PENDING".equals(request.status())) {
             return new ReviewResult(request, null);
         }
@@ -64,13 +63,13 @@ public class PlayerPointRequestService {
                 Long.toString(request.id()), "SUCCESS", null,
                 "requestType=" + request.requestType() + ",amount=" + request.amount()
                         + ",ledgerId=" + operation.ledger().id(), null, Instant.now());
-        return new ReviewResult(requireRequest(request.id()), operation);
+        return new ReviewResult(requireRequest(request.id(), scope), operation);
     }
 
     @Transactional
     public ReviewResult reject(long requestId, long operatorUserId, String reason) {
-        requirePermission(operatorUserId);
-        PlayerPointRequestRepository.Request request = requireRequest(requestId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operatorUserId);
+        PlayerPointRequestRepository.Request request = requireRequest(requestId, scope);
         if (!"PENDING".equals(request.status())) {
             return new ReviewResult(request, null);
         }
@@ -82,18 +81,13 @@ public class PlayerPointRequestService {
                 "/api/admin/player-desk/point-requests/" + request.id() + "/reject",
                 Long.toString(request.id()), "SUCCESS", null,
                 "requestType=" + request.requestType() + ",amount=" + request.amount(), null, Instant.now());
-        return new ReviewResult(requireRequest(request.id()), null);
+        return new ReviewResult(requireRequest(request.id(), scope), null);
     }
 
-    private PlayerPointRequestRepository.Request requireRequest(long requestId) {
-        return repository.findByIdForUpdate(requestId)
+    /** 范围外的积分申请按“不存在”处理，避免通过 403 暴露跨机器数据存在性。 */
+    private PlayerPointRequestRepository.Request requireRequest(long requestId, PlayerDeskScopeService.Scope scope) {
+        return repository.findByIdForUpdate(requestId, scope)
                 .orElseThrow(() -> BusinessException.notFound("POINT_REQUEST_NOT_FOUND", "积分申请不存在"));
-    }
-
-    private void requirePermission(long operatorUserId) {
-        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, "USER_MANAGE")) {
-            throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有用户管理权限");
-        }
     }
 
     private static String normalizeReason(String reason, String fallback) {

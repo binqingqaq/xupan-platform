@@ -470,12 +470,38 @@ export interface PlayerAccessLinkStatusView {
   configuredDays: number
 }
 
+/** `/api/admin/player-desk/scope` 的身份范围：平台管理员 / 子账号分组 / 机器账号。 */
+export type PlayerDeskScopeMode = 'GLOBAL' | 'GROUP' | 'MACHINE'
+
+export interface PlayerDeskScope {
+  mode: PlayerDeskScopeMode
+  /** GLOBAL 与 GROUP 模式为 null。 */
+  machineId: number | null
+  machineCode: string | null
+  machineName: string | null
+  machineStatus: string | null
+  /** 机器代理积分；GLOBAL/GROUP 为 null。 */
+  score: number | null
+  /** 托上限（`agent.bot_count`）。 */
+  botLimit: number | null
+  /** 当前普通玩家数。 */
+  playerCount: number | null
+  /** 当前托数量。 */
+  botCount: number | null
+  groupId: number | null
+  groupName: string | null
+}
+
 export interface CreateNormalPlayerRequest {
   displayName: string
+  /** 机器归属：机器账号由后端强制成自己，子账号必传，平台管理员可选。 */
+  machineId?: number | null
 }
 
 export interface CreateBotPlayerRequest {
   displayName: string
+  /** 机器归属：机器账号由后端强制成自己，子账号必传，平台管理员可选。 */
+  machineId?: number | null
 }
 
 export interface PlayerBalanceAdjustmentRequest {

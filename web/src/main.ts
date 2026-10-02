@@ -21,6 +21,7 @@ import UserRoom from './views/UserRoom.vue'
 import PlayerLinkLoginView from './views/PlayerLinkLoginView.vue'
 import { adminRoutes } from './adminRoutes'
 import { restoreSession, subscribeAuthState, type AuthAudience } from './api'
+import { isRoutePermissionAllowed } from './consoleScope'
 import './styles.css'
 import './styles/display-mobile-home.css'
 import './styles/admin-retro.css'
@@ -29,6 +30,8 @@ declare module 'vue-router' {
   interface RouteMeta {
     requiresAuth?: boolean
     requiredPermission?: string
+    /** 任一权限命中即放行；`/console` 用它对机器账号放行 `AGENT_CONSOLE_READ`。 */
+    requiredAnyPermission?: readonly string[]
     title?: string
   }
 }
@@ -95,7 +98,7 @@ router.beforeEach(async to => {
     return { path: loginPath, query: { redirect: to.fullPath, reason: 'required' } }
   }
   if (user.scope === 'CHAT_ONLY') return { path: '/forbidden' }
-  if (to.meta.requiredPermission && !user.permissions.includes(to.meta.requiredPermission)) {
+  if (!isRoutePermissionAllowed(to.meta, user.permissions)) {
     return { path: '/forbidden' }
   }
   return true

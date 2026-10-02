@@ -1,6 +1,5 @@
 package com.xupan.server.system.service;
 
-import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.system.repository.PlayerPointsReportRepository;
 import com.xupan.server.web.BusinessException;
 import org.junit.jupiter.api.Test;
@@ -16,8 +15,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -29,7 +26,7 @@ class PlayerPointsReportServiceTest {
     private PlayerPointsReportRepository repository;
 
     @Mock
-    private PermissionService permissionService;
+    private PlayerDeskScopeService scopeService;
 
     @Test
     void businessDayStartsAtSixInShanghai() {
@@ -42,13 +39,13 @@ class PlayerPointsReportServiceTest {
 
     @Test
     void reportAggregatesBetsAndAdminPointOperationsForSelectedKind() {
-        when(permissionService.hasPermission(7L, "USER_MANAGE")).thenReturn(true);
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
         Instant createdAt = Instant.parse("2026-09-21T10:00:00Z");
         PlayerPointsReportRepository.PlayerAccount player = new PlayerPointsReportRepository.PlayerAccount(
                 7L, 70L, "v1001", "P-001", "普通玩家", "NORMAL", money("40"), money("100"));
-        when(repository.findPlayers(eq("NORMAL"), any(Instant.class), any(Instant.class)))
+        when(repository.findPlayers(eq("NORMAL"), any(Instant.class), any(Instant.class), any()))
                 .thenReturn(List.of(player));
-        when(repository.findBetEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(10)))
+        when(repository.findBetEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(10), any()))
                 .thenReturn(List.of(
                         new PlayerPointsReportRepository.BetEvent(1L, 70L, "B-1", "20260921", 1,
                                 "FAN", "1", money("10"), money("1.95"), "WIN", money("8"),
@@ -56,16 +53,16 @@ class PlayerPointsReportServiceTest {
                         new PlayerPointsReportRepository.BetEvent(2L, 70L, "B-2", "20260921", 1,
                                 "FAN", "2", money("20"), money("1.95"), "PENDING", BigDecimal.ZERO,
                                 null, createdAt, null)));
-        when(repository.findLedgerEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(10)))
+        when(repository.findLedgerEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(10), any()))
                 .thenReturn(List.of(
                         new PlayerPointsReportRepository.LedgerEvent(11L, 70L, "ADMIN_GRANT", money("100"),
                                 money("0"), money("100"), 9L, "管理员", "G-1", null, null, "上分", createdAt),
                         new PlayerPointsReportRepository.LedgerEvent(12L, 70L, "ADMIN_ADJUST", money("-30"),
                                 money("100"), money("70"), 9L, "管理员", "A-1", null, null, "下分", createdAt)));
-        when(repository.findActionEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(10)))
+        when(repository.findActionEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(10), any()))
                 .thenReturn(List.of());
 
-        PlayerPointsReportService.Report report = new PlayerPointsReportService(repository, permissionService)
+        PlayerPointsReportService.Report report = new PlayerPointsReportService(repository, scopeService)
                 .report("normal", "2026-09-21", 10, 7L);
 
         assertThat(report.playerKind()).isEqualTo("NORMAL");
@@ -83,13 +80,13 @@ class PlayerPointsReportServiceTest {
             assertThat(card.pointOperations()).hasSize(2);
             assertThat(card.botActions()).isEmpty();
         });
-        verify(repository).findActionEvents(eq("NORMAL"), eq(report.fromInclusive()), eq(report.toExclusive()), eq(10));
+        verify(repository).findActionEvents(eq("NORMAL"), eq(report.fromInclusive()), eq(report.toExclusive()), eq(10), any());
     }
 
     @Test
     void invalidKindAndLimitAreRejectedBeforeRepositoryAccess() {
-        when(permissionService.hasPermission(7L, "USER_MANAGE")).thenReturn(true);
-        PlayerPointsReportService service = new PlayerPointsReportService(repository, permissionService);
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
+        PlayerPointsReportService service = new PlayerPointsReportService(repository, scopeService);
 
         assertThatThrownBy(() -> service.report("ALL", "2026-09-21", 10, 7L))
                 .isInstanceOf(BusinessException.class)

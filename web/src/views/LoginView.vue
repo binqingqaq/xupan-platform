@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, apiErrorMessage, restoreSession } from '../api'
+import { consoleLandingPath } from '../consoleScope'
 import type { CurrentUserView } from '../types'
 
 const route = useRoute()
@@ -26,9 +27,8 @@ const pageMessage = computed(() => route.query.reason === 'expired'
 
 function landingPath(user: CurrentUserView): string {
   if (explicitRedirect.value) return explicitRedirect.value
-  if (user.permissions.includes('USER_MANAGE')) return '/console'
-  if (user.permissions.includes('AGENT_CONSOLE_READ')) return '/agent'
-  return '/forbidden'
+  // 代理后台已统一到 /console：机器账号（AGENT_CONSOLE_READ）也落在这里。
+  return consoleLandingPath(user.permissions)
 }
 
 async function submit() {

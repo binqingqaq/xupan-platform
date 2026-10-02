@@ -1,6 +1,5 @@
 package com.xupan.server.system.service;
 
-import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.system.repository.PlayerPointOperationRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.stereotype.Service;
@@ -19,17 +18,17 @@ public class PlayerPointOperationService {
     private static final int MAX_LIMIT = 200;
 
     private final PlayerPointOperationRepository repository;
-    private final PermissionService permissionService;
+    private final PlayerDeskScopeService scopeService;
 
     public PlayerPointOperationService(PlayerPointOperationRepository repository,
-                                       PermissionService permissionService) {
+                                       PlayerDeskScopeService scopeService) {
         this.repository = repository;
-        this.permissionService = permissionService;
+        this.scopeService = scopeService;
     }
 
     @Transactional(readOnly = true)
     public Recent recent(String kind, Long beforeId, int limit, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operatorUserId);
         String playerKind = normalizeKind(kind);
         if (beforeId != null && beforeId <= 0) {
             throw BusinessException.badRequest("POINT_OPERATION_CURSOR_INVALID", "记录游标无效");
@@ -37,7 +36,7 @@ public class PlayerPointOperationService {
         int safeLimit = normalizeLimit(limit);
         PlayerPointsReportService.BusinessDay businessDay = PlayerPointsReportService.resolveBusinessDay(null);
         List<PlayerPointOperationRepository.Operation> rows = repository.findRecent(
-                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), beforeId, safeLimit + 1);
+                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), beforeId, safeLimit + 1, scope);
         boolean hasMore = rows.size() > safeLimit;
         List<PlayerPointOperationRepository.Operation> visible = hasMore
                 ? List.copyOf(rows.subList(0, safeLimit))
@@ -45,12 +44,6 @@ public class PlayerPointOperationService {
         Long nextBeforeId = hasMore && !visible.isEmpty() ? visible.get(visible.size() - 1).ledgerId() : null;
         return new Recent(playerKind, businessDay.businessDate(), businessDay.fromInclusive(),
                 businessDay.toExclusive(), visible.stream().map(Item::from).toList(), nextBeforeId, hasMore);
-    }
-
-    private void requireAdmin(long operatorUserId) {
-        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, "USER_MANAGE")) {
-            throw BusinessException.forbidden("USER_OPERATION_FORBIDDEN", "没有用户管理权限");
-        }
     }
 
     private static String normalizeKind(String kind) {
