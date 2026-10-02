@@ -146,12 +146,16 @@ public class VirtualWalletService {
         return resultFor(targetUserId, ledger);
     }
 
+    /**
+     * 撤单退款。BY220 撤单会物理删除注单，因此调用方必须在删除前校验注单归属与金额，
+     * 并把校验后的 {@code accountId} 一起传入。
+     */
     @Transactional
-    public WalletOperationResult refundForCancellation(long targetUserId, long betId,
+    public WalletOperationResult refundForCancellation(long targetUserId, long betId, long accountId,
                                                        String issueNumber, BigDecimal amount) {
         BigDecimal normalizedAmount = positiveAmount(amount);
         WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendCancellationRefund(
-                targetUserId, betId, requiredText(issueNumber, "期号不能为空", 64), normalizedAmount));
+                targetUserId, betId, accountId, requiredText(issueNumber, "期号不能为空", 64), normalizedAmount));
         return resultFor(targetUserId, ledger);
     }
 

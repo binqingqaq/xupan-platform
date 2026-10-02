@@ -6,6 +6,7 @@ import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -185,6 +186,7 @@ public class PlatformAdminService {
                        a.total_limit, a.positive_limit, a.angle_limit, a.strict_limit, a.tong_limit,
                        a.car_limit, a.special_limit, a.odd_even_limit, a.big_small_limit, a.fan_limit,
                        a.add_limit, a.player_max_stake, a.player_min_stake,
+                       COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
                        (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='NORMAL' AND d.status <> 'DELETED') normal_count,
                        (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='BOT' AND d.status <> 'DELETED') bot_count
                   FROM agent a
@@ -203,7 +205,8 @@ public class PlatformAdminService {
                 rs.getBigDecimal("strict_limit"), rs.getBigDecimal("tong_limit"), rs.getBigDecimal("car_limit"),
                 rs.getBigDecimal("special_limit"), rs.getBigDecimal("odd_even_limit"), rs.getBigDecimal("big_small_limit"),
                 rs.getBigDecimal("fan_limit"), rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"),
-                rs.getBigDecimal("player_min_stake"), rs.getLong("normal_count"), rs.getLong("bot_count")));
+                rs.getBigDecimal("player_min_stake"), rs.getLong("normal_count"), rs.getLong("bot_count"),
+                rs.getString("rebate_mode")));
         Long scope = accessService.subAccountGroupId(operator).orElse(null);
         return scope == null ? rows : rows.stream().filter(row -> scope.equals(row.groupId())).toList();
     }
@@ -314,12 +317,19 @@ public class PlatformAdminService {
 
     private void applyMachine(MachineInput input, long id, Long groupId, long operator, boolean create) {
         validateExpiry(input.expiresAt());
+        // 赔率、返水与限额由数据库 CHECK 兜底，这里先做服务端校验，避免把数据库错误暴露成 500。
+        requireNonNegative(input.oddsRate(), "MACHINE_ODDS_RATE_INVALID", "机器赔率不能为负数");
+        requireNonNegative(input.specialOddsRate(), "MACHINE_SPECIAL_ODDS_RATE_INVALID", "特码赔率不能为负数");
+        requireNonNegative(input.rebateRate(), "MACHINE_REBATE_RATE_INVALID", "返水不能为负数");
+        requireNonNegative(input.specialRebateRate(), "MACHINE_SPECIAL_REBATE_RATE_INVALID", "特码返水不能为负数");
+        requireNonNegative(input.score(), "MACHINE_SCORE_INVALID", "机器积分不能为负数");
         jdbc.update("""
                 UPDATE agent SET group_id=?, score=?, expires_at=?, board_open=?, robot_manage=?, chase_enabled=?,
                     bot_count=?, close_seconds=?, cancel_seconds=?, rebate_rate=?, odds_rate=?,
                     special_rebate_rate=?, special_odds_rate=?, total_limit=?, positive_limit=?, angle_limit=?,
                     strict_limit=?, tong_limit=?, car_limit=?, special_limit=?, odd_even_limit=?,
                     big_small_limit=?, fan_limit=?, add_limit=?, player_max_stake=?, player_min_stake=?,
+                    rebate_mode=?,
                     updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
                 """, groupId, amount(input.score()), timestamp(input.expiresAt()), input.boardOpen(),
@@ -330,7 +340,7 @@ public class PlatformAdminService {
                 amount(input.strictLimit()), amount(input.tongLimit()), amount(input.carLimit()),
                 amount(input.specialLimit()), amount(input.oddEvenLimit()), amount(input.bigSmallLimit()),
                 amount(input.fanLimit()), amount(input.addLimit()), amount(input.playerMaxStake()),
-                amount(input.playerMinStake()), id);
+                amount(input.playerMinStake()), normalizeRebateMode(input.rebateMode()), id);
         jdbc.update("DELETE FROM agent_game WHERE agent_id=?", id);
         if (input.games() != null) {
             for (String game : input.games()) {
@@ -380,6 +390,7 @@ public class PlatformAdminService {
                        a.special_rebate_rate, a.special_odds_rate, a.total_limit, a.positive_limit, a.angle_limit,
                        a.strict_limit, a.tong_limit, a.car_limit, a.special_limit, a.odd_even_limit,
                        a.big_small_limit, a.fan_limit, a.add_limit, a.player_max_stake, a.player_min_stake,
+                       COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
                        (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='NORMAL' AND d.status <> 'DELETED') normal_count,
                        (SELECT COUNT(*) FROM demo_user_account d WHERE d.agent_id=a.id AND d.player_kind='BOT' AND d.status <> 'DELETED') bot_count
                   FROM agent a
@@ -398,7 +409,7 @@ public class PlatformAdminService {
                 rs.getBigDecimal("tong_limit"), rs.getBigDecimal("car_limit"), rs.getBigDecimal("special_limit"),
                 rs.getBigDecimal("odd_even_limit"), rs.getBigDecimal("big_small_limit"), rs.getBigDecimal("fan_limit"),
                 rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"), rs.getBigDecimal("player_min_stake"),
-                rs.getLong("normal_count"), rs.getLong("bot_count")), id);
+                rs.getLong("normal_count"), rs.getLong("bot_count"), rs.getString("rebate_mode")), id);
     }
 
     private void require(long operator, String permission) {
@@ -442,6 +453,19 @@ public class PlatformAdminService {
     }
 
     private static BigDecimal amount(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }
+
+    private static void requireNonNegative(BigDecimal value, String code, String message) {
+        if (value != null && value.signum() < 0) {
+            throw BusinessException.badRequest(code, message);
+        }
+    }
+
+    /** BY220 x_robot.ls：单边/双边返水口径，未指定时保持单边。 */
+    private static String normalizeRebateMode(String value) {
+        return MachineBettingConfig.DOUBLE.equalsIgnoreCase(value == null ? null : value.trim())
+                ? MachineBettingConfig.DOUBLE
+                : MachineBettingConfig.SINGLE;
+    }
     private static Timestamp timestamp(Instant value) { return value == null ? null : Timestamp.from(value); }
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
     private static String trimToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
@@ -466,7 +490,8 @@ public class PlatformAdminService {
                                BigDecimal angleLimit, BigDecimal strictLimit, BigDecimal tongLimit,
                                BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
-                               BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games) {}
+                               BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games,
+                               String rebateMode) {}
     public record MachineRow(long id, String code, String displayName, String accountUsername, long accountUserId,
                              Long groupId, String groupUsername, BigDecimal score, Instant expiresAt, String status,
                              boolean boardOpen, boolean robotManage, boolean chaseEnabled, int requestedBotCount,
@@ -476,7 +501,7 @@ public class PlatformAdminService {
                              BigDecimal tongLimit, BigDecimal carLimit, BigDecimal specialLimit,
                              BigDecimal oddEvenLimit, BigDecimal bigSmallLimit, BigDecimal fanLimit,
                              BigDecimal addLimit, BigDecimal playerMaxStake, BigDecimal playerMinStake,
-                             long normalCount, long botCount) {}
+                             long normalCount, long botCount, String rebateMode) {}
 }
 
 

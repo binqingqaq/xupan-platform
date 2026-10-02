@@ -36,6 +36,7 @@ export interface Machine {
   oddsRate: number
   specialRebateRate: number
   specialOddsRate: number
+  rebateMode: 'SINGLE' | 'DOUBLE' | string
   totalLimit: number
   positiveLimit: number
   angleLimit: number
@@ -84,6 +85,7 @@ export interface MachineInput {
   oddsRate: number
   specialRebateRate: number
   specialOddsRate: number
+  rebateMode: 'SINGLE' | 'DOUBLE' | string
   totalLimit: number
   positiveLimit: number
   angleLimit: number
@@ -141,6 +143,7 @@ export interface MachineProfit {
   totalDoubleFlow: number
   totalProfit: number
   totalFanShui: number
+  rebateDouble: number
   totalUp: number
   totalDown: number
 }
@@ -157,6 +160,7 @@ export interface ProfitReport {
   totalDoubleFlow: number
   totalProfit: number
   totalFanShui: number
+  totalRebateDouble: number
   totalUp: number
   totalDown: number
   totalUpDown: number
@@ -230,7 +234,8 @@ export interface UnsettledOrderPage {
 
 export interface UnsettledOrderCancellation {
   id: number
-  status: 'CANCELED'
+  /** BY220 未结订单删除为物理删除，接口返回 DELETED；CANCELED 兼容历史响应。 */
+  status: 'CANCELED' | 'DELETED'
   refundedAmount: number
 }
 

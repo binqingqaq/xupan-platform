@@ -41,7 +41,8 @@ class VirtualWalletMigrationTest {
         assertThat(constraintCount("game_bet", "uk_game_bet_user_request_key")).isEqualTo(1);
         assertThat(constraintCount("demo_balance_ledger", "uk_demo_balance_ledger_idempotency")).isEqualTo(1);
         assertThat(constraintCount("demo_balance_ledger", "fk_demo_balance_ledger_operator")).isEqualTo(1);
-        assertThat(constraintCount("demo_balance_ledger", "fk_demo_balance_ledger_bet")).isEqualTo(1);
+        // V55 起按 BY220 物理删除注单，因此解除指向 game_bet 的外键；related_bet_id 仍保留原注单号。
+        assertThat(constraintCount("demo_balance_ledger", "fk_demo_balance_ledger_bet")).isZero();
         assertThat(constraintCount("game_bet", "fk_game_bet_demo_user")).isEqualTo(1);
 
         assertThat(jdbcTemplate.queryForObject(

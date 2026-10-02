@@ -50,7 +50,7 @@ afterEach(() => {
 describe('platform admin unsettled orders', () => {
   it('renders BY220 columns and safely invokes delete action', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    vi.mocked(api.cancelUnsettledOrder).mockResolvedValue({ id: 7, status: 'CANCELED', refundedAmount: 100 })
+    vi.mocked(api.cancelUnsettledOrder).mockResolvedValue({ id: 7, status: 'DELETED', refundedAmount: 100 })
     vi.mocked(api.listUnsettledOrders)
       .mockResolvedValueOnce({
         items: [{

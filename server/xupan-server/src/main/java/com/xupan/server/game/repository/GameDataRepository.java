@@ -1,5 +1,6 @@
 package com.xupan.server.game.repository;
 
+import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.service.SettlementResult;
@@ -322,6 +323,45 @@ public class GameDataRepository {
                 rs.getBigDecimal("special_rebate_rate")), accountId);
         return rows.isEmpty() ? BettingRates.ZERO : rows.get(0);
     }
+
+    /**
+     * 读取玩家所属机器的 BY220 配置（赔率、特码赔率、封盘、取消、开盘、返水口径）。
+     * 玩家没有归属机器时返回 {@link MachineBettingConfig#DEFAULT}，行为与配置前一致。
+     */
+    public MachineBettingConfig findMachineBettingConfig(long accountId) {
+        List<MachineBettingConfig> rows = jdbcTemplate.query("""
+                SELECT COALESCE(a.odds_rate, 0) odds_rate,
+                       COALESCE(a.special_odds_rate, 0) special_odds_rate,
+                       COALESCE(a.close_seconds, 0) close_seconds,
+                       COALESCE(a.cancel_seconds, 0) cancel_seconds,
+                       COALESCE(a.board_open, TRUE) board_open,
+                       COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
+                       COALESCE(a.rebate_rate, 0) rebate_rate,
+                       COALESCE(a.special_rebate_rate, 0) special_rebate_rate
+                  FROM demo_user_account d
+                  LEFT JOIN agent a ON a.id = d.agent_id
+                 WHERE d.id = ?
+                """, (rs, rowNum) -> new MachineBettingConfig(
+                rs.getBigDecimal("odds_rate"), rs.getBigDecimal("special_odds_rate"),
+                rs.getInt("close_seconds"), rs.getInt("cancel_seconds"), rs.getBoolean("board_open"),
+                rs.getString("rebate_mode"), rs.getBigDecimal("rebate_rate"),
+                rs.getBigDecimal("special_rebate_rate")), accountId);
+        return rows.isEmpty() ? MachineBettingConfig.DEFAULT : rows.get(0);
+    }
+
+    /**
+     * 按 BY220 语义物理删除未结算注单，作为撤单或未结订单删除的原子占用操作。
+     * 钱包退款流水和操作审计另行保留，删除后该注单不再参与结算与报表。
+     */
+    public boolean deletePendingBetById(long betId) {
+        if (betId <= 0) {
+            throw new IllegalArgumentException("注单编号无效");
+        }
+        return jdbcTemplate.update("""
+                DELETE FROM game_bet
+                 WHERE id = ? AND settlement_status = 'PENDING' AND settled_at IS NULL
+                """, betId) == 1;
+    }
     public long saveBetWithOddsSnapshot(long accountId, String betCode, String idempotencyKey,
                                         String issueNumber, int ballNumber,
                                         PlayType playType, List<Integer> parameters,
@@ -376,18 +416,6 @@ public class GameDataRepository {
                  WHERE id = ? AND settlement_status = 'PENDING' AND settled_at IS NULL
                 """, settlement.status().name(), settlement.netProfit(), settlement.explanation(),
                 Timestamp.from(Instant.now()), betId) == 1;
-    }
-
-    public boolean cancelBetOnce(long betId, Instant canceledAt) {
-        if (betId <= 0 || canceledAt == null) {
-            throw new IllegalArgumentException("撤单参数无效");
-        }
-        return jdbcTemplate.update("""
-                UPDATE game_bet
-                   SET settlement_status = 'CANCELED', net_profit = 0,
-                       explanation = '用户在有效时间内取消下注', canceled_at = ?, settled_at = ?
-                 WHERE id = ? AND settlement_status = 'PENDING' AND settled_at IS NULL
-                """, Timestamp.from(canceledAt), Timestamp.from(canceledAt), betId) == 1;
     }
 
     private static void requireBallNumber(int ballNumber) {

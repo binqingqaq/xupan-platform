@@ -8,9 +8,11 @@
 >
 > Git 状态：交接前工作区干净；`main` 领先 `origin/main` 10 个提交。
 >
-> 当前数据库基线：本机 MySQL 8.4.11 Flyway V54。
+> 当前数据库基线：本机 MySQL 8.4.11 Flyway V55。
 >
-> 当前验证：后端 H2/Flyway `320/320`、前端 Vitest `126/126`、`typecheck`、生产构建、本机 18080 健康检查。服务器和生产未验证。
+> 当前验证：后端 H2/Flyway `335/335`、前端 Vitest `129/129`、`typecheck`、生产构建、本机 MySQL V55 迁移与真实 HTTP 运行态对账（机器赔率/封盘/取消/双边返水/软删除过滤）。服务器和生产未验证。
+>
+> 本次新增验收证据：[BY220 代理赔率返水封盘取消结算映射验收记录](../验收记录/2026-10-02-BY220代理赔率返水封盘取消结算映射验收记录.md)；实施计划：[代理赔率返水封盘取消结算映射实施计划](../plans/2026-10-02-代理赔率返水封盘取消结算映射实施计划.md)。
 >
 > 本文是后续 DeepSeek 桌面端 Agent 的当前进度和未完成目标入口。它不替代用户确认的业务规则；发生冲突时先看当前源码、迁移、测试和 [BY220 严格平移总规则](../参考资料/BY220严格平移总规则.md)。
 
@@ -69,11 +71,11 @@ D:\codes\liuhecai\xupan-platform
 
 ```text
 分支：main
-代码：b69881f
-origin/main：落后当前分支 10 个提交
+代码：本次提交（见 git log -1；上一交接基线为 b69881f）
+origin/main：已推送至 cb7ca3d，本次提交待推送
 工作区：干净
-数据库：本机 MySQL 8.4.11，Flyway V54
-运行：http://127.0.0.1:18080
+数据库：本机 MySQL 8.4.11，Flyway V55
+运行：本机开发实例 http://127.0.0.1:18080；验证实例使用 18081 并在验证后停止
 /actuator/health：200
 /agent：200
 ```
@@ -82,12 +84,12 @@ origin/main：落后当前分支 10 个提交
 
 | 检查 | 当前结果 |
 | --- | --- |
-| 后端 H2/Flyway | `320/320` |
-| 前端 Vitest | `126/126` |
+| 后端 H2/Flyway | `335/335` |
+| 前端 Vitest | `129/129` |
 | 前端 typecheck | 通过 |
 | 前端生产构建 | 通过 |
-| 本机 MySQL | V54 迁移和关键运行态通过 |
-| 服务器 | 仅历史 `caf4677` V13→V32 证据；V54 未部署验证 |
+| 本机 MySQL | V55 迁移、真实 HTTP 机器配置读写、报表双边返水字段、负数校验 400、软删除过滤复验通过 |
+| 服务器 | 仅历史 `caf4677` V13→V32 证据；V55 未部署验证 |
 | 生产 | 未验证 |
 
 如果接手时工作区、提交号或测试结果已经变化，先把最新结果写回本文和 [模块状态矩阵](../模块状态矩阵.md)，不要沿用旧数字。
@@ -153,6 +155,7 @@ origin/main：落后当前分支 10 个提交
 - 运营汇总：业务日下注笔数、流水、净盈亏、待结算、活跃玩家、普通/BOT 流水。
 - 玩家明细：注单和积分流水分页。
 - 代理停用同步账号状态、会话版本和审计。
+- 机器配置生效：赔率（`PeiLv` 按玩法权重换算）、特码赔率（`tePeilv`）、封盘 `close_seconds`、取消 `cancel_seconds`、开盘开关、单边/双边返水口径 `rebate_mode`；撤单按 BY220 物理删除注单并幂等退款。
 
 重要区分：
 
@@ -165,75 +168,29 @@ origin/main：落后当前分支 10 个提交
 
 除非用户明确改变优先级，后续按以下顺序继续。报网、盘口、中心上游和二层结算仍暂缓。
 
-### P0：代理赔率、返水、封盘、取消的真实结算映射
+### P0：代理赔率、返水、封盘、取消的真实结算映射（已完成本机闭环）
 
-这是当前最优先的业务缺口，也是最容易做错的部分。
+状态：**本机完成**，证据见 [BY220 代理赔率返水封盘取消结算映射验收记录](../验收记录/2026-10-02-BY220代理赔率返水封盘取消结算映射验收记录.md)。已按用户 2026-10-02 确认的口径落地：
 
-先读 BY220：
+- 普通赔率按 BY220 `1 + num × PeiLv/100` 换算后写入 `game_bet.odds_snapshot`，机器未配置时回退全局 `game_odds`；特码直接用 `tePeilv`。
+- 权重：单/双/大/小/角/无/加/正=1、严/念=2、番=3、车/推=1/3、通=1/2。
+- 封盘 `close_seconds`（距开奖前 N 秒）与取消 `cancel_seconds`（下注后 N 秒内可撤单），`cancel=0` 关闭取消；`board_open=false` 拒注。
+- 返水按 BY220 原样对齐：单边特码 `本金×teFanshui` 不除 100；双边流水按 `getShuang`（赢单车本金/3、通类本金/2、其余本金；输单全额本金）；新增双边返水 `totalRebateDouble`/`rebateDouble`，特码输单为 0；和单不计。
+- 撤单与未结订单删除按 BY220 **物理删除注单行**，退款流水与操作审计保留。
+- 本轮同时修正：负数赔率/返水/积分由数据库 CHECK 变成 500 的问题（改为服务端 400）；报表机器列表补 `deleted_at IS NULL`，软删除机器不再出现在报表。
 
-```text
-D:\codes\liuhecai\_github-by220-cp\application\rbt\controller\Index.php
-```
+复核注意：结算分支 `SettlementService` **未改动**——逐行复核 `common.php:4341-4391` 后确认 BY220 通类与两位「无」是「赢值→赢、输值→输、其余→和」，与现状一致；`ADD`（加）玩法的和值数量差异登记待确认。BY220 用 bcmath 截断、本项目用 `HALF_UP`，末位舍入差异未与旧系统逐笔对账。
 
-重点方法：
+原始调查线索（保留供追溯）：`rbt/controller/Index.php` 的 `UpdatePeiLv/UpdatePeiLv2/UpdateFanShui/UpdateFanShui2/UpdateFengpan/UpdateCancel`、`application/common.php` 的 `getPeilv/getTePeilv/getShuang/getShuangs/getRecordData`；其中 `UpdatePeiLv2/UpdateFanShui2/UpdateFengpan/UpdateCancel` 在全仓库无调用者。
 
-```text
-UpdatePeiLv
-UpdatePeiLv2
-UpdateFanShui
-UpdateFanShui2
-UpdateFengpan
-UpdateCancel
-```
-
-同时读：
-
-```text
-D:\codes\liuhecai\_github-by220-cp\application\common.php
-```
-
-重点确认：
-
-- `peilv` 的计算和符号。
-- `tePeilv` 的计算和符号。
-- 普通玩法和特码玩法的差异。
-- 返水基数、比例和快照时机。
-- 封盘、取消、撤单和退款对注单/钱包/结算状态的影响。
-- 代理配置是仅影响新注单，还是也影响修改/重结算。
-- 幂等、重复提交、并发修改和审计要求。
-
-当前 xupan 相关位置：
-
-```text
-server\xupan-server\src\main\java\com\xupan\server\game\service\SettlementService.java
-server\xupan-server\src\main\java\com\xupan\server\game\service\DemoGameService.java
-server\xupan-server\src\main\java\com\xupan\server\agent\service\AgentConsoleService.java
-server\xupan-server\src\main\java\com\xupan\server\agent\web\AgentConsoleController.java
-game_bet.odds_snapshot
-game_bet.rebate_rate_snapshot
-game_bet.special_rebate_rate_snapshot
-game_odds
-agent.odds_rate
-agent.special_odds_rate
-```
-
-硬性要求：
-
-1. 先给出 BY220 公式到 xupan 字段/服务/状态的映射。
-2. 明确哪些配置在下注时快照，哪些在结算时读取。
-3. 先补结算集成测试和本机 MySQL 验证，再补页面。
-4. 未证明已经影响下注/结算前，禁止只做一个“能保存但无业务效果”的赔率页面。
-5. 不得自行改动 BY220 的公式、方向和状态流转。
-
-### P1：代理筛选、导出、钱包和转移
-
-完成 P0 后再做：
+### P1：代理筛选、导出、钱包和转移（当前最优先）
 
 - 日期、期号、玩家、普通/托、状态、玩法等筛选。
 - 报表分页、区间统计和导出。
 - 代理钱包、信用、冻结和可用额度。
 - 玩家在平台直属代理/普通代理之间的转移，及审计、幂等和归属校验。
 - 代理聊天室和托自动行为的代理范围可见性。
+- 代理后台 `/agent` 的返水口径展示（超级后台报表已输出单边/双边返水）。
 
 必须先确认 BY220 是否有同字段、同按钮和同状态；没有确认的功能不能自行发明。
 
@@ -381,13 +338,15 @@ http://127.0.0.1:18080
 
 ## 10. 已知风险
 
-- 代理赔率保存不等于结算生效。
+- 撤单与未结订单删除按 BY220 物理删除注单行：注单不可恢复，金额事实只保留在钱包流水与原注单号、操作审计中。
+- 报表口径与 BY220 的 bcmath 截断存在末位舍入差异（本项目 `HALF_UP`）；普通返水按百分数、特码返水按小数比率，配置口径必须在界面按单位填写。
+- 「清空数据」按注单时间关联清理的分支对已物理删除的注单不再匹配，这类流水只按自身时间清理。
 - 只读事务执行 `SELECT ... FOR UPDATE` 已在 MySQL 暴露过问题。
 - 非 AU8 WebSocket 下注尚未通关，当前必须保留 REST fallback。
 - `/console/agents` 不是正式 BY220 超级后台。
 - 旧演示开奖/重置接口不是正式超级后台菜单。
 - 清空数据和删除全量账号是破坏性操作，必须保留预检、确认文本、事务、审计和测试。
-- 服务器仍在历史 `caf4677` 基线，当前 V54 未部署验证。
+- 服务器仍在历史 `caf4677` 基线，当前 V55 未部署验证。
 - 所有金额仍只表示虚拟积分，不接入现实资金。
 
 ## 11. 完成判定

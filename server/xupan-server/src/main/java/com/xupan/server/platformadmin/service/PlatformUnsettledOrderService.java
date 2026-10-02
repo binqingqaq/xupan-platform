@@ -104,13 +104,14 @@ public class PlatformUnsettledOrderService {
         if (target.sysUserId() == null) {
             throw BusinessException.conflict("UNSETTLED_ORDER_WALLET_UNAVAILABLE", "玩家钱包身份不完整，不能删除");
         }
-        Instant now = Instant.now();
-        if (!gameDataRepository.cancelBetOnce(id, now)) {
+        // BY220 未结订单删除是物理删除注单：先原子删除注单行，再写退款流水与操作审计。
+        if (!gameDataRepository.deletePendingBetById(id)) {
             throw BusinessException.conflict("UNSETTLED_ORDER_ALREADY_SETTLED", "订单已结算或已删除，不能重复操作");
         }
-        walletService.refundForCancellation(target.sysUserId(), id, target.issueNumber(), target.stake());
+        walletService.refundForCancellation(target.sysUserId(), id, target.accountId(),
+                target.issueNumber(), target.stake());
         audit(operator, id, target.accountId(), target.issueNumber(), target.stake());
-        return new CancellationResult(id, "CANCELED", target.stake().setScale(2));
+        return new CancellationResult(id, "DELETED", target.stake().setScale(2));
     }
 
     private void requirePermission(long operator, String permission) {

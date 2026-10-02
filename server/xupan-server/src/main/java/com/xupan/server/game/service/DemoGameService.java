@@ -1,6 +1,7 @@
 package com.xupan.server.game.service;
 
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.domain.VirtualWallet;
@@ -36,13 +37,15 @@ public class DemoGameService {
     private final 自动轮期服务 automationService;
     private final ApplicationEventPublisher eventPublisher;
     private final GameBettingConfigService bettingConfigService;
+    private final AgentBettingPolicy agentBettingPolicy;
 
     public DemoGameService(SettlementService settlementService, GameDataRepository repository,
                            VirtualWalletService walletService,
                            GameIssueEventRepository eventRepository,
                            自动轮期服务 automationService,
                            ApplicationEventPublisher eventPublisher,
-                           GameBettingConfigService bettingConfigService) {
+                           GameBettingConfigService bettingConfigService,
+                           AgentBettingPolicy agentBettingPolicy) {
         this.settlementService = settlementService;
         this.repository = repository;
         this.walletService = walletService;
@@ -50,6 +53,7 @@ public class DemoGameService {
         this.automationService = automationService;
         this.eventPublisher = eventPublisher;
         this.bettingConfigService = bettingConfigService;
+        this.agentBettingPolicy = agentBettingPolicy;
     }
 
     public synchronized GameView current(long authenticatedUserId) {
@@ -137,8 +141,13 @@ public class DemoGameService {
                     : "下注无效：当前期已封盘，不能下注";
             throw BusinessException.conflict("GAME_BETTING_CLOSED", message);
         }
-        BigDecimal snapshotOdds = repository.findOdds(request.playType())
-                .orElseThrow(() -> new IllegalArgumentException("玩法赔率不存在"));
+        MachineBettingConfig machineConfig = repository.findMachineBettingConfig(wallet.accountId());
+        String rejection = agentBettingPolicy.rejectBet(machineConfig, issue, Instant.now()).orElse(null);
+        if (rejection != null) {
+            throw BusinessException.conflict(rejection, AgentBettingPolicy.rejectionMessage(rejection));
+        }
+        BigDecimal snapshotOdds = agentBettingPolicy.effectiveOdds(request.playType(),
+                repository.findOdds(request.playType()).orElse(null), machineConfig);
         settlementService.validateBet(request.playType(), request.parameters(), request.stake(), snapshotOdds);
         requireWithinLimit(wallet.accountId(), issue.issueNumber(), request);
         String betCode = "BET-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
@@ -187,25 +196,32 @@ public class DemoGameService {
                 || issue.bettingEndsAt() == null || !now.isBefore(issue.bettingEndsAt())) {
             return CancellationResult.stopped();
         }
-        if (!now.isBefore(issue.bettingEndsAt().minusSeconds(30))) {
-            return CancellationResult.lastThirtySeconds();
-        }
 
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
+        MachineBettingConfig machineConfig = repository.findMachineBettingConfig(wallet.accountId());
+        if (agentBettingPolicy.isClosedForBetting(machineConfig, issue, now)) {
+            return CancellationResult.stopped();
+        }
+        if (machineConfig.cancellationDisabled()) {
+            return CancellationResult.disabled();
+        }
         List<GameDataRepository.BetRecord> candidates = repository.findCancelableBets(
-                wallet.accountId(), issue.issueNumber(), now.minusSeconds(10));
+                wallet.accountId(), issue.issueNumber(),
+                agentBettingPolicy.cancellationWindowStart(machineConfig, now));
         List<CancellationItem> canceled = new ArrayList<>();
         for (GameDataRepository.BetRecord bet : candidates) {
-            if (repository.cancelBetOnce(bet.id(), now)) {
-                var refund = walletService.refundForCancellation(authenticatedUserId, bet.id(),
+            // 物理删除作为原子占用：删除成功才退款，重复请求不再命中同一注单。
+            if (repository.deletePendingBetById(bet.id())) {
+                var refund = walletService.refundForCancellation(authenticatedUserId, bet.id(), bet.accountId(),
                         bet.issueNumber(), bet.stake());
                 canceled.add(new CancellationItem(bet, refund.wallet().balance()));
             }
         }
         if (canceled.isEmpty()) {
-            return CancellationResult.noEligibleBets();
+            return CancellationResult.noEligibleBets(machineConfig.cancelSeconds());
         }
-        return CancellationResult.canceled(canceled, walletService.getForCurrentUser(authenticatedUserId).balance());
+        return CancellationResult.canceled(canceled,
+                walletService.getForCurrentUser(authenticatedUserId).balance(), machineConfig.cancelSeconds());
     }
 
     @Transactional
@@ -398,10 +414,12 @@ public class DemoGameService {
     }
 
     public record CancellationResult(Status status, List<CancellationItem> items,
-                                     BigDecimal balance) {
+                                     BigDecimal balance, int windowSeconds) {
         public enum Status {
+            /** 已过下注阶段或已进入机器封盘窗口（BY220：本期已停止，禁止取消）。 */
             STOPPED,
-            LAST_THIRTY_SECONDS,
+            /** 机器取消秒数为 0，关闭取消能力（BY220：禁止取消）。 */
+            CANCELLATION_DISABLED,
             NO_ELIGIBLE_BETS,
             CANCELED
         }
@@ -411,19 +429,19 @@ public class DemoGameService {
         }
 
         static CancellationResult stopped() {
-            return new CancellationResult(Status.STOPPED, List.of(), null);
+            return new CancellationResult(Status.STOPPED, List.of(), null, 0);
         }
 
-        static CancellationResult lastThirtySeconds() {
-            return new CancellationResult(Status.LAST_THIRTY_SECONDS, List.of(), null);
+        static CancellationResult disabled() {
+            return new CancellationResult(Status.CANCELLATION_DISABLED, List.of(), null, 0);
         }
 
-        static CancellationResult noEligibleBets() {
-            return new CancellationResult(Status.NO_ELIGIBLE_BETS, List.of(), null);
+        static CancellationResult noEligibleBets(int windowSeconds) {
+            return new CancellationResult(Status.NO_ELIGIBLE_BETS, List.of(), null, windowSeconds);
         }
 
-        static CancellationResult canceled(List<CancellationItem> items, BigDecimal balance) {
-            return new CancellationResult(Status.CANCELED, items, balance);
+        static CancellationResult canceled(List<CancellationItem> items, BigDecimal balance, int windowSeconds) {
+            return new CancellationResult(Status.CANCELED, items, balance, windowSeconds);
         }
     }
 

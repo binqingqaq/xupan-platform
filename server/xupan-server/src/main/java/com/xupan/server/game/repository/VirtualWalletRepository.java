@@ -257,13 +257,22 @@ public class VirtualWalletRepository {
                 betId, issue, safeReason);
     }
 
-    public WalletLedgerEntry appendCancellationRefund(long targetUserId, long betId,
+    /**
+     * 撤单退款流水。
+     *
+     * <p>BY220 撤单会物理删除注单（{@code common.php:2089}），因此注单行在写入流水时可能已经不存在。
+     * 调用方必须在同一事务内、删除之前校验注单归属、期号与金额，并把校验后的值传入：
+     * 本方法用 {@code accountId} 复核钱包归属，避免把退款写到错误的账户。</p>
+     */
+    public WalletLedgerEntry appendCancellationRefund(long targetUserId, long betId, long accountId,
                                                        String issueNumber, BigDecimal amount) {
         BigDecimal value = positiveMoney(amount, "WALLET_AMOUNT_INVALID");
         String issue = requiredText(issueNumber, "issueNumber", 64);
         String key = "CANCEL_REFUND:" + betId;
         VirtualWallet wallet = lockWallet(targetUserId);
-        requireBet(betId, wallet.accountId(), null, issue, value);
+        if (wallet.accountId() != accountId) {
+            throw new IllegalStateException("WALLET_BET_MISMATCH: 注单与钱包操作不匹配");
+        }
         Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
         if (replay.isPresent()) {
             return replayOrConflict(replay.get(), WalletOperationType.SETTLEMENT_REVERSAL, value,

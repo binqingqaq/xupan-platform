@@ -115,13 +115,14 @@ public class PlatformAdminResourceController {
                                  BigDecimal angleLimit, BigDecimal strictLimit, BigDecimal tongLimit,
                                  BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                  BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
-                                 BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games) {
+                                 BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games,
+                                 String rebateMode) {
         PlatformAdminService.MachineInput toInput() {
             return new PlatformAdminService.MachineInput(username, rawPassword, displayName, groupId, score,
                     expiresAt, boardOpen, robotManage, chaseEnabled, botCount, closeSeconds, cancelSeconds,
                     rebateRate, oddsRate, specialRebateRate, specialOddsRate, totalLimit, positiveLimit,
                     angleLimit, strictLimit, tongLimit, carLimit, specialLimit, oddEvenLimit, bigSmallLimit,
-                    fanLimit, addLimit, playerMaxStake, playerMinStake, games);
+                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode);
         }
     }
 
@@ -150,7 +151,7 @@ public class PlatformAdminResourceController {
                                   BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                   BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
                                   BigDecimal playerMaxStake, BigDecimal playerMinStake, long normalCount,
-                                  long botCount) {
+                                  long botCount, String rebateMode) {
         static MachineResponse from(PlatformAdminService.MachineRow row) {
             return new MachineResponse(row.id(), row.code(), row.displayName(), row.accountUsername(),
                     row.accountUserId(), row.groupId(), row.groupUsername(), row.score(), row.expiresAt(),
@@ -159,7 +160,7 @@ public class PlatformAdminResourceController {
                     row.specialRebateRate(), row.specialOddsRate(), row.totalLimit(), row.positiveLimit(),
                     row.angleLimit(), row.strictLimit(), row.tongLimit(), row.carLimit(), row.specialLimit(),
                     row.oddEvenLimit(), row.bigSmallLimit(), row.fanLimit(), row.addLimit(), row.playerMaxStake(),
-                    row.playerMinStake(), row.normalCount(), row.botCount());
+                    row.playerMinStake(), row.normalCount(), row.botCount(), row.rebateMode());
         }
     }
 

@@ -372,16 +372,16 @@ public class ChatMessageService {
         DemoGameService.CancellationResult result = gameService.cancelCurrentBets(userId, now);
         String content = switch (result.status()) {
             case STOPPED -> "@" + user.displayName() + " 本期已停止，禁止取消！";
-            case LAST_THIRTY_SECONDS -> "@" + user.displayName() + " 30秒以内禁止取消！";
-            case NO_ELIGIBLE_BETS -> "@" + user.displayName() + " 10秒内无有效指令！";
+            case CANCELLATION_DISABLED -> "@" + user.displayName() + " 禁止取消！";
+            case NO_ELIGIBLE_BETS -> "@" + user.displayName() + " " + result.windowSeconds() + "秒内无有效指令！";
             case CANCELED -> cancellationContent(user.displayName(), result);
         };
         publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "CANCEL_RESULT", content, now);
     }
 
     private static String cancellationContent(String displayName, DemoGameService.CancellationResult result) {
-        StringBuilder content = new StringBuilder("@").append(displayName)
-                .append(" 10秒内有效指令已全部取消");
+        StringBuilder content = new StringBuilder("@").append(displayName).append(' ')
+                .append(result.windowSeconds()).append("秒内有效指令已全部取消");
         for (DemoGameService.CancellationItem item : result.items()) {
             GameDataRepository.BetRecord bet = item.bet();
             content.append('\n').append('@').append(displayName).append(" 取消 ")

@@ -331,46 +331,105 @@ class PlatformAdminResourceControllerTest {
 
     @Test
     void reportsBy220SingleDoubleFlowAndRebate() throws Exception {
-        long groupId = insertAndReturnId("""
-                INSERT INTO agent_group (group_code, display_name, status, username)
-                VALUES ('PLATFORM_TEST_REPORT_GROUP', '报表测试子账号', 'ACTIVE', 'platform_test_report')
-                """);
-        long machineUserId = userRepository.insert("platform-admin-test-report-machine", "报表测试机器",
-                passwordPolicy.encode(PASSWORD), "ACTIVE");
-        long machineId = insertAndReturnId("""
-                INSERT INTO agent (agent_code, display_name, group_id, account_user_id, system_owned, status)
-                VALUES ('PLATFORM_TEST_REPORT_MACHINE', '报表测试机器', ?, ?, FALSE, 'ACTIVE')
-                """, groupId, machineUserId);
-        long playerUserId = userRepository.insert("platform-admin-test-report-player", "报表测试玩家",
-                passwordPolicy.encode(PASSWORD), "ACTIVE");
-        jdbcTemplate.update("""
-                INSERT INTO demo_user_account
-                    (user_code, display_name, balance, status, sys_user_id, agent_id,
-                     identity_type, player_kind, member_code)
-                VALUES ('PLATFORM_TEST_REPORT_PLAYER', '报表测试玩家', 100.00, 'ACTIVE', ?, ?,
-                        'REAL', 'NORMAL', 'V-REPORT-001')
-                """, playerUserId, machineId);
-        long accountId = jdbcTemplate.queryForObject(
-                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        ReportFixture fixture = createReportFixture("win");
+        long accountId = fixture.accountId();
+        // 番赢单：双边流水取本金（BY220 common.php:3919-3920 else 分支），不是 3 倍
         insertReportBet(accountId, "PLATFORM_TEST_REPORT_FAN", "FAN", "1", "10.00", "3.850",
-                "28.50", "WIN", "0.1000", "0.0000");
-        insertReportBet(accountId, "PLATFORM_TEST_REPORT_CAR", "CAR", "1,2,4", "12.00", "1.950",
-                "-12.00", "LOSE", "0.1000", "0.0000");
-        insertReportBet(accountId, "PLATFORM_TEST_REPORT_TONG", "NONE", "1,2,3", "20.00", "1.950",
-                "10.00", "WIN", "0.2000", "0.0000");
+                "28.50", "WIN", "1.0000", "0.0000");
+        // 车赢单：双边流水 = 本金/3（BY220 common.php:3914 totalYing = score/3）
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_CAR_WIN", "CAR", "1,2,4", "300.00", "1.950",
+                "95.00", "WIN", "1.0000", "0.0000");
+        // 通赢单：双边流水 = 本金/2（BY220 common.php:3916）
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_TONG_WIN", "TONG", "1,2,3", "200.00", "1.950",
+                "95.00", "WIN", "1.0000", "0.0000");
         String token = login(ADMIN, PASSWORD);
 
         mockMvc.perform(get("/api/admin/reports/profit")
                         .header("Authorization", bearer(token))
-                        .param("day", "2026-10-02").param("subAccountId", Long.toString(groupId)))
+                        .param("day", "2026-10-02").param("subAccountId", Long.toString(fixture.groupId())))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.machines[0].totalFlow").value(42.00))
-                .andExpect(jsonPath("$.machines[0].totalSingleFlow").value(38.50))
-                .andExpect(jsonPath("$.machines[0].totalDoubleFlow").value(52.00))
-                .andExpect(jsonPath("$.machines[0].totalProfit").value(26.50))
-                .andExpect(jsonPath("$.machines[0].totalFanShui").value(0.05))
-                .andExpect(jsonPath("$.totalDoubleFlow").value(52.00))
-                .andExpect(jsonPath("$.totalFanShui").value(0.05));
+                .andExpect(jsonPath("$.machines[0].totalFlow").value(510.00))
+                .andExpect(jsonPath("$.machines[0].totalSingleFlow").value(218.50))
+                // 双边流水：番 10.00 + 车 300/3=100.00 + 通 200/2=100.00
+                .andExpect(jsonPath("$.machines[0].totalDoubleFlow").value(210.00))
+                .andExpect(jsonPath("$.machines[0].totalProfit").value(218.50))
+                // 单边返水：番 28.50×1% = 0.29，车 95.00×1% = 0.95，通 95.00×1% = 0.95
+                .andExpect(jsonPath("$.machines[0].totalFanShui").value(2.19))
+                // 双边返水：番 10×1% = 0.10，车 100×1% = 1.00，通 100×1% = 1.00
+                .andExpect(jsonPath("$.machines[0].rebateDouble").value(2.10))
+                .andExpect(jsonPath("$.totalDoubleFlow").value(210.00))
+                .andExpect(jsonPath("$.totalFanShui").value(2.19))
+                .andExpect(jsonPath("$.totalRebateDouble").value(2.10));
+    }
+
+    @Test
+    void reportsBy220LoseFlowAndTongRebateHalving() throws Exception {
+        ReportFixture fixture = createReportFixture("lose");
+        long accountId = fixture.accountId();
+        // 车输单：双边流水 = 本金（BY220 common.php:4444-4447），双边返水基数 = 本金（common.php:3935）
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_CAR_LOSE", "CAR", "1,2,4", "300.00", "1.950",
+                "-300.00", "LOSE", "1.0000", "0.0000");
+        // 通输单：双边流水 = 本金（4444-4447 直接累加 score），但双边返水基数 = 本金/2（common.php:3938）
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_TONG_LOSE", "TONG", "1,2,3", "200.00", "1.950",
+                "-200.00", "LOSE", "1.0000", "0.0000");
+        // 3 参数无 = BY220 $tong 里的「12无3」（common.php:3909）：双边流水 = 本金，双边返水基数 = 本金/2
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_NONE_TONG_LOSE", "NONE", "1,2,3", "200.00", "1.950",
+                "-200.00", "LOSE", "1.0000", "0.0000");
+        // 2 参数无 = BY220 $wanfaArr 里的「1无2」三位无（common.php:3910）：双边流水和双边返水基数都取本金
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_NONE_LOSE", "NONE", "1,2", "200.00", "1.950",
+                "-200.00", "LOSE", "1.0000", "0.0000");
+        String token = login(ADMIN, PASSWORD);
+
+        mockMvc.perform(get("/api/admin/reports/profit")
+                        .header("Authorization", bearer(token))
+                        .param("day", "2026-10-02").param("subAccountId", Long.toString(fixture.groupId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.machines[0].totalFlow").value(900.00))
+                .andExpect(jsonPath("$.machines[0].totalSingleFlow").value(0.00))
+                // 双边流水：败单一律全额本金（300 + 200 + 200 + 200）
+                .andExpect(jsonPath("$.machines[0].totalDoubleFlow").value(900.00))
+                .andExpect(jsonPath("$.machines[0].totalProfit").value(-900.00))
+                // 单边返水只算赢单，输单为 0
+                .andExpect(jsonPath("$.machines[0].totalFanShui").value(0.00))
+                // 双边返水：车 300×1% = 3.00，通 200/2×1% = 1.00，3 参数无 200/2×1% = 1.00，2 参数无 200×1% = 2.00
+                .andExpect(jsonPath("$.machines[0].rebateDouble").value(7.00))
+                .andExpect(jsonPath("$.totalRebateDouble").value(7.00));
+    }
+
+    @Test
+    void reportsBy220SpecialAndDrawRules() throws Exception {
+        ReportFixture fixture = createReportFixture("special");
+        long accountId = fixture.accountId();
+        // 特码赢单：单边流水 = 本金×特码赔率；单边返水 = 本金×特码返水且不除 100（common.php:4410）；
+        // 双边流水 = 本金（getShuang else 分支）；双边返水 = 本金×赔率×普通返水/100（common.php:4426 用 totalYing）
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_SPECIAL_WIN", "SPECIAL", "7", "50.00", "18.000",
+                "850.00", "WIN", "1.0000", "0.1000");
+        // 特码输单：双边流水仍取本金（4444-4447），但 totalYing 输单为 0（common.php:4126），双边返水 = 0
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_SPECIAL_LOSE", "SPECIAL", "8", "50.00", "18.000",
+                "-50.00", "LOSE", "1.0000", "0.1000");
+        // 特码和单：双边流水与双边返水都不计（common.php:4424 排除 ying==3，4444-4447 只处理 ying==0）
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_SPECIAL_DRAW", "SPECIAL", "9", "20.00", "18.000",
+                "0.00", "DRAW", "1.0000", "0.1000");
+        // 番和单：双边流水与双边返水都不计
+        insertReportBet(accountId, "PLATFORM_TEST_REPORT_FAN_DRAW", "FAN", "1", "30.00", "3.850",
+                "0.00", "DRAW", "1.0000", "0.0000");
+        String token = login(ADMIN, PASSWORD);
+
+        mockMvc.perform(get("/api/admin/reports/profit")
+                        .header("Authorization", bearer(token))
+                        .param("day", "2026-10-02").param("subAccountId", Long.toString(fixture.groupId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.machines[0].totalFlow").value(150.00))
+                // 单边流水只取特码赢单：50 × 18.000
+                .andExpect(jsonPath("$.machines[0].totalSingleFlow").value(900.00))
+                // 双边流水：特码赢单 50.00 + 特码输单 50.00，两个和单不计
+                .andExpect(jsonPath("$.machines[0].totalDoubleFlow").value(100.00))
+                .andExpect(jsonPath("$.machines[0].totalProfit").value(800.00))
+                // 单边返水：特码赢单 50 × 0.1000 = 5.00（不除 100）
+                .andExpect(jsonPath("$.machines[0].totalFanShui").value(5.00))
+                // 双边返水：特码赢单 50 × 18.000 × 1% = 9.00
+                .andExpect(jsonPath("$.machines[0].rebateDouble").value(9.00))
+                .andExpect(jsonPath("$.totalRebateDouble").value(9.00));
     }
     @Test
     void listsAndSafelyDeletesUnsettledOrder() throws Exception {
@@ -414,11 +473,11 @@ class PlatformAdminResourceControllerTest {
 
         mockMvc.perform(delete("/api/admin/unsettled-orders/" + betId).header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("CANCELED"))
+                .andExpect(jsonPath("$.status").value("DELETED"))
                 .andExpect(jsonPath("$.refundedAmount").value(100.00));
+        // BY220 未结订单删除是物理删除注单行：注单不再存在，退款流水与审计保留。
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId))
-                .isEqualTo("CANCELED");
+                "SELECT COUNT(*) FROM game_bet WHERE id = ?", Long.class, betId)).isZero();
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT amount FROM demo_balance_ledger
                  WHERE related_bet_id = ? AND operation_type = 'SETTLEMENT_REVERSAL'
@@ -426,10 +485,15 @@ class PlatformAdminResourceControllerTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT balance FROM demo_user_account WHERE id = ?", java.math.BigDecimal.class, accountId))
                 .isEqualByComparingTo("1100.00");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM sys_operation_log
+                 WHERE resource_id = ? AND result = 'SUCCESS'
+                """, Long.class, Long.toString(betId))).isEqualTo(1);
         mockMvc.perform(get("/api/admin/unsettled-orders").header("Authorization", bearer(token)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.total").value(0));
+        // 注单已物理删除，重复删除不再命中记录。
         mockMvc.perform(delete("/api/admin/unsettled-orders/" + betId).header("Authorization", bearer(token)))
-                .andExpect(status().isConflict());
+                .andExpect(status().isNotFound());
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM sys_operation_log
                  WHERE permission_code = 'UNSETTLED_ORDER_DELETE' AND resource_id = ?
@@ -1005,6 +1069,35 @@ class PlatformAdminResourceControllerTest {
                    AND request_path = '/api/admin/password'
                 """, Long.class, ADMIN)).isEqualTo(1);
     }
+    /** 报表测试脚手架：建一个子账号（agent_group）+ 一台机器（agent）+ 一个玩家，返回三者主键。 */
+    private ReportFixture createReportFixture(String suffix) {
+        long groupId = insertAndReturnId("""
+                INSERT INTO agent_group (group_code, display_name, status, username)
+                VALUES (?, ?, 'ACTIVE', ?)
+                """, "PLATFORM_TEST_REPORT_GROUP_" + suffix, "报表测试子账号" + suffix,
+                "platform_test_report_" + suffix);
+        long machineUserId = userRepository.insert("platform-admin-test-report-machine-" + suffix,
+                "报表测试机器" + suffix, passwordPolicy.encode(PASSWORD), "ACTIVE");
+        long machineId = insertAndReturnId("""
+                INSERT INTO agent (agent_code, display_name, group_id, account_user_id, system_owned, status)
+                VALUES (?, ?, ?, ?, FALSE, 'ACTIVE')
+                """, "PLATFORM_TEST_REPORT_MACHINE_" + suffix, "报表测试机器" + suffix, groupId, machineUserId);
+        long playerUserId = userRepository.insert("platform-admin-test-report-player-" + suffix,
+                "报表测试玩家" + suffix, passwordPolicy.encode(PASSWORD), "ACTIVE");
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account
+                    (user_code, display_name, balance, status, sys_user_id, agent_id,
+                     identity_type, player_kind, member_code)
+                VALUES (?, ?, 100.00, 'ACTIVE', ?, ?, 'REAL', 'NORMAL', ?)
+                """, "PLATFORM_TEST_REPORT_PLAYER_" + suffix, "报表测试玩家" + suffix, playerUserId, machineId,
+                "V-REPORT-" + suffix);
+        long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        return new ReportFixture(groupId, machineId, accountId);
+    }
+
+    private record ReportFixture(long groupId, long machineId, long accountId) {}
+
     private void insertReportBet(long accountId, String betCode, String playType, String parameters,
                                  String stake, String odds, String netProfit, String status,
                                  String rebateRate, String specialRebateRate) {

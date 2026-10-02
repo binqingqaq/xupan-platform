@@ -20,6 +20,14 @@ vi.mock('./components/platform-admin/PlatformAdminNav.vue', () => ({
 let container: HTMLDivElement | null = null
 let app: ReturnType<typeof createApp> | null = null
 
+async function settle(ticks = 6) {
+  for (let index = 0; index < ticks; index += 1) {
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+  await nextTick()
+}
+
 beforeEach(() => {
   vi.mocked(api.me).mockResolvedValue({ displayName: '超级管理员', permissions: ['SUB_ACCOUNT_MANAGE'] } as never)
   vi.mocked(api.listSubAccounts).mockResolvedValue([])
@@ -31,10 +39,10 @@ beforeEach(() => {
       machineId: 2, machineCode: 'MACHINE', machineName: '报表机器', groupId: 1,
       groupUsername: '子账号', score: 0, playerBalance: 100, totalFlow: 42,
       totalSingleFlow: 38.5, totalDoubleFlow: 52, totalProfit: 26.5,
-      totalFanShui: 0.05, totalUp: 0, totalDown: 0,
+      totalFanShui: 0.05, rebateDouble: 0.09, totalUp: 0, totalDown: 0,
     }],
     totalRemaining: 100, totalFlow: 42, totalSingleFlow: 38.5, totalDoubleFlow: 52,
-    totalProfit: 26.5, totalFanShui: 0.05, totalUp: 0, totalDown: 0, totalUpDown: 0,
+    totalProfit: 26.5, totalFanShui: 0.05, totalRebateDouble: 0.09, totalUp: 0, totalDown: 0, totalUpDown: 0,
   })
 })
 
@@ -52,21 +60,21 @@ describe('platform admin reports', () => {
     document.body.appendChild(container)
     app = createApp(PlatformAdminReports)
     app.mount(container)
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settle()
 
     const profitTab = [...container.querySelectorAll<HTMLButtonElement>('.tabs button')]
       .find(button => button.textContent?.includes('盈亏报表'))
     profitTab?.click()
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settle()
+
+    expect(container.textContent).not.toContain('数据加载中')
 
     expect(container.textContent).toContain('双边流水')
     expect(container.textContent).toContain('反水')
+    expect(container.textContent).toContain('双边反水')
     expect(container.textContent).toContain('52.00')
     expect(container.textContent).toContain('0.05')
+    expect(container.textContent).toContain('0.09')
     expect(container.textContent).not.toContain('待规则确认')
   })
 })
