@@ -33,7 +33,18 @@ const navItems: NavItem[] = [
 const visibleNavItems = computed(() => navItems.filter(item => currentUser.value?.permissions.includes(item.permission || '')))
 
 const lastDraw = computed<DrawHistoryItem | null>(() => history.value[0] ?? null)
-const historyRows = computed(() => history.value.slice(0, 12))
+const historyRows = computed(() => history.value.slice(0, 15))
+const routeRows = computed(() => {
+  const oldestFirst = [...history.value].reverse()
+  const rows: Array<Array<{ issueNumber: string; fan: number }>> = []
+  for (let index = 0; index < oldestFirst.length; index += 12) {
+    rows.push(oldestFirst.slice(index, index + 12).map(row => ({
+      issueNumber: row.issueNumber,
+      fan: row.balls[7] === undefined ? 0 : fan(row.balls[7]),
+    })))
+  }
+  return rows
+})
 const specialFan = computed(() => {
   const number = lastDraw.value?.balls?.[7]
   return typeof number === 'number' ? fan(number) : null
@@ -51,7 +62,7 @@ async function load() {
   try {
     const [user, page] = await Promise.all([
       api.me(),
-      api.listDrawHistory({ gameCode: selectedGameCode.value, pageSize: 12 }),
+      api.listDrawHistory({ gameCode: selectedGameCode.value, pageSize: 48 }),
     ])
     currentUser.value = user
     history.value = page.items
@@ -104,6 +115,20 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
           <tbody><tr v-for="row in historyRows" :key="row.gameCode + row.issueNumber"><td>{{ issueTail(row.issueNumber) }}</td><td>{{ formatShortTime(row.settledAt) }}</td><td><span class="platform-admin-history-balls"><i v-for="(number,index) in row.balls" :key="index">{{ displayBall(number) }}</i></span></td><td><span class="platform-admin-history-fan">{{ row.balls[7] !== undefined ? fan(row.balls[7]) : '--' }}番</span></td></tr></tbody>
         </table>
       </section>
+
+      <p class="platform-admin-section-label">路字图：</p>
+      <section class="platform-admin-route">
+        <table>
+          <thead><tr><th></th><th></th><th></th><th></th><th>路</th><th>字</th><th>图</th><th></th><th></th><th></th><th></th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="(routeRow, rowIndex) in routeRows" :key="rowIndex">
+              <td v-for="(cell, cellIndex) in routeRow" :key="cell.issueNumber + cellIndex">
+                <span :class="['platform-admin-route-color', 'fan-' + cell.fan]">{{ cell.fan }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
     </section>
   </main>
 </template>
@@ -133,6 +158,15 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .platform-admin-history-balls { display: flex; justify-content: center; gap: 5px; }
 .platform-admin-history-balls i { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #e33323; border-radius: 50%; color: #e33323; font-style: normal; font-size: 13px; }
 .platform-admin-history-fan { display: inline-block; min-width: 54px; padding: 3px 7px; background: #eef8fc; color: #176a96; font-weight: 700; }
+.platform-admin-route { overflow-x: auto; border: 1px solid #bcdcef; background: #fff; }
+.platform-admin-route table { width: 100%; min-width: 720px; border-collapse: collapse; }
+.platform-admin-route th, .platform-admin-route td { padding: 6px; border: 1px solid #d9e3e8; text-align: center; font-size: 13px; }
+.platform-admin-route th { background: #eef8fc; color: #176a96; }
+.platform-admin-route-color { display: grid; place-items: center; width: 28px; height: 28px; margin: auto; color: #fff; font-weight: 700; }
+.platform-admin-route-color.fan-1 { background: #2f69d6; }
+.platform-admin-route-color.fan-2 { background: #25a25e; }
+.platform-admin-route-color.fan-3 { background: #d0b30d; }
+.platform-admin-route-color.fan-4 { background: #e21919; }
 .platform-admin-alert { margin: 10px; padding: 10px; background: #ffe1de; color: #a51e13; }
 @media (max-width: 900px) { .platform-admin-nav { padding: 4px 8px; } .platform-admin-welcome { width: 100%; padding: 8px 12px; } .platform-admin-draw-card { padding: 12px; } .platform-admin-draw-card h1 { font-size: 28px; } .platform-admin-ball-row { gap: 14px; } .platform-admin-ball { width: 36px; height: 36px; font-size: 16px; } }
 </style>

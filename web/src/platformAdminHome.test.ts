@@ -68,7 +68,8 @@ describe('platform admin home', () => {
     await nextTick()
 
     expect(api.getGameCatalog).toHaveBeenCalledTimes(1)
-    expect(api.listDrawHistory).toHaveBeenCalledWith({ gameCode: 'AU8', pageSize: 12 })
+    expect(api.listDrawHistory).toHaveBeenCalledWith({ gameCode: 'AU8', pageSize: 48 })
+    expect(container.querySelectorAll('.platform-admin-route-color')).toHaveLength(1)
 
     const select = container.querySelector<HTMLSelectElement>('select[aria-label="选择游戏"]')
     if (!select) throw new Error('missing game selector')
@@ -78,6 +79,6 @@ describe('platform admin home', () => {
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(api.listDrawHistory).toHaveBeenLastCalledWith({ gameCode: 'MULTI', pageSize: 12 })
+    expect(api.listDrawHistory).toHaveBeenLastCalledWith({ gameCode: 'MULTI', pageSize: 48 })
   })
 })
