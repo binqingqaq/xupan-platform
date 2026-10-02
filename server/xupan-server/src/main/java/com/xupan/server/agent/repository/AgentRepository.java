@@ -197,6 +197,29 @@ public class AgentRepository {
                 Long.class, userId).stream().findFirst();
     }
 
+    public Optional<Long> findCurrentAgentIdForUpdate(long userId) {
+        return jdbc.query("""
+                SELECT agent_id FROM demo_user_account
+                 WHERE sys_user_id = ?
+                   FOR UPDATE
+                """, (rs, rowNum) -> rs.getLong("agent_id"), userId).stream().findFirst();
+    }
+
+    public int assignPlayerToAgent(long userId, long agentId) {
+        return jdbc.update("""
+                UPDATE demo_user_account
+                   SET agent_id = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE sys_user_id = ?
+                """, agentId, userId);
+    }
+
+    public long findBotCountLimit(long agentId) {
+        Long limit = jdbc.queryForObject(
+                "SELECT bot_count FROM agent WHERE id = ? AND deleted_at IS NULL",
+                Long.class, agentId);
+        return limit == null ? 0L : limit;
+    }
+
     public int assignPlatformDirectPlayer(long userId, long targetAgentId) {
         long defaultAgentId = defaultAgentId();
         return jdbc.update("""
@@ -243,6 +266,25 @@ public class AgentRepository {
                         rs.getBigDecimal("balance"), instant(rs.getTimestamp("created_at")),
                         instant(rs.getTimestamp("last_login_at"))),
                 args.toArray());
+    }
+
+    public Optional<AgentPlayerRow> findPlayerByAgentAndUser(long agentId, long userId) {
+        return jdbc.query("""
+                SELECT u.id user_id, u.internal_code, u.display_name, u.status user_status,
+                       a.id account_id, a.member_code, a.player_kind, a.balance, a.status account_status,
+                       u.last_login_at, u.created_at
+                  FROM demo_user_account a
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.agent_id = ? AND u.id = ?
+                   AND a.identity_type IN ('REAL', 'TEST')
+                   AND a.player_kind IN ('NORMAL', 'BOT')
+                   AND u.status <> 'DELETED' AND a.status <> 'DELETED'
+                """, (rs, rowNum) -> new AgentPlayerRow(
+                        rs.getLong("user_id"), rs.getLong("account_id"), rs.getString("internal_code"),
+                        rs.getString("display_name"), rs.getString("member_code"), rs.getString("player_kind"),
+                        rs.getString("user_status"), rs.getString("account_status"),
+                        rs.getBigDecimal("balance"), instant(rs.getTimestamp("created_at")),
+                        instant(rs.getTimestamp("last_login_at"))), agentId, userId).stream().findFirst();
     }
 
     public long countPlayersByAgent(long agentId, String kind, String keyword) {

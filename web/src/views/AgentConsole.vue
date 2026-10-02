@@ -11,6 +11,12 @@ const kind = ref<'' | 'NORMAL' | 'BOT'>('')
 const keyword = ref('')
 const loading = ref(true)
 const error = ref('')
+const feedback = ref('')
+const createOpen = ref(false)
+const createKind = ref<'NORMAL' | 'BOT'>('NORMAL')
+const createDisplayName = ref('')
+const createUserCode = ref('')
+const creating = ref(false)
 
 async function load() {
   loading.value = true
@@ -38,6 +44,35 @@ function search() {
   void load()
 }
 
+function openCreate(kind: 'NORMAL' | 'BOT') {
+  createKind.value = kind
+  createDisplayName.value = ''
+  createUserCode.value = ''
+  createOpen.value = true
+}
+
+async function submitCreate() {
+  if (!createDisplayName.value.trim() || creating.value) return
+  creating.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    const player = createKind.value === 'NORMAL'
+      ? await api.createAgentPlayer(createDisplayName.value.trim())
+      : await api.createAgentBot({
+          userCode: createUserCode.value.trim(),
+          displayName: createDisplayName.value.trim(),
+        })
+    feedback.value = `${createKind.value === 'NORMAL' ? '玩家' : '托'} ${player.displayName} 已创建`
+    createOpen.value = false
+    await load()
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, createKind.value === 'NORMAL' ? '玩家创建失败' : '托创建失败')
+  } finally {
+    creating.value = false
+  }
+}
+
 onMounted(() => { void load() })
 </script>
 
@@ -49,10 +84,15 @@ onMounted(() => { void load() })
         <h1>{{ overview?.displayName || '代理工作台' }}</h1>
         <p v-if="overview" class="agent-console-meta">{{ overview.code }} · {{ overview.groupDisplayName || '平台直属' }}</p>
       </div>
-      <button type="button" @click="logout">退出登录</button>
+      <div class="agent-console-actions">
+        <button type="button" @click="openCreate('NORMAL')">添加玩家</button>
+        <button type="button" @click="openCreate('BOT')">添加托</button>
+        <button type="button" @click="logout">退出登录</button>
+      </div>
     </header>
 
     <p v-if="error" class="agent-console-alert" role="alert">{{ error }}</p>
+    <p v-if="feedback" class="agent-console-feedback" role="status">{{ feedback }}</p>
 
     <section v-if="overview" class="agent-console-stats">
       <article><span>普通玩家</span><strong>{{ overview.normalCount }}</strong></article>
@@ -88,6 +128,15 @@ onMounted(() => { void load() })
         </tbody>
       </table>
     </section>
+
+    <div v-if="createOpen" class="agent-console-modal-mask" @click.self="createOpen = false">
+      <form class="agent-console-modal" @submit.prevent="submitCreate">
+        <header><h2>{{ createKind === 'NORMAL' ? '添加玩家' : '添加托' }}</h2><button type="button" @click="createOpen = false">×</button></header>
+        <label>昵称<input v-model="createDisplayName" required maxlength="128" /></label>
+        <label v-if="createKind === 'BOT'">内部编码<input v-model="createUserCode" maxlength="64" placeholder="留空自动生成" /></label>
+        <footer><button type="button" @click="createOpen = false">取消</button><button type="submit" :disabled="creating">{{ creating ? '创建中...' : '确认' }}</button></footer>
+      </form>
+    </div>
   </main>
 </template>
 
@@ -96,6 +145,7 @@ onMounted(() => { void load() })
 .agent-console-header { display: flex; justify-content: space-between; align-items: center; max-width: 1080px; margin: 0 auto 18px; }
 .agent-console-header h1 { margin: 2px 0 4px; font-size: 24px; }
 .agent-console-header button { padding: 8px 14px; border: 1px solid #6f8177; background: #fff; cursor: pointer; }
+.agent-console-actions { display: flex; gap: 8px; }
 .agent-console-meta { margin: 0; color: #68756e; }
 .agent-console-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; max-width: 1080px; margin: 0 auto 16px; }
 .agent-console-stats article { padding: 14px; border: 1px solid #bdc8c2; background: #fff; }
@@ -110,6 +160,14 @@ onMounted(() => { void load() })
 .agent-console-table th, .agent-console-table td { padding: 9px; border: 1px solid #d6ded9; text-align: left; }
 .agent-console-table th { background: #e8eeea; }
 .agent-console-alert { max-width: 1048px; margin: 0 auto 12px; padding: 10px; background: #f1dcdc; }
+.agent-console-feedback { max-width: 1048px; margin: 0 auto 12px; padding: 10px; background: #dcecdf; color: #1f6437; }
 .agent-console-empty { padding: 18px; color: #68756e; text-align: center; }
+.agent-console-modal-mask { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); z-index: 20; }
+.agent-console-modal { width: min(480px, calc(100vw - 24px)); background: #fff; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.agent-console-modal header, .agent-console-modal footer { display: flex; justify-content: space-between; padding: 12px 16px; background: #e8eeea; }
+.agent-console-modal header h2 { margin: 0; font-size: 18px; }
+.agent-console-modal label { display: grid; gap: 6px; padding: 12px 16px 0; font-size: 13px; }
+.agent-console-modal input { padding: 8px; border: 1px solid #bdc8c2; }
+.agent-console-modal footer { justify-content: flex-end; gap: 8px; margin-top: 16px; background: #fff; }
 @media (max-width: 720px) { .agent-console-page { padding: 12px; } .agent-console-stats { grid-template-columns: repeat(2, 1fr); } .agent-console-table { display: block; overflow-x: auto; } }
 </style>

@@ -74,6 +74,20 @@ public class TestPlayerAdminService {
     @Transactional
     public TestPlayerAdminView create(String userCode, String displayName, long operatorUserId) {
         requireAdmin(operatorUserId);
+        return createInternal(userCode, displayName, operatorUserId,
+                "USER_MANAGE", "/api/admin/test-players");
+    }
+
+    @Transactional
+    public TestPlayerAdminView createForAgent(String userCode, String displayName, long operatorUserId) {
+        requirePermission(operatorUserId, "AGENT_PLAYER_MANAGE", "AGENT_PLAYER_FORBIDDEN",
+                "没有代理玩家管理权限");
+        return createInternal(userCode, displayName, operatorUserId,
+                "AGENT_PLAYER_MANAGE", "/api/agent/players/bot");
+    }
+
+    private TestPlayerAdminView createInternal(String userCode, String displayName, long operatorUserId,
+                                               String permission, String auditPath) {
         String code = optional(userCode, 64);
         if (code == null) {
             code = generatedUserCode();
@@ -92,7 +106,7 @@ public class TestPlayerAdminService {
                 throw BusinessException.badRequest("TEST_PLAYER_ROLE_INVALID", "测试玩家角色不可用");
             }
             walletService.ensureTestWalletForUser(userId, code, name);
-            audit(operatorUserId, "POST", "/api/admin/test-players", Long.toString(userId),
+            audit(operatorUserId, permission, "POST", auditPath, Long.toString(userId),
                     "userCode=" + code + ",identityType=TEST");
             return view(requirePlayer(code));
         } catch (DataIntegrityViolationException exception) {
@@ -186,8 +200,19 @@ public class TestPlayerAdminService {
         }
     }
 
+    private void requirePermission(long operatorUserId, String permission, String code, String message) {
+        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, permission)) {
+            throw BusinessException.forbidden(code, message);
+        }
+    }
+
     private void audit(long operatorUserId, String method, String path, String resourceId, String summary) {
-        auditRepository.record(operatorUserId, "USER_MANAGE", method, path, resourceId,
+        audit(operatorUserId, "USER_MANAGE", method, path, resourceId, summary);
+    }
+
+    private void audit(long operatorUserId, String permission, String method, String path,
+                       String resourceId, String summary) {
+        auditRepository.record(operatorUserId, permission, method, path, resourceId,
                 "SUCCESS", null, summary, null, Instant.now());
     }
 

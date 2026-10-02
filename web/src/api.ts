@@ -62,6 +62,7 @@ import type {
   AgentGroup,
   AgentOverview,
   AgentPage,
+  AgentPlayer,
   AgentPlayerAssignmentPage,
   AgentPlayerPage,
   CreateAgentGroupRequest,
@@ -487,6 +488,14 @@ export const api = {
     search.set('pageSize', String(params.pageSize || 20))
     return request<AgentPlayerPage>(`/api/agent/players?${search.toString()}`)
   },
+  createAgentPlayer: (displayName: string) =>
+    request<AgentPlayer>('/api/agent/players/normal', {
+      method: 'POST', body: JSON.stringify({ displayName }),
+    }),
+  createAgentBot: (payload: { userCode: string; displayName: string }) =>
+    request<AgentPlayer>('/api/agent/players/bot', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
   listSubAccounts: () => request<SubAccount[]>('/api/admin/sub-accounts'),
   createSubAccount: (payload: SubAccountInput) => request<SubAccount>('/api/admin/sub-accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateSubAccount: (id: number, payload: SubAccountInput) => request<SubAccount>(`/api/admin/sub-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

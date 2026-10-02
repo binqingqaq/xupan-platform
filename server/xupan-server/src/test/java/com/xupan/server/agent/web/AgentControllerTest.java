@@ -15,6 +15,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -65,6 +66,7 @@ class AgentControllerTest {
     @Test
     void agentCanReadOwnConsoleButCannotUsePlatformManagement() throws Exception {
         String agentToken = login(AGENT_USER, AGENT_PASSWORD);
+        jdbcTemplate.update("UPDATE agent SET bot_count = 1 WHERE id = ?", agentId);
 
         mockMvc.perform(get("/api/agent/me").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isOk())
@@ -73,6 +75,33 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/agent/players").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(0));
+        mockMvc.perform(post("/api/agent/players/normal")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"displayName\":\"agent-controller-player\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.playerKind").value("NORMAL"))
+                .andExpect(jsonPath("$.displayName").value("agent-controller-player"));
+        mockMvc.perform(post("/api/agent/players/bot")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"userCode\":\"agent-controller-bot\",\"displayName\":\"agent-controller-bot\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.playerKind").value("BOT"))
+                .andExpect(jsonPath("$.displayName").value("agent-controller-bot"));
+        mockMvc.perform(post("/api/agent/players/bot")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"userCode\":\"agent-controller-bot-2\",\"displayName\":\"agent-controller-bot-2\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("AGENT_BOT_LIMIT_REACHED"));
+        mockMvc.perform(get("/api/agent/players").header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2));
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM demo_user_account
+                 WHERE agent_id = ? AND player_kind IN ('NORMAL', 'BOT')
+                """, Long.class, agentId)).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT auth_mode FROM sys_user WHERE username = 'agent-controller-bot'
+                """, String.class)).isEqualTo("PLAYER_LINK");
         mockMvc.perform(get("/api/admin/agents").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
@@ -111,13 +140,23 @@ class AgentControllerTest {
         jdbcTemplate.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
+        jdbcTemplate.update("DELETE FROM test_player_action WHERE account_id IN "
+                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
+        jdbcTemplate.update("DELETE FROM test_player_behavior WHERE account_id IN "
+                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
+        jdbcTemplate.update("DELETE FROM player_access_link WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
         jdbcTemplate.update("DELETE FROM agent WHERE UPPER(agent_code) IN ('AGENT_CONTROLLER')");
         jdbcTemplate.update("DELETE FROM agent_group WHERE group_code = 'CONTROLLER_GROUP'");
         jdbcTemplate.update("DELETE FROM sys_login_log WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
         jdbcTemplate.update("DELETE FROM auth_session WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
+        jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");

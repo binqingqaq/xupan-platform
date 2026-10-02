@@ -62,6 +62,7 @@ class FlywayAuthMigrationTest {
             "GAME_SETTINGS_WRITE",
             "PLATFORM_PASSWORD_MANAGE",
             "AGENT_CONSOLE_READ",
+            "AGENT_PLAYER_MANAGE",
             "WALLET_READ",
             "WALLET_GRANT",
             "WALLET_ADJUST",
@@ -76,7 +77,7 @@ class FlywayAuthMigrationTest {
                     "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE",
                     "CHAT_MESSAGE_REVIEW", "CHAT_MESSAGE_RECALL", "CHAT_USER_MUTE", "CHAT_USER_KICK",
                     "WALLET_READ"),
-            "AGENT", Set.of("AGENT_CONSOLE_READ"),
+            "AGENT", Set.of("AGENT_CONSOLE_READ", "AGENT_PLAYER_MANAGE"),
             "OPERATOR", Set.of(
                     "GAME_CURRENT_READ", "GAME_ODDS_READ", "GAME_ODDS_WRITE",
                     "ROBOT_READ", "ROBOT_WRITE", "ROBOT_TEMPLATE_WRITE"),
@@ -93,7 +94,7 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54");
     }
 
     @Test

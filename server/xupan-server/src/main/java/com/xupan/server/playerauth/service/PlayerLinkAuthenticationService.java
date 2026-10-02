@@ -88,7 +88,21 @@ public class PlayerLinkAuthenticationService {
 
     @Transactional
     public IssuedLink issue(long userId, long operatorUserId) {
-        requireAdmin(operatorUserId);
+        return issueWithPermission(userId, operatorUserId, "USER_MANAGE",
+                "/api/admin/player-desk/players/" + userId + "/access-links",
+                "PLAYER_LINK_OPERATION_FORBIDDEN", "当前账号没有玩家链接管理权限");
+    }
+
+    @Transactional
+    public IssuedLink issueForAgent(long userId, long operatorUserId) {
+        return issueWithPermission(userId, operatorUserId, "AGENT_PLAYER_MANAGE",
+                "/api/agent/players/" + userId + "/access-links",
+                "AGENT_PLAYER_FORBIDDEN", "没有代理玩家管理权限");
+    }
+
+    private IssuedLink issueWithPermission(long userId, long operatorUserId, String permission,
+                                           String auditPath, String errorCode, String errorMessage) {
+        requirePermission(operatorUserId, permission, errorCode, errorMessage);
         PlayerLinkTarget target = target(userId);
         ensureIssuable(target);
         Instant now = clock.instant();
@@ -104,7 +118,7 @@ public class PlayerLinkAuthenticationService {
         linkRepository.insert(link);
         userRepository.updateAuthMode(userId, PLAYER_LINK_AUTH_MODE);
         sessionRepository.revokeAllActiveByUserId(userId, now);
-        audit(operatorUserId, "POST", "/api/admin/player-desk/players/" + userId + "/access-links",
+        audit(operatorUserId, permission, "POST", auditPath,
                 Long.toString(userId), "scope=" + SCOPE_PLAYER_FULL);
         long linkId = jdbcLinkId(link.tokenHash());
         return new IssuedLink(linkId, userId, SCOPE_PLAYER_FULL, link.expiresAt(), rawToken);
@@ -241,8 +255,19 @@ public class PlayerLinkAuthenticationService {
         }
     }
 
+    private void requirePermission(long operatorUserId, String permission, String code, String message) {
+        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, permission)) {
+            throw BusinessException.forbidden(code, message);
+        }
+    }
+
     private void audit(long operator, String method, String path, String resource, String summary) {
-        operationAuditRepository.record(operator, "USER_MANAGE", method, path, resource,
+        audit(operator, "USER_MANAGE", method, path, resource, summary);
+    }
+
+    private void audit(long operator, String permission, String method, String path,
+                       String resource, String summary) {
+        operationAuditRepository.record(operator, permission, method, path, resource,
                 "SUCCESS", null, summary, null, clock.instant());
     }
 

@@ -90,6 +90,20 @@ public class UserAdminService {
     @Transactional
     public long createPlayerLinkUser(String displayName, long operatorUserId) {
         requireAdmin(operatorUserId);
+        return createPlayerLinkUserInternal(displayName, operatorUserId,
+                "USER_MANAGE", "/api/admin/player-desk/players/normal");
+    }
+
+    @Transactional
+    public long createPlayerLinkUserForAgent(String displayName, long operatorUserId) {
+        requirePermission(operatorUserId, "AGENT_PLAYER_MANAGE", "AGENT_PLAYER_FORBIDDEN",
+                "没有代理玩家管理权限");
+        return createPlayerLinkUserInternal(displayName, operatorUserId,
+                "AGENT_PLAYER_MANAGE", "/api/agent/players/normal");
+    }
+
+    private long createPlayerLinkUserInternal(String displayName, long operatorUserId,
+                                              String permission, String auditPath) {
         String normalizedDisplayName = required(displayName, "REQUEST_INVALID", "显示名称不能为空");
         String normalizedUsername = normalizedDisplayName;
         if (userRepository.findByUsername(normalizedUsername).isPresent()) {
@@ -107,7 +121,7 @@ public class UserAdminService {
                 throw BusinessException.badRequest("USER_ROLE_INVALID", "用户角色不可用");
             }
             walletService.ensureWalletForUser(userId, normalizedDisplayName);
-            audit(operatorUserId, "POST", "/api/admin/player-desk/players/normal", Long.toString(userId),
+            audit(operatorUserId, permission, "POST", auditPath, Long.toString(userId),
                     "username=" + normalizedUsername + ",displayName=" + normalizedDisplayName + ",authMode=PLAYER_LINK");
             return userId;
         } catch (DataIntegrityViolationException exception) {
@@ -277,6 +291,12 @@ public class UserAdminService {
         }
     }
 
+    private void requirePermission(long operatorUserId, String permission, String code, String message) {
+        if (operatorUserId <= 0 || !permissionService.hasPermission(operatorUserId, permission)) {
+            throw BusinessException.forbidden(code, message);
+        }
+    }
+
     private String encodeManagedPassword(String rawPassword) {
         try {
             return passwordPolicy.encode(rawPassword);
@@ -329,7 +349,12 @@ public class UserAdminService {
     }
 
     private void audit(long operatorUserId, String method, String path, String resourceId, String summary) {
-        auditRepository.record(operatorUserId, "USER_MANAGE", method, path, resourceId,
+        audit(operatorUserId, "USER_MANAGE", method, path, resourceId, summary);
+    }
+
+    private void audit(long operatorUserId, String permission, String method, String path,
+                       String resourceId, String summary) {
+        auditRepository.record(operatorUserId, permission, method, path, resourceId,
                 "SUCCESS", null, summary, null, Instant.now());
     }
 

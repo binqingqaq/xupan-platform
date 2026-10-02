@@ -4,10 +4,16 @@ import com.xupan.server.agent.repository.AgentRepository;
 import com.xupan.server.agent.service.AgentConsoleService;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
@@ -41,6 +47,22 @@ public class AgentConsoleController {
                 result.page(), result.pageSize(), result.total());
     }
 
+    @PostMapping("/players/normal")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AgentPlayerResponse createNormal(Authentication authentication,
+                                            @Valid @RequestBody CreateNormalRequest request) {
+        return AgentPlayerResponse.from(service.createNormal(
+                principal(authentication).getUserId(), request.displayName()));
+    }
+
+    @PostMapping("/players/bot")
+    @ResponseStatus(HttpStatus.CREATED)
+    public AgentPlayerResponse createBot(Authentication authentication,
+                                         @Valid @RequestBody CreateBotRequest request) {
+        return AgentPlayerResponse.from(service.createBot(
+                principal(authentication).getUserId(), request.userCode(), request.displayName()));
+    }
+
     private static AuthenticatedUser principal(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
             throw new AuthenticationService.AuthenticationFailure("AUTH_UNAUTHENTICATED");
@@ -70,5 +92,11 @@ public class AgentConsoleController {
                     row.memberCode(), row.playerKind(), row.userStatus(), row.accountStatus(), row.balance(),
                     row.createdAt(), row.lastLoginAt());
         }
+    }
+
+    public record CreateNormalRequest(@NotBlank String displayName) {
+    }
+
+    public record CreateBotRequest(String userCode, @NotBlank String displayName) {
     }
 }
