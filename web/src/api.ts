@@ -65,6 +65,7 @@ import type {
   AgentPlayer,
   AgentPlayerAssignmentPage,
   AgentScoreChange,
+  AgentPlayerLink,
   AgentPlayerPage,
   CreateAgentGroupRequest,
   CreateAgentRequest,
@@ -502,6 +503,13 @@ export const api = {
   }) => request<AgentScoreChange>(`/api/agent/players/${userId}/score`, {
     method: 'POST', body: JSON.stringify(payload),
   }),
+  getAgentPlayerLink: (userId: number) => request<AgentPlayerLink>(`/api/agent/players/${userId}/link`),
+  rotateAgentPlayerLink: (userId: number) =>
+    request<AgentPlayerLink>(`/api/agent/players/${userId}/link/rotate`, { method: 'POST' }),
+  revokeAgentPlayerLink: (userId: number, linkId: number) =>
+    request<void>(`/api/agent/players/${userId}/link/${linkId}/revoke`, { method: 'POST' }),
+  restoreAgentPlayerLink: (userId: number, linkId: number) =>
+    request<void>(`/api/agent/players/${userId}/link/${linkId}/restore`, { method: 'POST' }),
   listSubAccounts: () => request<SubAccount[]>('/api/admin/sub-accounts'),
   createSubAccount: (payload: SubAccountInput) => request<SubAccount>('/api/admin/sub-accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateSubAccount: (id: number, payload: SubAccountInput) => request<SubAccount>(`/api/admin/sub-accounts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

@@ -137,6 +137,25 @@ class AgentControllerTest {
                         .content("{\"direction\":\"TOP_UP\",\"amount\":1000.00,\"idempotencyKey\":\"agent-topup-too-much\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("AGENT_SCORE_INSUFFICIENT"));
+        MvcResult linkResult = mockMvc.perform(get("/api/agent/players/" + normalUserId + "/link")
+                        .header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/33/")))
+                .andReturn();
+        long linkId = ((Number) JsonPath.read(linkResult.getResponse().getContentAsString(), "$.linkId")).longValue();
+        MvcResult rotatedLinkResult = mockMvc.perform(post("/api/agent/players/" + normalUserId + "/link/rotate")
+                        .header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessUrl").value(org.hamcrest.Matchers.containsString("/33/")))
+                .andReturn();
+        long rotatedLinkId = ((Number) JsonPath.read(
+                rotatedLinkResult.getResponse().getContentAsString(), "$.linkId")).longValue();
+        mockMvc.perform(post("/api/agent/players/" + normalUserId + "/link/" + rotatedLinkId + "/revoke")
+                        .header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/agent/players/" + normalUserId + "/link/" + rotatedLinkId + "/restore")
+                        .header("Authorization", bearer(agentToken)))
+                .andExpect(status().isOk());
         mockMvc.perform(get("/api/admin/agents").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));

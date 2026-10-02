@@ -147,6 +147,30 @@ public class AgentConsoleService {
                 wallet.wallet().balance(), wallet.ledger().id(), false);
     }
 
+    @Transactional
+    public PlayerLinkAuthenticationService.IssuedLink currentLink(long accountUserId, long playerUserId) {
+        Agent agent = requireManagedPlayerAgent(accountUserId, playerUserId);
+        return playerLinkAuthenticationService.currentForAgent(playerUserId, accountUserId);
+    }
+
+    @Transactional
+    public PlayerLinkAuthenticationService.IssuedLink rotateLink(long accountUserId, long playerUserId) {
+        Agent agent = requireManagedPlayerAgent(accountUserId, playerUserId);
+        return playerLinkAuthenticationService.rotateForAgent(playerUserId, accountUserId);
+    }
+
+    @Transactional
+    public void revokeLink(long accountUserId, long playerUserId, long linkId) {
+        Agent agent = requireManagedPlayerAgent(accountUserId, playerUserId);
+        playerLinkAuthenticationService.revokeForAgent(playerUserId, linkId, accountUserId);
+    }
+
+    @Transactional
+    public void restoreLink(long accountUserId, long playerUserId, long linkId) {
+        Agent agent = requireManagedPlayerAgent(accountUserId, playerUserId);
+        playerLinkAuthenticationService.restoreForAgent(playerUserId, linkId, accountUserId);
+    }
+
     @Transactional(readOnly = true)
     public AgentPlayerPage listPlayers(long accountUserId, String kind, String keyword,
                                        int page, int pageSize) {
@@ -197,6 +221,14 @@ public class AgentConsoleService {
     private AgentRepository.AgentPlayerRow requirePlayer(long agentId, long userId) {
         return agentRepository.findPlayerByAgentAndUser(agentId, userId)
                 .orElseThrow(() -> BusinessException.notFound("AGENT_PLAYER_NOT_FOUND", "玩家不存在"));
+    }
+
+    private Agent requireManagedPlayerAgent(long accountUserId, long playerUserId) {
+        requirePlayerManage(accountUserId);
+        Agent agent = requireActiveAgent(accountUserId);
+        ensureOwnedByAgent(agent.id(), playerUserId);
+        requirePlayer(agent.id(), playerUserId);
+        return agent;
     }
 
     private void auditScoreChange(long operator, AgentRepository.AgentPlayerRow player, String direction,

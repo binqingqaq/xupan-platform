@@ -4,10 +4,12 @@ import com.xupan.server.agent.repository.AgentRepository;
 import com.xupan.server.agent.service.AgentConsoleService;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
+import com.xupan.server.playerauth.service.PlayerLinkAuthenticationService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +22,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 
@@ -74,6 +78,28 @@ public class AgentConsoleController {
                 request.direction(), request.amount(), request.idempotencyKey()));
     }
 
+    @GetMapping("/players/{userId}/link")
+    public LinkResponse currentLink(Authentication authentication, @PathVariable long userId,
+                                    HttpServletRequest request) {
+        return LinkResponse.from(service.currentLink(principal(authentication).getUserId(), userId), origin(request));
+    }
+
+    @PostMapping("/players/{userId}/link/rotate")
+    public LinkResponse rotateLink(Authentication authentication, @PathVariable long userId,
+                                   HttpServletRequest request) {
+        return LinkResponse.from(service.rotateLink(principal(authentication).getUserId(), userId), origin(request));
+    }
+
+    @PostMapping("/players/{userId}/link/{linkId}/revoke")
+    public void revokeLink(Authentication authentication, @PathVariable long userId, @PathVariable long linkId) {
+        service.revokeLink(principal(authentication).getUserId(), userId, linkId);
+    }
+
+    @PostMapping("/players/{userId}/link/{linkId}/restore")
+    public void restoreLink(Authentication authentication, @PathVariable long userId, @PathVariable long linkId) {
+        service.restoreLink(principal(authentication).getUserId(), userId, linkId);
+    }
+
     private static AuthenticatedUser principal(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
             throw new AuthenticationService.AuthenticationFailure("AUTH_UNAUTHENTICATED");
@@ -122,5 +148,21 @@ public class AgentConsoleController {
             return new ScoreChangeResponse(change.direction(), change.amount(), change.agentScore(),
                     change.playerBalance(), change.ledgerId(), change.replay());
         }
+    }
+
+    public record LinkResponse(long linkId, long userId, String scope, Instant expiresAt, String accessUrl) {
+        static LinkResponse from(PlayerLinkAuthenticationService.IssuedLink link, String origin) {
+            String token = URLEncoder.encode(link.rawToken(), StandardCharsets.UTF_8);
+            return new LinkResponse(link.linkId(), link.userId(), link.scope(), link.expiresAt(),
+                    origin + "/33/" + token);
+        }
+    }
+
+    private static String origin(HttpServletRequest request) {
+        String scheme = request.getScheme();
+        int port = request.getServerPort();
+        boolean standard = ("http".equalsIgnoreCase(scheme) && port == 80)
+                || ("https".equalsIgnoreCase(scheme) && port == 443);
+        return scheme + "://" + request.getServerName() + (standard ? "" : ":" + port);
     }
 }

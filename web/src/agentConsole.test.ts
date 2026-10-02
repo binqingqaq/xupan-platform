@@ -14,6 +14,10 @@ vi.mock('./api', () => ({
     createAgentPlayer: vi.fn(),
     createAgentBot: vi.fn(),
     changeAgentPlayerScore: vi.fn(),
+    getAgentPlayerLink: vi.fn(),
+    rotateAgentPlayerLink: vi.fn(),
+    revokeAgentPlayerLink: vi.fn(),
+    restoreAgentPlayerLink: vi.fn(),
     logout: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
@@ -51,6 +55,14 @@ beforeEach(() => {
   })
   vi.mocked(api.changeAgentPlayerScore).mockResolvedValue({
     direction: 'TOP_UP', amount: 50, agentScore: 950, playerBalance: 50, ledgerId: 9, replay: false,
+  })
+  vi.mocked(api.getAgentPlayerLink).mockResolvedValue({
+    linkId: 6, userId: 101, scope: 'PLAYER_FULL', expiresAt: '2026-10-09T00:00:00Z',
+    accessUrl: 'http://127.0.0.1:18080/33/test-token',
+  })
+  vi.mocked(api.rotateAgentPlayerLink).mockResolvedValue({
+    linkId: 7, userId: 101, scope: 'PLAYER_FULL', expiresAt: '2026-10-09T00:00:00Z',
+    accessUrl: 'http://127.0.0.1:18080/33/rotated-token',
   })
 })
 
@@ -121,5 +133,33 @@ describe('agent console', () => {
     expect(api.changeAgentPlayerScore).toHaveBeenCalledWith(101, expect.objectContaining({
       direction: 'TOP_UP', amount: 50, idempotencyKey: expect.any(String),
     }))
+  })
+
+  it('views and rotates the current player link', async () => {
+    vi.mocked(api.listAgentPlayers).mockResolvedValue({
+      items: [{
+        userId: 101, accountId: 201, internalCode: 'P-101', displayName: '玩家甲',
+        memberCode: 'V-101', playerKind: 'NORMAL', userStatus: 'ACTIVE', accountStatus: 'ACTIVE',
+        balance: 0, createdAt: '2026-10-02T00:00:00Z', lastLoginAt: null,
+      }],
+      page: 1, pageSize: 100, total: 1,
+    })
+    await mountConsole()
+
+    const linkButton = [...container!.querySelectorAll<HTMLButtonElement>('.agent-console-row-actions button')]
+      .find(button => button.textContent?.includes('链接'))
+    linkButton?.click()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.getAgentPlayerLink).toHaveBeenCalledWith(101)
+    expect(container!.textContent).toContain('test-token')
+
+    const rotate = [...container!.querySelectorAll<HTMLButtonElement>('.agent-console-modal footer button')]
+      .find(button => button.textContent?.includes('刷新'))
+    rotate?.click()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.rotateAgentPlayerLink).toHaveBeenCalledWith(101)
+    expect(container!.textContent).toContain('rotated-token')
   })
 })

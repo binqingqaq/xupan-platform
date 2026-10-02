@@ -177,6 +177,61 @@ public class PlayerLinkAuthenticationService {
     }
 
     @Transactional
+    public IssuedLink currentForAgent(long userId, long operatorUserId) {
+        requirePermission(operatorUserId, "AGENT_PLAYER_MANAGE", "AGENT_PLAYER_FORBIDDEN", "没有代理玩家管理权限");
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        PlayerAccessLink link = linkRepository.findLatestByUserId(userId)
+                .orElseThrow(() -> BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "当前没有玩家链接"));
+        if (link.tokenCiphertext() == null) {
+            throw BusinessException.notFound("PLAYER_LINK_DISPLAY_UNAVAILABLE", "当前链接需要刷新后才能展示");
+        }
+        return issuedFromStored(link);
+    }
+
+    @Transactional
+    public IssuedLink rotateForAgent(long userId, long operatorUserId) {
+        requirePermission(operatorUserId, "AGENT_PLAYER_MANAGE", "AGENT_PLAYER_FORBIDDEN", "没有代理玩家管理权限");
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        Instant now = clock.instant();
+        linkRepository.revokeAllByUserId(userId, now);
+        sessionRepository.revokeAllActiveByUserId(userId, now);
+        return issueInternal(userId, operatorUserId, now, "AGENT_PLAYER_MANAGE",
+                "/api/agent/players/" + userId + "/link/rotate");
+    }
+
+    @Transactional
+    public void revokeForAgent(long userId, long linkId, long operatorUserId) {
+        requirePermission(operatorUserId, "AGENT_PLAYER_MANAGE", "AGENT_PLAYER_FORBIDDEN", "没有代理玩家管理权限");
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        if (linkRepository.findByIdAndUserId(linkId, userId).isEmpty()
+                || linkRepository.revoke(linkId, userId, clock.instant()) == 0) {
+            throw BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在");
+        }
+        sessionRepository.revokeAllActiveByUserId(userId, clock.instant());
+        audit(operatorUserId, "AGENT_PLAYER_MANAGE", "POST",
+                "/api/agent/players/" + userId + "/link/" + linkId + "/revoke",
+                Long.toString(linkId), "revoked=true");
+    }
+
+    @Transactional
+    public void restoreForAgent(long userId, long linkId, long operatorUserId) {
+        requirePermission(operatorUserId, "AGENT_PLAYER_MANAGE", "AGENT_PLAYER_FORBIDDEN", "没有代理玩家管理权限");
+        PlayerLinkTarget target = target(userId);
+        ensureIssuable(target);
+        linkRepository.findByIdAndUserId(linkId, userId)
+                .orElseThrow(() -> BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在"));
+        if (linkRepository.restore(linkId, userId) != 1) {
+            throw BusinessException.notFound("PLAYER_LINK_NOT_FOUND", "玩家链接不存在");
+        }
+        audit(operatorUserId, "AGENT_PLAYER_MANAGE", "POST",
+                "/api/agent/players/" + userId + "/link/" + linkId + "/restore",
+                Long.toString(linkId), "revoked=false");
+    }
+
+    @Transactional
     public Expiration updateExpiration(long userId, int days, long operatorUserId) {
         requireAdmin(operatorUserId);
         if (days < 1 || days > 3650) {
@@ -211,12 +266,18 @@ public class PlayerLinkAuthenticationService {
     }
 
     private IssuedLink issueInternal(long userId, long operatorUserId, Instant now) {
+        return issueInternal(userId, operatorUserId, now, "USER_MANAGE",
+                "/api/admin/player-desk/players/" + userId + "/access-links/rotate");
+    }
+
+    private IssuedLink issueInternal(long userId, long operatorUserId, Instant now, String permission,
+                                     String auditPath) {
         String rawToken = randomToken();
         PlayerAccessLink link = new PlayerAccessLink(0L, userId, TokenService.sha256(rawToken),
                 tokenCipher.encrypt(rawToken), SCOPE_PLAYER_FULL, now.plus(Duration.ofDays(configuredDays(userId))), null, null, operatorUserId, now);
         linkRepository.insert(link);
         userRepository.updateAuthMode(userId, PLAYER_LINK_AUTH_MODE);
-        audit(operatorUserId, "POST", "/api/admin/player-desk/players/" + userId + "/access-links/rotate",
+        audit(operatorUserId, permission, "POST", auditPath,
                 Long.toString(userId), "scope=" + SCOPE_PLAYER_FULL);
         return new IssuedLink(jdbcLinkId(link.tokenHash()), userId, SCOPE_PLAYER_FULL, link.expiresAt(), rawToken);
     }

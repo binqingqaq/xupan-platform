@@ -110,3 +110,11 @@ export interface AgentScoreChange {
   ledgerId: number
   replay: boolean
 }
+
+export interface AgentPlayerLink {
+  linkId: number
+  userId: number
+  scope: string
+  expiresAt: string
+  accessUrl: string
+}
