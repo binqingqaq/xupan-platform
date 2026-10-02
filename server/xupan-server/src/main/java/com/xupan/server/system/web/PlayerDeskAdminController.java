@@ -10,6 +10,7 @@ import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.report.service.ReportService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.media.AvatarPresetService;
 import com.xupan.server.system.service.PlayerDeskAdminService;
@@ -37,16 +38,19 @@ import java.util.List;
     private final PlayerPointRequestService pointRequestService;
     private final PlayerPointOperationService pointOperationService;
     private final PlayerDeskScopeService scopeService;
+    private final ReportService reportService;
 
     public PlayerDeskAdminController(PlayerDeskAdminService service, PlayerPointsReportService pointsReportService,
                                      PlayerPointRequestService pointRequestService,
                                      PlayerPointOperationService pointOperationService,
-                                     PlayerDeskScopeService scopeService) {
+                                     PlayerDeskScopeService scopeService,
+                                     ReportService reportService) {
         this.service = service;
         this.pointsReportService = pointsReportService;
         this.pointRequestService = pointRequestService;
         this.pointOperationService = pointOperationService;
         this.scopeService = scopeService;
+        this.reportService = reportService;
     }
 
     /** 当前登录身份的运营后台范围与档案，供前端渲染头部。 */
@@ -71,6 +75,48 @@ import java.util.List;
     public PlayerDeskAdminService.MachineConfig updateMachineConfig(Authentication auth,
                                                                    @Valid @RequestBody MachineConfigRequest request) {
         return service.updateMachineConfig(user(auth), request.machineId(), request.toUpdate());
+    }
+
+    /** 机器报网配置与上报统计（BY220 {@code robot.php} 报网栏）；密码只返回 {@code hasPassword}。 */
+    @GetMapping("/report")
+    public ReportConfigResponse report(Authentication auth, @RequestParam(required = false) Long machineId) {
+        return ReportConfigResponse.from(reportService.config(user(auth), machineId));
+    }
+
+    /** 保存报网类型/账号/密码/上游地址/网盘/盘口/自动上报/失败退单；密码只在非空时覆盖。 */
+    @PutMapping("/report")
+    public ReportConfigResponse updateReport(Authentication auth, @RequestBody ReportConfigRequest request) {
+        return ReportConfigResponse.from(reportService.saveConfig(user(auth), request.machineId(), request.toUpdate()));
+    }
+
+    /** 本地模拟登录（不发任何外部请求）：置在线并记录登录时间。 */
+    @PostMapping("/report/login")
+    public ReportConfigResponse reportLogin(Authentication auth,
+                                            @RequestBody(required = false) ReportMachineRequest request) {
+        return ReportConfigResponse.from(reportService.login(user(auth), request == null ? null : request.machineId()));
+    }
+
+    /** 退出报网：置离线。 */
+    @PostMapping("/report/logout")
+    public ReportConfigResponse reportLogout(Authentication auth,
+                                             @RequestBody(required = false) ReportMachineRequest request) {
+        return ReportConfigResponse.from(reportService.logout(user(auth), request == null ? null : request.machineId()));
+    }
+
+    /** 按 {@code report_status}（可空=全部）列出本机器范围内的注单。 */
+    @GetMapping("/report/orders")
+    public ReportOrders reportOrders(Authentication auth, @RequestParam(required = false) Long machineId,
+                                     @RequestParam(required = false) String status,
+                                     @RequestParam(defaultValue = "1") int page,
+                                     @RequestParam(defaultValue = "20") int pageSize) {
+        return ReportOrders.from(reportService.orders(user(auth), machineId, status, page, pageSize));
+    }
+
+    /** 重报单笔注单（BY220 {@code reFeidan}）：只允许未报/失败/超时，且注单属于本机器。 */
+    @PostMapping("/report/orders/{betId}/resubmit")
+    public ReportResubmit resubmitReportOrder(Authentication auth, @PathVariable long betId,
+                                              @RequestBody(required = false) ReportMachineRequest request) {
+        return ReportResubmit.from(reportService.resubmit(user(auth), request == null ? null : request.machineId(), betId));
     }
 
     @GetMapping("/summary")
@@ -415,5 +461,52 @@ import java.util.List;
     }
     public record MessageOutcome(ChatMessage message, boolean replayed, String feedback, Object bet) {
         static MessageOutcome from(ChatMessageService.ChatMessageSendOutcome x) { return new MessageOutcome(x.message(), x.deduplicated(), null, null); }
+    }
+    /** 报网配置请求体；{@code null} 字段表示保持原值，{@code reportPassword} 只在非空时覆盖。 */
+    public record ReportConfigRequest(Long machineId, String reportType, Boolean reportAuto, Boolean reportWithdraw,
+                                      String reportUsername, String reportPassword, String reportUrl,
+                                      String reportNetworkCode, String reportRouteCode) {
+        ReportService.ReportConfigUpdate toUpdate() {
+            return new ReportService.ReportConfigUpdate(reportType, reportAuto, reportWithdraw, reportUsername,
+                    reportPassword, reportUrl, reportNetworkCode, reportRouteCode);
+        }
+    }
+    /** 只带机器选择的报网请求体（登录/退出/重报）。 */
+    public record ReportMachineRequest(Long machineId) {}
+    /** 报网配置响应；只含 {@code hasPassword} 布尔，绝不含密码明文或密文。 */
+    public record ReportConfigResponse(long machineId, String reportType, boolean reportAuto, boolean reportOnline,
+                                       boolean reportWithdraw, String reportUsername, boolean hasPassword,
+                                       String reportUrl, String reportNetworkCode, String reportRouteCode,
+                                       BigDecimal reportBalance, BigDecimal reportStake, Instant reportLastLoginAt,
+                                       long timeoutOrderCount, long unreportedCount, long failedOrderCount) {
+        static ReportConfigResponse from(ReportService.ReportConfigView x) {
+            return new ReportConfigResponse(x.machineId(), x.reportType(), x.reportAuto(), x.reportOnline(),
+                    x.reportWithdraw(), x.reportUsername(), x.hasPassword(), x.reportUrl(), x.reportNetworkCode(),
+                    x.reportRouteCode(), x.reportBalance(), x.reportStake(), x.reportLastLoginAt(),
+                    x.timeoutOrderCount(), x.unreportedCount(), x.failedOrderCount());
+        }
+    }
+    /** 报网订单分页响应。 */
+    public record ReportOrders(List<ReportOrder> items, int page, int pageSize, long total) {
+        static ReportOrders from(ReportService.ReportOrderPage x) {
+            return new ReportOrders(x.items().stream().map(ReportOrder::from).toList(), x.page(), x.pageSize(),
+                    x.total());
+        }
+    }
+    public record ReportOrder(long betId, String betCode, long accountId, String memberCode, String displayName,
+                              String issueNumber, int ballNumber, String playType, String parametersText,
+                              BigDecimal stake, BigDecimal odds, String settlementStatus, String reportStatus,
+                              Instant createdAt) {
+        static ReportOrder from(com.xupan.server.report.repository.ReportConfigRepository.OrderRow x) {
+            return new ReportOrder(x.betId(), x.betCode(), x.accountId(), x.memberCode(), x.displayName(),
+                    x.issueNumber(), x.ballNumber(), x.playType(), x.parametersText(), x.stake(), x.odds(),
+                    x.settlementStatus(), x.reportStatus(), x.createdAt());
+        }
+    }
+    /** 重报结果：本次回写的上报状态 + 最新配置快照。 */
+    public record ReportResubmit(long betId, String reportStatus, ReportConfigResponse config) {
+        static ReportResubmit from(ReportService.ResubmitResult x) {
+            return new ReportResubmit(x.betId(), x.reportStatus(), ReportConfigResponse.from(x.config()));
+        }
     }
 }

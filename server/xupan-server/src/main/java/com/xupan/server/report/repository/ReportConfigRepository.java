@@ -1,0 +1,256 @@
+package com.xupan.server.report.repository;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * 机器级报网配置（BY220 {@code x_robot.flyers_*}）与订单上报状态的持久化。
+ *
+ * <p>边界（强制）：</p>
+ * <ul>
+ *   <li>本仓储**不读取** {@code agent.report_password_ciphertext} 的密文值，只暴露
+ *       {@code hasPassword} 布尔，避免明文/密文从任何一层泄露到响应、日志或审计。</li>
+ *   <li>订单相关读写一律带机器范围条件（{@code demo_user_account.agent_id}），
+ *       保证机器账号只能看到、只能改自己机器名下的注单。</li>
+ *   <li>不做任何外部访问；{@code report_url} 只保存不请求。</li>
+ * </ul>
+ *
+ * <p>字段依据 Flyway V56（{@code agent.report_*}、{@code game_bet.report_status}），本类不修改迁移。</p>
+ */
+@Repository
+public class ReportConfigRepository {
+
+    private final JdbcTemplate jdbc;
+
+    public ReportConfigRepository(JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
+    }
+
+    /** 读取机器的报网配置；密码只以 {@code hasPassword} 形式返回。 */
+    public Optional<ReportConfigRow> findConfig(long agentId) {
+        List<ReportConfigRow> rows = jdbc.query("""
+                SELECT ag.id, ag.agent_code, ag.display_name,
+                       ag.report_type, ag.report_auto, ag.report_online, ag.report_withdraw,
+                       ag.report_username, ag.report_url, ag.report_network_code, ag.report_route_code,
+                       ag.report_balance, ag.report_stake, ag.report_last_login_at,
+                       CASE WHEN ag.report_password_ciphertext IS NULL
+                                  OR ag.report_password_ciphertext = '' THEN FALSE ELSE TRUE END AS has_password
+                  FROM agent ag
+                 WHERE ag.id = ? AND ag.deleted_at IS NULL
+                """, (rs, rowNum) -> new ReportConfigRow(
+                rs.getLong("id"), rs.getString("agent_code"), rs.getString("display_name"),
+                rs.getString("report_type"), rs.getBoolean("report_auto"), rs.getBoolean("report_online"),
+                rs.getBoolean("report_withdraw"), rs.getString("report_username"), rs.getBoolean("has_password"),
+                rs.getString("report_url"), rs.getString("report_network_code"), rs.getString("report_route_code"),
+                amount(rs.getBigDecimal("report_balance")), amount(rs.getBigDecimal("report_stake")),
+                instant(rs.getTimestamp("report_last_login_at"))), agentId);
+        return rows.stream().findFirst();
+    }
+
+    /**
+     * 保存报网配置。
+     *
+     * <p>{@code report_password_ciphertext} 只在 {@link ReportConfigUpdate#passwordCiphertext()} 非空时写入，
+     * 因此"不传密码"不会清掉已保存的密文。</p>
+     */
+    public int updateConfig(long agentId, ReportConfigUpdate update) {
+        StringBuilder sql = new StringBuilder("""
+                UPDATE agent
+                   SET report_type = ?, report_auto = ?, report_withdraw = ?, report_username = ?,
+                       report_url = ?, report_network_code = ?, report_route_code = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                """);
+        List<Object> args = new ArrayList<>();
+        args.add(update.reportType());
+        args.add(update.reportAuto());
+        args.add(update.reportWithdraw());
+        args.add(update.reportUsername());
+        args.add(update.reportUrl());
+        args.add(update.reportNetworkCode());
+        args.add(update.reportRouteCode());
+        String ciphertext = update.passwordCiphertext();
+        if (ciphertext != null && !ciphertext.isBlank()) {
+            sql.append(", report_password_ciphertext = ?");
+            args.add(ciphertext);
+        }
+        sql.append(" WHERE id = ? AND deleted_at IS NULL");
+        args.add(agentId);
+        return jdbc.update(sql.toString(), args.toArray());
+    }
+
+    /** 本地模拟登录：只置在线与登录时间，不发起任何外部请求。 */
+    public int markOnline(long agentId, Instant loginAt) {
+        return jdbc.update("""
+                UPDATE agent
+                   SET report_online = TRUE, report_last_login_at = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND deleted_at IS NULL
+                """, Timestamp.from(loginAt), agentId);
+    }
+
+    /** 退出报网：只置离线，保留上次登录时间与已保存配置。 */
+    public int markOffline(long agentId) {
+        return jdbc.update("""
+                UPDATE agent
+                   SET report_online = FALSE, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND deleted_at IS NULL
+                """, agentId);
+    }
+
+    /** 按 {@code report_status} 统计本机器注单：超时 / 未报 / 失败。 */
+    public StatusCounts counts(long agentId) {
+        return jdbc.queryForObject("""
+                SELECT COALESCE(SUM(CASE WHEN b.report_status = 'TIMEOUT' THEN 1 ELSE 0 END), 0) AS timeout_count,
+                       COALESCE(SUM(CASE WHEN b.report_status = 'UNREPORTED' THEN 1 ELSE 0 END), 0) AS unreported_count,
+                       COALESCE(SUM(CASE WHEN b.report_status = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed_count
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE a.agent_id = ?
+                """, (rs, rowNum) -> new StatusCounts(rs.getLong("timeout_count"),
+                rs.getLong("unreported_count"), rs.getLong("failed_count")), agentId);
+    }
+
+    /** 列出本机器范围内的注单；{@code status} 为 {@code null} 时不过滤上报状态。 */
+    public List<OrderRow> findOrders(long agentId, String status, int page, int pageSize) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT b.id, b.bet_code, b.user_id, b.issue_number, b.ball_number, b.play_type,
+                       b.parameters_text, b.stake, b.odds_snapshot, b.settlement_status, b.report_status,
+                       b.created_at, a.member_code, a.display_name
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE a.agent_id = ?
+                """);
+        List<Object> args = new ArrayList<>();
+        args.add(agentId);
+        if (status != null && !status.isBlank()) {
+            sql.append(" AND b.report_status = ?");
+            args.add(status);
+        }
+        sql.append(" ORDER BY b.created_at DESC, b.id DESC LIMIT ? OFFSET ?");
+        args.add(pageSize);
+        args.add((long) (page - 1) * pageSize);
+        return jdbc.query(sql.toString(), (rs, rowNum) -> new OrderRow(
+                rs.getLong("id"), rs.getString("bet_code"), rs.getLong("user_id"), rs.getString("member_code"),
+                rs.getString("display_name"), rs.getString("issue_number"), rs.getInt("ball_number"),
+                rs.getString("play_type"), rs.getString("parameters_text"), rs.getBigDecimal("stake"),
+                rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"), rs.getString("report_status"),
+                instant(rs.getTimestamp("created_at"))), args.toArray());
+    }
+
+    /** 统计本机器范围内指定上报状态的注单数。 */
+    public long countOrders(long agentId, String status) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT COUNT(*)
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE a.agent_id = ?
+                """);
+        List<Object> args = new ArrayList<>();
+        args.add(agentId);
+        if (status != null && !status.isBlank()) {
+            sql.append(" AND b.report_status = ?");
+            args.add(status);
+        }
+        Long total = jdbc.queryForObject(sql.toString(), Long.class, args.toArray());
+        return total == null ? 0 : total;
+    }
+
+    /** 按注单 id 读取快照与其所属机器（供重报与下注链路使用）。 */
+    public Optional<BetRow> findBet(long betId) {
+        List<BetRow> rows = jdbc.query("""
+                SELECT b.id, b.user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
+                       b.stake, b.odds_snapshot, b.report_status, b.settlement_status
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.id = ?
+                """, (rs, rowNum) -> betRow(rs), betId);
+        return rows.stream().findFirst();
+    }
+
+    /** 按注单 id + 机器范围读取快照；范围外的注单按"不存在"处理。 */
+    public Optional<BetRow> findBetForAgent(long betId, long agentId) {
+        List<BetRow> rows = jdbc.query("""
+                SELECT b.id, b.user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
+                       b.stake, b.odds_snapshot, b.report_status, b.settlement_status
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.id = ? AND a.agent_id = ?
+                """, (rs, rowNum) -> betRow(rs), betId, agentId);
+        return rows.stream().findFirst();
+    }
+
+    /**
+     * 回写上报状态。
+     *
+     * <p>两个条件同时生效，保证并发与越权都改不动别人的注单：
+     * {@code id} 命中目标注单、{@code user_id} 属于目标机器、且当前状态在 {@code allowedFrom} 内。</p>
+     *
+     * @return 受影响行数；0 表示注单不存在、不属于该机器或状态已变化
+     */
+    public int updateReportStatus(long betId, long agentId, String newStatus, List<String> allowedFrom) {
+        if (allowedFrom == null || allowedFrom.isEmpty()) {
+            return 0;
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(allowedFrom.size(), "?"));
+        List<Object> args = new ArrayList<>();
+        args.add(newStatus);
+        args.add(betId);
+        args.addAll(allowedFrom);
+        args.add(agentId);
+        return jdbc.update("UPDATE game_bet SET report_status = ? WHERE id = ? AND report_status IN ("
+                + placeholders + ") AND user_id IN (SELECT id FROM demo_user_account WHERE agent_id = ?)",
+                args.toArray());
+    }
+
+    private static BetRow betRow(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("agent_id"),
+                rs.getString("issue_number"), rs.getString("play_type"), rs.getString("parameters_text"),
+                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("report_status"),
+                rs.getString("settlement_status"));
+    }
+
+    private static BigDecimal amount(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO.setScale(2) : value.setScale(2);
+    }
+
+    private static Instant instant(Timestamp value) {
+        return value == null ? null : value.toInstant();
+    }
+
+    /** 机器报网配置读模型；不含密码密文。 */
+    public record ReportConfigRow(long agentId, String agentCode, String agentName, String reportType,
+                                  boolean reportAuto, boolean reportOnline, boolean reportWithdraw,
+                                  String reportUsername, boolean hasPassword, String reportUrl,
+                                  String reportNetworkCode, String reportRouteCode, BigDecimal reportBalance,
+                                  BigDecimal reportStake, Instant reportLastLoginAt) {
+    }
+
+    /** 报网配置写模型；{@code passwordCiphertext} 为空表示不改动已保存的密码。 */
+    public record ReportConfigUpdate(String reportType, Boolean reportAuto, Boolean reportWithdraw,
+                                     String reportUsername, String passwordCiphertext, String reportUrl,
+                                     String reportNetworkCode, String reportRouteCode) {
+    }
+
+    /** 注单上报状态计数。 */
+    public record StatusCounts(long timeoutCount, long unreportedCount, long failedCount) {
+    }
+
+    /** 注单快照（含所属机器），供重报与下注链路使用。 */
+    public record BetRow(long betId, long accountId, long agentId, String issueNumber, String playType,
+                         String parametersText, BigDecimal stake, BigDecimal odds, String reportStatus,
+                         String settlementStatus) {
+    }
+
+    /** 报网订单列表行。 */
+    public record OrderRow(long betId, String betCode, long accountId, String memberCode, String displayName,
+                           String issueNumber, int ballNumber, String playType, String parametersText,
+                           BigDecimal stake, BigDecimal odds, String settlementStatus, String reportStatus,
+                           Instant createdAt) {
+    }
+}
