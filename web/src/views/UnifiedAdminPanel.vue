@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
+import { createMachineConfigConsoleStore } from '../machineConfigConsole'
 import { scopeIdentityText } from '../consoleScope'
 import type { CurrentUserView, GameView, PlayerDeskScope } from '../types'
 import type { Machine } from '../types/platformAdmin'
@@ -26,6 +27,17 @@ const scopeError = ref('')
 const machineError = ref('')
 const machines = ref<Machine[]>([])
 const selectedMachineId = ref<number | null>(null)
+
+/**
+ * 机器级配置句柄：顶部状态栏与底部控制区共用同一份读写状态。
+ *
+ * BY220 `robot.php` 的赔率/特码赔率/特码返水/封盘/取消/返水/流水显示/限额都是机器自己的值，
+ * 只有"全部机器"（管理员未选机器）才回落到全局 `/betting-config`。
+ */
+const machineConsole = createMachineConfigConsoleStore(
+  () => scope.value,
+  () => selectedMachineId.value,
+)
 
 const operatorName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '当前账号')
 const isPlatformAdmin = computed(() => (currentUser.value?.permissions ?? []).includes('USER_MANAGE'))
@@ -164,14 +176,20 @@ onMounted(() => { void loadState(); void loadScope() })
             <span>现有兼容入口</span>
             <RouterLink to="/console/operations">旧运营页</RouterLink>
             <RouterLink to="/console/users">用户管理</RouterLink>
-            <RouterLink to="/console/agents">代理管理</RouterLink>
+            <!-- 用户 2026-10-02 确认：代理组织管理已由超级后台「子账号」「机器管理」覆盖，
+                 不再从代理后台导航进入；路由 /console/agents 仅作内部兼容保留。 -->
             <RouterLink to="/console/robots">服务端机器人</RouterLink>
           </section>
         </template>
       </aside>
 
       <section class="unified-admin-content">
-        <AdminWelcomeControlPanel part="game" />
+        <AdminWelcomeControlPanel
+          part="game"
+          :scope="scope"
+          :machine-id="selectedMachineId"
+          :machine-console="machineConsole"
+        />
 
         <ReportControlPanel class="unified-content-report" />
 
@@ -186,12 +204,12 @@ onMounted(() => { void loadState(); void loadScope() })
           <PlayerWorkbenchModule embedded :machine-id="selectedMachineId" @points-changed="refreshRecentPoints" />
         </section>
         <template v-if="bottomControlRaised">
-          <AdminBottomControlPanel @raise="toggleBottomControlPosition" />
+          <AdminBottomControlPanel :machine-console="machineConsole" @raise="toggleBottomControlPosition" />
           <AdminDomainFooterPanel />
         </template>
         <template v-else>
           <AdminDomainFooterPanel />
-          <AdminBottomControlPanel @raise="toggleBottomControlPosition" />
+          <AdminBottomControlPanel :machine-console="machineConsole" @raise="toggleBottomControlPosition" />
         </template>
       </section>
     </div>

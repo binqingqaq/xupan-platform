@@ -1,13 +1,94 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import {
+  MACHINE_CONFIG_UNAVAILABLE_HINT,
+  MACHINE_ONLY_FIELD_HINT,
+  createMachineConfigConsoleStore,
+  createMachineControlDraft,
+  validateMachineControlDraft,
+  type MachineConfigConsoleHandle,
+  type MachineControlDraft,
+} from '../../machineConfigConsole'
+import type { PlayerDeskScope } from '../../types'
+
+/**
+ * 底部控制区（BY220 `robot.php`：预留封盘 / 取消 / 返水）。
+ *
+ * 这三项都是**机器自己的值**（`agent.close_seconds/cancel_seconds/rebate_rate`），
+ * 因此只读写在机器上下文下的机器配置；"全部机器"或身份范围未就绪时禁用并给出提示，
+ * 不再用前端假值伪装成已生效。显示类开关（显示右角/倒计时）等阶段 4 建字段后再接入。
+ */
+const props = defineProps<{
+  /** `/console` 顶部状态栏与底部控制区共用同一个机器配置句柄。 */
+  machineConsole?: MachineConfigConsoleHandle
+  scope?: PlayerDeskScope | null
+  machineId?: number | null
+}>()
 
 const emit = defineEmits<{ raise: [] }>()
 
-const closeReserveSeconds = ref(100)
-const cancelSeconds = ref(10)
-const rebate = ref(5)
+const ownMachineConsole = props.machineConsole === undefined
+  ? createMachineConfigConsoleStore(() => props.scope ?? null, () => props.machineId ?? null)
+  : null
+const machineConsole: MachineConfigConsoleHandle | null = props.machineConsole ?? ownMachineConsole
+
+const draft = ref<MachineControlDraft>({ closeSeconds: '', cancelSeconds: '', rebateRate: '' })
+const notice = ref('')
+const error = ref('')
+const saving = ref(false)
+
 const showRightCorner = ref(true)
 const showCountdown = ref(true)
+
+const level = computed(() => machineConsole?.level ?? 'UNAVAILABLE')
+const machineConfig = computed(() => machineConsole?.config ?? null)
+const machineOnly = computed(() => level.value !== 'MACHINE' || machineConfig.value === null)
+const disabled = computed(() => machineOnly.value || saving.value || Boolean(machineConsole?.saving))
+const hintText = computed(() => {
+  if (level.value === 'GLOBAL') return MACHINE_ONLY_FIELD_HINT
+  if (level.value === 'UNAVAILABLE') return MACHINE_CONFIG_UNAVAILABLE_HINT
+  return ''
+})
+
+watch(machineConfig, next => {
+  if (next) draft.value = createMachineControlDraft(next)
+}, { immediate: true })
+
+function setNotice(value: string) {
+  notice.value = value
+  error.value = ''
+}
+
+function setError(value: string) {
+  error.value = value
+  notice.value = ''
+}
+
+async function commit() {
+  const handle = machineConsole
+  const current = machineConfig.value
+  if (!handle || !current || disabled.value) return
+  const parsed = validateMachineControlDraft(draft.value)
+  if (!parsed.ok) {
+    setError(parsed.message)
+    draft.value = createMachineControlDraft(current)
+    return
+  }
+  const unchanged = parsed.patch.closeSeconds === current.closeSeconds
+    && parsed.patch.cancelSeconds === current.cancelSeconds
+    && parsed.patch.rebateRate === current.rebateRate
+  if (unchanged) return
+  saving.value = true
+  const saved = await handle.save(parsed.patch)
+  saving.value = false
+  if (saved) {
+    setNotice('预留封盘、取消与返水已保存')
+    return
+  }
+  // 保存失败时不显示成功，并回退到服务端当前值。
+  setError(handle.error || '机器配置保存失败，请稍后重试')
+  draft.value = createMachineControlDraft(machineConfig.value ?? current)
+}
 </script>
 
 <template>
@@ -16,35 +97,50 @@ const showCountdown = ref(true)
       <label class="bottom-control-label" for="admin-close-reserve">预留封盘:</label>
       <input
         id="admin-close-reserve"
-        v-model.number="closeReserveSeconds"
+        v-model="draft.closeSeconds"
         class="bottom-control-input"
-        type="number"
-        min="0"
-        step="1"
+        type="text"
         inputmode="numeric"
+        autocomplete="off"
+        :disabled="disabled"
+        @change="commit"
+        @keyup.enter="commit"
+        @blur="commit"
       />
       <span class="bottom-control-unit">S</span>
       <label class="bottom-control-label bottom-control-spaced" for="admin-cancel-seconds">取消:</label>
       <input
         id="admin-cancel-seconds"
-        v-model.number="cancelSeconds"
+        v-model="draft.cancelSeconds"
         class="bottom-control-input"
-        type="number"
-        min="0"
-        step="1"
+        type="text"
         inputmode="numeric"
+        autocomplete="off"
+        :disabled="disabled"
+        @change="commit"
+        @keyup.enter="commit"
+        @blur="commit"
       />
       <span class="bottom-control-unit">S</span>
       <label class="bottom-control-label bottom-control-spaced" for="admin-rebate">返水:</label>
       <input
         id="admin-rebate"
-        v-model.number="rebate"
+        v-model="draft.rebateRate"
         class="bottom-control-input bottom-control-input-narrow"
-        type="number"
-        min="0"
-        step="1"
-        inputmode="numeric"
+        type="text"
+        inputmode="decimal"
+        autocomplete="off"
+        :disabled="disabled"
+        @change="commit"
+        @keyup.enter="commit"
+        @blur="commit"
       />
+      <button class="bottom-control-save" type="button" :disabled="disabled" @click="commit">
+        {{ saving ? '保存中...' : '保存' }}
+      </button>
+      <span v-if="notice" class="bottom-control-notice" role="status">{{ notice }}</span>
+      <span v-if="error" class="bottom-control-error" role="alert">{{ error }}</span>
+      <span v-else-if="hintText" class="bottom-control-hint">{{ hintText }}</span>
     </div>
 
     <div class="bottom-control-switches">
@@ -69,6 +165,7 @@ const showCountdown = ref(true)
           <input v-model="showCountdown" type="radio" name="admin-show-countdown" :value="false" />
           <span>关</span>
         </label>
+        <span class="bottom-control-stage">阶段 4 接入</span>
         <button class="bottom-control-raise" type="button" title="上移至线路域名上方" @click="emit('raise')">
           <i aria-hidden="true">↑</i>移上
         </button>
@@ -124,6 +221,11 @@ const showCountdown = ref(true)
   text-align: center;
 }
 
+.bottom-control-input:disabled {
+  background: #eef4f9;
+  color: #93aec2;
+}
+
 .bottom-control-input-narrow {
   width: 42px;
 }
@@ -131,6 +233,39 @@ const showCountdown = ref(true)
 .bottom-control-unit {
   color: var(--ops-blue-deep, #15599d);
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.bottom-control-save {
+  height: 23px;
+  margin-left: 4px;
+  border: 1px solid var(--ops-green, #23845f);
+  border-radius: 2px;
+  background: linear-gradient(#47a77d, var(--ops-green, #23845f));
+  color: #fff;
+  padding: 0 9px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.bottom-control-save:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.bottom-control-notice {
+  color: var(--ops-green, #23845f);
+  white-space: nowrap;
+}
+
+.bottom-control-error {
+  color: var(--ops-red, #d94747);
+  white-space: nowrap;
+}
+
+.bottom-control-hint {
+  color: var(--ops-muted, #6d8093);
   white-space: nowrap;
 }
 
@@ -160,6 +295,17 @@ const showCountdown = ref(true)
   height: 13px;
   margin: 0;
   accent-color: var(--ops-blue, #2d7bcd);
+}
+
+/* 显示类开关当前只是本地状态，字段在阶段 4 才建，这里明确标注，避免被当成已生效配置。 */
+.bottom-control-stage {
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: #f2f7fc;
+  color: var(--ops-muted, #6d8093);
+  padding: 0 4px;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .bottom-control-raise {

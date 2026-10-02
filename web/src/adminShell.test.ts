@@ -57,7 +57,8 @@ describe('unified admin routes', () => {
     expect(source).toContain('AdminWelcomeControlPanel')
     expect(source).toContain('AdminDomainFooterPanel')
     expect(source).toContain('AdminBottomControlPanel')
-    expect(source).toContain('<RouterLink to="/console/agents">代理管理</RouterLink>')
+    // 用户 2026-10-02 确认：代理后台唯一入口是 /console，导航里的“代理管理”入口已移除
+    expect(source).not.toContain('>代理管理</RouterLink>')
     expect(source).not.toContain('后台功能导航')
     expect(reportSource).toContain('报网类型:')
     expect(reportSource).toContain('设置账号')
@@ -108,12 +109,17 @@ describe('unified admin routes', () => {
   it('uses the requested page titles and favicon', () => {
     const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
     const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
+    const adminRoutesSource = readFileSync(resolve(process.cwd(), 'src/adminRoutes.ts'), 'utf8')
 
     expect(html).toContain('<title>奥巴AI</title>')
     expect(html).toContain('href="/display/picture/favicon.ico"')
     expect(routerSource).toContain("title: 'AI模型房间管理'")
     expect(routerSource).toContain("title: '奥巴AI'")
-    expect(routerSource).toContain("requiredPermission: 'AGENT_CONSOLE_READ'")
+    // 机器账号进代理后台的权限在 /console 路由上（用户 2026-10-02 确认 /console 是代理后台唯一入口）
+    expect(adminRoutesSource).toContain("requiredAnyPermission: ['USER_MANAGE', 'AGENT_CONSOLE_READ']")
+    // /agent 已收敛为跳转，不再挂载独立代理后台页面
+    expect(routerSource).toContain("path: '/agent', redirect: '/console'")
+    expect(routerSource).not.toContain("component: AgentConsole")
   })
 
   it('hides the player status toggle while keeping the handler for later', () => {

@@ -460,6 +460,83 @@ export interface BettingConfigView extends BettingLimits {
   specialRebate: number
 }
 
+/** 流水显示口径：`SINGLE`=单边，`DOUBLE`=双边（BY220 `robot.php` `setType` → `agent.rebate_mode`）。 */
+export type MachineRebateMode = 'SINGLE' | 'DOUBLE'
+
+/**
+ * `/api/admin/player-desk/machine-config` 的机器级配置读模型。
+ *
+ * BY220 `robot.php` 的顶部状态栏（赔率/特码赔率/特码返水/限额）与底部控制区（预留封盘/取消/返水/流水显示）
+ * 读的都是**该机器自己** `x_robot` 的值，在 xupan 里就是同一张 `agent` 表。
+ */
+export interface MachineConfigView {
+  machineId: number
+  machineCode: string
+  machineName: string
+  boardOpen: boolean
+  chaseEnabled: boolean
+  /** 托上限（`agent.bot_count`）；写接口的字段名是 `botCount`，读模型返回 `botLimit`。 */
+  botLimit: number
+  closeSeconds: number
+  cancelSeconds: number
+  /** 返水（底部控制区"返水"，BY220 `FanShui`）。 */
+  rebateRate: number
+  /** 赔率（顶部状态栏"赔率"，BY220 `PeiLv`）。 */
+  oddsRate: number
+  /** 特码返水（顶部状态栏"特码返水"，BY220 `teFanshui`）。 */
+  specialRebateRate: number
+  /** 特码赔率（顶部状态栏"特码赔率"，BY220 `tePeilv`）。 */
+  specialOddsRate: number
+  /** 流水显示，BY220 `setType`。 */
+  rebateMode: MachineRebateMode | string
+  totalLimit: number
+  positiveLimit: number
+  angleLimit: number
+  strictLimit: number
+  tongLimit: number
+  carLimit: number
+  specialLimit: number
+  oddEvenLimit: number
+  bigSmallLimit: number
+  fanLimit: number
+  addLimit: number
+  playerMinStake: number
+  playerMaxStake: number
+}
+
+/**
+ * 机器级配置写模型，字段与后端 `MachineConfigRequest` 一一对应。
+ *
+ * PUT 是整表单替换：未传的数值字段会按 0 落库，因此前端必须用完整表单提交
+ * （见 `machineConfigPayload`）。`machineId` 在机器账号下由后端强制成自己那台。
+ */
+export interface MachineConfigUpdateRequest {
+  machineId?: number
+  boardOpen: boolean
+  chaseEnabled: boolean
+  botCount: number
+  closeSeconds: number
+  cancelSeconds: number
+  rebateRate: number
+  oddsRate: number
+  specialRebateRate: number
+  specialOddsRate: number
+  rebateMode: MachineRebateMode | string
+  totalLimit: number
+  positiveLimit: number
+  angleLimit: number
+  strictLimit: number
+  tongLimit: number
+  carLimit: number
+  specialLimit: number
+  oddEvenLimit: number
+  bigSmallLimit: number
+  fanLimit: number
+  addLimit: number
+  playerMinStake: number
+  playerMaxStake: number
+}
+
 export interface PlayerAccessLinkStatusView {
   linkId: number
   scope: 'PLAYER_FULL' | 'CHAT_ONLY' | string

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api, apiErrorMessage } from '../../api'
 import { botQuotaText, machineOptionLabel, machineStatusLabel } from '../../consoleScope'
 import {
@@ -11,8 +11,24 @@ import {
   type BettingDisplayDraft,
   type BettingDisplayField,
 } from '../../bettingConfig'
+import {
+  MACHINE_CONFIG_UNAVAILABLE_HINT,
+  MACHINE_LIMIT_FIELDS,
+  MACHINE_ONLY_FIELD_HINT,
+  createMachineConfigConsoleStore,
+  createMachineLimitDraft,
+  createMachineOddsDraft,
+  machineConfigTitle,
+  normalizeRebateMode,
+  validateMachineLimitDraft,
+  validateMachineOddsDraft,
+  type MachineConfigConsoleHandle,
+  type MachineConfigLevel,
+  type MachineLimitKey,
+  type MachineOddsDraft,
+} from '../../machineConfigConsole'
 import { formatPoints } from '../../playerDesk'
-import type { BettingConfigView, BettingLimits, PlayerDeskScope } from '../../types'
+import type { BettingConfigView, BettingLimits, MachineConfigView, PlayerDeskScope } from '../../types'
 import type { Machine } from '../../types/platformAdmin'
 
 const props = defineProps<{
@@ -24,6 +40,8 @@ const props = defineProps<{
   operatorName?: string
   scopeError?: string
   machineError?: string
+  /** 机器级配置句柄：`/console` 顶部与底部共用同一个，避免两处缓存互相覆盖。 */
+  machineConsole?: MachineConfigConsoleHandle
 }>()
 const emit = defineEmits<{ scopeChanged: [scope: PlayerDeskScope]; machineChanged: [machineId: number | null] }>()
 
@@ -100,14 +118,28 @@ async function loadOwnScope() {
 
 const DISPLAY_FIELDS: BettingDisplayField[] = ['displayOdds', 'specialOdds', 'specialRebate']
 
-const config = ref<BettingConfigView | null>(null)
-const draft = ref<BettingDisplayDraft>({ displayOdds: '', specialOdds: '', specialRebate: '' })
+/**
+ * 机器级配置句柄：`/console` 由父级传入并被顶部状态栏与底部控制区共用；
+ * 单独挂载本组件（没有父级传入）时自建一个，退化为"只有自己会用"的独立句柄。
+ */
+const ownMachineConsole = props.machineConsole === undefined && (props.part ?? 'all') !== 'welcome'
+  ? createMachineConfigConsoleStore(() => props.scope ?? null, () => props.machineId ?? null)
+  : null
+const machineConsole: MachineConfigConsoleHandle | null = props.machineConsole ?? ownMachineConsole
+const configLevel = computed<MachineConfigLevel>(() => machineConsole?.level ?? 'UNAVAILABLE')
+const machineConfig = computed<MachineConfigView | null>(() => machineConsole?.config ?? null)
+const machineSaving = computed(() => machineConsole?.saving ?? false)
+/** GLOBAL=全部机器时的全局配置；MACHINE 下完全不使用。 */
+const globalConfig = ref<BettingConfigView | null>(null)
+const globalDraft = ref<BettingDisplayDraft>({ displayOdds: '', specialOdds: '', specialRebate: '' })
+const machineDraft = ref<MachineOddsDraft>({ oddsRate: '', specialOddsRate: '', specialRebateRate: '', rebateMode: 'SINGLE' })
 const notice = ref('')
 const error = ref('')
 const savingDisplay = ref(false)
 
 const limitOpen = ref(false)
-const limitDraft = ref<Record<keyof BettingLimits, string> | null>(null)
+const limitMode = ref<'MACHINE' | 'GLOBAL'>('GLOBAL')
+const limitDraft = ref<Record<string, string> | null>(null)
 const limitError = ref('')
 const savingLimits = ref(false)
 
@@ -121,32 +153,139 @@ function setError(value: string) {
   notice.value = ''
 }
 
-function applyConfig(next: BettingConfigView) {
-  config.value = next
-  draft.value = createDisplayDraft(next)
+function applyGlobalConfig(next: BettingConfigView) {
+  globalConfig.value = next
+  globalDraft.value = createDisplayDraft(next)
 }
 
-async function loadConfig() {
+async function loadGlobalConfig() {
   try {
-    applyConfig(await api.getBettingConfig())
+    applyGlobalConfig(await api.getBettingConfig())
   } catch (cause) {
     setError(apiErrorMessage(cause, '赔率与限额配置加载失败'))
   }
 }
 
-async function commitDisplay() {
-  if (savingDisplay.value) return
-  if (!config.value) {
-    await loadConfig()
+// 机器配置变化（首次加载 / 保存回读 / 切换机器）后同步草稿，界面始终显示服务端当前值。
+watch(machineConfig, next => {
+  if (next) machineDraft.value = createMachineOddsDraft(next)
+}, { immediate: true })
+
+// 身份范围可能在挂载后才返回，这里按最终层级决定读机器配置还是全局配置。
+watch(configLevel, level => {
+  if (part.value === 'welcome') return
+  if (level === 'GLOBAL') void loadGlobalConfig()
+}, { immediate: true })
+
+const displayTargetText = computed(() => {
+  if (configLevel.value === 'MACHINE') {
+    return machineConfig.value ? machineConfigTitle(machineConfig.value) : '机器配置加载中...'
+  }
+  if (configLevel.value === 'GLOBAL') return '全部机器（全局配置）'
+  return '身份范围未就绪'
+})
+
+const boardStatusText = computed(() => {
+  if (configLevel.value === 'MACHINE') {
+    const current = machineConfig.value
+    if (!current) return '—'
+    return current.boardOpen ? '开盘' : '闭盘'
+  }
+  return configLevel.value === 'GLOBAL' ? '开盘' : '—'
+})
+
+// 机器级栏目在"全部机器"下没有可写对象：必须禁用并说明，不能继续伪装成已生效。
+const machineOnlyNotice = computed(() => {
+  if (configLevel.value === 'GLOBAL') return MACHINE_ONLY_FIELD_HINT
+  if (configLevel.value === 'UNAVAILABLE') return MACHINE_CONFIG_UNAVAILABLE_HINT
+  return ''
+})
+
+const displayDisabled = computed(() => savingDisplay.value || machineSaving.value
+  || configLevel.value === 'UNAVAILABLE'
+  || (configLevel.value === 'MACHINE' && machineConfig.value === null))
+
+const rebateModeDisabled = computed(() => displayDisabled.value || configLevel.value !== 'MACHINE')
+
+const limitsDisabled = computed(() => savingLimits.value
+  || configLevel.value === 'UNAVAILABLE'
+  || (configLevel.value === 'MACHINE' && machineConfig.value === null))
+
+function activeOddsDraft(): { oddsRate: string; specialOddsRate: string; specialRebateRate: string } {
+  return configLevel.value === 'MACHINE'
+    ? machineDraft.value
+    : { oddsRate: globalDraft.value.displayOdds, specialOddsRate: globalDraft.value.specialOdds, specialRebateRate: globalDraft.value.specialRebate }
+}
+
+function writeOddsDraft(field: 'odds' | 'specialOdds' | 'specialRebate', value: string) {
+  if (configLevel.value === 'MACHINE') {
+    if (field === 'odds') machineDraft.value.oddsRate = value
+    else if (field === 'specialOdds') machineDraft.value.specialOddsRate = value
+    else machineDraft.value.specialRebateRate = value
     return
   }
-  const current = config.value
+  if (field === 'odds') globalDraft.value.displayOdds = value
+  else if (field === 'specialOdds') globalDraft.value.specialOdds = value
+  else globalDraft.value.specialRebate = value
+}
+
+function useOddsModel(field: 'odds' | 'specialOdds' | 'specialRebate') {
+  const key = field === 'odds' ? 'oddsRate' : field === 'specialOdds' ? 'specialOddsRate' : 'specialRebateRate'
+  return computed({
+    get: () => activeOddsDraft()[key],
+    set: (value: string) => writeOddsDraft(field, value),
+  })
+}
+
+const oddsText = useOddsModel('odds')
+const specialOddsText = useOddsModel('specialOdds')
+const specialRebateText = useOddsModel('specialRebate')
+const rebateModeValue = computed({
+  get: () => normalizeRebateMode(machineDraft.value.rebateMode) ?? 'SINGLE',
+  set: (value: string) => { machineDraft.value.rebateMode = normalizeRebateMode(value) ?? 'SINGLE' },
+})
+
+/** 机器上下文：赔率/特码赔率/特码返水/流水显示一次性整表单提交到该机器。 */
+async function commitMachineDisplay() {
+  const current = machineConfig.value
+  const handle = machineConsole
+  if (!current || !handle || savingDisplay.value || handle.saving) return
+  const parsed = validateMachineOddsDraft(machineDraft.value)
+  if (!parsed.ok) {
+    setError(parsed.message)
+    machineDraft.value = createMachineOddsDraft(current)
+    return
+  }
+  const unchanged = parsed.patch.oddsRate === current.oddsRate
+    && parsed.patch.specialOddsRate === current.specialOddsRate
+    && parsed.patch.specialRebateRate === current.specialRebateRate
+    && parsed.patch.rebateMode === (normalizeRebateMode(current.rebateMode) ?? 'SINGLE')
+  if (unchanged) return
+  savingDisplay.value = true
+  const saved = await handle.save(parsed.patch)
+  savingDisplay.value = false
+  if (saved) {
+    setNotice('赔率、特码赔率、特码返水与流水显示已保存')
+    return
+  }
+  // 保存失败：不改界面值，显式报错并回退到服务端当前值。
+  setError(handle.error || '机器配置保存失败，请稍后重试')
+  machineDraft.value = createMachineOddsDraft(machineConfig.value ?? current)
+}
+
+/** 全部机器：保留原有全局 `/betting-config` 行为。 */
+async function commitGlobalDisplay() {
+  const current = globalConfig.value
+  if (!current) {
+    await loadGlobalConfig()
+    return
+  }
   const parsed = {} as Record<BettingDisplayField, number>
   for (const field of DISPLAY_FIELDS) {
-    const result = validateDisplayInput(field, draft.value[field])
+    const result = validateDisplayInput(field, globalDraft.value[field])
     if (!result.ok) {
       setError(result.message)
-      draft.value = createDisplayDraft(current)
+      globalDraft.value = createDisplayDraft(current)
       return
     }
     parsed[field] = result.value
@@ -155,12 +294,12 @@ async function commitDisplay() {
     && parsed.specialOdds === current.specialOdds
     && parsed.specialRebate === current.specialRebate
   if (unchanged) {
-    draft.value = createDisplayDraft(current)
+    globalDraft.value = createDisplayDraft(current)
     return
   }
   savingDisplay.value = true
   try {
-    applyConfig(await api.updateBettingDisplay({
+    applyGlobalConfig(await api.updateBettingDisplay({
       displayOdds: parsed.displayOdds,
       specialOdds: parsed.specialOdds,
       specialRebate: parsed.specialRebate,
@@ -168,18 +307,48 @@ async function commitDisplay() {
     setNotice('赔率与返水已保存')
   } catch (cause) {
     setError(apiErrorMessage(cause, '赔率与返水保存失败'))
-    draft.value = createDisplayDraft(current)
+    globalDraft.value = createDisplayDraft(current)
   } finally {
     savingDisplay.value = false
   }
 }
 
+async function commitDisplay() {
+  if (savingDisplay.value) return
+  if (configLevel.value === 'MACHINE') await commitMachineDisplay()
+  else if (configLevel.value === 'GLOBAL') await commitGlobalDisplay()
+}
+
+function changeRebateMode(event: Event) {
+  rebateModeValue.value = (event.target as HTMLSelectElement).value
+  void commitDisplay()
+}
+
+const limitRows = computed<{ key: string; label: string }[]>(() => limitMode.value === 'MACHINE'
+  ? MACHINE_LIMIT_FIELDS.map(field => ({ key: field.key as string, label: field.label }))
+  : LIMIT_FIELDS.map(field => ({ key: field.key as string, label: field.label })))
+
+const limitSubtitle = computed(() => limitMode.value === 'MACHINE'
+  ? `机器：${machineConfig.value ? machineConfigTitle(machineConfig.value) : '未选择'}；0 表示不限制`
+  : '全部机器：按单个玩家当前期累计计算')
+
 function openLimits() {
-  if (!config.value) {
-    void loadConfig().then(() => { if (config.value) openLimits() })
+  if (configLevel.value === 'MACHINE') {
+    const current = machineConfig.value
+    if (!current) return
+    limitMode.value = 'MACHINE'
+    limitDraft.value = createMachineLimitDraft(current)
+  } else if (configLevel.value === 'GLOBAL') {
+    const current = globalConfig.value
+    if (!current) {
+      void loadGlobalConfig().then(() => { if (globalConfig.value) openLimits() })
+      return
+    }
+    limitMode.value = 'GLOBAL'
+    limitDraft.value = createLimitDraft(current)
+  } else {
     return
   }
-  limitDraft.value = createLimitDraft(config.value)
   limitError.value = ''
   limitOpen.value = true
 }
@@ -193,14 +362,37 @@ function closeLimits() {
 async function saveLimits() {
   const current = limitDraft.value
   if (!current || savingLimits.value) return
-  const result = validateLimitDraft(current)
+  if (limitMode.value === 'MACHINE') {
+    const parsed = validateMachineLimitDraft(current as Record<MachineLimitKey, string>)
+    if (!parsed.ok) {
+      limitError.value = parsed.message
+      return
+    }
+    const handle = machineConsole
+    if (!handle) {
+      limitError.value = MACHINE_CONFIG_UNAVAILABLE_HINT
+      return
+    }
+    savingLimits.value = true
+    const saved = await handle.save(parsed.patch)
+    savingLimits.value = false
+    if (saved) {
+      limitOpen.value = false
+      limitDraft.value = null
+      setNotice('机器限额已保存')
+      return
+    }
+    limitError.value = handle.error || '限额配置保存失败'
+    return
+  }
+  const result = validateLimitDraft(current as unknown as Record<keyof BettingLimits, string>)
   if (!result.ok) {
     limitError.value = result.message
     return
   }
   savingLimits.value = true
   try {
-    applyConfig(await api.updateBettingLimits(result.limits))
+    applyGlobalConfig(await api.updateBettingLimits(result.limits))
     limitOpen.value = false
     limitDraft.value = null
     setNotice('限额配置已保存')
@@ -212,7 +404,6 @@ async function saveLimits() {
 }
 
 onMounted(() => {
-  if (part.value !== 'welcome') void loadConfig()
   if (part.value !== 'game' && props.scope === undefined) void loadOwnScope()
 })
 </script>
@@ -259,16 +450,18 @@ onMounted(() => {
 
   <section v-if="part !== 'welcome'" class="admin-game-control-bar" aria-label="状态与赔率配置区域">
     <span class="game-control-label">当前状态:</span>
-    <span class="game-control-value game-control-status">开盘</span>
+    <span class="game-control-value game-control-status">{{ boardStatusText }}</span>
+    <span class="game-control-label">机器:</span>
+    <span class="game-control-value game-control-target">{{ displayTargetText }}</span>
     <label class="game-control-label" for="admin-display-odds">赔率:</label>
     <input
       id="admin-display-odds"
-      v-model="draft.displayOdds"
+      v-model="oddsText"
       class="game-control-input"
       type="text"
       inputmode="numeric"
       autocomplete="off"
-      :disabled="savingDisplay"
+      :disabled="displayDisabled"
       @change="commitDisplay"
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
@@ -278,6 +471,7 @@ onMounted(() => {
       class="game-control-limit-button"
       type="button"
       aria-haspopup="dialog"
+      :disabled="limitsDisabled"
       @click="openLimits"
     >
       设置
@@ -285,12 +479,12 @@ onMounted(() => {
     <label class="game-control-label" for="admin-special-odds">特码赔率:</label>
     <input
       id="admin-special-odds"
-      v-model="draft.specialOdds"
+      v-model="specialOddsText"
       class="game-control-input game-control-input-wide"
       type="text"
       inputmode="decimal"
       autocomplete="off"
-      :disabled="savingDisplay"
+      :disabled="displayDisabled"
       @change="commitDisplay"
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
@@ -298,16 +492,29 @@ onMounted(() => {
     <label class="game-control-label" for="admin-special-rebate">特码返水:</label>
     <input
       id="admin-special-rebate"
-      v-model="draft.specialRebate"
+      v-model="specialRebateText"
       class="game-control-input"
       type="text"
       inputmode="numeric"
       autocomplete="off"
-      :disabled="savingDisplay"
+      :disabled="displayDisabled"
       @change="commitDisplay"
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
     />
+    <label class="game-control-label" for="admin-rebate-mode">流水显示:</label>
+    <select
+      id="admin-rebate-mode"
+      class="game-control-select"
+      :value="rebateModeValue"
+      :disabled="rebateModeDisabled"
+      title="单边 / 双边（BY220 robot.php setType）"
+      @change="changeRebateMode"
+    >
+      <option value="SINGLE">单边</option>
+      <option value="DOUBLE">双边</option>
+    </select>
+    <span v-if="machineOnlyNotice" class="game-control-hint">{{ machineOnlyNotice }}</span>
     <span v-if="notice" class="game-control-notice" role="status">{{ notice }}</span>
     <span v-if="error" class="game-control-error" role="alert">{{ error }}</span>
   </section>
@@ -317,10 +524,10 @@ onMounted(() => {
       <section class="limit-config-dialog" role="dialog" aria-modal="true" aria-labelledby="limit-config-title">
         <header>
           <h3 id="limit-config-title">限额配置</h3>
-          <span>全部为整数，不能为空，按单个玩家当前期累计计算</span>
+          <span>{{ limitSubtitle }}</span>
         </header>
         <div class="limit-config-grid">
-          <label v-for="field in LIMIT_FIELDS" :key="field.key" class="limit-config-field">
+          <label v-for="field in limitRows" :key="field.key" class="limit-config-field">
             <span>{{ field.label }}</span>
             <input v-model="limitDraft[field.key]" type="text" inputmode="numeric" autocomplete="off" />
           </label>
@@ -469,6 +676,33 @@ onMounted(() => {
 .game-control-status {
   min-width: 58px;
   color: var(--ops-blue, #2d7bcd);
+}
+
+.game-control-target {
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--ops-text, #243b53);
+  text-overflow: ellipsis;
+}
+
+.game-control-select {
+  height: 24px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  border-radius: 2px;
+  background: #fff;
+  color: var(--ops-blue-deep, #15599d);
+  padding: 0 3px;
+  font: inherit;
+}
+
+.game-control-select:disabled {
+  background: #eef4f9;
+  color: #93aec2;
+}
+
+.game-control-hint {
+  color: var(--ops-muted, #6d8093);
+  white-space: nowrap;
 }
 
 .game-control-input {

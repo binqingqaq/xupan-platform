@@ -54,6 +54,8 @@ import type {
   BetBoardView,
   BettingConfigView,
   BettingLimits,
+  MachineConfigUpdateRequest,
+  MachineConfigView,
   QuickBetPreference,
   MobileDisplayHomeResponse,
 } from './types'
@@ -240,6 +242,15 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'GAME_BETTING_CLOSED') return '下注无效：本期已封盘'
   if (error.code === 'GAME_BALL_NOT_SUPPORTED') return '下注无效：球号必须在 1 到 8 之间'
   if (error.code === 'BETTING_CONFIG_INVALID') return '配置未保存：请检查赔率、返水和限额是否为有效整数'
+  if (error.code === 'PLAYER_DESK_MACHINE_REQUIRED') return '请先选择机器，再读取或保存机器配置'
+  if (error.code === 'MACHINE_ODDS_RATE_INVALID') return '机器赔率不能为负数'
+  if (error.code === 'MACHINE_SPECIAL_ODDS_RATE_INVALID') return '特码赔率不能为负数'
+  if (error.code === 'MACHINE_REBATE_RATE_INVALID') return '返水不能为负数'
+  if (error.code === 'MACHINE_SPECIAL_REBATE_RATE_INVALID') return '特码返水不能为负数'
+  if (error.code === 'MACHINE_REBATE_MODE_INVALID') return '流水显示只能选单边或双边'
+  if (error.code === 'MACHINE_STAKE_RANGE_INVALID') return '玩家注额范围无效：最小注额不能大于最高注额'
+  if (error.code === 'MACHINE_CONFIG_FORBIDDEN') return '当前账号没有机器配置权限'
+  if (error.code === 'MACHINE_NOT_FOUND') return '机器不存在或已停用，请刷新后重试'
   if (error.code === 'PLATFORM_PASSWORD_OLD_MISMATCH') return '旧密码错误'
   if (error.code === 'PLATFORM_PASSWORD_CONFIRM_MISMATCH') return '新密码与确认密码不一致'
   if (error.code === 'PLATFORM_PASSWORD_NO_CHANGE') return '未做任何更改'
@@ -809,6 +820,26 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  /**
+   * 机器级配置（BY220 `robot.php` 顶部状态栏与底部控制区）。
+   *
+   * 机器账号固定读自己那台；管理员/子账号必须传 `machineId`，否则后端 400 `PLAYER_DESK_MACHINE_REQUIRED`。
+   */
+  getMachineConfig: (machineId?: number | null) => {
+    const query = new URLSearchParams()
+    if (machineId !== null && machineId !== undefined) query.set('machineId', String(machineId))
+    const suffix = query.toString()
+    return request<MachineConfigView>(`/api/admin/player-desk/machine-config${suffix ? `?${suffix}` : ''}`)
+  },
+  /** 机器级配置是整表单保存：`payload` 必须由 `machineConfigPayload` 基于当前值补全。 */
+  updateMachineConfig: (payload: MachineConfigUpdateRequest) => {
+    const body: Record<string, unknown> = { ...payload }
+    if (body.machineId === null || body.machineId === undefined) delete body.machineId
+    return request<MachineConfigView>('/api/admin/player-desk/machine-config', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+  },
   getMobileDisplayHome: () => request<MobileDisplayHomeResponse>('/api/display/mobile/home'),
   getPlayerBehavior: (userId: number) => request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`),
   updatePlayerBehavior: (userId: number, payload: TestPlayerBehaviorRequest) =>
