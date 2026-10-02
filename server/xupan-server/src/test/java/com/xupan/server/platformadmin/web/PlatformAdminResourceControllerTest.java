@@ -201,6 +201,26 @@ class PlatformAdminResourceControllerTest {
         assertThat(listedGames).hasSize(1);
         assertThat(listedGames.get(0)).containsExactlyInAnyOrder("AU8", "K28");
 
+        // 账本原则 2：机器积分改动必须落流水。
+        // 创建时 score=500 → 一条 MACHINE_INIT（0 → 500）
+        assertThat(machineLedgerCount(machineId)).isEqualTo(1L);
+        assertThat(machineLedgerType(machineId)).isEqualTo("MACHINE_INIT");
+        assertThat(machineLedgerBalanceAfter(machineId)).isEqualByComparingTo("500.00");
+        // 上面那次编辑没改 score（仍是 500）→ 不得凭空多一条流水
+        assertThat(machineLedgerCount(machineId)).as("积分未变不应写流水").isEqualTo(1L);
+
+        // 把积分改成 800 → 追加一条 MACHINE_ADJUST，变动前后可验算
+        mockMvc.perform(put("/api/admin/machines/" + machineId)
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(base.replace("\"score\":500", "\"score\":800")
+                                + ",\"username\":\"platform_test_games_machine\"}"))
+                .andExpect(status().isOk());
+        assertThat(machineLedgerCount(machineId)).isEqualTo(2L);
+        assertThat(machineLedgerType(machineId)).isEqualTo("MACHINE_ADJUST");
+        assertThat(machineLedgerBalanceBefore(machineId)).isEqualByComparingTo("500.00");
+        assertThat(machineLedgerBalanceAfter(machineId)).isEqualByComparingTo("800.00");
+        assertThat(machineLedgerAmount(machineId)).isEqualByComparingTo("300.00");
+
         // 显式传空列表表示"清空彩种"，此时才真的清空
         mockMvc.perform(put("/api/admin/machines/" + machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
@@ -1362,11 +1382,43 @@ class PlatformAdminResourceControllerTest {
         jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "
                 + "(SELECT id FROM agent WHERE UPPER(agent_code) LIKE 'PLATFORM_TEST_%')");
         cleanupByUsers("DELETE FROM demo_user_account WHERE sys_user_id IN %s");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE UPPER(agent_code) LIKE 'PLATFORM_TEST_%')");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE group_id IN (SELECT id FROM agent_group WHERE username LIKE 'platform_test_%')");
         jdbcTemplate.update("DELETE FROM agent WHERE UPPER(agent_code) LIKE 'PLATFORM_TEST_%'");
         jdbcTemplate.update("DELETE FROM agent_group WHERE username LIKE 'platform_test_%'");
         cleanupByUsers("DELETE FROM auth_session WHERE user_id IN %s");
         cleanupByUsers("DELETE FROM sys_user_role WHERE user_id IN %s");
         cleanupByUsers("DELETE FROM sys_user WHERE id IN %s");
+    }
+
+    private long machineLedgerCount(long agentId) {
+        Long total = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent_ledger WHERE agent_id = ?", Long.class, agentId);
+        return total == null ? 0L : total;
+    }
+
+    private String machineLedgerType(long agentId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT entry_type FROM agent_ledger WHERE agent_id = ? ORDER BY id DESC LIMIT 1
+                """, String.class, agentId);
+    }
+
+    private java.math.BigDecimal machineLedgerBalanceBefore(long agentId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT balance_before FROM agent_ledger WHERE agent_id = ? ORDER BY id DESC LIMIT 1
+                """, java.math.BigDecimal.class, agentId);
+    }
+
+    private java.math.BigDecimal machineLedgerBalanceAfter(long agentId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT balance_after FROM agent_ledger WHERE agent_id = ? ORDER BY id DESC LIMIT 1
+                """, java.math.BigDecimal.class, agentId);
+    }
+
+    private java.math.BigDecimal machineLedgerAmount(long agentId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT amount FROM agent_ledger WHERE agent_id = ? ORDER BY id DESC LIMIT 1
+                """, java.math.BigDecimal.class, agentId);
     }
 
     private void cleanupByUsers(String template, boolean twice) {

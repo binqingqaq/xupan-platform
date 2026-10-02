@@ -226,6 +226,7 @@ class AgentBettingPolicyIntegrationTest {
         jdbc.update("DELETE FROM game_issue");
         jdbc.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);
+        jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = 'MACHINE-ODDS-TEST')");
         jdbc.update("DELETE FROM agent WHERE agent_code = 'MACHINE-ODDS-TEST'");
         jdbc.update("DELETE FROM sys_user_role WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);

@@ -318,6 +318,12 @@ class AuthControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code <> 'DEMO-USER'");
+        // 账本流水必须先删：agent_ledger 对 agent / agent_group 有外键，且账本本身是追加保留的，
+        // 生产上机器只做软删除（不物理删），这里只是测试清理。
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code LIKE 'AUTH_TEST_%')");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE group_id IN "
+                + "(SELECT g.id FROM agent_group g JOIN sys_user u ON u.id = g.sys_user_id)");
         jdbcTemplate.update("DELETE FROM agent_group WHERE sys_user_id IN (SELECT id FROM sys_user)");
         // 本类新建的机器账号（agent 行）必须先删，否则 sys_user 会被 agent.account_user_id 外键挡住。
         jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "

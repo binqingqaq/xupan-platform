@@ -571,7 +571,8 @@ class ReportConsoleTest {
         }
         if (!machineIds.isEmpty()) {
             delete("DELETE FROM agent_game WHERE agent_id IN (%s)", machineIds);
-            delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
+            delete("DELETE FROM agent_ledger WHERE agent_id IN (%s)", machineIds);
+        delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
         }
         if (!owners.isEmpty()) {
             delete("DELETE FROM sys_login_log WHERE user_id IN (%s)", owners);

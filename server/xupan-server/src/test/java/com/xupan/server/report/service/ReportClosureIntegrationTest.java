@@ -298,7 +298,8 @@ class ReportClosureIntegrationTest {
         }
         if (!machineIds.isEmpty()) {
             delete("DELETE FROM agent_game WHERE agent_id IN (%s)", machineIds);
-            delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
+            delete("DELETE FROM agent_ledger WHERE agent_id IN (%s)", machineIds);
+        delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
         }
         if (!owners.isEmpty()) {
             delete("DELETE FROM auth_session WHERE user_id IN (%s)", owners);

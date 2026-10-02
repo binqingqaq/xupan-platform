@@ -1,6 +1,7 @@
 package com.xupan.server.platformadmin.service;
 
 import com.xupan.server.agent.repository.AgentRepository;
+import com.xupan.server.agent.service.AgentLedgerService;
 import com.xupan.server.agent.service.AgentAdminService;
 import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.repository.UserRepository;
@@ -33,11 +34,13 @@ public class PlatformAdminService {
     private final PermissionService permissionService;
     private final SessionRepository sessionRepository;
     private final PlatformAdminAccessService accessService;
+    private final AgentLedgerService agentLedgerService;
 
     public PlatformAdminService(JdbcTemplate jdbc, AgentRepository agentRepository,
                                 AgentAdminService agentAdminService, UserRepository userRepository,
                                 PasswordPolicyService passwordPolicy, PermissionService permissionService,
-                                SessionRepository sessionRepository, PlatformAdminAccessService accessService) {
+                                SessionRepository sessionRepository, PlatformAdminAccessService accessService,
+                                AgentLedgerService agentLedgerService) {
         this.jdbc = jdbc;
         this.agentRepository = agentRepository;
         this.agentAdminService = agentAdminService;
@@ -46,6 +49,7 @@ public class PlatformAdminService {
         this.permissionService = permissionService;
         this.sessionRepository = sessionRepository;
         this.accessService = accessService;
+        this.agentLedgerService = agentLedgerService;
     }
 
     @Transactional(readOnly = true)
@@ -89,15 +93,17 @@ public class PlatformAdminService {
             userRepository.assignRole(accountUserId, "SUB_ACCOUNT");
             jdbc.update("""
                     INSERT INTO agent_group
-                        (group_code, display_name, status, created_by, username, password_hash, score,
+                        (group_code, display_name, status, created_by, username, password_hash,
                          expires_at, sub_account_manage, machine_manage, unified_report_enabled,
                          report_username, report_network_code, report_route_code, sys_user_id)
-                    VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, code, displayName, operator, username, passwordHash,
-                    amount(input.score()), timestamp(input.expiresAt()), input.subAccountManage(),
+                    timestamp(input.expiresAt()), input.subAccountManage(),
                     input.machineManage(), input.unifiedReportEnabled(), trimToNull(input.reportUsername()),
                     trimToNull(input.reportNetworkCode()), trimToNull(input.reportRouteCode()), accountUserId);
             Long id = jdbc.queryForObject("SELECT id FROM agent_group WHERE group_code = ?", Long.class, code);
+            // 账本原则 2：积分不在 INSERT 里直接写，统一由账本服务写余额 + 流水
+            applyGroupScore(id, input.score(), AgentLedgerService.TYPE_SUB_ACCOUNT_INIT, operator);
             audit(operator, "SUB_ACCOUNT_MANAGE", "POST", "/api/admin/sub-accounts", id,
                     "username=" + username);
             return findSubAccount(id);
@@ -123,25 +129,27 @@ public class PlatformAdminService {
                 ? null : passwordPolicy.encode(input.rawPassword());
         if (passwordHash == null) {
             jdbc.update("""
-                    UPDATE agent_group SET username=?, display_name=?, score=?, expires_at=?,
+                    UPDATE agent_group SET username=?, display_name=?, expires_at=?,
                        sub_account_manage=?, machine_manage=?, unified_report_enabled=?,
                        report_username=?, report_network_code=?, report_route_code=?, updated_at=CURRENT_TIMESTAMP
                      WHERE id=?
-                    """, username, displayName, amount(input.score()),
+                    """, username, displayName,
                     timestamp(input.expiresAt()), input.subAccountManage(), input.machineManage(),
                     input.unifiedReportEnabled(), trimToNull(input.reportUsername()),
                     trimToNull(input.reportNetworkCode()), trimToNull(input.reportRouteCode()), id);
         } else {
             jdbc.update("""
-                    UPDATE agent_group SET username=?, password_hash=?, display_name=?, score=?, expires_at=?,
+                    UPDATE agent_group SET username=?, password_hash=?, display_name=?, expires_at=?,
                        sub_account_manage=?, machine_manage=?, unified_report_enabled=?,
                        report_username=?, report_network_code=?, report_route_code=?, updated_at=CURRENT_TIMESTAMP
                      WHERE id=?
                     """, username, passwordHash, displayName,
-                    amount(input.score()), timestamp(input.expiresAt()), input.subAccountManage(),
+                    timestamp(input.expiresAt()), input.subAccountManage(),
                     input.machineManage(), input.unifiedReportEnabled(), trimToNull(input.reportUsername()),
                     trimToNull(input.reportNetworkCode()), trimToNull(input.reportRouteCode()), id);
         }
+        // 账本原则 2：积分变动走账本服务（锁行 + 写流水），目标值未变时不产生账目
+        applyGroupScore(id, input.score(), AgentLedgerService.TYPE_SUB_ACCOUNT_ADJUST, operator);
         if (accountUserId == null) {
             String currentHash = jdbc.queryForObject(
                     "SELECT password_hash FROM agent_group WHERE id = ?", String.class, id);
@@ -329,7 +337,7 @@ public class PlatformAdminService {
         requireNonNegative(input.specialRebateRate(), "MACHINE_SPECIAL_REBATE_RATE_INVALID", "特码返水不能为负数");
         requireNonNegative(input.score(), "MACHINE_SCORE_INVALID", "机器积分不能为负数");
         jdbc.update("""
-                UPDATE agent SET group_id=?, score=?, expires_at=?, board_open=?, robot_manage=?, chase_enabled=?,
+                UPDATE agent SET group_id=?, expires_at=?, board_open=?, robot_manage=?, chase_enabled=?,
                     bot_count=?, close_seconds=?, cancel_seconds=?, rebate_rate=?, odds_rate=?,
                     special_rebate_rate=?, special_odds_rate=?, total_limit=?, positive_limit=?, angle_limit=?,
                     strict_limit=?, tong_limit=?, car_limit=?, special_limit=?, odd_even_limit=?,
@@ -337,7 +345,7 @@ public class PlatformAdminService {
                     rebate_mode=?,
                     updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
-                """, groupId, amount(input.score()), timestamp(input.expiresAt()), input.boardOpen(),
+                """, groupId, timestamp(input.expiresAt()), input.boardOpen(),
                 input.robotManage(), input.chaseEnabled(), Math.max(0, input.botCount()),
                 Math.max(0, input.closeSeconds()), Math.max(0, input.cancelSeconds()), amount(input.rebateRate()),
                 amount(input.oddsRate()), amount(input.specialRebateRate()), amount(input.specialOddsRate()),
@@ -346,6 +354,10 @@ public class PlatformAdminService {
                 amount(input.specialLimit()), amount(input.oddEvenLimit()), amount(input.bigSmallLimit()),
                 amount(input.fanLimit()), amount(input.addLimit()), amount(input.playerMaxStake()),
                 amount(input.playerMinStake()), normalizeRebateMode(input.rebateMode()), id);
+        // 账本原则 2：机器积分不在上面的整值 UPDATE 里写死，统一由账本服务锁行改余额并写流水；
+        // 目标值与当前值相同时不产生账目（重复提交同一次编辑天然幂等）。
+        applyMachineScore(id, input.score(),
+                create ? AgentLedgerService.TYPE_MACHINE_INIT : AgentLedgerService.TYPE_MACHINE_ADJUST, operator);
         // BY220 由超管在机器表单里勾选彩种（rb/form.html:42-50 写 x_robot.game）。
         // games 为 null 表示"本次不指定彩种"，必须保留已有配置；
         // 只有显式传入列表时才整体替换，避免编辑机器其它字段时把彩种清成只剩 AU8。
@@ -358,6 +370,25 @@ public class PlatformAdminService {
         }
         audit(operator, "MACHINE_MANAGE", create ? "POST" : "PUT",
                 create ? "/api/admin/machines" : "/api/admin/machines/" + id, id, "machine");
+    }
+
+    /**
+     * 机器积分的唯一写入点（账本原则 2、3）。
+     *
+     * <p>幂等键用随机值：超管这类"设置成某值"的操作靠**目标值相同即不写流水**保证幂等，
+     * 而不是靠固定键（固定键会在余额反复涨落时撞唯一约束）。</p>
+     */
+    private void applyMachineScore(long agentId, BigDecimal target, String entryType, long operator) {
+        agentLedgerService.setMachineScore(agentId, target == null ? BigDecimal.ZERO : target, entryType,
+                "超管维护机器积分", operator,
+                "MACHINE-" + entryType + "-" + java.util.UUID.randomUUID());
+    }
+
+    /** 子账号积分的唯一写入点（账本原则 2、3）。 */
+    private void applyGroupScore(long groupId, BigDecimal target, String entryType, long operator) {
+        agentLedgerService.setGroupScore(groupId, target == null ? BigDecimal.ZERO : target, entryType,
+                "超管维护子账号积分", operator,
+                "SUB-ACCOUNT-" + entryType + "-" + java.util.UUID.randomUUID());
     }
 
     private SubAccountRow findSubAccount(long id) {

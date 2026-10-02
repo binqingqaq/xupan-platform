@@ -33,6 +33,7 @@ public class AgentConsoleService {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final AgentRepository agentRepository;
+    private final AgentLedgerService agentLedgerService;
     private final PermissionService permissionService;
     private final UserAdminService userAdminService;
     private final TestPlayerAdminService testPlayerAdminService;
@@ -41,7 +42,8 @@ public class AgentConsoleService {
     private final VirtualWalletService walletService;
     private final JdbcTemplate jdbc;
 
-    public AgentConsoleService(AgentRepository agentRepository, PermissionService permissionService,
+    public AgentConsoleService(AgentRepository agentRepository, AgentLedgerService agentLedgerService,
+                                PermissionService permissionService,
                                UserAdminService userAdminService,
                                TestPlayerAdminService testPlayerAdminService,
                                PlayerLinkAuthenticationService playerLinkAuthenticationService,
@@ -49,6 +51,7 @@ public class AgentConsoleService {
                                VirtualWalletService walletService,
                                JdbcTemplate jdbc) {
         this.agentRepository = agentRepository;
+        this.agentLedgerService = agentLedgerService;
         this.permissionService = permissionService;
         this.userAdminService = userAdminService;
         this.testPlayerAdminService = testPlayerAdminService;
@@ -137,15 +140,20 @@ public class AgentConsoleService {
 
         WalletOperationResult wallet;
         if ("TOP_UP".equals(normalizedDirection)) {
-            if (!"BOT".equals(player.playerKind())
-                    && agentRepository.debitScore(agent.id(), normalizedAmount) != 1) {
-                throw BusinessException.conflict("AGENT_SCORE_INSUFFICIENT", "您的账号剩余积分不足以完成本次上分！");
+            // 账本原则 2：代理积分变化必须同时写流水，且带幂等键，所以改由 AgentLedgerService 统一写。
+            // 机器（BOT）玩家不扣代理积分：BY220 对托的上分不动代理余额。
+            if (!"BOT".equals(player.playerKind())) {
+                agentLedgerService.changeMachineScore(agent.id(), normalizedAmount.negate(),
+                        AgentLedgerService.TYPE_PLAYER_TOP_UP, reason, "PLAYER",
+                        Long.toString(playerUserId), accountUserId, "AGENT-LEDGER-" + key);
             }
             wallet = walletService.grant(accountUserId, playerUserId, normalizedAmount, reason, key);
         } else {
             wallet = walletService.adjust(accountUserId, playerUserId, normalizedAmount.negate(), reason, key);
             if (!"BOT".equals(player.playerKind())) {
-                agentRepository.creditScore(agent.id(), normalizedAmount);
+                agentLedgerService.changeMachineScore(agent.id(), normalizedAmount,
+                        AgentLedgerService.TYPE_PLAYER_DOWN, reason, "PLAYER",
+                        Long.toString(playerUserId), accountUserId, "AGENT-LEDGER-" + key);
             }
         }
         BigDecimal agentScore = agentRepository.findScore(agent.id());

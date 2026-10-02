@@ -359,7 +359,8 @@ class PlayerDeskScopeTest {
         }
         if (!machineIds.isEmpty()) {
             delete("DELETE FROM agent_game WHERE agent_id IN (%s)", machineIds);
-            delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
+            delete("DELETE FROM agent_ledger WHERE agent_id IN (%s)", machineIds);
+        delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
         }
         jdbc.update("UPDATE agent_group SET sys_user_id = NULL, deleted_by = NULL, created_by = NULL WHERE group_code = ?", GROUP_CODE);
         jdbc.update("DELETE FROM agent_group WHERE group_code = ?", GROUP_CODE);

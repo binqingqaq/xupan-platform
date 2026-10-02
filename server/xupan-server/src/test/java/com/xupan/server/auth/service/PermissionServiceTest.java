@@ -24,6 +24,9 @@ class PermissionServiceTest {
 
     @AfterEach
     void clean() {
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE group_id IN "
+                + "(SELECT id FROM agent_group WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'permission-test-%'))");
         jdbcTemplate.update("DELETE FROM agent_group WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'permission-test-%')");
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "

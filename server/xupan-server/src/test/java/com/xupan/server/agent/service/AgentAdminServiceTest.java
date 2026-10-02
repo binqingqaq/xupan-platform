@@ -46,6 +46,8 @@ class AgentAdminServiceTest {
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agenttest_%'))");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agenttest_%')");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE UPPER(agent_code) LIKE 'AGENTTEST_%')");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE group_id IN (SELECT id FROM agent_group WHERE group_code LIKE 'agenttest_%')");
         jdbcTemplate.update("DELETE FROM agent WHERE UPPER(agent_code) LIKE 'AGENTTEST_%'");
         jdbcTemplate.update("DELETE FROM agent_group WHERE group_code LIKE 'agenttest_%'");
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "

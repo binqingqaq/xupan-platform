@@ -242,6 +242,8 @@ class AgentControllerTest {
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
         jdbcTemplate.update("DELETE FROM player_access_link WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE UPPER(agent_code) IN ('AGENT_CONTROLLER'))");
+        jdbcTemplate.update("DELETE FROM agent_ledger WHERE group_id IN (SELECT id FROM agent_group WHERE group_code = 'CONTROLLER_GROUP')");
         jdbcTemplate.update("DELETE FROM agent WHERE UPPER(agent_code) IN ('AGENT_CONTROLLER')");
         jdbcTemplate.update("DELETE FROM agent_group WHERE group_code = 'CONTROLLER_GROUP'");
         jdbcTemplate.update("DELETE FROM sys_login_log WHERE user_id IN "

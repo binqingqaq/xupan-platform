@@ -10,6 +10,7 @@ import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.agent.service.ScoreLedgerQueryService;
 import com.xupan.server.report.service.ReportService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.media.AvatarPresetService;
@@ -39,18 +40,21 @@ import java.util.List;
     private final PlayerPointOperationService pointOperationService;
     private final PlayerDeskScopeService scopeService;
     private final ReportService reportService;
+    private final ScoreLedgerQueryService scoreLedgerQueryService;
 
     public PlayerDeskAdminController(PlayerDeskAdminService service, PlayerPointsReportService pointsReportService,
                                      PlayerPointRequestService pointRequestService,
                                      PlayerPointOperationService pointOperationService,
                                      PlayerDeskScopeService scopeService,
-                                     ReportService reportService) {
+                                     ReportService reportService,
+                                ScoreLedgerQueryService scoreLedgerQueryService) {
         this.service = service;
         this.pointsReportService = pointsReportService;
         this.pointRequestService = pointRequestService;
         this.pointOperationService = pointOperationService;
         this.scopeService = scopeService;
         this.reportService = reportService;
+        this.scoreLedgerQueryService = scoreLedgerQueryService;
     }
 
     /** 当前登录身份的运营后台范围与档案，供前端渲染头部。 */
@@ -110,6 +114,22 @@ import java.util.List;
                                      @RequestParam(defaultValue = "1") int page,
                                      @RequestParam(defaultValue = "20") int pageSize) {
         return ReportOrders.from(reportService.orders(user(auth), machineId, status, page, pageSize));
+    }
+
+    /**
+     * 本机器自己的积分流水（代理层账本，Flyway V60 {@code agent_ledger}）。
+     *
+     * <p>账本原则 2、3 的落地：任何积分变化都有一条追加式流水，这里把它读出来，
+     * 使账本可被核对（下一阶段中心上游的第二层结算与对账都依赖它）。</p>
+     *
+     * <p>BY220 {@code robot.php} 没有"积分流水"菜单，因此本接口只提供数据，
+     * **不新增任何菜单页面**，避免发明 BY220 不存在的业务流程。</p>
+     */
+    @GetMapping("/score-ledger")
+    public ScoreLedgerPage scoreLedger(Authentication auth, @RequestParam(required = false) Long machineId,
+                                       @RequestParam(defaultValue = "1") int page,
+                                       @RequestParam(defaultValue = "20") int pageSize) {
+        return ScoreLedgerPage.from(scoreLedgerQueryService.page(user(auth), machineId, page, pageSize));
     }
 
     /** 重报单笔注单（BY220 {@code reFeidan}）：只允许未报/失败/超时，且注单属于本机器。 */
@@ -487,8 +507,31 @@ import java.util.List;
         }
     }
     /** 报网订单分页响应。 */
-    public record ReportOrders(List<ReportOrder> items, int page, int pageSize, long total) {
-        static ReportOrders from(ReportService.ReportOrderPage x) {
+    /** 一页代理积分流水（账本原则 2、3）。 */
+    public record ScoreLedgerPage(long machineId, List<ScoreLedgerEntry> items, int page, int pageSize,
+                                  long total, boolean balanced) {
+        static ScoreLedgerPage from(ScoreLedgerQueryService.Page x) {
+            return new ScoreLedgerPage(x.machineId(), x.items().stream().map(ScoreLedgerEntry::from).toList(),
+                    x.page(), x.pageSize(), x.total(), x.balanced());
+        }
+    }
+
+    /**
+     * 一行代理积分流水。
+     *
+     * @param direction IN 增加 / OUT 减少
+     * @param amount    变动额（正数，方向由 {@code direction} 表达）
+     */
+    public record ScoreLedgerEntry(long id, String entryType, String direction, BigDecimal amount,
+                                   BigDecimal balanceBefore, BigDecimal balanceAfter, String reason,
+                                   String referenceType, String referenceId, Instant createdAt) {
+        static ScoreLedgerEntry from(com.xupan.server.agent.repository.AgentLedgerRepository.LedgerRow x) {
+            return new ScoreLedgerEntry(x.id(), x.entryType(), x.direction(), x.amount(), x.balanceBefore(),
+                    x.balanceAfter(), x.reason(), x.referenceType(), x.referenceId(), x.createdAt());
+        }
+    }
+
+    public record ReportOrders(List<ReportOrder> items, int page, int pageSize, long total) {        static ReportOrders from(ReportService.ReportOrderPage x) {
             return new ReportOrders(x.items().stream().map(ReportOrder::from).toList(), x.page(), x.pageSize(),
                     x.total());
         }

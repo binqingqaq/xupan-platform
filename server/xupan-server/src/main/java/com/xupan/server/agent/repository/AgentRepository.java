@@ -225,21 +225,9 @@ public class AgentRepository {
                 BigDecimal.class, agentId);
     }
 
-    public int debitScore(long agentId, BigDecimal amount) {
-        return jdbc.update("""
-                UPDATE agent
-                   SET score = score - ?, updated_at = CURRENT_TIMESTAMP
-                 WHERE id = ? AND deleted_at IS NULL AND score >= ?
-                """, amount, agentId, amount);
-    }
-
-    public int creditScore(long agentId, BigDecimal amount) {
-        return jdbc.update("""
-                UPDATE agent
-                   SET score = score + ?, updated_at = CURRENT_TIMESTAMP
-                 WHERE id = ? AND deleted_at IS NULL
-                """, amount, agentId);
-    }
+    // 注意：这里刻意不再提供 debitScore/creditScore 这类"只改余额不写流水"的方法。
+    // 账本原则 2 要求余额变化必须同时写流水，机器与子账号积分的唯一写入方是
+    // com.xupan.server.agent.service.AgentLedgerService（锁行 + 写 agent_ledger）。
 
     public int assignPlatformDirectPlayer(long userId, long targetAgentId) {
         long defaultAgentId = defaultAgentId();
