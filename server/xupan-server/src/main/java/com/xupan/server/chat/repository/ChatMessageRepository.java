@@ -140,8 +140,45 @@ public class ChatMessageRepository {
                 new IllegalStateException("写入机器人聊天消息后未找到消息"));
     }
 
-    public int updateRobotSenderName(long robotId, String senderName) {
-        if (robotId <= 0 || senderName == null || senderName.isBlank()) {
+    /**
+     * 写入一条系统提示消息（{@code message_type='SYSTEM'}、{@code sender_type='SYSTEM'}）。
+     *
+     * <p>用途：BY220 的 {@code addMsg(...)} 房间内提示，例如失败退单时的"注单取消"
+     * （{@code common.php:1635}）。{@code idempotencyKey} 保证同一事件重复处理不会写两条。</p>
+     */
+    public ChatMessage insertSystemMessage(long roomId, long sequenceNo, String issueNumber,
+                                           String idempotencyKey, String content,
+                                           String payloadJson, Instant createdAt) {
+        requireTransaction("insertSystemMessage");
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement statement = connection.prepareStatement("""
+                    INSERT INTO chat_message
+                        (room_id, sequence_no, client_message_id, idempotency_key,
+                         issue_number, message_type, sender_type, sender_id, sender_name,
+                         content, payload_json, status, created_at, updated_at)
+                    VALUES (?, ?, NULL, ?, ?, 'SYSTEM', 'SYSTEM', NULL, '系统', ?, CAST(? AS JSON),
+                            'ACTIVE', ?, ?)
+                    """, Statement.RETURN_GENERATED_KEYS);
+            statement.setLong(1, roomId);
+            statement.setLong(2, sequenceNo);
+            statement.setString(3, idempotencyKey);
+            statement.setString(4, issueNumber);
+            statement.setString(5, content);
+            statement.setString(6, payloadJson);
+            statement.setTimestamp(7, Timestamp.from(createdAt));
+            statement.setTimestamp(8, Timestamp.from(createdAt));
+            return statement;
+        }, keyHolder);
+        Number key = generatedMessageId(keyHolder);
+        if (key == null) {
+            throw new IllegalStateException("写入系统聊天消息后未取得消息 ID");
+        }
+        return findById(key.longValue()).orElseThrow(() ->
+                new IllegalStateException("写入系统聊天消息后未找到消息"));
+    }
+
+    public int updateRobotSenderName(long robotId, String senderName) {        if (robotId <= 0 || senderName == null || senderName.isBlank()) {
             throw new IllegalArgumentException("机器人消息名称参数无效");
         }
         return jdbcTemplate.update("""

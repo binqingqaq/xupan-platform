@@ -2,6 +2,7 @@ package com.xupan.server.report.service;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.playerauth.service.PlayerLinkTokenCipher;
@@ -42,6 +43,8 @@ import java.util.Set;
 @Service
 public class ReportService {
 
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ReportService.class);
+
     /** 审计动作码（BY220 报网配置）。 */
     public static final String AUDIT_ACTION = "AGENT_REPORT_CONFIG";
 
@@ -73,11 +76,13 @@ public class ReportService {
     private final PlayerLinkTokenCipher passwordCipher;
     private final GameDataRepository gameDataRepository;
     private final VirtualWalletService walletService;
+    private final ChatMessageService chatMessageService;
 
     public ReportService(ReportConfigRepository repository, PlayerDeskScopeService scopeService,
                          PermissionService permissionService, OperationAuditRepository auditRepository,
                          ReportAdapter reportAdapter, PlayerLinkTokenCipher passwordCipher,
-                         GameDataRepository gameDataRepository, VirtualWalletService walletService) {
+                         GameDataRepository gameDataRepository, VirtualWalletService walletService,
+                         ChatMessageService chatMessageService) {
         this.repository = repository;
         this.scopeService = scopeService;
         this.permissionService = permissionService;
@@ -86,6 +91,7 @@ public class ReportService {
         this.passwordCipher = passwordCipher;
         this.gameDataRepository = gameDataRepository;
         this.walletService = walletService;
+        this.chatMessageService = chatMessageService;
     }
 
     /** 读取机器报网配置 + 上报状态统计（超时 / 未报 / 失败）。密码只返回 {@code hasPassword}。 */
@@ -309,6 +315,16 @@ public class ReportService {
         }
         walletService.refundForCancellation(bet.sysUserId(), bet.betId(), bet.accountId(),
                 bet.issueNumber(), bet.stake());
+        // BY220 失败退单会发一条"注单取消"房间提示（common.php:1635 addMsg）。
+        // 反馈失败不能影响退款结果，因此单独兜住异常；幂等键保证重复处理不重复发消息。
+        try {
+            chatMessageService.publishSystemMessage("main", bet.issueNumber(),
+                    "CHAT-REPORT-WITHDRAW-" + bet.betId(),
+                    "@" + bet.betId() + " 注单取消（上报失败自动退单）", Instant.now());
+        } catch (RuntimeException feedbackFailure) {
+            log.warn("失败退单的聊天室取消反馈写入失败 betId={} {}", bet.betId(),
+                    feedbackFailure.getMessage());
+        }
         auditRepository.record(0L, AUDIT_ACTION, "POST", "/api/admin/player-desk/report/withdraw",
                 Long.toString(bet.betId()), "SUCCESS", null,
                 "machineId=" + bet.agentId() + ",reason=REPORT_FAILED,refunded=" + bet.stake()

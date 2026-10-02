@@ -655,9 +655,40 @@ public class ChatMessageService {
         return message;
     }
 
+    /**
+     * 发布一条系统提示消息（{@code SYSTEM} 发送者），用于房间内的系统事件提示。
+     *
+     * <p>对应 BY220 的 {@code addMsg(...)}：例如失败退单时的"注单取消"提示
+     * （{@code common.php:1635}）。与机器人消息分开，避免把系统事件伪装成机器人发言。</p>
+     *
+     * @param idempotencyKey 幂等键，同一事件重复处理不会写入第二条
+     */
+    @Transactional
+    public ChatMessage publishSystemMessage(String roomCode, String issueNumber, String idempotencyKey,
+                                           String content, Instant createdAt) {
+        String normalizedRoomCode = requireRoomCode(roomCode);
+        String normalizedIssueNumber = requireRobotText(issueNumber, "CHAT_SYSTEM_ISSUE_INVALID",
+                "系统消息期号无效", 64);
+        String normalizedKey = requireRobotText(idempotencyKey, "CHAT_SYSTEM_IDEMPOTENCY_KEY_INVALID",
+                "系统消息幂等键无效", 128);
+        String normalizedContent = contentPolicy.normalize(content);
+        Instant now = createdAt == null ? Instant.now() : createdAt;
+
+        Optional<ChatMessage> existing = messageRepository.findByIdempotencyKey(normalizedKey);
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        ChatRoom room = requireRoomForUpdate(normalizedRoomCode);
+        long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+        ChatMessage message = messageRepository.insertSystemMessage(room.id(), sequence, normalizedIssueNumber,
+                normalizedKey, normalizedContent, "{}", now);
+        outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
+        eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
+        return message;
+    }
+
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
-    public void publishSettlementFeedback(BetSettlementCompletedEvent event) {
-        if (event == null || walletService == null || robotRepository == null) {
+    public void publishSettlementFeedback(BetSettlementCompletedEvent event) {        if (event == null || walletService == null || robotRepository == null) {
             throw new IllegalArgumentException("结算反馈参数或服务未配置");
         }
         var wallet = walletService.getByAccountId(event.accountId());

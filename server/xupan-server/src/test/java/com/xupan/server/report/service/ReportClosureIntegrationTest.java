@@ -122,6 +122,8 @@ class ReportClosureIntegrationTest {
         assertThat(betExists(failedBet)).as("失败退单应物理删除注单").isFalse();
         assertThat(balanceOf()).as("失败退单应退还本金")
                 .isEqualByComparingTo(balanceBeforeWithdraw.add(new BigDecimal("10.00")));
+        // BY220 失败退单还会发一条"注单取消"房间提示（common.php:1635 addMsg）
+        assertThat(systemCancelMessageCount(failedBet)).as("失败退单应写入一条系统取消提示").isEqualTo(1);
 
         // ⑥ 重报已被删除的订单：按范围不存在，调用失败（幂等保护）
         assertThatThrownByResubmitMissing(failedBet);
@@ -208,6 +210,16 @@ class ReportClosureIntegrationTest {
     private boolean betExists(long betId) {
         Long count = jdbc.queryForObject("SELECT COUNT(*) FROM game_bet WHERE id = ?", Long.class, betId);
         return count != null && count > 0;
+    }
+
+    /** 统计该注单的"注单取消"系统提示条数（幂等键以注单号结尾）。 */
+    private long systemCancelMessageCount(long betId) {
+        Long count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM chat_message
+                 WHERE message_type = 'SYSTEM' AND sender_type = 'SYSTEM'
+                   AND idempotency_key = ?
+                """, Long.class, "CHAT-REPORT-WITHDRAW-" + betId);
+        return count == null ? 0L : count;
     }
 
     /** 机器报网的"押注"本地模拟值（累计已成功上报的投注额）。 */
