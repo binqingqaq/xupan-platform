@@ -4,9 +4,9 @@
 >
 > 当前分支：`main`
 >
-> 当前代码基线：`b69881f feat: 增加 BY220 代理后台玩家明细`
+> 当前代码基线：`d2ae53c feat: 按 BY220 实现代理赔率返水封盘取消结算映射`
 >
-> Git 状态：交接前工作区干净；`main` 领先 `origin/main` 10 个提交。
+> Git 状态：工作区干净；本次提交后 `main` 领先 `origin/main` 1 个提交（`cb7ca3d` 之前已推送）。
 >
 > 当前数据库基线：本机 MySQL 8.4.11 Flyway V55。
 >
@@ -71,7 +71,7 @@ D:\codes\liuhecai\xupan-platform
 
 ```text
 分支：main
-代码：本次提交（见 git log -1；上一交接基线为 b69881f）
+代码：d2ae53c
 origin/main：已推送至 cb7ca3d，本次提交待推送
 工作区：干净
 数据库：本机 MySQL 8.4.11，Flyway V55
