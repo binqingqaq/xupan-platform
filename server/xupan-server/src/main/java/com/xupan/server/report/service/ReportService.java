@@ -85,6 +85,7 @@ public class ReportService {
     private final PermissionService permissionService;
     private final OperationAuditRepository auditRepository;
     private final ReportAdapter reportAdapter;
+    private final CenterReportAdapter centerReportAdapter;
     private final PlayerLinkTokenCipher passwordCipher;
     private final GameDataRepository gameDataRepository;
     private final VirtualWalletService walletService;
@@ -93,7 +94,8 @@ public class ReportService {
     public ReportService(ReportConfigRepository repository, ReportUpstreamOrderRepository orderRepository,
                          PlayerDeskScopeService scopeService,
                          PermissionService permissionService, OperationAuditRepository auditRepository,
-                         ReportAdapter reportAdapter, PlayerLinkTokenCipher passwordCipher,
+                         ReportAdapter reportAdapter, CenterReportAdapter centerReportAdapter,
+                         PlayerLinkTokenCipher passwordCipher,
                          GameDataRepository gameDataRepository, VirtualWalletService walletService,
                          ChatMessageService chatMessageService) {
         this.repository = repository;
@@ -102,6 +104,7 @@ public class ReportService {
         this.permissionService = permissionService;
         this.auditRepository = auditRepository;
         this.reportAdapter = reportAdapter;
+        this.centerReportAdapter = centerReportAdapter;
         this.passwordCipher = passwordCipher;
         this.gameDataRepository = gameDataRepository;
         this.walletService = walletService;
@@ -279,7 +282,7 @@ public class ReportService {
         ReportCommand command = new ReportCommand(bet.betId(), bet.accountId(), bet.agentId(), bet.issueNumber(),
                 bet.playType(), bet.parametersText(), bet.stake(), bet.odds(), config.reportType(),
                 config.reportNetworkCode(), config.reportRouteCode(), config.reportOnline());
-        ReportOutcome outcome = reportAdapter.submit(command);
+        ReportOutcome outcome = adapterFor(config.reportType()).submit(command);
         String newStatus = mapOutcome(outcome);
         orderRepository.resolveAttempt(orderId, newStatus, outcome.name(), responseMessage(outcome),
                 upstreamOrderNo(bet, attemptNo), Instant.now());
@@ -293,6 +296,20 @@ public class ReportService {
             repository.addReportedStake(bet.agentId(), bet.stake());
         }
         return newStatus;
+    }
+
+    /**
+     * 按机器的 {@code report_type} 选择适配器。
+     *
+     * <p>{@code CENTER} 走中心上游适配器（把订单真正报给中心），其余走本地模拟适配器。
+     * 选择放在这里而不是让适配器自己判断，是为了让"这台机器报给谁"只有一个判定点，
+     * 便于以后接入新的报网类型。</p>
+     */
+    private ReportAdapter adapterFor(String reportType) {
+        if (CenterReportAdapter.CODE.equalsIgnoreCase(reportType == null ? "" : reportType.trim())) {
+            return centerReportAdapter;
+        }
+        return reportAdapter;
     }
 
     /** 上报请求摘要（落库留痕；不含任何凭据）。 */

@@ -2,6 +2,7 @@ package com.xupan.server.report.service;
 
 import com.xupan.server.report.domain.ReportCommand;
 import com.xupan.server.report.domain.ReportOutcome;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
@@ -24,7 +25,12 @@ import java.util.Set;
  * </ol>
  *
  * <p>这些规则是本地模拟的**约定**，不代表任何真实上游行为；接入真实上游时必须另行设计。</p>
+ *
+ * <p>标 {@code @Primary}：存在多个 {@link ReportAdapter} 实现时，默认注入必须是本地模拟
+ * （既有行为不变）。选中心上游是**显式**的——由 {@code ReportService.adapterFor(reportType)}
+ * 按机器配置决定，不依赖注入的默认值。</p>
  */
+@Primary
 @Component
 public class LocalReportAdapter implements ReportAdapter {
 
