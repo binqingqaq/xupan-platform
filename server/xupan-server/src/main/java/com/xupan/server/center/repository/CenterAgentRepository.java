@@ -60,20 +60,24 @@ public class CenterAgentRepository {
                 """, (rs, rowNum) -> agentRow(rs), tokenHash).stream().findFirst();
     }
 
-    public Optional<AgentRow> findByUpstreamAccount(String upstreamAccount) {
-        return jdbc.query("""
+    public Optional<AgentRow> findByUpstreamAccount(String upstreamAccount) {        return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
                        credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
                   FROM center_agent WHERE upstream_account = ?
                 """, (rs, rowNum) -> agentRow(rs), upstreamAccount).stream().findFirst();
     }
 
-    public List<AgentRow> findAll() {
-        return jdbc.query("""
+    public List<AgentRow> findAll() {        return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
                        credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
                   FROM center_agent ORDER BY id
                 """, (rs, rowNum) -> agentRow(rs));
+    }
+
+    /** 该代理的 token 哈希（常量时间比较用；不向上暴露给接口层）。 */
+    public String findTokenHash(long centerAgentId) {
+        return jdbc.query("SELECT token_hash FROM center_agent WHERE id = ?",
+                (rs, rowNum) -> rs.getString("token_hash"), centerAgentId).stream().findFirst().orElse(null);
     }
 
     public int updateStatus(long id, String status) {

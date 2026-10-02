@@ -2,8 +2,11 @@ package com.xupan.server.center.web;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
+import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.center.repository.CenterAgentRepository;
+import com.xupan.server.center.repository.CenterOrderRepository;
 import com.xupan.server.center.service.CenterAgentService;
+import com.xupan.server.center.service.CenterOrderService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.core.Authentication;
@@ -36,9 +39,14 @@ public class CenterAdminController {
     private static final int MAX_PAGE_SIZE = 100;
 
     private final CenterAgentService service;
+    private final CenterOrderService orderService;
+    private final PermissionService permissionService;
 
-    public CenterAdminController(CenterAgentService service) {
+    public CenterAdminController(CenterAgentService service, CenterOrderService orderService,
+                                 PermissionService permissionService) {
         this.service = service;
+        this.orderService = orderService;
+        this.permissionService = permissionService;
     }
 
     @GetMapping
@@ -84,6 +92,35 @@ public class CenterAdminController {
         return CenterAgentResponse.from(service.require(id));
     }
 
+    /**
+     * 中心订单列表（中心管理端的"实时订单"）。
+     *
+     * <p>按《代理报网盘口与结算业务规则说明》§23.7，运营档需要有中心订单可见性；
+     * 这里先提供数据接口，菜单在阶段 C 一起接入。</p>
+     */
+    @GetMapping("/orders")
+    public CenterOrderPage orders(Authentication authentication,
+                                  @RequestParam(required = false) Long centerAgentId,
+                                  @RequestParam(required = false) String status,
+                                  @RequestParam(defaultValue = "1") int page,
+                                  @RequestParam(defaultValue = "20") int pageSize) {
+        requireOrderReader(authentication);
+        if (page < 1 || pageSize < 1 || pageSize > MAX_PAGE_SIZE) {
+            throw com.xupan.server.web.BusinessException.badRequest(
+                    "CENTER_ORDER_QUERY_INVALID", "分页参数必须为 1 到 100");
+        }
+        return new CenterOrderPage(orderService.list(centerAgentId, status, page, pageSize).stream()
+                .map(CenterOrderView::from).toList(), page, pageSize,
+                orderService.count(centerAgentId, status));
+    }
+
+    /** 中心订单按状态的汇总（中心总览）。 */
+    @GetMapping("/orders/summary")
+    public List<CenterStatusSummary> ordersSummary(Authentication authentication) {
+        requireOrderReader(authentication);
+        return orderService.countsByStatus().stream().map(CenterStatusSummary::from).toList();
+    }
+
     /** 中心代理账本流水（追加式，含变动前后值）。 */
     @GetMapping("/{id}/ledger")
     public CenterLedgerPage ledger(Authentication authentication, @PathVariable long id,
@@ -107,6 +144,19 @@ public class CenterAdminController {
      * {@code PermissionService}（见 {@code CenterAgentService} 的 {@code requireManage}），
      * 避免同一个权限在两处各判一次、口径漂移。</p>
      */
+    /**
+     * 订单查看权限：{@code CENTER_ORDER_READ}。
+     *
+     * <p>与 {@code CENTER_AGENT_MANAGE} 分开：允许"只看订单不看账户与额度"的角色存在。</p>
+     */
+    private void requireOrderReader(Authentication authentication) {
+        long operator = operator(authentication);
+        if (!permissionService.hasPermission(operator, "CENTER_ORDER_READ")) {
+            throw com.xupan.server.web.BusinessException.forbidden("CENTER_ORDER_FORBIDDEN",
+                    "没有中心上游订单查看权限");
+        }
+    }
+
     private long operator(Authentication authentication) {
         if (authentication == null || !(authentication.getPrincipal() instanceof AuthenticatedUser user)) {
             throw new AuthenticationService.AuthenticationFailure("AUTH_UNAUTHENTICATED");
@@ -141,6 +191,31 @@ public class CenterAdminController {
 
     /** 创建响应：额外带**一次性**的 Token 原文。 */
     public record CenterAgentCreatedResponse(CenterAgentResponse agent, String token) {
+    }
+
+    public record CenterOrderPage(List<CenterOrderView> items, int page, int pageSize, long total) {
+    }
+
+    public record CenterOrderView(long id, long centerAgentId, String agentOrderNo, Long localBetId,
+                                  String gameCode, String issueNumber, String playType, String playText,
+                                  BigDecimal odds, BigDecimal amount, String status, String rejectCode,
+                                  String rejectReason, BigDecimal frozenAmount, String settleResult,
+                                  BigDecimal settleAmount, String drawNumbers, Instant acceptedAt,
+                                  Instant settledAt, Instant createdAt) {
+        static CenterOrderView from(CenterOrderRepository.OrderRow row) {
+            return new CenterOrderView(row.id(), row.centerAgentId(), row.agentOrderNo(), row.localBetId(),
+                    row.gameCode(), row.issueNumber(), row.playType(), row.playText(), row.odds(),
+                    row.amount(), row.status(), row.rejectCode(), row.rejectReason(), row.frozenAmount(),
+                    row.settleResult(), row.settleAmount(), row.drawNumbers(), row.acceptedAt(),
+                    row.settledAt(), row.createdAt());
+        }
+    }
+
+    /** 按状态的汇总。 */
+    public record CenterStatusSummary(String status, long total, BigDecimal amount) {
+        static CenterStatusSummary from(CenterOrderRepository.StatusCount count) {
+            return new CenterStatusSummary(count.status(), count.total(), count.amount());
+        }
     }
 
     /** 一页中心账本。 */

@@ -47,6 +47,17 @@ public class SecurityConfig {
                         .hasAuthority("PERM_SYSTEM_MONITOR_READ")
                         // WebSocket authentication is performed by the one-time ticket interceptor.
                         .requestMatchers("/ws/chat/**").permitAll()
+                        // 中心上游接单面（/api/center/**）用**代理 Token** 认证，不是会话认证，
+                        // 因此在这里放行，由 CenterOrderController 内部校验 Token 并自行返回 401。
+                        // 注意：这条放行只覆盖 /api/center/**，不影响 /api/admin/**（超管面仍需权限）。
+                        .requestMatchers("/api/center", "/api/center/**").permitAll()
+                        // 顺序要紧：更具体的 orders/** 必须排在 agents/** 之前，否则会被上面那条吃掉，
+                        // 变成"看订单需要账户管理权限"，与"只看订单不看账户"的设计不符。
+                        .requestMatchers(HttpMethod.GET, "/api/admin/center/agents/orders",
+                                        "/api/admin/center/agents/orders/**")
+                        .hasAuthority("PERM_CENTER_ORDER_READ")
+                        .requestMatchers("/api/admin/center/agents", "/api/admin/center/agents/**")
+                        .hasAuthority("PERM_CENTER_AGENT_MANAGE")
                         .requestMatchers("/api/auth/logout", "/api/auth/me", "/api/auth/ws-ticket").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/me/avatar").access(nonChatOnly())
                         .requestMatchers("/api/me/quick-bet-preferences").access(nonChatOnly())

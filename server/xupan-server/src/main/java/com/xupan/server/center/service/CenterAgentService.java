@@ -143,18 +143,31 @@ public class CenterAgentService {
     }
 
     /**
-     * 额度三层之间的变动（唯一入口）。
-     *
-     * <p>先锁行，再按当前值算差额，写回该层，追加一条该层的流水。
-     * 同一幂等键命中时按重放返回，不重复记账。</p>
+     * 超管入口：额度三层变动（需要 {@code CENTER_AGENT_MANAGE}）。
      */
     @Transactional
     public BigDecimal move(long id, String bucket, String entryType, String direction, BigDecimal amount,
                            String reason, String referenceType, String referenceId,
                            String idempotencyKey, Long operator) {
-        // 这是三层额度唯一的公开变动入口，自己也要校验权限：
-        // 后续中心订单接收（Token 认证）走另一条内部通道，不复用这里的超管权限。
         requireManage(operator);
+        return moveInternal(id, bucket, entryType, direction, amount, reason, referenceType, referenceId,
+                idempotencyKey, operator);
+    }
+
+    /**
+     * 内部通道：额度三层变动，**不做超管权限校验**。
+     *
+     * <p>为什么需要它：中心侧有两种调用者——超管（会话 + 权限）和接单通道（代理 Token）。
+     * 接单冻结额度时没有超管身份，如果硬复用 {@link #move} 就会把"代理上报订单"变成需要超管权限，
+     * 这与业务事实不符（§16.3 代理上报是常态，不是超管操作）。</p>
+     *
+     * <p><b>调用方必须自己完成身份与业务校验</b>（例如 {@link CenterOrderService} 先认证 Token、
+     * 再校验订单），本方法只保证账务本身正确：锁行、算差额、写层、写流水、幂等。</p>
+     */
+    @Transactional
+    public BigDecimal moveInternal(long id, String bucket, String entryType, String direction, BigDecimal amount,
+                                   String reason, String referenceType, String referenceId,
+                                   String idempotencyKey, Long operator) {
         CenterAgentRepository.AgentRow locked = lock(id);
         BigDecimal before = bucketValue(locked, bucket);
         Optional<CenterAgentRepository.LedgerRow> replay = repository.findLedgerByIdempotencyKey(idempotencyKey);

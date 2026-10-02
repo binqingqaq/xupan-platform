@@ -278,9 +278,12 @@ class CenterAdminControllerTest {
                 + "SELECT ?, id FROM sys_role WHERE role_code = 'USER'", userId);
 
         String userToken = login(plainUser, PASSWORD);
+        // URL 层的权限规则（SecurityConfig）会先拒绝，因此这里拿到的是框架级错误码。
+        // 保留这条断言是为了固定"普通用户进不来"这个事实；服务层的 CENTER_AGENT_FORBIDDEN
+        // 仍然覆盖"权限规则被绕过"的兜底场景。
         mockMvc.perform(get("/api/admin/center/agents").header("Authorization", bearer(userToken)))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("CENTER_AGENT_FORBIDDEN"));
+                .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
 
         // 有权限的管理员仍可用
         mockMvc.perform(get("/api/admin/center/agents").header("Authorization", bearer(token)))

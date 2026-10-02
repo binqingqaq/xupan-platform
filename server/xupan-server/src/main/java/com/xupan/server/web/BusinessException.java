@@ -43,4 +43,15 @@ public final class BusinessException extends RuntimeException {
     public static BusinessException forbidden(String code, String message) {
         return new BusinessException(HttpStatus.FORBIDDEN, code, message);
     }
+
+    /**
+     * 未通过认证（401）。
+     *
+     * <p>用于非会话类凭据的认证失败，例如中心上游的代理 Token。
+     * 注意：调用方应保持**所有失败原因返回同一个 code**，不要把"账号不存在"与"凭据错误"分开，
+     * 否则会把账户是否存在暴露给探测方。</p>
+     */
+    public static BusinessException unauthorized(String code, String message) {
+        return new BusinessException(HttpStatus.UNAUTHORIZED, code, message);
+    }
 }
