@@ -1,4 +1,12 @@
 <script setup lang="ts">
+/**
+ * 已收敛（用户 2026-10-02 确认）：代理后台的唯一入口是 `/console`（BY220 `robot.php` 语义，
+ * 机器账号登录、按机器隔离）。本组件不再挂载任何路由，`/agent` 已重定向到 `/console`；
+ * 其代理积分联动、托上限、`agent_id` 范围隔离与代理档案能力已并入 `/console`。
+ *
+ * 保留本文件仅用于追溯，以及在后端 `/api/agent/**` 下线前作为对照实现。
+ * 禁止把本组件重新挂回路由，也不要在这里新增业务能力。
+ */
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'

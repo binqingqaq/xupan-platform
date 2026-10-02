@@ -1,7 +1,6 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
-import AgentConsole from './views/AgentConsole.vue'
 import PlatformAdminHome from './views/PlatformAdminHome.vue'
 import PlatformAdminLoginView from './views/PlatformAdminLoginView.vue'
 import PlatformAdminSubAccounts from './views/PlatformAdminSubAccounts.vue'
@@ -60,7 +59,9 @@ const router = createRouter({
     { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/forbidden', component: ForbiddenView, meta: { title: 'AI模型房间管理' } },
     { path: '/room', component: UserRoom, meta: { requiresAuth: true, title: '奥巴AI' } },
-    { path: '/agent', component: AgentConsole, meta: { requiresAuth: true, requiredPermission: 'AGENT_CONSOLE_READ', title: '代理后台' } },
+    // 已收敛：`/agent` 曾是重复实现出来的代理后台。用户 2026-10-02 确认代理后台唯一入口是 `/console`
+    // （BY220 `robot.php` 语义：机器账号登录、按机器隔离），旧地址保留自动跳转兼容。
+    { path: '/agent', redirect: '/console' },
     ...adminRoutes,
   ],
 })
