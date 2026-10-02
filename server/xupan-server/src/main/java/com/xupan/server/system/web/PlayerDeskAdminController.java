@@ -31,8 +31,7 @@ import java.time.Instant;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/admin/player-desk")
-public class PlayerDeskAdminController {
+@RequestMapping("/api/admin/player-desk")public class PlayerDeskAdminController {
     private final PlayerDeskAdminService service;
     private final PlayerPointsReportService pointsReportService;
     private final PlayerPointRequestService pointRequestService;
@@ -54,6 +53,24 @@ public class PlayerDeskAdminController {
     @GetMapping("/scope")
     public ScopeResponse scope(Authentication auth) {
         return ScopeResponse.from(scopeService.requireAccess(user(auth)));
+    }
+
+    /**
+     * 机器级配置（BY220 {@code robot.php} 顶部状态栏与底部控制区）。
+     *
+     * <p>机器账号固定读自己；管理员按 {@code machineId} 读取指定机器。</p>
+     */
+    @GetMapping("/machine-config")
+    public PlayerDeskAdminService.MachineConfig machineConfig(Authentication auth,
+                                                             @RequestParam(required = false) Long machineId) {
+        return service.machineConfig(user(auth), machineId);
+    }
+
+    /** 保存机器级配置：代理可改自己那台，管理员按范围改；不改彩种归属。 */
+    @PutMapping("/machine-config")
+    public PlayerDeskAdminService.MachineConfig updateMachineConfig(Authentication auth,
+                                                                   @Valid @RequestBody MachineConfigRequest request) {
+        return service.updateMachineConfig(user(auth), request.machineId(), request.toUpdate());
     }
 
     @GetMapping("/summary")
@@ -328,8 +345,24 @@ public class PlayerDeskAdminController {
                     x.odds(), x.settlementStatus(), x.netProfit(), x.explanation());
         }
     }
-    public record CreateNormal(@NotBlank String displayName, Long machineId) {}
-    public record CreateBot(String userCode, @NotBlank String displayName, Long machineId) {}
+    /** 机器级配置请求体；字段与 {@link PlayerDeskAdminService.MachineConfigUpdate} 一一对应。 */
+    public record MachineConfigRequest(Long machineId, boolean boardOpen, boolean chaseEnabled, int botCount,
+                                       int closeSeconds, int cancelSeconds, BigDecimal rebateRate, BigDecimal oddsRate,
+                                       BigDecimal specialRebateRate, BigDecimal specialOddsRate, String rebateMode,
+                                       BigDecimal totalLimit, BigDecimal positiveLimit, BigDecimal angleLimit,
+                                       BigDecimal strictLimit, BigDecimal tongLimit, BigDecimal carLimit,
+                                       BigDecimal specialLimit, BigDecimal oddEvenLimit, BigDecimal bigSmallLimit,
+                                       BigDecimal fanLimit, BigDecimal addLimit, BigDecimal playerMinStake,
+                                       BigDecimal playerMaxStake) {
+        PlayerDeskAdminService.MachineConfigUpdate toUpdate() {
+            return new PlayerDeskAdminService.MachineConfigUpdate(boardOpen, chaseEnabled, botCount, closeSeconds,
+                    cancelSeconds, rebateRate, oddsRate, specialRebateRate, specialOddsRate, rebateMode,
+                    totalLimit, positiveLimit, angleLimit, strictLimit, tongLimit, carLimit, specialLimit,
+                    oddEvenLimit, bigSmallLimit, fanLimit, addLimit, playerMinStake, playerMaxStake);
+        }
+    }
+
+    public record CreateNormal(@NotBlank String displayName, Long machineId) {}    public record CreateBot(String userCode, @NotBlank String displayName, Long machineId) {}
     public record StatusRequest(@NotBlank String status) {}
     public record AvatarUpdate(@NotBlank String avatarKey) {}
     public record BalanceRequest(@NotNull BigDecimal amount, @NotBlank String reason, @NotBlank String idempotencyKey) {}
