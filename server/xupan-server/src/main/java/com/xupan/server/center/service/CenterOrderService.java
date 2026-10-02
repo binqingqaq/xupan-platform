@@ -36,8 +36,17 @@ public class CenterOrderService {
     /** 单笔上限与单期敞口上限（中心侧风控，虚拟积分）。 */
     private static final BigDecimal MAX_SINGLE_AMOUNT = new BigDecimal("100000.00");
     private static final BigDecimal MAX_ISSUE_EXPOSURE = new BigDecimal("500000.00");
+    /**
+     * 可受理玩法：与 {@link com.xupan.server.game.domain.PlayType} 保持一致。
+     *
+     * <p>刻意从枚举派生而不是手写字符串——手写极易漏项（此前就漏了 ANGLE/STRICT/POSITIVE，
+     * 还多了枚举里不存在的 SPECIAL/FAN_SPECIAL），结果合法玩法被误拒、
+     * 而结算侧又解析不出来。</p>
+     */
     private static final java.util.Set<String> ALLOWED_PLAY_TYPES =
-            java.util.Set.of("FAN", "TONG", "CAR", "SPECIAL", "ODD_EVEN", "BIG_SMALL", "FAN_SPECIAL", "ADD");
+            java.util.Arrays.stream(com.xupan.server.game.domain.PlayType.values())
+                    .map(Enum::name)
+                    .collect(java.util.stream.Collectors.toUnmodifiableSet());
     private static final java.util.regex.Pattern ISSUE_PATTERN =
             java.util.regex.Pattern.compile("^[0-9]{6,12}$");
 

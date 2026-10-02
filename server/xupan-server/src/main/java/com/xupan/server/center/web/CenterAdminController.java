@@ -7,6 +7,7 @@ import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
 import com.xupan.server.center.service.CenterAgentService;
 import com.xupan.server.center.service.CenterOrderService;
+import com.xupan.server.center.service.CenterSettlementService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.core.Authentication;
@@ -40,12 +41,15 @@ public class CenterAdminController {
 
     private final CenterAgentService service;
     private final CenterOrderService orderService;
+    private final CenterSettlementService settlementService;
     private final PermissionService permissionService;
 
     public CenterAdminController(CenterAgentService service, CenterOrderService orderService,
+                                 CenterSettlementService settlementService,
                                  PermissionService permissionService) {
         this.service = service;
         this.orderService = orderService;
+        this.settlementService = settlementService;
         this.permissionService = permissionService;
     }
 
@@ -112,6 +116,28 @@ public class CenterAdminController {
         return new CenterOrderPage(orderService.list(centerAgentId, status, page, pageSize).stream()
                 .map(CenterOrderView::from).toList(), page, pageSize,
                 orderService.count(centerAgentId, status));
+    }
+
+    /**
+     * 第二层结算：按开奖结果结算某游戏某期全部已接受的中心订单（中心赔代理 / 从代理收）。
+     *
+     * <p>对应《代理报网盘口与结算业务规则说明》§10：玩家赢 → 本地赔玩家、中心再赔代理；
+     * 玩家输 → 本地收玩家、中心再从代理收。幂等：只处理 ACCEPTED，结算后置为 SETTLED。</p>
+     */
+    @PostMapping("/settlements")
+    public CenterSettlementResponse settle(Authentication authentication,
+                                           @Valid @RequestBody CenterSettlementRequest request) {
+        long operator = operator(authentication);
+        if (!permissionService.hasPermission(operator, "CENTER_AGENT_MANAGE")) {
+            throw com.xupan.server.web.BusinessException.forbidden("CENTER_AGENT_FORBIDDEN",
+                    "没有中心上游管理权限");
+        }
+        com.xupan.server.game.domain.BallResult result = new com.xupan.server.game.domain.BallResult(
+                request.number(), request.fan(), request.parity(), request.size());
+        CenterSettlementService.SettlementSummary summary = settlementService.settleIssue(
+                request.gameCode(), request.issueNumber(), result, request.drawNumbers(),
+                request.limit() == null ? 500 : request.limit());
+        return CenterSettlementResponse.from(summary);
     }
 
     /** 中心订单按状态的汇总（中心总览）。 */
@@ -215,6 +241,38 @@ public class CenterAdminController {
     public record CenterStatusSummary(String status, long total, BigDecimal amount) {
         static CenterStatusSummary from(CenterOrderRepository.StatusCount count) {
             return new CenterStatusSummary(count.status(), count.total(), count.amount());
+        }
+    }
+
+    /**
+     * 第二层结算请求。
+     *
+     * <p>开奖字段用包装类型而不是 {@code int} + {@code @NotBlank}：
+     * 缺字段时应该由业务层给出可读错误（"开奖结果不完整"），
+     * 而不是被 Bean Validation 提前拦成一个笼统的 {@code REQUEST_INVALID}。</p>
+     */
+    public record CenterSettlementRequest(@NotBlank String gameCode, @NotBlank String issueNumber,
+                                          Integer number, Integer fan, String parity, String size,
+                                          String drawNumbers, Integer limit) {
+    }
+
+    /** 一期第二层结算结果。 */
+    public record CenterSettlementResponse(String gameCode, String issueNumber, int settledCount,
+                                           int skippedCount, BigDecimal agentWinTotal,
+                                           BigDecimal agentLoseTotal, List<SettledOrderView> orders) {
+        static CenterSettlementResponse from(CenterSettlementService.SettlementSummary summary) {
+            return new CenterSettlementResponse(summary.gameCode(), summary.issueNumber(),
+                    summary.settledCount(), summary.skippedCount(), summary.agentWinTotal(),
+                    summary.agentLoseTotal(), summary.orders().stream().map(SettledOrderView::from).toList());
+        }
+    }
+
+    public record SettledOrderView(long orderId, long centerAgentId, String agentOrderNo,
+                                   String settleResult, BigDecimal settleAmount, BigDecimal stake,
+                                   String label) {
+        static SettledOrderView from(CenterSettlementService.SettledOrder order) {
+            return new SettledOrderView(order.orderId(), order.centerAgentId(), order.agentOrderNo(),
+                    order.settleResult(), order.settleAmount(), order.stake(), order.label());
         }
     }
 
