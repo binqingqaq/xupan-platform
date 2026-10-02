@@ -7,6 +7,7 @@ import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
 import com.xupan.server.center.service.CenterAgentService;
 import com.xupan.server.center.service.CenterOrderService;
+import com.xupan.server.center.service.CenterReconciliationService;
 import com.xupan.server.center.service.CenterSettlementService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -42,14 +43,17 @@ public class CenterAdminController {
     private final CenterAgentService service;
     private final CenterOrderService orderService;
     private final CenterSettlementService settlementService;
+    private final CenterReconciliationService reconciliationService;
     private final PermissionService permissionService;
 
     public CenterAdminController(CenterAgentService service, CenterOrderService orderService,
                                  CenterSettlementService settlementService,
+                                 CenterReconciliationService reconciliationService,
                                  PermissionService permissionService) {
         this.service = service;
         this.orderService = orderService;
         this.settlementService = settlementService;
+        this.reconciliationService = reconciliationService;
         this.permissionService = permissionService;
     }
 
@@ -138,6 +142,25 @@ public class CenterAdminController {
                 request.gameCode(), request.issueNumber(), result, request.drawNumbers(),
                 request.limit() == null ? 500 : request.limit());
         return CenterSettlementResponse.from(summary);
+    }
+
+    /**
+     * 两侧对账：本地上报订单 ↔ 中心订单逐笔比对，并做双方账本自检。
+     *
+     * <p>对应闭环判据"没有超时/退款/对账遗留"：{@code balanced=true} 表示已对平。</p>
+     */
+    @GetMapping("/reconciliation")
+    public ReconciliationResponse reconciliation(Authentication authentication,
+                                                 @RequestParam(required = false) Long machineId,
+                                                 @RequestParam(defaultValue = "50") int limit) {
+        requireOrderReader(authentication);
+        if (limit < 1 || limit > 500) {
+            throw com.xupan.server.web.BusinessException.badRequest(
+                    "CENTER_RECONCILIATION_QUERY_INVALID", "limit 必须为 1 到 500");
+        }
+        CenterReconciliationService.Report report = reconciliationService.reconcile(machineId, limit);
+        return ReconciliationResponse.from(report, reconciliationService.countInconsistentCenterBuckets(),
+                reconciliationService.countInconsistentAgentBuckets());
     }
 
     /** 中心订单按状态的汇总（中心总览）。 */
@@ -273,6 +296,39 @@ public class CenterAdminController {
         static SettledOrderView from(CenterSettlementService.SettledOrder order) {
             return new SettledOrderView(order.orderId(), order.centerAgentId(), order.agentOrderNo(),
                     order.settleResult(), order.settleAmount(), order.stake(), order.label());
+        }
+    }
+
+    /** 对账结果。 */
+    public record ReconciliationResponse(ReconciliationCounts counts, int differenceCount, boolean balanced,
+                                         List<ReconciliationDifference> differences,
+                                         int missingInCenterCount, int missingInLocalCount,
+                                         int statusMismatchCount, int amountMismatchCount,
+                                         long inconsistentCenterBuckets, long inconsistentAgentBuckets) {
+        static ReconciliationResponse from(CenterReconciliationService.Report report,
+                                           long inconsistentCenterBuckets, long inconsistentAgentBuckets) {
+            return new ReconciliationResponse(
+                    new ReconciliationCounts(report.counts().localTotal(), report.counts().centerTotal(),
+                            report.counts().localUnresolved(), report.counts().centerUnresolved(),
+                            report.counts().activeCenterAgents()),
+                    report.differenceCount(), report.balanced(),
+                    report.differences().stream().map(ReconciliationDifference::from).toList(),
+                    report.missingInCenterCount(), report.missingInLocalCount(),
+                    report.statusMismatchCount(), report.amountMismatchCount(),
+                    inconsistentCenterBuckets, inconsistentAgentBuckets);
+        }
+    }
+
+    public record ReconciliationCounts(long localTotal, long centerTotal, long localUnresolved,
+                                       long centerUnresolved, long activeCenterAgents) {
+    }
+
+    public record ReconciliationDifference(String type, long betId, String localStatus, String centerStatus,
+                                           BigDecimal localAmount, BigDecimal centerAmount) {
+        static ReconciliationDifference from(CenterReconciliationService.Difference difference) {
+            return new ReconciliationDifference(difference.type(), difference.betId(),
+                    difference.localStatus(), difference.centerStatus(), difference.localAmount(),
+                    difference.centerAmount());
         }
     }
 
