@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { GameSettings, Machine, MachineInput, MachinePlayer, SubAccount } from '../types/platformAdmin'
 
 const machines = ref<Machine[]>([])
@@ -29,6 +30,7 @@ function openEdit(row: Machine) {
     rawPassword: '',
     displayName: row.displayName,
     groupId: row.groupId,
+    expiresAt: instantToLocalDateTime(row.expiresAt),
     rebateMode: row.rebateMode === 'DOUBLE' ? 'DOUBLE' : 'SINGLE',
     // 必须回显该机器已配置的彩种（BY220 rb/form.html:42-50 用 info.gameArr 预勾选）。
     // 以前这里硬编码 ['AU8']，导致编辑机器任何字段都会把彩种清成只剩 AU8。
@@ -36,7 +38,7 @@ function openEdit(row: Machine) {
   })
   formOpen.value = true
 }
-async function submit() { if (!form.username.trim()) return; busy.value = true; error.value = ''; try { const payload = { ...form, username: form.username.trim(), displayName: form.displayName.trim(), rebateMode: form.rebateMode === 'DOUBLE' ? 'DOUBLE' : 'SINGLE' }; if (editingId.value) await api.updateMachine(editingId.value, payload); else await api.createMachine(payload); feedback.value = editingId.value ? '机器账号已更新' : '机器账号已创建'; formOpen.value = false; await load() } catch (cause) { error.value = apiErrorMessage(cause, '机器账号保存失败') } finally { busy.value = false } }
+async function submit() { if (!form.username.trim()) return; busy.value = true; error.value = ''; try { const payload = { ...form, username: form.username.trim(), displayName: form.displayName.trim(), expiresAt: localDateTimeToInstant(form.expiresAt), rebateMode: form.rebateMode === 'DOUBLE' ? 'DOUBLE' : 'SINGLE' }; if (editingId.value) await api.updateMachine(editingId.value, payload); else await api.createMachine(payload); feedback.value = editingId.value ? '机器账号已更新' : '机器账号已创建'; formOpen.value = false; await load() } catch (cause) { error.value = apiErrorMessage(cause, '机器账号保存失败') } finally { busy.value = false } }
 async function toggle(row: Machine) { busy.value = true; try { await api.changeMachineStatus(row.id, row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'); await load() } catch (cause) { error.value = apiErrorMessage(cause, '机器状态更新失败') } finally { busy.value = false } }
 /**
  * 登录账号被锁（LOCKED）时显示「已锁定」。

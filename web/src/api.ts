@@ -259,6 +259,8 @@ export function pointRequestErrorMessage(error: unknown, fallback: string): stri
 
 export function apiErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof ApiError)) return fallback
+  if (error.code === 'REQUEST_BODY_INVALID') return '提交内容格式不正确，请检查失效时间等字段'
+  if (error.code === 'REQUEST_INVALID') return '请求参数无效，请检查必填字段'
   if (error.code === 'AVATAR_FILE_INVALID') return '请选择有效的头像图片'
   if (error.code === 'AVATAR_FILE_TOO_LARGE') return '头像图片不能超过 5 MB'
   if (error.code === 'AVATAR_FILE_TYPE_INVALID') return '头像只支持 JPG、PNG、GIF 或 WebP 图片'

@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { SubAccount, SubAccountInput } from '../types/platformAdmin'
 // 报网类型选项与机器端（ReportControlPanel）复用同一份，取值集合与后端 ck_agent_report_type /
 // ck_agent_group_report_type 一致（BY220 x_robot.flyers_type）。
@@ -55,7 +56,7 @@ function openEdit(row: SubAccount) {
     username: row.username || '', rawPassword: '', displayName: row.displayName, score: row.score,
     // BY220：编辑态「上分」「下分」每次都是空输入框（不是回显历史值），「在线/下线」按 `x_admin.online` 回显。
     up: null, down: null, online: row.online === true,
-    expiresAt: row.expiresAt, subAccountManage: row.subAccountManage, machineManage: row.machineManage,
+    expiresAt: instantToLocalDateTime(row.expiresAt), subAccountManage: row.subAccountManage, machineManage: row.machineManage,
     unifiedReportEnabled: row.unifiedReportEnabled, reportUsername: row.reportUsername || '',
     reportNetworkCode: row.reportNetworkCode || '', reportRouteCode: row.reportRouteCode || '',
     reportType: row.reportType || '',
@@ -73,7 +74,7 @@ async function submit() {
     username: form.username.trim(),
     rawPassword: form.rawPassword || undefined,
     displayName: form.displayName.trim(),
-    expiresAt: form.expiresAt,
+    expiresAt: localDateTimeToInstant(form.expiresAt),
     subAccountManage: form.subAccountManage,
     machineManage: form.machineManage,
     unifiedReportEnabled: form.unifiedReportEnabled,
