@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, apiErrorMessage } from '../../api'
-import { botQuotaText, machineOptionLabel, machineStatusLabel } from '../../consoleScope'
+import { botQuotaText, machineOptionLabel, machineStatusLabel, scopeAllowsMachineSwitch } from '../../consoleScope'
 import {
   LIMIT_FIELDS,
   createDisplayDraft,
@@ -59,8 +59,13 @@ const machineOptions = computed(() => props.machines ?? internalMachines.value)
 const machineId = computed<number | null>(() => props.machineId === undefined ? internalMachineId.value : (props.machineId ?? null))
 const scopeErrorText = computed(() => props.scopeError || internalScopeError.value)
 const machineErrorText = computed(() => props.machineError || internalMachineError.value)
-// 机器账号固定在自己机器上下文，只有平台管理员提供机器选择器。
-const canSwitchMachine = computed(() => scope.value?.mode === 'GLOBAL')
+// 机器账号固定在自己机器上下文；平台侧的超管（`GLOBAL`）与子账号（`GROUP`）都需要选择机器：
+// 计划 §3.2「平台侧玩家工作台含机器选择器」＋【Q5=F1】子账号也有玩家工作台，且
+// `PlayerDeskScopeService.java:190` 在 `GROUP` 范围 `machineId == null` 时直接 400
+// 「子账号创建玩家或托必须指定机器」——子账号拿不到选择器就等于建不了玩家/托。
+// GROUP 的候选来自后端已按分组过滤的 `GET /api/admin/machines`（只返回本组机器）。
+// 口径收敛：改用 `consoleScope.ts::scopeAllowsMachineSwitch`（唯一实现），避免本组件与共享层各写一份后再次漂移。
+const canSwitchMachine = computed(() => scopeAllowsMachineSwitch(scope.value))
 const operatorLabel = computed(() => props.operatorName?.trim() || '当前账号')
 const machineProfile = computed(() => {
   const current = scope.value
@@ -77,7 +82,11 @@ const machineProfile = computed(() => {
 const machineSwitchHint = computed(() => {
   if (!canSwitchMachine.value) return ''
   const machine = machineOptions.value.find(item => item.id === machineId.value)
-  return machine ? `当前按机器创建（${machineOptionLabel(machine)}）` : '未选择机器：创建按平台默认归属'
+  if (machine) return `当前按机器创建（${machineOptionLabel(machine)}）`
+  // 子账号未选机器时必须明确要求，不能再说"按平台默认归属"：后端会直接 400
+  // （`PlayerDeskScopeService.java:190`「子账号创建玩家或托必须指定机器」）。
+  if (scope.value?.mode === 'GROUP') return '子账号必须选择机器：未选择时不能创建玩家或托'
+  return '未选择机器：创建按平台默认归属'
 })
 const pointsText = computed(() => {
   const value = scope.value?.score
@@ -435,7 +444,9 @@ onMounted(() => {
         :value="machineId === null ? '' : String(machineId)"
         @change="changeMachine"
       >
-        <option value="">全部机器</option>
+        <!-- 子账号（GROUP）没有"全部机器"这个合法选项：选中即 machineId=null，后端
+             `PlayerDeskScopeService.java:190` 会 400「子账号创建玩家或托必须指定机器」。 -->
+        <option value="">{{ scope?.mode === 'GROUP' ? '请选择本组机器' : '全部机器' }}</option>
         <option v-for="machine in machineOptions" :key="machine.id" :value="String(machine.id)">{{ machineOptionLabel(machine) }}</option>
       </select>
     </label>

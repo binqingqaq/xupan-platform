@@ -8,6 +8,13 @@ export interface SubAccount {
   score: number
   expiresAt: string | null
   status: 'ACTIVE' | 'DISABLED'
+  /**
+   * 登录账号（`sys_user.status`）的真实状态。
+   *
+   * 与 `status` 可能不一致：账号被锁成 `LOCKED` 且 `locked_until` 为空时永远不会自动解锁，
+   * 登录只会提示「用户名或密码错误」，所以列表必须显示「已锁定」并提供解锁。
+   */
+  accountStatus?: 'ACTIVE' | 'DISABLED' | 'LOCKED' | 'DELETED' | null
   subAccountManage: boolean
   machineManage: boolean
   unifiedReportEnabled: boolean
@@ -15,7 +22,50 @@ export interface SubAccount {
   reportUsername: string | null
   reportNetworkCode: string | null
   reportRouteCode: string | null
+  /**
+   * 统一飞单的报网类型（V73 `agent_group.report_type`），取值与机器端 `REPORT_TYPE_OPTIONS` 一致。
+   *
+   * BY220 里机器的报网类型（`x_robot.flyers_type`）由所选网盘的 `code` 决定
+   * （`rbt/controller/Index.php:745`），而网盘表 `x_rbwp` 没有类型列
+   * （`admin/controller/Index.php:42-98`）；本项目把「网盘编码」与「报网类型」拆成两列，
+   * 因此在子账号侧显式保存统一飞单的类型。`null` 表示子账号未设置（机器读取时回退机器自身类型）。
+   */
+  reportType?: string | null
+  /**
+   * 是否已设置子账号飞单密码（BY220 `x_admin.feidanpwd`）。
+   *
+   * 有意偏离 BY220：BY220 的「飞单密码」列直接显示明文，本项目按安全基线只暴露「是否已设置」，
+   * 接口永不返回明文或密文。
+   */
+  hasReportPassword?: boolean
+  /**
+   * 子账号统一飞单的上游地址（BY220 `x_admin.feidanurl`）：只保存不请求。
+   *
+   * BY220 只在被注释掉的 subLogin 代码里用它（`Users.php:112-121` 的 `new K28(['host' => ...])`），
+   * 表单里没有该字段；本项目显式暴露，与机器端 `report_url` 同语义。
+   */
+  reportUrl?: string | null
+  /**
+   * 网盘状态（BY220 `x_admin.feidanonline`）：`true` = 在线，`false` = 离线（`Users.php:162`）。
+   *
+   * 本项目不接真实上游，这是"统一飞单会话"的本地模拟读数：继承该子账号统一飞单的机器报网登录成功
+   * 即置在线，退出置离线；统一飞单配置不完整时列表读取会强制离线（BY220 `Users.php:148`）。
+   */
+  reportOnline?: boolean
+  /** 网盘余额（BY220 `x_admin.feidanmoney`）：最近一次成功登录读到的上游余额（本地模拟取自那台机器）。 */
+  reportBalance?: number
+  /** 网盘下注（BY220 `x_admin.feidanbetting`）：最近一次成功登录读到的上游未结算下注额。 */
+  reportStake?: number
   machineCount: number
+  /**
+   * BY220 `x_admin.online`：勾选「在线」为 true（原值 1），「下线」为 false（原值 0）。
+   *
+   * 注意：BY220 `sub/list.html` 的「在线」列是注释掉的（`//,{field: 'txtOnline', ...}`），
+   * 所以这里只在编辑表单的「在线/下线」开关上回显与提交，列表不加在线列。
+   */
+  online?: boolean
+  /** BY220 `x_admin.logtime`：最近一次登录时间；从未登录为 null。 */
+  logtime?: string | null
   createdAt: string
 }
 
@@ -30,6 +80,8 @@ export interface Machine {
   score: number
   expiresAt: string | null
   status: 'ACTIVE' | 'DISABLED'
+  /** 登录账号（`sys_user.status`）的真实状态；`LOCKED` 表示登录被永久拒绝，需在机器管理里解锁。 */
+  accountStatus?: 'ACTIVE' | 'DISABLED' | 'LOCKED' | 'DELETED' | null
   boardOpen: boolean
   robotManage: boolean
   chaseEnabled: boolean
@@ -64,7 +116,13 @@ export interface SubAccountInput {
   username: string
   rawPassword?: string
   displayName: string
-  score: number
+  /**
+   * 直接设定的积分。
+   *
+   * BY220 `sub/form.html`：新增态「积分」是初始积分（可填）；编辑态「积分」是 `readonly` 只读回显，
+   * 改分只能走「上分」「下分」，因此编辑态请求不带 `score`（后端按未变更处理）。
+   */
+  score?: number
   expiresAt: string | null
   subAccountManage: boolean
   machineManage: boolean
@@ -72,6 +130,26 @@ export interface SubAccountInput {
   reportUsername?: string | null
   reportNetworkCode?: string | null
   reportRouteCode?: string | null
+  /**
+   * 统一飞单的报网类型（V73 `agent_group.report_type`）；空串落 NULL 表示「未设置」。
+   *
+   * 与 `reportUsername`/`reportNetworkCode`/`reportRouteCode` 同样按整表单覆盖语义写入
+   * （BY220 `Users::add()` 编辑分支是整表单 `update($data)`）。
+   */
+  reportType?: string | null
+  /** BY220 编辑态「上分」：`setInc('score', up)`；与 `down` 不能同时提交（后端 400）。 */
+  up?: number
+  /** BY220 编辑态「下分」：`setDec('score', down)`；超过余额时后端 409 `SUB_ACCOUNT_SCORE_DOWN_INSUFFICIENT`。 */
+  down?: number
+  /** BY220 编辑态「在线/下线」开关（`x_admin.online`）。 */
+  online?: boolean
+  /**
+   * 子账号统一飞单的上游地址（BY220 `x_admin.feidanurl`）；空串落 NULL，只保存不请求。
+   *
+   * 注意：`reportOnline`/`reportBalance`/`reportStake` 是上游状态，**不接受表单直接设定**
+   * （BY220 表单也没有这三个字段），因此不在这里暴露。
+   */
+  reportUrl?: string | null
 }
 
 export interface MachineInput {

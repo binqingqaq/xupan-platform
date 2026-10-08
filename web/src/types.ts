@@ -69,6 +69,12 @@ export interface CurrentUserView {
   scope: 'PLAYER_FULL' | 'CHAT_ONLY' | null | string
   roles: string[]
   permissions: string[]
+  /**
+   * BY220 `public/head.html:192` 顶部欢迎语用的「可用积分」：`user_uid != '1'` 时取 `x_admin.score`。
+   *
+   * 非子账号（超级管理员/其它身份）为 `null`，前端据此显示「超级管理员」而不是积分。
+   */
+  subAccountScore?: number | null
 }
 
 export interface PlayerAccessLinkView {
@@ -286,6 +292,21 @@ export interface PlayerDeskDetail extends PlayerDeskItem {
   behavior: PlayerDeskBehavior | null
   linkStatus: PlayerAccessLinkStatusView | null
   recentActions: PlayerActionSummary[]
+}
+
+/**
+ * `DELETE /api/admin/player-desk/players/{userId}` 的返回体。
+ *
+ * BY220 `DelMember` 只回传 `0`（成功标志）；这里额外回传退回机器池的金额，
+ * 因为物理删除后玩家行已不存在，**不可能再返回玩家详情**。
+ */
+export interface PlayerDeskDeleteResult {
+  userId: number
+  memberCode: string | null
+  playerName: string | null
+  refundedAmount: number
+  machineId: number | null
+  alreadyDeleted: boolean
 }
 
 export interface PlayerDeskPointRecordBet {
@@ -830,6 +851,13 @@ export interface ReportConfigView {
   timeoutOrderCount: number
   unreportedCount: number
   failedOrderCount: number
+  /**
+   * BY220 统一飞单回退：机器自身没配飞单账号，而所属子账号 `unified_report_enabled=1`
+   * 且配了飞单账号（`x_admin.feidan/feidanname/feidanid/feidantype`，见 `Users.php::add()`
+   * 与 `sub/list.html` 的「开启飞单/网盘/盘口/飞单账号」列）时，后端按子账号配置回退，
+   * 并置 `true` 表示当前用的是子账号的统一飞单配置（机器自身配置优先）。
+   */
+  inheritedFromGroup?: boolean
 }
 
 /** 报网配置保存请求；null 表示保持原值，密码仅在非空时覆盖。 */
@@ -919,8 +947,85 @@ export interface CenterAgent {
   availableBalance: number
   frozenBalance: number
   upstreamUnsettled: number
+  /** 代理级风控上限；null 表示回退全局默认（单笔 10 万 / 单期敞口 50 万） */
+  maxSingleAmount: number | null
+  maxIssueExposure: number | null
+  /** 最近一次被风控拒绝的原因与累计次数（管理端列表直接展示） */
+  lastRejectCode: string | null
+  lastRejectAt: string | null
+  rejectCount: number
   createdAt: string
   updatedAt: string
+}
+
+/** 一次风控命中（P1-C1）。 */
+export interface CenterRiskHit {
+  id: number
+  ruleCode: string
+  ruleCategory: 'LIMIT' | 'EXPOSURE' | 'BEHAVIOR' | 'ACCOUNT'
+  observedValue: number | null
+  thresholdValue: number | null
+  gameCode: string | null
+  issueNumber: string | null
+  agentOrderNo: string | null
+  detail: string | null
+  createdAt: string
+}
+
+/** 按规则聚合的风控命中。 */
+export interface CenterRiskRuleSummary {
+  ruleCode: string
+  ruleCategory: 'LIMIT' | 'EXPOSURE' | 'BEHAVIOR' | 'ACCOUNT'
+  hitCount: number
+  agentCount: number
+}
+
+/** 中心订单处置动作（P1-C2 / C-3）。 */
+export type CenterDispositionAction = 'CONFIRM_ACCEPTED' | 'CONFIRM_FAILED' | 'REFUND' | 'CANCEL'
+
+/** 一次处置的结果。 */
+export interface CenterOrderDisposition {
+  orderId: number
+  status: string
+  action: string
+  frozenAmount: number
+  settleAmount: number | null
+  duplicate: boolean
+}
+
+/** 一条处置历史记录（追加式，含状态迁移与操作人）。 */
+export interface CenterOrderDispositionRecord {
+  id: number
+  centerOrderId: number
+  action: string
+  fromStatus: string
+  toStatus: string
+  amount: number
+  reason: string | null
+  operatorUserId: number | null
+  createdAt: string
+}
+
+/** 对账差异处置结论（C-2 ②）。 */
+export type ReconciliationResolution = 'ACKNOWLEDGED' | 'ACCEPTED' | 'FIXED' | 'IGNORED'
+
+/** 一条对账差异处置记录（追加式；撤销与过期都不删除记录）。 */
+export interface ReconciliationDisposition {
+  id: number
+  differenceType: string
+  betId: number
+  resolution: string
+  centerAgentId: number | null
+  reason: string | null
+  expiresAt: string | null
+  revokedAt: string | null
+  createdAt: string
+}
+
+/** 处置记录的保留策略观察值（C-4 ③）。 */
+export interface ReconciliationRetention {
+  effective: number
+  expired: number
 }
 
 /** 创建中心代理的响应：token 是**唯一一次**返回的原文。 */
@@ -1015,6 +1120,8 @@ export interface CenterReconciliationDifference {
   centerStatus: string | null
   localAmount: number | null
   centerAmount: number | null
+  /** 该差异当前是否已被有效处置（未撤销、未过期）；事实不会被隐藏，只是标记 */
+  disposed: boolean
 }
 
 export interface CenterReconciliation {

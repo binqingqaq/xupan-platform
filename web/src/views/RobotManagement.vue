@@ -467,9 +467,11 @@ onMounted(async () => {
         <h1>机器人管理</h1>
       </div>
       <nav class="admin-header-actions" aria-label="后台导航">
-        <RouterLink class="header-link" to="/console">运营控制台</RouterLink>
-        <RouterLink class="header-link" to="/console/users">用户管理</RouterLink>
-        <RouterLink class="header-link" to="/console/players">玩家工作台</RouterLink>
+        <!-- 计划 §3.2（2026-10-08 严格对齐 BY220）：`/console` 已收敛为机器账号入口（角色 `AGENT`），
+             平台账号点过去会被拒；本页是平台侧顶层页，返回 BY220 admin 首页（开奖信息）= `/platform-admin`。 -->
+        <RouterLink class="header-link" to="/platform-admin">平台首页</RouterLink>
+        <!-- 计划 §6 + Q4=E2：平台子页面已从 /console/* 迁到 /platform-admin/*，旧地址不再重定向。 -->
+        <RouterLink class="header-link" to="/platform-admin/users">用户管理</RouterLink>
         <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
         <button class="header-link" type="button" @click="logout">退出登录</button>
       </nav>

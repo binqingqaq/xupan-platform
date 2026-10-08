@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { api, apiErrorMessage, ApiError } from '../api'
+import { api, apiErrorMessage, ApiError, pointRequestErrorMessage } from '../api'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import QuickBetPanel from '../components/QuickBetPanel.vue'
 import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { ChatSocket } from '../services/chatSocket'
-import { mayAffectBetAccount } from '../chatSubmission'
+import { isPointRequestCommand, submissionAffectsAccount } from '../chatSubmission'
 import { DEFAULT_QUICK_BET_AMOUNTS } from '../quickBet'
 import {
   chatHistoryCutoffMs,
@@ -546,20 +546,33 @@ function connectChatSocket() {
           : message)
     },
     onMessageAck: event => {
-      if (pendingChatMessage.value?.clientMessageId === event.clientMessageId) pendingChatMessage.value = null
-      if (event.message.messageType === 'USER_BET') void refreshAccountAfterBetSubmission()
+      // WS 发送成功不会走 HTTP 分支的刷新，因此这里按「这条消息是否影响账户」补一次：
+      // 下注（USER_BET）与上下分申请（下分创建即扣余额）都需要刷新账户面板。
+      const ackedPending = pendingChatMessage.value?.clientMessageId === event.clientMessageId
+        ? pendingChatMessage.value
+        : null
+      if (ackedPending) pendingChatMessage.value = null
+      if (event.message.messageType === 'USER_BET' || ackedPending?.refreshAccount) {
+        void refreshAccountAfterBetSubmission()
+      }
     },
     onError: event => {
+      let pendingFailed = false
       if (event.clientMessageId && pendingChatMessage.value?.clientMessageId === event.clientMessageId) {
         const shouldRefreshAccount = pendingChatMessage.value.refreshAccount
         pendingChatMessage.value = { ...pendingChatMessage.value, status: 'failed' }
         if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
         void refreshChatMessagesAfterSubmission()
+        pendingFailed = true
       }
       if (event.code === 'AUTH_UNAUTHENTICATED' || event.code === 'AUTH_TOKEN_REVOKED' || event.code === 'AUTH_PERMISSION_DENIED') {
         authenticated.value = false
         loginError.value = '登录状态已失效，请重新登录'
+        return
       }
+      // 后端业务拒绝时给出可读文案（例如下分申请被 400 拒绝的「您当前积分不足X」）。
+      // 仅在 message 非空时提示，避免把网络类错误也盖成业务文案。
+      if (pendingFailed && event.message) showFeedback(event.message, 'error')
     },
   }, { lastReceivedSequence: chatLastSequence.value })
 }
@@ -900,7 +913,9 @@ function isRulesRequest(text: string) {
 
 async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()): Promise<boolean> {
   if (pendingChatMessage.value?.status === 'sending') return false
-  const shouldRefreshAccount = mayAffectBetAccount(body)
+  // 上下分申请（上X/下X）也会改余额：下分**创建即扣**（BY220 common.php:1874-1876），
+  // 因此发送后必须刷新账户面板，不能只靠下次轮询。
+  const shouldRefreshAccount = submissionAffectsAccount(body)
   pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'sending' }
   scrollToBottom()
   if (selectedGameCode.value === 'AU8' && chatSocket.sendMessage(clientMessageId, body)) return true
@@ -922,7 +937,11 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
       loginError.value = '登录状态已失效，请重新登录'
     } else {
       pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'failed' }
-      showFeedback(apiErrorMessage(error, '消息发送失败，可点击重试'), 'error')
+      // 上下分申请被 400 拒绝时后端已给出玩家可读文案（「您当前积分不足X」），
+      // 优先用它；下注等其它场景继续走既有的按 code 映射。
+      showFeedback(isPointRequestCommand(body)
+        ? pointRequestErrorMessage(error, '消息发送失败，可点击重试')
+        : apiErrorMessage(error, '消息发送失败，可点击重试'), 'error')
     }
     if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
     void refreshChatMessagesAfterSubmission()

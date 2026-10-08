@@ -134,7 +134,7 @@ onMounted(async () => {
           <div class="inline-row">
             <strong>危险操作</strong>
             <button type="button" class="danger" :disabled="dangerSaving" @click="deleteAllAccounts">{{ dangerSaving ? '处理中...' : '删除全量账号' }}</button>
-            <span>仅保留当前超级管理员和主机器人账号；按 BY220 先预检，再输入确认文本执行软删除。</span>
+            <span>仅保留当前超级管理员和主机器人账号；按 BY220 先预检，再输入确认文本执行物理删除（删除后不可恢复，同名账号可重建）。</span>
           </div>
         </section>
 

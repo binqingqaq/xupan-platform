@@ -45,7 +45,10 @@ onMounted(() => { void loadState() })
         <h1>备用模块</h1>
       </div>
       <nav class="admin-header-actions" aria-label="备用模块导航">
-        <RouterLink class="header-link" to="/console">返回运营控制台</RouterLink>
+        <!-- 计划 §3.2（2026-10-08 严格对齐 BY220）：`/console` 已收敛为机器账号入口（角色 `AGENT`），
+             平台账号点过去会被拒；本页是平台侧顶层页、BY220 无对应上级页，
+             故返回 BY220 admin 首页（`Index/index` 开奖信息）= `/platform-admin`。 -->
+        <RouterLink class="header-link" to="/platform-admin">返回平台首页</RouterLink>
       </nav>
     </header>
 

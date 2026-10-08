@@ -9,6 +9,13 @@ import type {
   CenterOrderSummary,
   CenterReconciliation,
   CenterSettlementResult,
+  CenterRiskHit,
+  CenterRiskRuleSummary,
+  CenterOrderDispositionRecord,
+  CenterDispositionAction,
+  ReconciliationDisposition,
+  ReconciliationRetention,
+  ReconciliationResolution,
 } from '../types'
 
 /**
@@ -43,6 +50,12 @@ const ledgerBalanced = ref(true)
 const reconciliation = ref<CenterReconciliation | null>(null)
 const settlement = ref<CenterSettlementResult | null>(null)
 
+// C-2 ② / C-4 ③：对账差异处置与保留策略
+const reconForm = ref<{ resolution: ReconciliationResolution; reason: string }>({
+  resolution: 'ACKNOWLEDGED',
+  reason: '',
+})
+
 const loading = ref(false)
 const error = ref('')
 const feedback = ref('')
@@ -57,6 +70,21 @@ const grantForm = ref({ agentId: 0, amount: 1000 })
 const limitForm = ref({ agentId: 0, creditLimit: 10000 })
 const settleForm = ref({ gameCode: 'AU8', issueNumber: '', fan: 1 })
 const restoreTokenVisible = ref(false)
+
+// P1-C1：代理级风控
+const riskForm = ref<{ agentId: number; maxSingleAmount: number | ''; maxIssueExposure: number | '' }>({
+  agentId: 0,
+  maxSingleAmount: '',
+  maxIssueExposure: '',
+})
+const riskHits = ref<CenterRiskHit[]>([])
+const riskAgentId = ref<number | null>(null)
+const riskSummary = ref<CenterRiskRuleSummary[]>([])
+
+// P1-C2 / C-3：订单处置
+const disposeForm = ref({ reason: '' })
+const disposeHistory = ref<CenterOrderDispositionRecord[]>([])
+const disposeHistoryOrderId = ref<number | null>(null)
 
 const activeAgents = computed(() => agents.value.filter(item => item.status === 'ACTIVE'))
 const totals = computed(() => ({
@@ -250,7 +278,176 @@ async function settle() {
   }
 }
 
-onMounted(refresh)
+// ---------------------------------------------------------------
+// P1-C1：代理级风控上限与命中记录
+// ---------------------------------------------------------------
+
+async function saveRiskLimits() {
+  busy.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    // 空字符串表示"回退全局默认"（后端 null → 用全局常量）。
+    const single = riskForm.value.maxSingleAmount
+    const exposure = riskForm.value.maxIssueExposure
+    await api.setCenterAgentRiskLimits(riskForm.value.agentId, {
+      maxSingleAmount: single === '' || single === null ? null : Number(single),
+      maxIssueExposure: exposure === '' || exposure === null ? null : Number(exposure),
+    })
+    feedback.value = '代理级风控上限已更新'
+    await refresh()
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '设置代理级风控上限失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function loadRiskHits(agentId: number) {
+  riskAgentId.value = agentId
+  riskHits.value = await api.centerAgentRiskHits(agentId, { limit: 20 })
+}
+
+async function loadRiskSummary() {
+  riskSummary.value = await api.centerRiskHitSummary({ windowMinutes: 1440 })
+}
+
+// ---------------------------------------------------------------
+// P1-C2 / C-3：订单处置
+// ---------------------------------------------------------------
+
+const DISPOSITION_LABELS: Record<CenterDispositionAction, string> = {
+  CONFIRM_ACCEPTED: '确认受理',
+  CONFIRM_FAILED: '确认失败',
+  REFUND: '退款',
+  CANCEL: '撤单',
+}
+
+function dispositionLabel(action: string) {
+  return DISPOSITION_LABELS[action as CenterDispositionAction] ?? action
+}
+
+/** 该状态下允许的处置动作——与后端 dispose 的状态守卫保持一致。 */
+function allowedActions(status: string): CenterDispositionAction[] {
+  if (status === 'TIMEOUT' || status === 'PENDING') return ['CONFIRM_ACCEPTED', 'CONFIRM_FAILED']
+  if (status === 'ACCEPTED') return ['REFUND', 'CANCEL']
+  return []
+}
+
+async function dispose(order: CenterOrderItem, action: CenterDispositionAction) {
+  busy.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    const result = await api.disposeCenterOrder(order.id, {
+      action,
+      reason: disposeForm.value.reason.trim() || dispositionLabel(action),
+      // 幂等键：同一动作重复点击不会二次改状态、不会二次退额度。
+      idempotencyKey: `center-disp-${order.id}-${action}-${Date.now()}`,
+    })
+    feedback.value = result.duplicate
+      ? `订单 ${order.id} 该处置已执行过（回放结果）`
+      : `订单 ${order.id} 已${dispositionLabel(action)} → ${result.status}`
+    disposeForm.value.reason = ''
+    await refresh()
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '订单处置失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function showDispositions(orderId: number) {
+  disposeHistoryOrderId.value = disposeHistoryOrderId.value === orderId ? null : orderId
+  if (disposeHistoryOrderId.value === null) {
+    disposeHistory.value = []
+    return
+  }
+  disposeHistory.value = await api.centerOrderDispositions(orderId)
+}
+
+// ---------------------------------------------------------------
+// C-2 ② / C-4 ③：对账差异处置与保留策略
+// ---------------------------------------------------------------
+
+const RESOLUTION_LABELS: Record<ReconciliationResolution, string> = {
+  ACKNOWLEDGED: '已知悉',
+  ACCEPTED: '接受差异',
+  FIXED: '已修复',
+  IGNORED: '忽略',
+}
+
+function resolutionLabel(value: string) {
+  return RESOLUTION_LABELS[value as ReconciliationResolution] ?? value
+}
+
+function disposedLabel(type: string, betId: number) {
+  return reconDisposedKeys.value.has(`${type}-${betId}`) ? '已处置' : '待处置'
+}
+
+/** 生效中的差异处置键集合；与后端"未撤销且未过期"的口径一致。 */
+const reconDisposedKeys = ref<Set<string>>(new Set())
+const reconDispositions = ref<ReconciliationDisposition[]>([])
+const reconRetention = ref<ReconciliationRetention | null>(null)
+
+async function loadReconDispositions() {
+  reconDispositions.value = await api.listReconciliationDispositions({ limit: 50 })
+  reconDisposedKeys.value = new Set(
+    reconDispositions.value.map(item => `${item.differenceType}-${item.betId}`),
+  )
+  reconRetention.value = await api.reconciliationRetention()
+}
+
+/**
+ * 处置一条差异。
+ *
+ * 注意：这会**只**写一条处置记录，不改订单、不改账本。
+ * 差异的事实仍然显示在列表里（带"已处置"标记），不会被隐藏。
+ */
+async function disposeDifference(row: { type: string; betId: number }) {
+  busy.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    const result = await api.disposeReconciliationDifference({
+      differenceType: row.type,
+      betId: row.betId,
+      resolution: reconForm.value.resolution,
+      reason: reconForm.value.reason.trim() || resolutionLabel(reconForm.value.resolution),
+      // 默认 7 天生效：到期后差异重新回到待处置，避免"标一次已知就永远不再看"。
+      effectiveDays: 7,
+      idempotencyKey: `center-recon-${row.type}-${row.betId}-${Date.now()}`,
+    })
+    feedback.value = `差异 ${row.type}/${row.betId} 已标记为「${resolutionLabel(result.resolution)}」`
+    reconForm.value.reason = ''
+    await Promise.all([loadReconciliation(), loadReconDispositions()])
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '对账差异处置失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+async function revokeDifference(item: ReconciliationDisposition) {
+  busy.value = true
+  error.value = ''
+  feedback.value = ''
+  try {
+    await api.revokeReconciliationDisposition(item.id)
+    feedback.value = `已撤销差异处置 ${item.differenceType}/${item.betId}，该差异重新变为待处置`
+    await Promise.all([loadReconciliation(), loadReconDispositions()])
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '撤销差异处置失败')
+  } finally {
+    busy.value = false
+  }
+}
+
+onMounted(async () => {
+  await refresh()
+  await loadRiskSummary()
+  await loadReconDispositions()
+})
 </script>
 
 <template>
@@ -414,14 +611,24 @@ onMounted(refresh)
             <option value="TIMEOUT">超时</option>
             <option value="SETTLED">已结算</option>
             <option value="CANCELLED">已撤单</option>
+            <option value="REFUNDED">已退款</option>
+            <option value="MANUAL">人工待处置</option>
           </select>
         </label>
+        <label>
+          处置原因
+          <input v-model="disposeForm.reason" type="text" placeholder="留空则用动作名" />
+        </label>
       </div>
+      <p class="center-hint">
+        超时 <strong>不等于</strong>失败：超时单必须人工查证后明确落到终态。可处置的动作由当前状态决定，
+        重复点击不会二次退款（幂等键保证）。
+      </p>
       <table class="center-table">
         <thead>
           <tr>
             <th>中心订单号</th><th>本地注单</th><th>期号</th><th>玩法</th><th>本金</th>
-            <th>状态</th><th>拒绝原因</th><th>结算</th><th>创建时间</th>
+            <th>状态</th><th>拒绝原因</th><th>结算</th><th>操作</th><th>创建时间</th>
           </tr>
         </thead>
         <tbody>
@@ -434,11 +641,44 @@ onMounted(refresh)
             <td>{{ statusLabel(row.status) }}</td>
             <td>{{ row.rejectReason ?? '—' }}</td>
             <td>{{ settleLabel(row.settleResult) }}<span v-if="row.settleAmount !== null"> {{ money(row.settleAmount) }}</span></td>
+            <td class="center-actions">
+              <button
+                v-for="action in allowedActions(row.status)"
+                :key="action"
+                type="button"
+                :disabled="busy"
+                @click="dispose(row, action)"
+              >
+                {{ dispositionLabel(action) }}
+              </button>
+              <button type="button" @click="showDispositions(row.id)">
+                {{ disposeHistoryOrderId === row.id ? '收起' : '处置记录' }}
+              </button>
+            </td>
             <td>{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
           </tr>
-          <tr v-if="!orders.length"><td colspan="9" class="center-empty">暂无订单</td></tr>
+          <tr v-if="!orders.length"><td colspan="10" class="center-empty">暂无订单</td></tr>
         </tbody>
       </table>
+      <div v-if="disposeHistoryOrderId !== null" class="center-form">
+        <p class="center-hint">订单 #{{ disposeHistoryOrderId }} 的处置记录</p>
+        <table class="center-table">
+          <thead>
+            <tr><th>动作</th><th>从</th><th>到</th><th>金额</th><th>原因</th><th>时间</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in disposeHistory" :key="item.id">
+              <td>{{ dispositionLabel(item.action) }}</td>
+              <td>{{ statusLabel(item.fromStatus) }}</td>
+              <td>{{ statusLabel(item.toStatus) }}</td>
+              <td>{{ money(item.amount) }}</td>
+              <td>{{ item.reason ?? '—' }}</td>
+              <td>{{ item.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
+            </tr>
+            <tr v-if="!disposeHistory.length"><td colspan="6" class="center-empty">尚无处置记录</td></tr>
+          </tbody>
+        </table>
+      </div>
       <p class="center-hint">共 {{ orderTotal }} 笔</p>
     </section>
 
@@ -473,13 +713,44 @@ onMounted(refresh)
         <div class="center-card"><span>冻结敞口</span><strong>{{ money(totals.frozen) }}</strong></div>
         <div class="center-card"><span>未结算敞口</span><strong>{{ money(totals.unsettled) }}</strong></div>
         <div class="center-card"><span>总敞口</span><strong>{{ money(totals.risk) }}</strong></div>
+        <div class="center-card">
+          <span>24h 风控命中</span>
+          <strong>{{ riskSummary.reduce((sum, item) => sum + item.hitCount, 0) }}</strong>
+        </div>
       </div>
       <p class="center-hint">
-        敞口 = 冻结额度 + 上游未结算。中心对每笔订单做单笔上限、单期敞口上限与可用额度校验；
-        超限的订单会被拒绝，代理侧据此走失败退单。
+        敞口 = 冻结额度 + 上游未结算。中心对每笔订单做单笔上限、单期敞口上限、可用额度与异常行为校验；
+        超限的订单会被拒绝并留下命中记录，代理侧据此走失败退单。
       </p>
+
+      <div class="center-form">
+        <label>
+          代理
+          <select v-model.number="riskForm.agentId">
+            <option :value="0">请选择</option>
+            <option v-for="row in agents" :key="row.id" :value="row.id">{{ row.agentCode }}</option>
+          </select>
+        </label>
+        <label>
+          单笔上限（留空=全局默认）
+          <input v-model="riskForm.maxSingleAmount" type="number" min="0" placeholder="100000" />
+        </label>
+        <label>
+          单期敞口上限（留空=全局默认）
+          <input v-model="riskForm.maxIssueExposure" type="number" min="0" placeholder="500000" />
+        </label>
+        <button type="button" :disabled="busy || !riskForm.agentId" @click="saveRiskLimits">
+          保存代理级风控
+        </button>
+      </div>
+
       <table class="center-table">
-        <thead><tr><th>代理编号</th><th>可用</th><th>冻结</th><th>未结算</th><th>敞口</th><th>信用额度</th></tr></thead>
+        <thead>
+          <tr>
+            <th>代理编号</th><th>可用</th><th>冻结</th><th>未结算</th><th>敞口</th><th>信用额度</th>
+            <th>单笔上限</th><th>单期敞口上限</th><th>最近拒绝</th><th>拒绝次数</th><th>命中记录</th>
+          </tr>
+        </thead>
         <tbody>
           <tr v-for="row in agents" :key="row.id">
             <td>{{ row.agentCode }}</td>
@@ -488,10 +759,56 @@ onMounted(refresh)
             <td>{{ money(row.upstreamUnsettled) }}</td>
             <td>{{ money(Number(row.frozenBalance) + Number(row.upstreamUnsettled)) }}</td>
             <td>{{ money(row.creditLimit) }}</td>
+            <td>{{ row.maxSingleAmount === null ? '全局默认' : money(row.maxSingleAmount) }}</td>
+            <td>{{ row.maxIssueExposure === null ? '全局默认' : money(row.maxIssueExposure) }}</td>
+            <td>{{ row.lastRejectCode ?? '—' }}</td>
+            <td>{{ row.rejectCount }}</td>
+            <td>
+              <button type="button" @click="loadRiskHits(row.id)">
+                {{ riskAgentId === row.id ? '刷新' : '查看' }}
+              </button>
+            </td>
           </tr>
-          <tr v-if="!agents.length"><td colspan="6" class="center-empty">还没有中心代理</td></tr>
+          <tr v-if="!agents.length"><td colspan="11" class="center-empty">还没有中心代理</td></tr>
         </tbody>
       </table>
+
+      <div v-if="riskAgentId !== null" class="center-form">
+        <p class="center-hint">代理 #{{ riskAgentId }} 最近的风控命中</p>
+        <table class="center-table">
+          <thead>
+            <tr><th>规则</th><th>类别</th><th>观测值</th><th>阈值</th><th>期号</th><th>说明</th><th>时间</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="hit in riskHits" :key="hit.id">
+              <td>{{ hit.ruleCode }}</td>
+              <td>{{ hit.ruleCategory }}</td>
+              <td>{{ hit.observedValue === null ? '—' : money(hit.observedValue) }}</td>
+              <td>{{ hit.thresholdValue === null ? '—' : money(hit.thresholdValue) }}</td>
+              <td>{{ hit.gameCode ?? '—' }} / {{ hit.issueNumber ?? '—' }}</td>
+              <td>{{ hit.detail ?? '—' }}</td>
+              <td>{{ hit.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
+            </tr>
+            <tr v-if="!riskHits.length"><td colspan="7" class="center-empty">该代理暂无风控命中</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="center-form">
+        <p class="center-hint">近 24 小时全量命中按规则聚合</p>
+        <table class="center-table">
+          <thead><tr><th>规则</th><th>类别</th><th>命中次数</th><th>涉及代理数</th></tr></thead>
+          <tbody>
+            <tr v-for="item in riskSummary" :key="item.ruleCode">
+              <td>{{ item.ruleCode }}</td>
+              <td>{{ item.ruleCategory }}</td>
+              <td>{{ item.hitCount }}</td>
+              <td>{{ item.agentCount }}</td>
+            </tr>
+            <tr v-if="!riskSummary.length"><td colspan="4" class="center-empty">近 24 小时没有风控命中</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section v-else class="center-panel">
@@ -511,7 +828,7 @@ onMounted(refresh)
         金额不一致 {{ reconciliation?.amountMismatchCount ?? 0 }}
       </p>
       <table class="center-table">
-        <thead><tr><th>差异类型</th><th>注单</th><th>本地状态</th><th>中心状态</th><th>本地金额</th><th>中心金额</th></tr></thead>
+        <thead><tr><th>差异类型</th><th>注单</th><th>本地状态</th><th>中心状态</th><th>本地金额</th><th>中心金额</th><th>处置</th><th>操作</th></tr></thead>
         <tbody>
           <tr v-for="row in reconciliation?.differences ?? []" :key="`${row.type}-${row.betId}`">
             <td>{{ differenceLabel(row.type) }}</td>
@@ -520,10 +837,66 @@ onMounted(refresh)
             <td>{{ row.centerStatus ?? '—' }}</td>
             <td>{{ row.localAmount === null ? '—' : money(row.localAmount) }}</td>
             <td>{{ row.centerAmount === null ? '—' : money(row.centerAmount) }}</td>
+            <td>
+              <strong :class="{ 'center-disposed': row.disposed }">
+                {{ disposedLabel(row.type, row.betId) }}
+              </strong>
+            </td>
+            <td class="center-actions">
+              <button type="button" :disabled="busy || row.disposed" @click="disposeDifference(row)">
+                标记处置
+              </button>
+            </td>
           </tr>
-          <tr v-if="!reconciliation?.differences?.length"><td colspan="6" class="center-empty">没有差异</td></tr>
+          <tr v-if="!reconciliation?.differences?.length"><td colspan="8" class="center-empty">没有差异</td></tr>
         </tbody>
       </table>
+
+      <div class="center-form">
+        <p class="center-hint">
+          处置只记录判断，<strong>不修改订单或账本</strong>；差异事实仍会显示在列表中并带「已处置」标记。
+          处置默认 7 天后失效，届时差异会重新回到待处置状态。
+        </p>
+        <label>
+          处置结论
+          <select v-model="reconForm.resolution">
+            <option value="ACKNOWLEDGED">已知悉</option>
+            <option value="ACCEPTED">接受差异</option>
+            <option value="FIXED">已修复</option>
+            <option value="IGNORED">忽略</option>
+          </select>
+        </label>
+        <label>
+          处置理由
+          <input v-model="reconForm.reason" type="text" placeholder="留空则用结论名" />
+        </label>
+        <span v-if="reconRetention" class="center-hint">
+          保留策略：生效中 {{ reconRetention.effective }} 条、已失效 {{ reconRetention.expired }} 条
+          （处置记录只追加不删除，供审计追溯）
+        </span>
+      </div>
+
+      <div class="center-form">
+        <p class="center-hint">生效中的差异处置</p>
+        <table class="center-table">
+          <thead>
+            <tr><th>差异类型</th><th>注单</th><th>结论</th><th>理由</th><th>到期</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in reconDispositions" :key="item.id">
+              <td>{{ differenceLabel(item.differenceType) }}</td>
+              <td>{{ item.betId }}</td>
+              <td>{{ resolutionLabel(item.resolution) }}</td>
+              <td>{{ item.reason ?? '—' }}</td>
+              <td>{{ item.expiresAt ? item.expiresAt.replace('T', ' ').slice(0, 19) : '永久' }}</td>
+              <td class="center-actions">
+                <button type="button" :disabled="busy" @click="revokeDifference(item)">撤销</button>
+              </td>
+            </tr>
+            <tr v-if="!reconDispositions.length"><td colspan="6" class="center-empty">没有生效中的处置</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
   </div>
 </template>

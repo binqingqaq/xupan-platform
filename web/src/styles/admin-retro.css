@@ -103,7 +103,6 @@ body.ops-console-body .admin-section,
 body.ops-console-body .unified-player-workbench,
 body.ops-console-body .admin-summary,
 body.ops-console-body .unified-status-grid,
-body.ops-console-body .unified-sidebar-note,
 body.ops-console-body .unified-compat-links,
 body.ops-console-body .bet-board-panel,
 body.ops-console-body .report-control-panel,
@@ -118,7 +117,6 @@ body.ops-console-body .admin-bottom-control {
 
 body.ops-console-body .section-title,
 body.ops-console-body .panel-heading,
-body.ops-console-body .unified-nav-heading,
 body.ops-console-body .bet-board-heading {
   border-bottom: 1px solid var(--ops-line);
   background: linear-gradient(#eef8ff, #d8ecff);
@@ -140,7 +138,6 @@ body.ops-console-body .bet-board-panel,
 body.ops-console-body .admin-bottom-control,
 body.ops-console-body .admin-domain-footer,
 body.ops-console-body .admin-placeholder-panel,
-body.ops-console-body .unified-sidebar-note,
 body.ops-console-body .unified-stash-entry,
 body.ops-console-body .unified-compat-links {
   overflow: clip;

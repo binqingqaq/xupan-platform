@@ -66,6 +66,24 @@ const reportTypeLabel = computed(() => {
 const onlineText = computed(() => (config.value?.reportOnline ? '在线' : '离线'))
 const loginButtonDisabled = computed(() => !machineReady.value || loggingIn.value || saving.value)
 
+/**
+ * BY220 统一飞单：子账号的 `x_admin.feidan/feidanname/feidanid/feidantype` 是统一飞单来源
+ * （`Users.php::add()` 保存、`sub/list.html` 的「开启飞单/网盘/盘口/飞单账号」列展示）。
+ * 机器自身没配飞单账号、而所属子账号 `unified_report_enabled=1` 且配了账号时，后端按子账号配置回退，
+ * 并在 `config.inheritedFromGroup` 标记；此时这些字段**不是机器自己已配置**，界面必须如实标注。
+ */
+const inheritedFromGroup = computed(() => config.value?.inheritedFromGroup === true)
+const inheritedSuffix = computed(() => (inheritedFromGroup.value ? '（继承子账号）' : ''))
+/** 继承态下字段为空时显示「沿用子账号」，不能显示成机器自己的「未设置」。 */
+function reportFieldText(value: string | null | undefined): string {
+  if (value) return value
+  return inheritedFromGroup.value ? '沿用子账号' : '未设置'
+}
+const reportPasswordText = computed(() => {
+  if (config.value?.hasPassword) return '已设置'
+  return inheritedFromGroup.value ? '沿用子账号' : '未设置'
+})
+
 function setNotice(message: string, kind: 'ok' | 'error' = 'ok') {
   notice.value = message
   noticeKind.value = kind
@@ -142,11 +160,15 @@ function openAccountDialog() {
     setNotice(readOnlyHint.value, 'error')
     return
   }
-  accountDraft.reportUsername = config.value?.reportUsername ?? ''
+  // 统一飞单继承态**不回填**子账号的飞单账号/网盘/盘口：那是子账号的共享账号，
+  // 一旦原样提交就会被写成本机自有配置（撞上游账号唯一约束，兄弟机器立刻报「已被占用」，
+  // 而且本机以后不再跟随子账号轮换）。留空提交＝继续沿用子账号。
+  const inherited = config.value?.inheritedFromGroup === true
+  accountDraft.reportUsername = inherited ? '' : (config.value?.reportUsername ?? '')
   accountDraft.reportPassword = ''
   accountDraft.reportUrl = config.value?.reportUrl ?? ''
-  accountDraft.reportNetworkCode = config.value?.reportNetworkCode ?? ''
-  accountDraft.reportRouteCode = config.value?.reportRouteCode ?? 'A'
+  accountDraft.reportNetworkCode = inherited ? '' : (config.value?.reportNetworkCode ?? '')
+  accountDraft.reportRouteCode = inherited ? '' : (config.value?.reportRouteCode ?? 'A')
   accountDialogOpen.value = true
 }
 
@@ -162,14 +184,16 @@ async function saveAccount() {
   }
   saving.value = true
   try {
+    const username = accountDraft.reportUsername.trim()
     config.value = await api.updateReportConfig({
       machineId: effectiveMachineId.value ?? undefined,
-      reportUsername: accountDraft.reportUsername.trim(),
+      // 留空表示继续沿用子账号统一飞单：必须传 null（保持原值），不能传空串（会被当成显式清空）
+      reportUsername: username || null,
       // 密码为空表示不修改；非空才覆盖（后端只存密文）
       reportPassword: accountDraft.reportPassword.trim() || null,
       reportUrl: accountDraft.reportUrl.trim(),
-      reportNetworkCode: accountDraft.reportNetworkCode.trim(),
-      reportRouteCode: accountDraft.reportRouteCode,
+      reportNetworkCode: username ? accountDraft.reportNetworkCode.trim() : null,
+      reportRouteCode: username ? (accountDraft.reportRouteCode || 'A') : null,
     })
     emit('changed', config.value)
     setNotice('报网账号已保存（密码只存密文，界面不回显）')
@@ -245,6 +269,13 @@ defineExpose({ load })
           {{ option.label }}
         </option>
       </select>
+      <!-- BY220：机器的 flyers_type 由所选网盘/统一飞单决定（rbt/controller/Index.php:745），
+           继承态下这里显示的就是子账号统一飞单的类型；显式改成别的值＝写成本机自己的类型。 -->
+      <span
+        v-if="inheritedFromGroup"
+        class="report-control-metric report-control-type-source"
+        title="当前报网类型来自所属子账号的统一飞单；选择其它值会写成本机自己的类型"
+      >{{ inheritedSuffix }}</span>
       <button type="button" class="report-control-button report-control-account" :disabled="!machineReady || saving" @click="openAccountDialog">
         设置账号
       </button>
@@ -258,8 +289,8 @@ defineExpose({ load })
            本项目不接真实上游，因此这两项固定为本地模拟值 0，界面如实标注，不伪装成上游实时数据。 -->
       <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">押注: <b>{{ config?.reportStake ?? 0 }}</b></span>
       <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">网盘余额: <b>{{ config?.reportBalance ?? 0 }}</b>（本地模拟）</span>
-      <span class="report-control-metric">账号: <b>{{ config?.reportUsername || '未设置' }}</b></span>
-      <span class="report-control-metric">密码: <b>{{ config?.hasPassword ? '已设置' : '未设置' }}</b></span>
+      <span class="report-control-metric">账号: <b>{{ reportFieldText(config?.reportUsername) }}</b>{{ inheritedSuffix }}</span>
+      <span class="report-control-metric">密码: <b>{{ reportPasswordText }}</b>{{ inheritedSuffix }}</span>
     </div>
 
     <div class="report-control-row report-control-status-row">
@@ -278,11 +309,16 @@ defineExpose({ load })
       <span class="report-control-metric">超时订单: <b>{{ config?.timeoutOrderCount ?? 0 }}</b></span>
       <span class="report-control-metric">未报: <b>{{ config?.unreportedCount ?? 0 }}</b></span>
       <span class="report-control-metric">失败: <b>{{ config?.failedOrderCount ?? 0 }}</b></span>
-      <span class="report-control-metric">盘口: <b>{{ config?.reportRouteCode || '未设置' }}</b></span>
-      <span class="report-control-metric">网盘: <b>{{ config?.reportNetworkCode || '未设置' }}</b></span>
+      <span class="report-control-metric">盘口: <b>{{ reportFieldText(config?.reportRouteCode) }}</b>{{ inheritedSuffix }}</span>
+      <span class="report-control-metric">网盘: <b>{{ reportFieldText(config?.reportNetworkCode) }}</b>{{ inheritedSuffix }}</span>
       <button type="button" class="report-control-button report-control-refresh" :disabled="!machineReady || loading" @click="load">
         {{ loading ? '刷新中' : '刷新' }}
       </button>
+    </div>
+
+    <!-- BY220 统一飞单：机器自身没配飞单账号时按所属子账号配置回退（机器自身配置优先） -->
+    <div v-if="inheritedFromGroup" class="report-control-row report-control-inherit-row">
+      <span class="report-control-inherit-hint">当前使用所属子账号的统一飞单配置（网盘/盘口/飞单账号继承，机器自身配置优先）</span>
     </div>
 
     <p v-if="readOnlyHint" class="report-control-hint">{{ readOnlyHint }}</p>
@@ -328,6 +364,9 @@ defineExpose({ load })
           </select>
         </label>
         <p class="report-account-note">
+          <template v-if="config?.inheritedFromGroup === true">
+            当前沿用所属子账号的统一飞单配置：留空保存＝继续沿用；要改为本机专属，请填写本机飞单账号并选择盘口线路。
+          </template>
           密码只保存密文、界面不回显；本项目不连接任何外部平台，登录为本地模拟。
         </p>
         <div class="report-account-actions">
@@ -496,6 +535,14 @@ defineExpose({ load })
 .report-control-hint {
   color: #8a6d1f;
   background: #fff8e1;
+}
+
+/* BY220 统一飞单继承提示（子账号配置回退） */
+.report-control-inherit-hint {
+  padding: 1px 6px;
+  border: 1px solid #e2cd8f;
+  background: #fff8e1;
+  color: #8a6d1f;
 }
 
 .report-control-notice.is-ok {

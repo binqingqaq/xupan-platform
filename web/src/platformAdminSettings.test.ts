@@ -55,7 +55,7 @@ beforeEach(() => {
   vi.mocked(api.deleteAllAccounts).mockResolvedValue({
     preview: false,
     counts: { admins: 1, robots: 2, players: 3, flyers: 0 },
-    message: '已软删除子账号 1 个，机器 2 个，玩家/托 3 个',
+    message: '已删除子账号 1 个，机器 2 个，玩家/托 3 个',
   })
   vi.mocked(api.previewClearData).mockResolvedValue({
     preview: true,
@@ -122,6 +122,7 @@ describe('platform admin settings', () => {
   })
 
   it('previews and confirms the BY220 delete-all-accounts operation', async () => {
+    // BY220 的 userDels 是物理删除，本项目已对齐：提示文案不再说"软删除"
     vi.spyOn(window, 'prompt').mockReturnValue('DELETE_ALL_ACCOUNTS')
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     await mountSettings()
@@ -133,7 +134,7 @@ describe('platform admin settings', () => {
 
     expect(api.previewDeleteAllAccounts).toHaveBeenCalledWith('DELETE_ALL_ACCOUNTS')
     expect(api.deleteAllAccounts).toHaveBeenCalledWith('DELETE_ALL_ACCOUNTS')
-    expect(container?.textContent).toContain('已软删除子账号 1 个，机器 2 个，玩家/托 3 个')
+    expect(container?.textContent).toContain('已删除子账号 1 个，机器 2 个，玩家/托 3 个')
   })
 
   it('previews and confirms the BY220 clear-data operation', async () => {

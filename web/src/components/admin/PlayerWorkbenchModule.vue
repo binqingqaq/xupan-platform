@@ -307,7 +307,7 @@ async function confirmDeletePlayer() {
     selected.value = null
     accessLink.value = null
     await refresh()
-    actionMessage.value = '玩家已删除，历史数据已保留'
+    actionMessage.value = '玩家已删除（物理删除，不可恢复），历史数据已保留'
   } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家删除失败' } finally { saving.value = false }
 }
 async function saveBehavior() {
@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
       </aside>
       <section class="player-detail-pane" aria-label="玩家详情">
         <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
-        <template v-else><div class="detail-heading"><div class="detail-identity"><button class="desk-avatar large avatar-trigger" type="button" :disabled="selected.status === 'DELETED'" title="点击更换头像" @click="openAvatarPicker"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></button><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><button v-if="selected.status !== 'DELETED'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
+        <template v-else><div class="detail-heading"><div class="detail-identity"><button class="desk-avatar large avatar-trigger" type="button" :disabled="selected.status === 'DELETED'" title="点击更换头像" @click="openAvatarPicker"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></button><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><!-- BY220 `rbt/view/index/admin_list.html:2656`：删除入口只在「普」列表渲染（`memberType == 0`），托列表没有删除按钮；后端 DelMember 不校验类型，约束在 UI 层。 --><button v-if="selected.status !== 'DELETED' && selected.playerKind !== 'BOT'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
           <div class="player-edit-rows"><div class="player-edit-row"><span>会员ID：<strong>{{ selected.memberCode }}</strong></span><div class="days-editor"><input v-model.number="linkDays" type="number" min="1" max="3650" aria-label="链接有效期天数" /><span>天</span><button class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="saveLinkDays">保存</button><small>剩余 {{ linkDays }} 天</small></div></div><div class="player-edit-row"><label>昵称<input v-model="nicknameDraft" maxlength="128" /></label><button class="outline-button" type="button" :disabled="saving || selected.status === 'DELETED'" @click="updateNickname">更新</button></div><div class="player-edit-actions"><template v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'"><button v-if="selected.linkStatus?.active" class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="revokeAccessLink">拉黑</button><button v-else class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="whitelistPlayer">拉白</button></template><button class="outline-button" type="button" @click="openRenameHistory">换名记录</button></div></div>
           <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
 
@@ -481,7 +481,7 @@ onBeforeUnmount(() => {
       <div v-if="deleteConfirmOpen && selected" class="create-modal-layer" role="presentation" @click.self="closeDeleteConfirm">
         <section class="create-modal delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-player-title">
           <header class="create-modal-header"><div><span class="eyebrow">DELETE PLAYER</span><h2 id="delete-player-title">删除玩家</h2></div><button class="modal-close" type="button" aria-label="关闭" :disabled="saving" @click="closeDeleteConfirm">×</button></header>
-          <div class="delete-modal-content"><p>确定删除 <strong>{{ playerDisplayName(selected) }}</strong> 数据吗？</p><p class="form-hint">删除后会撤销登录链接并停止托行为，历史积分流水、下注、中奖流水和聊天记录会保留。</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeDeleteConfirm">取消</button><button class="danger-fill-button" type="button" :disabled="saving" @click="confirmDeletePlayer">{{ saving ? '删除中...' : '确定删除' }}</button></div></div>
+          <div class="delete-modal-content"><p>是否删除 <strong>{{ selected.memberCode }} ({{ playerDisplayName(selected) }})</strong> 数据？</p><p class="form-hint danger-hint">删除后不可恢复：该玩家会被物理删除（登录链接立即失效、无法再登录）；历史积分流水、下注、中奖流水和聊天记录会保留。</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeDeleteConfirm">取消</button><button class="danger-fill-button" type="button" :disabled="saving" @click="confirmDeletePlayer">{{ saving ? '删除中...' : '确定删除' }}</button></div></div>
         </section>
       </div>
     </Teleport>
@@ -781,6 +781,8 @@ em { font-style: normal; }
 .delete-modal-content, .rename-history-content { padding: 8px; }
 .delete-modal-content p { margin-bottom: 6px; }
 .form-hint { margin-bottom: 6px; color: #667c90; font-size: 10px; }
+/* 物理删除不可恢复：与普通提示区分，用警色而不是常规灰色 */
+.delete-modal-content .danger-hint { color: #b4342b; }
 .rename-history-list { display: grid; gap: 5px; max-height: 240px; overflow: auto; }
 .rename-history-list > div { display: grid; gap: 2px; padding-bottom: 4px; border-bottom: 1px solid #d8e5f0; }
 .rename-history-list small { color: #667c90; font-size: 10px; }

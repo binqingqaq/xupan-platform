@@ -22,6 +22,18 @@ vi.mock('./api', () => ({
     grantCenterAgent: vi.fn(),
     setCenterAgentCreditLimit: vi.fn(),
     settleCenterIssue: vi.fn(),
+    // P1-C1 风控
+    setCenterAgentRiskLimits: vi.fn(),
+    centerAgentRiskHits: vi.fn(),
+    centerRiskHitSummary: vi.fn(),
+    // P1-C2 / C-3 处置
+    disposeCenterOrder: vi.fn(),
+    centerOrderDispositions: vi.fn(),
+    // C-2 ② / C-4 ③ 对账差异处置
+    disposeReconciliationDifference: vi.fn(),
+    revokeReconciliationDisposition: vi.fn(),
+    listReconciliationDispositions: vi.fn(),
+    reconciliationRetention: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
@@ -41,6 +53,11 @@ const agent = {
   availableBalance: 9000,
   frozenBalance: 100,
   upstreamUnsettled: 200,
+  maxSingleAmount: null,
+  maxIssueExposure: null,
+  lastRejectCode: null,
+  lastRejectAt: null,
+  rejectCount: 0,
   createdAt: '2026-10-02T00:00:00Z',
   updatedAt: '2026-10-02T00:00:00Z',
 }
@@ -114,6 +131,11 @@ beforeEach(() => {
   vi.mocked(api.centerAgentLedger).mockResolvedValue({
     items: [], page: 1, pageSize: 30, total: 0, balanced: true,
   } as never)
+  vi.mocked(api.centerRiskHitSummary).mockResolvedValue([] as never)
+  vi.mocked(api.centerAgentRiskHits).mockResolvedValue([] as never)
+  vi.mocked(api.centerOrderDispositions).mockResolvedValue([] as never)
+  vi.mocked(api.listReconciliationDispositions).mockResolvedValue([] as never)
+  vi.mocked(api.reconciliationRetention).mockResolvedValue({ effective: 0, expired: 0 } as never)
 })
 
 afterEach(() => {
@@ -226,6 +248,295 @@ describe('中心上游管理页', () => {
     dismiss.click()
     await settle()
     expect(host.textContent ?? '').not.toContain('ctr_secret_once')
+  })
+
+  // -----------------------------------------------------------------
+  // P1-C1：代理级风控
+  // -----------------------------------------------------------------
+
+  it('renders per-agent risk limits and falls back to global default when unset', async () => {
+    const host = mountPage()
+    await settle()
+    clickTab(host, '风险')
+    await settle()
+
+    const text = host.textContent ?? ''
+    // 未配置时明确写"全局默认"，而不是显示 0（0 会被误读成"不允许下单"）
+    expect(text).toContain('全局默认')
+    expect(text).toContain('单笔上限')
+    expect(text).toContain('单期敞口上限')
+  })
+
+  it('saves per-agent risk limits with null when the field is left blank', async () => {
+    vi.mocked(api.setCenterAgentRiskLimits).mockResolvedValue(agent as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '风险')
+    await settle()
+
+    const select = host.querySelector('.center-form select') as HTMLSelectElement
+    select.value = '1'
+    select.dispatchEvent(new Event('change'))
+    await settle()
+
+    const saveButton = Array.from(host.querySelectorAll('.center-form button'))
+      .find(item => item.textContent?.trim() === '保存代理级风控') as HTMLButtonElement
+    saveButton.click()
+    await settle()
+
+    // 两个输入都留空 → 传 null，表示回退全局默认
+    expect(api.setCenterAgentRiskLimits).toHaveBeenCalledWith(1, {
+      maxSingleAmount: null,
+      maxIssueExposure: null,
+    })
+  })
+
+  it('lists risk hits with observed value and threshold', async () => {
+    vi.mocked(api.centerAgentRiskHits).mockResolvedValue([
+      {
+        id: 7,
+        ruleCode: 'CENTER_AMOUNT_LIMIT_EXCEEDED',
+        ruleCategory: 'LIMIT',
+        observedValue: 200,
+        thresholdValue: 100,
+        gameCode: 'AU8',
+        issueNumber: '3006478',
+        agentOrderNo: 'BET-200',
+        detail: '单笔金额超过中心上限',
+        createdAt: '2026-10-02T00:00:00Z',
+      },
+    ] as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '风险')
+    await settle()
+
+    const viewButton = Array.from(host.querySelectorAll('.center-table button'))
+      .find(item => item.textContent?.trim() === '查看') as HTMLButtonElement
+    viewButton.click()
+    await settle()
+
+    const text = host.textContent ?? ''
+    expect(text).toContain('CENTER_AMOUNT_LIMIT_EXCEEDED')
+    expect(text).toContain('200.00')
+    expect(text).toContain('100.00')
+  })
+
+  // -----------------------------------------------------------------
+  // P1-C2 / C-3：订单处置
+  // -----------------------------------------------------------------
+
+  it('offers only the disposition actions allowed by the current order status', async () => {
+    vi.mocked(api.listCenterOrders).mockResolvedValue({
+      items: [{ ...order, status: 'TIMEOUT' }], page: 1, pageSize: 20, total: 1,
+    } as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '实时订单')
+    await settle()
+
+    const labels = Array.from(host.querySelectorAll('.center-actions button'))
+      .map(item => item.textContent?.trim())
+    // TIMEOUT 只能"确认受理 / 确认失败"，不能退款——超时不等于失败
+    expect(labels).toContain('确认受理')
+    expect(labels).toContain('确认失败')
+    expect(labels).not.toContain('退款')
+  })
+
+  it('sends an idempotency key when disposing an accepted order', async () => {
+    vi.mocked(api.listCenterOrders).mockResolvedValue({
+      items: [{ ...order, status: 'ACCEPTED' }], page: 1, pageSize: 20, total: 1,
+    } as never)
+    vi.mocked(api.disposeCenterOrder).mockResolvedValue({
+      orderId: 11, status: 'REFUNDED', action: 'REFUND',
+      frozenAmount: 100, settleAmount: null, duplicate: false,
+    } as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '实时订单')
+    await settle()
+
+    const refundButton = Array.from(host.querySelectorAll('.center-actions button'))
+      .find(item => item.textContent?.trim() === '退款') as HTMLButtonElement
+    refundButton.click()
+    await settle()
+
+    expect(api.disposeCenterOrder).toHaveBeenCalledTimes(1)
+    const [orderId, body] = vi.mocked(api.disposeCenterOrder).mock.calls[0]
+    expect(orderId).toBe(11)
+    expect(body.action).toBe('REFUND')
+    // 幂等键必须存在且与订单+动作绑定
+    expect(body.idempotencyKey).toContain('center-disp-11-REFUND')
+    expect(host.textContent ?? '').toContain('REFUNDED')
+  })
+
+  it('shows the disposition history for an order', async () => {
+    vi.mocked(api.centerOrderDispositions).mockResolvedValue([
+      {
+        id: 1,
+        centerOrderId: 11,
+        action: 'CONFIRM_ACCEPTED',
+        fromStatus: 'TIMEOUT',
+        toStatus: 'ACCEPTED',
+        amount: 0,
+        reason: '查证上游已受理',
+        operatorUserId: 1,
+        createdAt: '2026-10-02T00:00:00Z',
+      },
+    ] as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '实时订单')
+    await settle()
+
+    const historyButton = Array.from(host.querySelectorAll('.center-actions button'))
+      .find(item => item.textContent?.trim() === '处置记录') as HTMLButtonElement
+    historyButton.click()
+    await settle()
+
+    const text = host.textContent ?? ''
+    expect(text).toContain('查证上游已受理')
+    expect(text).toContain('超时')
+    expect(text).toContain('已接受')
+  })
+
+  // -----------------------------------------------------------------
+  // C-2 ② / C-4 ③：对账差异处置
+  // -----------------------------------------------------------------
+
+  it('marks each reconciliation difference as pending or disposed', async () => {
+    vi.mocked(api.centerReconciliation).mockResolvedValue({
+      ...reconciliation,
+      balanced: false,
+      differenceCount: 1,
+      amountMismatchCount: 1,
+      differences: [
+        {
+          type: 'AMOUNT_MISMATCH', betId: 100, localStatus: 'ACCEPTED', centerStatus: 'ACCEPTED',
+          localAmount: 100, centerAmount: 90, disposed: false,
+        },
+      ],
+    } as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '对账')
+    await settle()
+
+    expect(host.textContent ?? '').toContain('待处置')
+  })
+
+  it('shows a difference as disposed when an effective disposition exists', async () => {
+    vi.mocked(api.centerReconciliation).mockResolvedValue({
+      ...reconciliation,
+      balanced: false,
+      differenceCount: 1,
+      differences: [
+        {
+          type: 'AMOUNT_MISMATCH', betId: 100, localStatus: 'ACCEPTED', centerStatus: 'ACCEPTED',
+          localAmount: 100, centerAmount: 90, disposed: true,
+        },
+      ],
+    } as never)
+    vi.mocked(api.listReconciliationDispositions).mockResolvedValue([
+      {
+        id: 5, differenceType: 'AMOUNT_MISMATCH', betId: 100, resolution: 'ACCEPTED',
+        centerAgentId: null, reason: '已核对上游回执', expiresAt: '2026-10-10T00:00:00Z',
+        revokedAt: null, createdAt: '2026-10-03T00:00:00Z',
+      },
+    ] as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '对账')
+    await settle()
+
+    const text = host.textContent ?? ''
+    expect(text).toContain('已处置')
+    expect(text).toContain('接受差异')
+    expect(text).toContain('已核对上游回执')
+  })
+
+  it('disposes a difference with an idempotency key and a 7-day window', async () => {
+    vi.mocked(api.centerReconciliation).mockResolvedValue({
+      ...reconciliation,
+      balanced: false,
+      differenceCount: 1,
+      differences: [
+        {
+          type: 'AMOUNT_MISMATCH', betId: 100, localStatus: 'ACCEPTED', centerStatus: 'ACCEPTED',
+          localAmount: 100, centerAmount: 90, disposed: false,
+        },
+      ],
+    } as never)
+    vi.mocked(api.disposeReconciliationDifference).mockResolvedValue({
+      id: 6, differenceType: 'AMOUNT_MISMATCH', betId: 100, resolution: 'ACKNOWLEDGED',
+      reason: '已知悉', expiresAt: '2026-10-10T00:00:00Z', revokedAt: null, duplicate: false,
+    } as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '对账')
+    await settle()
+
+    const button = Array.from(host.querySelectorAll('.center-actions button'))
+      .find(item => item.textContent?.trim() === '标记处置') as HTMLButtonElement
+    button.click()
+    await settle()
+
+    expect(api.disposeReconciliationDifference).toHaveBeenCalledTimes(1)
+    const [body] = vi.mocked(api.disposeReconciliationDifference).mock.calls[0]
+    expect(body.differenceType).toBe('AMOUNT_MISMATCH')
+    expect(body.betId).toBe(100)
+    // 幂等键必须存在
+    expect(body.idempotencyKey).toContain('center-recon-AMOUNT_MISMATCH-100')
+    // 默认 7 天生效——到期后差异重新回到待处置
+    expect(body.effectiveDays).toBe(7)
+  })
+
+  it('revokes a difference disposition so the difference becomes pending again', async () => {
+    vi.mocked(api.listReconciliationDispositions).mockResolvedValue([
+      {
+        id: 7, differenceType: 'STATUS_MISMATCH', betId: 200, resolution: 'IGNORED',
+        centerAgentId: null, reason: '误标', expiresAt: null,
+        revokedAt: null, createdAt: '2026-10-03T00:00:00Z',
+      },
+    ] as never)
+    vi.mocked(api.revokeReconciliationDisposition).mockResolvedValue({
+      id: 7, differenceType: 'STATUS_MISMATCH', betId: 200, resolution: 'IGNORED',
+      reason: '误标', expiresAt: null, revokedAt: '2026-10-03T01:00:00Z', duplicate: false,
+    } as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '对账')
+    await settle()
+
+    const revokeButton = Array.from(host.querySelectorAll('.center-actions button'))
+      .find(item => item.textContent?.trim() === '撤销') as HTMLButtonElement
+    revokeButton.click()
+    await settle()
+
+    expect(api.revokeReconciliationDisposition).toHaveBeenCalledWith(7)
+    expect(host.textContent ?? '').toContain('重新变为待处置')
+  })
+
+  it('shows retention stats for reconciliation dispositions', async () => {
+    vi.mocked(api.reconciliationRetention).mockResolvedValue({ effective: 3, expired: 2 } as never)
+
+    const host = mountPage()
+    await settle()
+    clickTab(host, '对账')
+    await settle()
+
+    const text = host.textContent ?? ''
+    expect(text).toContain('保留策略')
+    expect(text).toContain('生效中 3 条')
+    expect(text).toContain('已失效 2 条')
   })
 })
 

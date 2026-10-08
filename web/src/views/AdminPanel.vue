@@ -197,9 +197,10 @@ onMounted(load)
         <h1>演示管理后台</h1>
       </div>
       <nav class="admin-header-actions" aria-label="后台导航">
-        <RouterLink class="header-link" to="/console/users">用户管理</RouterLink>
-        <RouterLink class="header-link" to="/console/players">玩家工作台</RouterLink>
-        <RouterLink v-if="currentUser?.permissions.includes('ROBOT_READ')" class="header-link" to="/console/robots">机器人管理</RouterLink>
+        <!-- 计划 §6 + Q4=E2：这两个平台子页面已从 /console/* 迁到 /platform-admin/*，旧地址不再重定向，
+             这里必须指向新地址，否则点下去会落到独立 404 页（本页自身挂在 /platform-admin/operations）。2026-10-08 严格对齐 BY220：原「玩家工作台」入口是 BY220 不存在的平台侧玩家运营面，已整条删除。 -->
+        <RouterLink class="header-link" to="/platform-admin/users">用户管理</RouterLink>
+        <RouterLink v-if="currentUser?.permissions.includes('ROBOT_READ')" class="header-link" to="/platform-admin/robots">机器人管理</RouterLink>
         <RouterLink class="header-link" to="/room">返回用户前台</RouterLink>
         <button class="header-link" type="button" @click="logout">退出登录</button>
       </nav>

@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
 import { createMachineConfigConsoleStore } from '../machineConfigConsole'
 import { scopeIdentityText } from '../consoleScope'
 import type { BetBoardView, CurrentUserView, PlayerDeskScope } from '../types'
-import type { Machine } from '../types/platformAdmin'
-import PlayerWorkbenchModule from '../components/admin/PlayerWorkbenchModule.vue'
 import BetBoardPanel from '../components/admin/BetBoardPanel.vue'
 import AdminWelcomeControlPanel from '../components/admin/AdminWelcomeControlPanel.vue'
 import AdminDomainFooterPanel from '../components/admin/AdminDomainFooterPanel.vue'
 import AdminBottomControlPanel from '../components/admin/AdminBottomControlPanel.vue'
 import ReportControlPanel from '../components/admin/ReportControlPanel.vue'
+import PlayerWorkbenchModule from '../components/admin/PlayerWorkbenchModule.vue'
 import PointsApprovalPanel from '../components/admin/PointsApprovalPanel.vue'
 import RecentPointsRecordsPanel from '../components/admin/RecentPointsRecordsPanel.vue'
 
@@ -22,27 +21,31 @@ const currentBoard = ref<BetBoardView | null>(null)
 const boardError = ref('')
 const loading = ref(true)
 const error = ref('')
-const pointsRefreshToken = ref(0)
 const bottomControlRaised = ref(false)
 const scope = ref<PlayerDeskScope | null>(null)
 const scopeError = ref('')
-const machineError = ref('')
-const machines = ref<Machine[]>([])
-const selectedMachineId = ref<number | null>(null)
+/**
+ * 上下分申请审批（`PointsApprovalPanel`）与玩家/托工作台（`PlayerWorkbenchModule`）的上下分
+ * 都会改变最近上下分记录，用递增令牌让 `RecentPointsRecordsPanel` 立即重拉。
+ * 用法与 `PlatformAdminPlayerWorkbench.vue` 一致。
+ */
+const pointsRefreshToken = ref(0)
 
 /**
  * 机器级配置句柄：顶部状态栏与底部控制区共用同一份读写状态。
  *
- * BY220 `robot.php` 的赔率/特码赔率/特码返水/封盘/取消/返水/流水显示/限额都是机器自己的值，
- * 只有"全部机器"（管理员未选机器）才回落到全局 `/betting-config`。
+ * BY220 `robot.php` 的赔率/特码赔率/特码返水/封盘/取消/返水/流水显示/限额都是机器自己的值。
+ * `/console` 已按计划 §3.1 与阶段 4 收敛为**机器账号专用**（`MACHINE` 范围），
+ * 因此这里不再有"选择机器"：`createMachineConfigConsoleStore` 在 `MACHINE` 范围下由
+ * `resolveMachineConfigTargetId` 直接取 `scope.machineId`，第二个参数固定传 null，
+ * 界面不会（也不该）回落到全局 `/betting-config`。
  */
 const machineConsole = createMachineConfigConsoleStore(
   () => scope.value,
-  () => selectedMachineId.value,
+  () => null,
 )
 
 const operatorName = computed(() => currentUser.value?.displayName || currentUser.value?.username || '当前账号')
-const isPlatformAdmin = computed(() => (currentUser.value?.permissions ?? []).includes('USER_MANAGE'))
 const identityText = computed(() => scopeIdentityText(scope.value, operatorName.value))
 
 function toggleBottomControlPosition() {
@@ -101,26 +104,15 @@ async function loadBoardState() {
   }
 }
 
-async function loadMachines() {
-  machineError.value = ''
-  try {
-    machines.value = await api.listMachines()
-  } catch (cause) {
-    machines.value = []
-    machineError.value = apiErrorMessage(cause, '机器列表加载失败，创建玩家/托前请确认机器归属')
-  }
-}
-
-// 身份范围（机器账号 / 子账号分组 / 平台管理员全局）由后端 scope 接口给出，
-// 机器账号拿不到全局列表也不会白屏，这里只按现有 apiErrorMessage 风格提示。
+/**
+ * 身份范围由后端 scope 接口给出。`/console` 收敛后只应是 `MACHINE`（自己那台机器），
+ * 因此这里不再拉取全局机器列表、也没有机器选择器；范围异常时按既有 `apiErrorMessage` 风格提示，
+ * 页面其余区块（状态栏、报网栏、下注榜、底部控制区）保持可用，不会白屏。
+ */
 async function loadScope() {
   scopeError.value = ''
   try {
-    const next = await api.getPlayerDeskScope()
-    scope.value = next
-    selectedMachineId.value = null
-    if (next.mode === 'GLOBAL') await loadMachines()
-    else machines.value = []
+    scope.value = await api.getPlayerDeskScope()
   } catch (cause) {
     scope.value = null
     scopeError.value = apiErrorMessage(cause, '当前身份范围加载失败，请刷新重试')
@@ -133,16 +125,16 @@ function reload() {
   void loadScope()
 }
 
+function refreshRecentPoints() {
+  pointsRefreshToken.value++
+}
+
 async function logout() {
   try {
     await api.logout()
   } finally {
     await router.replace({ path: '/login', query: { reason: 'logged-out' } })
   }
-}
-
-function refreshRecentPoints() {
-  pointsRefreshToken.value++
 }
 
 onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
@@ -162,67 +154,58 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
       </div>
     </header>
 
+    <!-- 计划 §3.1 第 5 项：机器身份行（BY220 `robot.php` 主页 `rbt/view/index/admin_list.html:632` `欢迎您:`
+         + `:635` 总积分 + `:670/:672` 普/托计数）由 `part="welcome"` 实例渲染；
+         接线沿用本页原版（`git show HEAD:web/src/views/UnifiedAdminPanel.vue` 的
+         `section.unified-control-strip` 位置与 props）。
+         机器账号 `MACHINE` 下 `scopeAllowsMachineSwitch` 为 false（`consoleScope.ts:217-219`），
+         既不传 `machines` 也不传 `machine-id`，界面不会出现机器选择器。 -->
     <section class="unified-control-strip" aria-label="运营控制区">
       <AdminWelcomeControlPanel
         part="welcome"
         :scope="scope"
-        :machines="machines"
-        :machine-id="selectedMachineId"
         :operator-name="operatorName"
         :scope-error="scopeError"
-        :machine-error="machineError"
-        @machine-changed="selectedMachineId = $event"
       />
     </section>
 
     <div class="unified-admin-layout">
       <aside class="unified-admin-sidebar" aria-label="后台辅助信息">
-        <BetBoardPanel :scope="scope" :machine-id="selectedMachineId" />
-        <section class="unified-sidebar-note">
-          <div class="unified-nav-heading"><strong>模块预留</strong><span>未接入</span></div>
-          <p>其他后台区域保留位置，后续按独立计划逐块接入。</p>
-        </section>
-        <!-- 机器账号没有这些子路由的权限，不给入口，保持各子路由原权限边界不变。 -->
-        <template v-if="isPlatformAdmin">
-          <section class="unified-stash-entry" aria-label="备用模块入口">
-            <div class="unified-nav-heading"><strong>备用模块</strong><span>移出项</span></div>
-            <RouterLink to="/console/stash">查看备用模块</RouterLink>
-          </section>
-          <section class="unified-compat-links" aria-label="兼容入口">
-            <span>现有兼容入口</span>
-            <RouterLink to="/console/operations">旧运营页</RouterLink>
-            <RouterLink to="/console/users">用户管理</RouterLink>
-            <!-- 用户 2026-10-02 确认：代理组织管理已由超级后台「子账号」「机器管理」覆盖，
-                 不再从代理后台导航进入；路由 /console/agents 仅作内部兼容保留。 -->
-            <RouterLink to="/console/robots">服务端机器人</RouterLink>
-          </section>
-        </template>
+        <BetBoardPanel :scope="scope" :machine-id="null" />
+        <!-- 计划 §3.2 / §6【Q4=E2】：备用模块入口与 /console/operations、/console/users、
+             /console/robots 兼容入口都属平台侧功能，已随玩家工作台一起迁到 /platform-admin/*，
+             旧 /console/* 地址不再保留重定向，这里不再给出任何入口。 -->
       </aside>
 
       <section class="unified-admin-content">
         <AdminWelcomeControlPanel
           part="game"
           :scope="scope"
-          :machine-id="selectedMachineId"
           :machine-console="machineConsole"
         />
 
         <ReportControlPanel
           class="unified-content-report"
           :scope="scope"
-          :machine-id="selectedMachineId"
+          :machine-id="null"
         />
 
-        <div v-if="error || scopeError || machineError" class="unified-alert" role="alert"><span>{{ error || scopeError || machineError }}</span><button type="button" @click="reload">重试</button></div>
+        <div v-if="error || scopeError" class="unified-alert" role="alert"><span>{{ error || scopeError }}</span><button type="button" @click="reload">重试</button></div>
 
-        <section class="unified-reserved-grid" aria-label="后续功能预留">
+        <!-- 计划 §3.1 第 1–3 项：`/console` 是 BY220 `robot.php` 的机器运营台（机器账号 `AGENT`），
+             上下分申请审批、最近上下分记录与玩家/托工作台（建玩家/托、上下分、详情、头像、改名、
+             链接、托行为）都属机器账号；口径与 `PlatformAdminPlayerWorkbench.vue` 相同，
+             但机器账号固定在自己那台机器（`PlayerDeskScopeService` 判为 `MACHINE`），
+             既没有机器列表也没有机器选择器，因此 `PlayerWorkbenchModule` 不传 `machine-id`（后端强制成自己）。 -->
+        <section class="unified-workbench-panels" aria-label="上下分审批与最近记录">
           <PointsApprovalPanel @points-changed="refreshRecentPoints" />
           <RecentPointsRecordsPanel :refresh-token="pointsRefreshToken" />
         </section>
 
         <section class="unified-player-workbench" aria-label="玩家工作台">
-          <PlayerWorkbenchModule embedded :machine-id="selectedMachineId" @points-changed="refreshRecentPoints" />
+          <PlayerWorkbenchModule embedded @points-changed="refreshRecentPoints" />
         </section>
+
         <template v-if="bottomControlRaised">
           <AdminBottomControlPanel :machine-console="machineConsole" @raise="toggleBottomControlPosition" />
           <AdminDomainFooterPanel />
@@ -336,6 +319,8 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
 }
 .system-status i.danger { background: #d0653f; }
 
+/* `part="welcome"` 实例（机器身份行）在原版位置 `section.unified-control-strip` 里，
+   样式沿用 `git show HEAD:web/src/views/UnifiedAdminPanel.vue` 的同名规则。 */
 .unified-control-strip {
   display: grid;
   gap: 0;
@@ -344,25 +329,19 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
   padding: 6px 6px 0;
 }
 
-.unified-control-strip :deep(.admin-welcome-bar),
-.unified-control-strip :deep(.admin-game-control-bar),
-.unified-content-report {
+.unified-control-strip :deep(.admin-welcome-bar) {
+  min-height: 31px;
   border-color: #6ba0d5;
   background: #fff;
   box-shadow: none;
-}
-
-.unified-control-strip :deep(.admin-welcome-bar) {
-  min-height: 31px;
   padding: 3px 8px;
 }
 
-.unified-control-strip :deep(.admin-game-control-bar) {
-  min-height: 35px;
-  margin: 0;
-  border-top: 0;
-  padding: 3px 8px;
-}
+.unified-control-strip :deep(.welcome-user),
+.unified-control-strip :deep(.welcome-meta) { margin-right: 8px; }
+.unified-control-strip :deep(.welcome-password) { margin-left: 20px; }
+
+/* 内容区顶部期号/开奖/倒计时状态栏（`part="game"` 实例的下半条）。 */
 .unified-admin-content :deep(.admin-game-control-bar) {
   width: 100%;
   min-height: 30px;
@@ -370,19 +349,11 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
   padding: 3px 8px;
 }
 
-.unified-control-strip :deep(.welcome-user),
-.unified-control-strip :deep(.welcome-meta) { margin-right: 8px; }
-.unified-control-strip :deep(.welcome-password) { margin-left: 20px; }
-.unified-control-strip :deep(.game-control-value),
-.unified-control-strip :deep(.game-control-input),
-.unified-control-strip :deep(.game-control-limit-button) { height: 24px; }
-.unified-control-strip :deep(.game-control-input) { width: 52px; }
-.unified-control-strip :deep(.game-control-input-wide) { width: 64px; }
-.unified-control-strip :deep(.game-control-limit-button) { min-width: 78px; }
-
 .unified-content-report {
   width: 100%;
   margin: 6px 0 0;
+  border-color: #6ba0d5;
+  background: #fff;
   font-size: 11px;
 }
 
@@ -478,168 +449,71 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
 .unified-admin-sidebar :deep(.bet-board-fan),
 .unified-admin-sidebar :deep(.bet-board-fan-placeholder) { width: 16px; height: 16px; }
 
-.unified-sidebar-note,
-.unified-stash-entry,
-.unified-compat-links {
-  min-width: 0;
-  border: 1px solid #8fbbe0;
-  background: #fff;
-}
-
-.unified-nav-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 28px;
-  border-bottom: 1px solid #b8d7eb;
-  background: linear-gradient(#eef8ff, #d9ecff);
-  padding: 0 7px;
-}
-
-.unified-nav-heading strong { color: #315b7c; font-size: 11px; }
-.unified-nav-heading span { color: #7d96a8; font-size: 9px; }
-.unified-sidebar-note p { margin: 0; padding: 6px 7px; color: #728797; font-size: 10px; line-height: 1.45; }
-.unified-stash-entry a {
-  display: flex;
-  min-height: 30px;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(#fff, #eaf4ff);
-  color: #246c9f;
-  font-size: 10px;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.unified-stash-entry a:hover {
-  background: linear-gradient(#f8fcff, #d8ecff);
-  color: #145f98;
-  text-decoration: underline;
-}
-
-.unified-compat-links {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0;
-  padding: 0;
-}
-
-.unified-compat-links > span {
-  grid-column: 1 / -1;
-  border-bottom: 1px solid #c7dfef;
-  background: linear-gradient(#f2f9ff, #e5f2fc);
-  color: #6f8796;
-  padding: 4px 6px;
-  font-size: 9px;
-}
-
-.unified-compat-links a {
-  display: grid;
-  min-width: 0;
-  min-height: 27px;
-  place-items: center;
-  border-right: 1px solid #d6e6f1;
-  color: #39759e;
-  padding: 3px 2px;
-  font-size: 9px;
-  line-height: 1.25;
-  text-align: center;
-  text-decoration: none;
-}
-
-.unified-compat-links a:last-child { border-right: 0; }
-.unified-compat-links a:hover { background: #eef8ff; color: #146ba7; text-decoration: underline; }
-
-.unified-alert {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-height: 34px;
-  border: 1px solid #d9a3a3;
-  background: #fff7f7;
-  color: #a64040;
-  padding: 4px 7px;
-  font-size: 11px;
-}
-
-.unified-alert button {
-  min-height: 24px;
-  border: 1px solid #d79898;
-  border-radius: 2px;
-  background: #fff;
-  color: #a14e4e;
-  padding: 0 8px;
-  cursor: pointer;
-}
-
-
-.unified-reserved-grid {
+.unified-workbench-panels {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin: 0;
 }
 
-.unified-reserved-grid :deep(.points-approval-panel),
-.unified-reserved-grid :deep(.recent-points-panel) {
+.unified-workbench-panels :deep(.points-approval-panel),
+.unified-workbench-panels :deep(.recent-points-panel) {
   min-height: 252px;
   border-color: #4b8ed3;
   background: #fff;
   box-shadow: none;
 }
 
-.unified-reserved-grid :deep(.panel-heading) {
+.unified-workbench-panels :deep(.panel-heading) {
   min-height: 34px;
   border-bottom-color: #a9cde7;
   background: linear-gradient(#f1f9ff, #dceeff);
   padding: 4px 7px;
 }
 
-.unified-reserved-grid :deep(.panel-heading h2) { font-size: 12px; }
-.unified-reserved-grid :deep(.panel-heading span) { font-size: 9px; }
-.unified-reserved-grid :deep(.new-count) { font-size: 9px; }
-.unified-reserved-grid :deep(.sound-controls) { gap: 5px; font-size: 9px; }
-.unified-reserved-grid :deep(.sound-controls label) { min-height: 24px; gap: 3px; }
-.unified-reserved-grid :deep(.sound-controls input) { width: 12px; height: 12px; }
-.unified-reserved-grid :deep(.sound-test-button) { min-height: 24px; padding: 0 6px; font-size: 9px; }
-.unified-reserved-grid :deep(.kind-switch button) { min-width: 43px; min-height: 25px; padding: 0 5px; font-size: 10px; }
+.unified-workbench-panels :deep(.panel-heading h2) { font-size: 12px; }
+.unified-workbench-panels :deep(.panel-heading span) { font-size: 9px; }
+.unified-workbench-panels :deep(.new-count) { font-size: 9px; }
+.unified-workbench-panels :deep(.sound-controls) { gap: 5px; font-size: 9px; }
+.unified-workbench-panels :deep(.sound-controls label) { min-height: 24px; gap: 3px; }
+.unified-workbench-panels :deep(.sound-controls input) { width: 12px; height: 12px; }
+.unified-workbench-panels :deep(.sound-test-button) { min-height: 24px; padding: 0 6px; font-size: 9px; }
+.unified-workbench-panels :deep(.kind-switch button) { min-width: 43px; min-height: 25px; padding: 0 5px; font-size: 10px; }
 
-.unified-reserved-grid :deep(.panel-body) {
+.unified-workbench-panels :deep(.panel-body) {
   min-height: 210px;
   padding: 6px 7px 7px;
 }
 
-.unified-reserved-grid :deep(.panel-state) {
+.unified-workbench-panels :deep(.panel-state) {
   min-height: 165px;
   gap: 5px;
   font-size: 11px;
 }
 
-.unified-reserved-grid :deep(.panel-notice),
-.unified-reserved-grid :deep(.panel-error),
-.unified-reserved-grid :deep(.panel-hint) { margin-bottom: 5px; padding: 5px 6px; font-size: 10px; }
+.unified-workbench-panels :deep(.panel-notice),
+.unified-workbench-panels :deep(.panel-error),
+.unified-workbench-panels :deep(.panel-hint) { margin-bottom: 5px; padding: 5px 6px; font-size: 10px; }
 
-.unified-reserved-grid :deep(.request-list) { gap: 4px; max-height: 210px; }
+.unified-workbench-panels :deep(.request-list) { gap: 4px; max-height: 210px; }
 
-.unified-reserved-grid :deep(.request-row) {
+.unified-workbench-panels :deep(.request-row) {
   min-height: 44px;
   gap: 6px;
   padding: 4px 6px;
 }
 
-.unified-reserved-grid :deep(.request-label) { gap: 4px; }
-.unified-reserved-grid :deep(.request-label strong) { font-size: 14px; }
-.unified-reserved-grid :deep(.request-direction),
-.unified-reserved-grid :deep(.request-player) { font-size: 10px; }
-.unified-reserved-grid :deep(.request-actions),
-.unified-reserved-grid :deep(.confirm-actions) { gap: 4px; }
-.unified-reserved-grid :deep(.approve-button),
-.unified-reserved-grid :deep(.cancel-button) { min-width: 47px; min-height: 27px; padding: 0 7px; font-size: 10px; }
-.unified-reserved-grid :deep(.record-list) { gap: 1px; max-height: 218px; }
-.unified-reserved-grid :deep(.record-row) { grid-template-columns: 84px minmax(0, 1fr) auto; gap: 5px; min-height: 25px; padding: 4px 2px; font-size: 11px; }
-.unified-reserved-grid :deep(.load-more-button) { min-height: 28px; margin-top: 5px; font-size: 10px; }
+.unified-workbench-panels :deep(.request-label) { gap: 4px; }
+.unified-workbench-panels :deep(.request-label strong) { font-size: 14px; }
+.unified-workbench-panels :deep(.request-direction),
+.unified-workbench-panels :deep(.request-player) { font-size: 10px; }
+.unified-workbench-panels :deep(.request-actions),
+.unified-workbench-panels :deep(.confirm-actions) { gap: 4px; }
+.unified-workbench-panels :deep(.approve-button),
+.unified-workbench-panels :deep(.cancel-button) { min-width: 47px; min-height: 27px; padding: 0 7px; font-size: 10px; }
+.unified-workbench-panels :deep(.record-list) { gap: 1px; max-height: 218px; }
+.unified-workbench-panels :deep(.record-row) { grid-template-columns: 84px minmax(0, 1fr) auto; gap: 5px; min-height: 25px; padding: 4px 2px; font-size: 11px; }
+.unified-workbench-panels :deep(.load-more-button) { min-height: 28px; margin-top: 5px; font-size: 10px; }
 
 .unified-player-workbench {
   min-width: 0;
@@ -763,6 +637,29 @@ onMounted(() => { void loadState(); void loadBoardState(); void loadScope() })
 .unified-player-workbench :deep(.days-editor small) { font-size: 9px; }
 .unified-player-workbench :deep(.action-row) { grid-template-columns: 48px minmax(0, 1fr) 48px 96px; gap: 4px; padding: 5px 0; font-size: 9px; }
 .unified-player-workbench :deep(.bet-row) { grid-template-columns: 68px minmax(0, 1fr) 54px 58px; gap: 5px; padding: 6px 0; font-size: 10px; }
+
+.unified-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid #d9a3a3;
+  background: #fff7f7;
+  color: #a64040;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.unified-alert button {
+  min-height: 24px;
+  border: 1px solid #d79898;
+  border-radius: 2px;
+  background: #fff;
+  color: #a14e4e;
+  padding: 0 8px;
+  cursor: pointer;
+}
 
 .unified-admin-content :deep(.admin-domain-footer) {
   min-height: 34px;

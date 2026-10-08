@@ -5,9 +5,7 @@ import type {
   AdminUserPage,
   CreateBotPlayerRequest,
   CreateNormalPlayerRequest,
-  ChangeTestPlayerStatusRequest,
   ChangeAdminUserStatusRequest,
-  CreateTestPlayerRequest,
   CreateAdminUserRequest,
   BetView,
   ChatMessage,
@@ -27,15 +25,11 @@ import type {
   WalletSummaryResponse,
   ResetAdminUserPasswordRequest,
   UpdateAdminUserRolesRequest,
-  TestPlayerBalanceOperationResponse,
-  TestPlayerBalanceRequest,
-  TestPlayerBetRequest,
-  TestPlayerPage,
-  TestPlayerView,
   PlayerActionSummary,
   PlayerBalanceAdjustmentRequest,
   PlayerDeskBehavior,
   PlayerDeskDetail,
+  PlayerDeskDeleteResult,
   PlayerDeskPage,
   PlayerDeskScope,
   PlayerDeskSummary,
@@ -68,6 +62,14 @@ import type {
   CenterAgentLedgerPage,
   CenterOrderPage,
   CenterOrderSummary,
+  CenterRiskHit,
+  CenterRiskRuleSummary,
+  CenterOrderDisposition,
+  CenterOrderDispositionRecord,
+  CenterDispositionAction,
+  ReconciliationDisposition,
+  ReconciliationResolution,
+  ReconciliationRetention,
   CenterSettlementResult,
   CenterReconciliation,
 } from './types'
@@ -146,7 +148,14 @@ import type {
 import { buildDispatchQuery } from './robotAdmin'
 
 export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated'
-export type AuthAudience = 'ADMIN' | 'PLAYER'
+/**
+ * 入口级使用端（阶段 5，Flyway V75 `auth_session.entry`）：一个入口一个刷新 Cookie，互不覆盖。
+ *
+ * 取值与后端请求头 `X-Xupan-Auth-Audience` 的契约一致：`PLATFORM`（`/platform-admin`，
+ * Cookie `xupan_refresh`）、`CONSOLE`（`/console`，Cookie `xupan_console_refresh`）、
+ * `PLAYER`（玩家链接，Cookie `xupan_player_refresh`）。后端另兼容旧的 `ADMIN`（当 `PLATFORM`）。
+ */
+export type AuthAudience = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
 
 const AUTH_AUDIENCE_STORAGE_KEY = 'xupan.auth.audience'
 const AUTH_REFRESH_AUDIENCE_HEADER = 'X-Xupan-Auth-Audience'
@@ -158,11 +167,19 @@ let authState: AuthState = 'unknown'
 let authAudience: AuthAudience = readStoredAuthAudience()
 const authStateListeners = new Set<(state: AuthState) => void>()
 
+/**
+ * 读取本标签页的使用端提示（只存"提示"，不存 Token）。
+ *
+ * 老标签页的 sessionStorage 里可能还是阶段 5 之前的 `ADMIN`（旧平台入口值）→ 映射为 `PLATFORM`；
+ * 未识别/读不到一律按 `PLATFORM`，与后端"缺省当平台入口"的口径一致。
+ */
 function readStoredAuthAudience(): AuthAudience {
   try {
-    return window.sessionStorage.getItem(AUTH_AUDIENCE_STORAGE_KEY) === 'PLAYER' ? 'PLAYER' : 'ADMIN'
+    const stored = window.sessionStorage.getItem(AUTH_AUDIENCE_STORAGE_KEY)
+    if (stored === 'PLAYER' || stored === 'CONSOLE' || stored === 'PLATFORM') return stored
+    return 'PLATFORM'
   } catch {
-    return 'ADMIN'
+    return 'PLATFORM'
   }
 }
 
@@ -219,6 +236,27 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * 聊天室**上下分申请**（「上X / 下X」）发送失败时的文案。
+ *
+ * 与下注共用 `WALLET_INSUFFICIENT_BALANCE`，但两侧语义不同：
+ *   * 下注：钱包层只给「本次钱包操作无法完成」，靠 {@link apiErrorMessage} 映射成
+ *     「余额不足，下注未提交」（`api.ts:267`，**保持不变**）；
+ *   * 上下分申请：后端按计划 §5 以 400 拒绝创建并**直接给出给玩家看的**文案
+ *     「您当前积分不足X」（`ChatMessageService.processPointRequest`），
+ *     此时应优先使用后端 message，否则玩家看不到这句提示。
+ *
+ * 调用方只在上下分申请场景用本函数（见 `UserRoom.vue` 的
+ * `isPointRequestCommand(body)` 分支），因此不会影响下注那条文案。
+ */
+export function pointRequestErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiError && error.code === 'WALLET_INSUFFICIENT_BALANCE'
+      && error.message) {
+    return error.message
+  }
+  return apiErrorMessage(error, fallback)
+}
+
 export function apiErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof ApiError)) return fallback
   if (error.code === 'AVATAR_FILE_INVALID') return '请选择有效的头像图片'
@@ -237,6 +275,8 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'GAME_SETTINGS_NOT_FOUND') return '彩种不存在'
   if (error.code === 'AUTH_UNAUTHENTICATED') return '请先登录'
   if (error.code === 'AUTH_TOKEN_REVOKED') return '登录状态已失效，请重新登录'
+  // 阶段 4：显式 `CONSOLE` 入口的登录由服务端校验 `AGENT` 角色，非机器账号回 403（不签发任何 Cookie）。
+  if (error.code === 'AUTH_ENTRY_FORBIDDEN') return '该入口只接受机器账号，请到 /platform-admin/login 登录'
   if (error.code === 'PLAYER_LINK_INVALID') return '玩家链接无效、已过期或已撤销'
     if (error.code === 'PLAYER_LINK_NOT_ALLOWED') return '当前玩家分类不支持玩家链接'
   if (error.code === 'PLAYER_LINK_STATUS_INVALID') return '当前玩家状态不允许链接登录'
@@ -244,7 +284,6 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'PLAYER_LINK_OPERATION_FORBIDDEN') return '当前账号没有玩家链接管理权限'
   if (error.code === 'PLAYER_NICKNAME_EXISTS') return '昵称已存在，请换一个昵称'
   if (error.status === 401) return '登录状态已失效，请重新登录'
-  if (error.code === 'TEST_PLAYER_OPERATION_FORBIDDEN') return '当前账号没有测试玩家管理权限'
   if (error.status === 403 || error.code === 'AUTH_PERMISSION_DENIED') return '当前账号没有执行此操作的权限'
   if (error.code === 'WALLET_INSUFFICIENT_BALANCE') return '余额不足，下注未提交'
   if (error.code === 'WALLET_INACTIVE') return '该用户的虚拟钱包当前不可用'
@@ -261,6 +300,22 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'MACHINE_SPECIAL_REBATE_RATE_INVALID') return '特码返水不能为负数'
   if (error.code === 'MACHINE_REBATE_MODE_INVALID') return '流水显示只能选单边或双边'
   if (error.code === 'MACHINE_STAKE_RANGE_INVALID') return '玩家注额范围无效：最小注额不能大于最高注额'
+  // BY220 语义：机器积分从「所属子账号」的资金池划出/退回
+  if (error.code === 'SUB_ACCOUNT_SCORE_INSUFFICIENT') return '该子帐号积分不足以为机器分配积分！'
+  // BY220 `Users::add()` 原文案：下分超过该子账号余额时 `$message = '该子帐号积分不足以下分！'`
+  if (error.code === 'SUB_ACCOUNT_SCORE_DOWN_INSUFFICIENT') return '该子帐号积分不足以下分！'
+  // 上分与下分互斥（BY220 虽有 setInc/setDec 两段，但同时提交语义不明确，后端按 400 拒绝）
+  if (error.code === 'SUB_ACCOUNT_SCORE_ADJUST_INVALID') return '上分与下分不能同时提交'
+  if (error.code === 'SUB_ACCOUNT_USERNAME_EXISTS') return '子账号用户名已存在'
+  if (error.code === 'MACHINE_SCORE_INSUFFICIENT') return '机器积分不足以退回子账号'
+  // 阶段 1 积分精度收口：代理账本侧超精度统一 400，两个错误码同时承载「不能为负数」与
+  // 「最多两位小数」两种语义（后端 message 区分），这里按 message 是否含「负数」二选一。
+  if (error.code === 'SUB_ACCOUNT_SCORE_INVALID') {
+    return error.message.includes('负数') ? '子账号积分不能为负数' : '子账号积分最多两位小数'
+  }
+  if (error.code === 'MACHINE_SCORE_INVALID') {
+    return error.message.includes('负数') ? '机器积分不能为负数' : '机器积分最多两位小数'
+  }
   if (error.code === 'MACHINE_CONFIG_FORBIDDEN') return '当前账号没有机器配置权限'
   if (error.code === 'MACHINE_NOT_FOUND') return '机器不存在或已停用，请刷新后重试'
   if (error.code === 'PLATFORM_PASSWORD_OLD_MISMATCH') return '旧密码错误'
@@ -293,12 +348,11 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AGENT_PLAYER_TRANSFER_FORBIDDEN') return '第一版只允许分配平台直属玩家'
   if (error.code === 'AGENT_CONSOLE_FORBIDDEN' || error.code === 'AGENT_DISABLED') return '代理后台当前不可用'
   if (error.code === 'USER_QUERY_INVALID') return '筛选或分页参数不合法'
+  // 2026-10-08：「测试玩家」业务线（BY220 无此概念）的接口与页面已删除。
+  // TEST_PLAYER_NOT_FOUND / TEST_PLAYER_STATUS_INVALID 两条映射保留：它们仍由托（BOT）
+  // 的创建与状态变更链路（TestPlayerAdminService.create/changeStatus）抛出。
   if (error.code === 'TEST_PLAYER_NOT_FOUND') return '测试玩家不存在，请刷新列表后重试'
-  if (error.code === 'TEST_PLAYER_USERNAME_EXISTS') return '测试玩家登录名已存在，请换一个登录名'
   if (error.code === 'TEST_PLAYER_STATUS_INVALID') return '测试玩家状态不合法'
-  if (error.code === 'TEST_PLAYER_QUERY_INVALID') return '测试玩家筛选或分页参数不合法'
-  if (error.code === 'TEST_PLAYER_BALANCE_INVALID') return '测试玩家余额操作金额或原因不合法'
-  if (error.code === 'TEST_PLAYER_BALANCE_RESET_CONFLICT') return '测试玩家余额已变化，请刷新后重试'
   if (error.code === 'PLAYER_DESK_NOT_FOUND') return '玩家不存在，请刷新列表后重试'
   if (error.code === 'PLAYER_DESK_QUERY_INVALID') return '玩家筛选或分页参数不合法'
   if (error.code === 'PLAYER_DESK_OPERATION_FORBIDDEN') return '当前账号没有玩家工作台权限'
@@ -447,14 +501,20 @@ export const api = {
       : `/api/media/avatars/${encodeURIComponent(avatarKey)}`
   },
   hasAccessToken: () => Boolean(getAccessToken()),
-  login: (username: string, password: string) => request<{ accessToken: string; user: CurrentUserView }>('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ username, password, deviceLabel: 'xupan-web' }),
-  }, false).then(result => {
-    setAuthAudience('ADMIN')
-    setAccessToken(result.accessToken)
-    return result
-  }),
+  /**
+   * 登录：`audience` 是本入口（阶段 5）。请求头决定后端写哪个入口的刷新 Cookie
+   * （`/login` 传 `CONSOLE`、`/platform-admin/login` 传 `PLATFORM`），成功后本地使用端也切到该入口。
+   */
+  login: (username: string, password: string, audience: AuthAudience = 'PLATFORM') =>
+    request<{ accessToken: string; user: CurrentUserView }>('/api/auth/login', {
+      method: 'POST',
+      headers: { [AUTH_REFRESH_AUDIENCE_HEADER]: audience },
+      body: JSON.stringify({ username, password, deviceLabel: 'xupan-web' }),
+    }, false).then(result => {
+      setAuthAudience(audience)
+      setAccessToken(result.accessToken)
+      return result
+    }),
   exchangePlayerLink: (token: string) => request<{ accessToken: string; expiresIn: number; user: CurrentUserView }>('/api/player-auth/exchange', {
     method: 'POST',
     body: JSON.stringify({ token }),
@@ -641,6 +701,65 @@ export const api = {
     search.set('limit', String(params.limit || 50))
     return request<CenterReconciliation>(`/api/admin/center/agents/reconciliation?${search.toString()}`)
   },
+  /** 设定代理级风控上限（P1-C1）；传 null 表示回退全局默认。 */
+  setCenterAgentRiskLimits: (
+    id: number,
+    body: { maxSingleAmount: number | null; maxIssueExposure: number | null },
+  ) => request<CenterAgent>(`/api/admin/center/agents/${id}/risk-limits`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  }),
+  centerAgentRiskHits: (id: number, params: { limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params.limit || 20))
+    return request<CenterRiskHit[]>(`/api/admin/center/agents/${id}/risk-hits?${search.toString()}`)
+  },
+  centerRiskHitSummary: (params: { windowMinutes?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('windowMinutes', String(params.windowMinutes || 1440))
+    return request<CenterRiskRuleSummary[]>(
+      `/api/admin/center/agents/risk-hits/summary?${search.toString()}`,
+    )
+  },
+  /** 处置中心订单（P1-C2 / C-3）：确认受理 / 确认失败 / 退款 / 撤单。 */
+  disposeCenterOrder: (
+    orderId: number,
+    body: { action: CenterDispositionAction; reason?: string; idempotencyKey: string },
+  ) => request<CenterOrderDisposition>(`/api/admin/center/agents/orders/${orderId}/disposition`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  centerOrderDispositions: (orderId: number) =>
+    request<CenterOrderDispositionRecord[]>(
+      `/api/admin/center/agents/orders/${orderId}/dispositions`,
+    ),
+  /** 处置一条对账差异（C-2 ②）：只记录判断，不修复数据。 */
+  disposeReconciliationDifference: (body: {
+    differenceType: string
+    betId: number
+    resolution: ReconciliationResolution
+    reason?: string
+    effectiveDays?: number
+    idempotencyKey: string
+  }) => request<ReconciliationDisposition>('/api/admin/center/agents/reconciliation/dispositions', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
+  /** 撤销一条差异处置：差异重新回到待处置列表。 */
+  revokeReconciliationDisposition: (id: number) =>
+    request<ReconciliationDisposition>(
+      `/api/admin/center/agents/reconciliation/dispositions/${id}/revoke`,
+      { method: 'POST' },
+    ),
+  listReconciliationDispositions: (params: { limit?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('limit', String(params.limit || 50))
+    return request<ReconciliationDisposition[]>(
+      `/api/admin/center/agents/reconciliation/dispositions?${search.toString()}`,
+    )
+  },
+  reconciliationRetention: () =>
+    request<ReconciliationRetention>('/api/admin/center/agents/reconciliation/retention'),
   cancelUnsettledOrder: (id: number) =>
     request<UnsettledOrderCancellation>(`/api/admin/unsettled-orders/${id}`, { method: 'DELETE' }),
   listOrderCorrections: (params: { page?: number; pageSize?: number } = {}) => {
@@ -816,7 +935,7 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ avatarKey }),
     }),
-  deletePlayerDeskPlayer: (userId: number) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}`, { method: 'DELETE' }),
+  deletePlayerDeskPlayer: (userId: number) => request<PlayerDeskDeleteResult>(`/api/admin/player-desk/players/${userId}`, { method: 'DELETE' }),
   issuePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links`, { method: 'POST' }),
   getCurrentPlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/current`),
   rotatePlayerAccessLink: (userId: number) => request<PlayerAccessLinkView>(`/api/admin/player-desk/players/${userId}/access-links/rotate`, { method: 'POST' }),
@@ -964,34 +1083,6 @@ export const api = {
     }),
   getPlayerActions: (userId: number, limit = 20) =>
     request<PlayerActionSummary[]>(`/api/admin/player-desk/players/${userId}/actions?limit=${limit}`),
-  getTestPlayers: (params: { status?: string; keyword?: string; page?: number; pageSize?: number } = {}) => {
-    const query = new URLSearchParams()
-    query.set('status', params.status ?? '')
-    query.set('keyword', params.keyword ?? '')
-    query.set('page', String(params.page ?? 1))
-    query.set('pageSize', String(params.pageSize ?? 20))
-    return request<TestPlayerPage>(`/api/admin/test-players?${query.toString()}`)
-  },
-  getTestPlayer: (userCode: string) => request<TestPlayerView>(`/api/admin/test-players/${encodeURIComponent(userCode)}`),
-  createTestPlayer: (payload: CreateTestPlayerRequest) =>
-    request<TestPlayerView>('/api/admin/test-players', { method: 'POST', body: JSON.stringify(payload) }),
-  changeTestPlayerStatus: (userCode: string, payload: ChangeTestPlayerStatusRequest) =>
-    request<TestPlayerView>(`/api/admin/test-players/${encodeURIComponent(userCode)}/status`, { method: 'PATCH', body: JSON.stringify(payload) }),
-  grantTestPlayerBalance: (userCode: string, payload: Required<TestPlayerBalanceRequest>) =>
-    request<TestPlayerBalanceOperationResponse>(`/api/admin/test-players/${encodeURIComponent(userCode)}/balance/grants`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  resetTestPlayerBalance: (userCode: string, payload: Omit<TestPlayerBalanceRequest, 'amount'>) =>
-    request<TestPlayerBalanceOperationResponse>(`/api/admin/test-players/${encodeURIComponent(userCode)}/balance/reset`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
-  placeTestPlayerBet: (userCode: string, payload: TestPlayerBetRequest) =>
-    request<unknown>(`/api/admin/test-players/${encodeURIComponent(userCode)}/bets`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
   getAdminWallet: (userId: number) => request<WalletSummaryResponse>(`/api/admin/users/${userId}/wallet`),
   getAdminWalletLedger: (userId: number, limit = 50) => request<WalletLedgerEntry[]>(`/api/admin/users/${userId}/wallet/ledger?limit=${limit}`),
   grantWallet: (userId: number, payload: WalletGrantRequest) =>

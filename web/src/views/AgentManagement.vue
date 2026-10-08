@@ -130,7 +130,10 @@ onMounted(() => { void load() })
         <h1>代理组织管理</h1>
       </div>
       <div class="agent-admin-actions">
-        <RouterLink to="/console">返回运营台</RouterLink>
+        <!-- 计划 §3.2（2026-10-08 严格对齐 BY220）：`/console` 已收敛为机器账号入口（角色 `AGENT`），
+             平台账号点过去会被拒；本页挂在 `/platform-admin/agents`，BY220 无对应上级页，
+             故返回 admin 首页 = `/platform-admin`。 -->
+        <RouterLink to="/platform-admin">返回平台首页</RouterLink>
         <button type="button" @click="logout">退出登录</button>
       </div>
     </header>

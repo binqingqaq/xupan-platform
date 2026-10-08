@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, apiErrorMessage, restoreSession } from '../api'
-import { consoleLandingPath } from '../consoleScope'
+import { canRedirectWithinEntry, consoleLandingPath, isConsoleEntryAccount } from '../consoleScope'
 import type { CurrentUserView } from '../types'
 
 const route = useRoute()
@@ -19,16 +19,25 @@ const explicitRedirect = computed(() => {
 
 const pageMessage = computed(() => route.query.reason === 'expired'
   ? '登录状态已失效，请重新登录'
-  : route.query.reason === 'forbidden'
-    ? '当前账号没有访问权限'
+  : route.query.reason === 'no-permission'
+    ? '当前账号没有进入该后台的权限，请用有权限的账号重新登录'
     : route.query.reason === 'logged-out'
       ? '你已退出登录'
     : '请输入账号和密码继续')
 
+/**
+ * 阶段 4：`/login` 是 BY220 `robot.php` 的机器端入口，只接受**机器账号**
+ * （`roles` 含 `AGENT` 且不含 `ADMIN`/`SUB_ACCOUNT`，口径与 `/console` 路由门禁一致）。
+ */
+function canEnter(user: CurrentUserView) {
+  return isConsoleEntryAccount(user.roles)
+}
+
 function landingPath(user: CurrentUserView): string {
-  if (explicitRedirect.value) return explicitRedirect.value
-  // 代理后台已统一到 /console：机器账号（AGENT_CONSOLE_READ）也落在这里。
-  return consoleLandingPath(user.permissions)
+  // 只回跳本入口（`CONSOLE`）的地址；跨入口 redirect 直接丢弃，避免"回跳→被弹回"死循环。
+  if (canRedirectWithinEntry(explicitRedirect.value, 'CONSOLE')) return explicitRedirect.value
+  // 阶段 3 第 5 项 + 计划 §6「登录后落地页」：机器账号 → `/console`。
+  return consoleLandingPath(user.roles)
 }
 
 async function submit() {
@@ -39,7 +48,12 @@ async function submit() {
   busy.value = true
   error.value = ''
   try {
-    const result = await api.login(username.value.trim(), password.value)
+    // 入口级会话（阶段 5）：机器端登录页写 `CONSOLE` 入口的刷新 Cookie。
+    const result = await api.login(username.value.trim(), password.value, 'CONSOLE')
+    if (!canEnter(result.user)) {
+      error.value = '该账号不是机器账号，请到 /platform-admin/login 登录'
+      return
+    }
     password.value = ''
     await router.replace(landingPath(result.user))
   } catch (loginError) {
@@ -50,8 +64,10 @@ async function submit() {
 }
 
 onMounted(async () => {
-  const user = await restoreSession('ADMIN')
-  if (user) await router.replace(landingPath(user))
+  // 刚被守卫按权限弹回来（reason=no-permission）时不再自动回跳：否则会「回跳 → 被弹回」死循环。
+  if (route.query.reason === 'no-permission') return
+  const user = await restoreSession('CONSOLE')
+  if (user && canEnter(user)) await router.replace(landingPath(user))
 })
 </script>
 

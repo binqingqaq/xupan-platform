@@ -188,4 +188,31 @@ describe('platform admin machines', () => {
     expect(container?.querySelectorAll('.games-checks input:checked').length).toBe(0)
     expect(container?.querySelector('.games-checks')?.textContent).toContain('澳8番摊')
   })
+
+  /**
+   * 回归：机器账号被锁（登录态 LOCKED）时列表必须显示「已锁定」并给出「解锁」。
+   *
+   * 缺陷背景：`LOCKED` + `locked_until` 为空时 `canLogin` 永远为 false，登录只会提示
+   * 「用户名或密码错误」；机器管理以前只显示 BY220 的机器状态（正常/停用），超管看不出账号被锁、
+   * 也没有解锁入口（本机遗留机器账号 localadmin 就是这样卡死的）。
+   */
+  it('shows a locked machine account and unlocks it from the list', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([
+      machine({ id: 5, accountUsername: 'lockedbot', status: 'ACTIVE', accountStatus: 'LOCKED' }),
+    ] as never)
+
+    await mountMachines()
+    const row = container?.querySelector('tbody tr')
+    expect(row?.textContent).toContain('已锁定')
+
+    const buttons = Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+    const unlock = buttons.find(button => button.textContent === '解锁')
+    expect(unlock).toBeTruthy()
+    // 锁定时不能再给「停用」，否则超管容易误点成停用而看不出账号仍被锁
+    expect(buttons.some(button => button.textContent === '停用')).toBe(false)
+
+    unlock?.click()
+    await settle()
+    expect(api.changeMachineStatus).toHaveBeenCalledWith(5, 'ACTIVE')
+  })
 })
