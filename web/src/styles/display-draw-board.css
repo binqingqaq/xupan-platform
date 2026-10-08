@@ -1,0 +1,518 @@
+/*
+ * 移动端开奖首页。
+ * 尺寸基准：参考站实际渲染为 720px 宽容器、基准字号 16px；下列注释中的 px 均指该基准下的像素。
+ * 统一约定：凡是用 em 表达盒子尺寸的元素，自身不设置 font-size，字号一律落在子元素上，
+ * 避免 em 同时参与字号与尺寸计算而互相叠加。
+ * 样式为本项目自行实现，未复制参考站文件。
+ */
+
+.draw-board-page {
+  --draw-board-red: #e71607;
+  --draw-board-blue: #2389e9;
+  --draw-board-green: #1fb61d;
+  --draw-board-gray: #999999;
+  --draw-board-border: #99ccff;
+  --draw-board-tab-bg: #eeeeee;
+  --draw-board-tab-active: #99ccff;
+  --draw-board-refresh: #ff9900;
+
+  min-height: 100vh;
+  background: #edf2fa;
+  color: #000;
+  font-family: 'PingFang SC', 'Microsoft YaHei', Arial, 'Helvetica Neue', sans-serif;
+}
+
+/* 内容区最多 720px；窄屏保持字号并调整布局。 */
+.draw-board-shell {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid var(--draw-board-border);
+  border-top: 0;
+  box-sizing: border-box;
+  font-size: 16px;
+}
+
+.draw-board-page .is-red {
+  background-color: var(--draw-board-red);
+}
+
+.draw-board-page .is-blue {
+  background-color: var(--draw-board-blue);
+}
+
+.draw-board-page .is-green {
+  background-color: var(--draw-board-green);
+}
+
+.draw-board-page .is-gray {
+  background-color: var(--draw-board-gray);
+}
+
+/* ---------------- 顶部冻结区 ---------------- */
+
+.draw-board-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: #fff;
+}
+
+.draw-board-tabs {
+  display: flex;
+  gap: 0.5625em; /* 9px */
+  padding: 0.125em 0.25em 0;
+}
+
+.draw-board-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25em;
+  height: 2.1875em; /* 35px */
+  padding: 0 0.25em;
+  border: 0;
+  border-radius: 0.625em; /* 10px */
+  background: var(--draw-board-tab-bg);
+  color: #000;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.draw-board-tab-label {
+  font-size: 1.375em; /* 22px */
+  font-weight: 700;
+  line-height: 1;
+}
+
+.draw-board-tab-mark {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.7em; /* 27px，与参考站图标高度一致 */
+  height: 1.7em;
+  border-radius: 50%;
+  background: #d4453b;
+  color: #fff;
+  font-size: 0.875em;
+  font-weight: 700;
+}
+
+.draw-board-tab:nth-child(2) .draw-board-tab-mark {
+  background: #2c8a64;
+}
+
+.draw-board-tab:nth-child(3) .draw-board-tab-mark {
+  background: #3279a8;
+}
+
+.draw-board-tab.is-active {
+  background: var(--draw-board-tab-active);
+}
+
+/* 开奖记录行 */
+
+.draw-board-record {
+  display: flex;
+  align-items: stretch;
+  padding: 1.0625em 0 0;
+}
+
+.draw-board-record-head {
+  flex: 0 0 8.8125em; /* 141px */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.draw-board-record-issue {
+  font-size: 1.375em; /* 22px */
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.draw-board-record-badge {
+  margin-top: 0.1em;
+  padding: 0 0.2em;
+  background: #ffff00;
+  color: #ff0000;
+  font-size: 1.25em; /* 20px */
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.draw-board-record-balls {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.draw-board-record-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #333;
+  border-right: 0;
+  text-align: center;
+}
+
+.draw-board-record-cell:last-child {
+  border-right: 1px solid #333;
+}
+
+.draw-board-record-number {
+  display: block;
+  color: #fff;
+  font-size: 1.625em; /* 26px */
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.draw-board-record-zodiac {
+  flex: 1 1 auto;
+  display: block;
+  background: #fff;
+  color: #000;
+  font-size: 1.375em; /* 22px */
+  font-weight: 400;
+  line-height: 1.15;
+}
+
+.draw-board-record-refresh {
+  flex: 0 0 1.1875em; /* 19px */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #333;
+  border-right: 0;
+  background: #ffff00;
+}
+
+.draw-board-record-refresh span {
+  color: #ff0000;
+  font-size: 1.25em; /* 20px */
+  font-weight: 700;
+  line-height: 1.05;
+  text-align: center;
+}
+
+/* ---------------- 四个彩种详情 ---------------- */
+
+.draw-board-main {
+  padding-top: 1.375em;
+  border-top: 1px solid var(--draw-board-border);
+}
+
+.draw-board-status {
+  margin: 0.5em 0.3125em;
+  font-size: 1.375em;
+  text-align: center;
+  color: #666;
+}
+
+.draw-board-status.is-error {
+  color: #ef4444;
+}
+
+.draw-board-status.is-stale {
+  color: #d97706;
+}
+
+.draw-board-panel {
+  padding: 0 0.3125em; /* 5px */
+}
+
+.draw-board-panel:last-child {
+  padding-bottom: 0.5em;
+}
+
+.draw-board-panel + .draw-board-panel {
+  border-top: 1px dashed #cccccc;
+}
+
+.draw-board-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25em;
+  padding: 0.625em 0 0.375em;
+}
+
+.draw-board-panel-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 1.46875em; /* 23.5px */
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.draw-board-issue {
+  color: #ff0000;
+}
+
+.draw-board-panel-countdown {
+  flex: 0 0 auto;
+  font-size: 1.46875em; /* 23.5px */
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.draw-board-panel-balls {
+  display: flex;
+  align-items: stretch;
+  gap: 0.375em; /* 6px */
+  padding-bottom: 0.5em;
+}
+
+.draw-board-ball {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 5.1875em; /* 83px */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375em; /* 6px */
+}
+
+.draw-board-ball-code {
+  color: #fff;
+  font-family: Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 2.9375em; /* 47px */
+  font-weight: 900;
+  line-height: 1;
+}
+
+.draw-board-ball-tag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.25em; /* 4px */
+  padding: 0 0.5em; /* 8px */
+  height: 1.75em; /* 28px */
+  border-radius: 0.25em; /* 4px */
+  background: #fff;
+  color: #333;
+  font-size: 1em; /* 16px，仅用于盒子尺寸 */
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.draw-board-ball-tag span {
+  font-size: 1.1875em; /* 19px */
+  font-weight: 400;
+  line-height: 1.1;
+}
+
+.draw-board-ball-plus {
+  flex: 0 0 2.125em; /* 34px */
+  align-self: center;
+  color: #333;
+  text-align: center;
+}
+
+.draw-board-ball-plus span {
+  font-size: 2.875em; /* 46px */
+  font-weight: 700;
+  line-height: 1;
+}
+
+.draw-board-panel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding-bottom: 0.625em;
+}
+
+.draw-board-panel-next {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 1.46875em; /* 23.5px */
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.draw-board-refresh {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1em;
+  padding: 0.1em 0.45em;
+  border: 0;
+  border-radius: 0.27em;
+  background: var(--draw-board-refresh);
+  color: #fff;
+  font-size: 1.375em; /* 22px */
+  font-weight: 700;
+  line-height: 1.15;
+  cursor: pointer;
+}
+
+.draw-board-refresh img {
+  width: 0.73em; /* 16px */
+  height: 0.73em;
+}
+
+.draw-board-refresh:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.draw-board-tab:focus-visible,
+.draw-board-refresh:focus-visible {
+  outline: 2px solid #145ca8;
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .draw-board-tabs {
+    gap: 4px;
+    padding: 4px 4px 0;
+  }
+
+  .draw-board-tab {
+    min-height: 44px;
+    height: auto;
+    gap: 4px;
+    padding: 4px 2px;
+    border-radius: 4px;
+    white-space: normal;
+  }
+
+  .draw-board-tab-label {
+    font-size: 12px;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .draw-board-tab-mark {
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
+  }
+
+  .draw-board-record {
+    padding-top: 10px;
+  }
+
+  .draw-board-record-head {
+    flex-basis: 78px;
+  }
+
+  .draw-board-record-issue {
+    max-width: 100%;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+    text-align: center;
+  }
+
+  .draw-board-record-badge {
+    font-size: 12px;
+  }
+
+  .draw-board-record-number {
+    font-size: 16px;
+  }
+
+  .draw-board-record-zodiac {
+    font-size: 12px;
+  }
+
+  .draw-board-record-refresh {
+    flex-basis: 18px;
+  }
+
+  .draw-board-record-refresh span {
+    font-size: 12px;
+  }
+
+  .draw-board-main {
+    padding-top: 8px;
+  }
+
+  .draw-board-status {
+    font-size: 14px;
+  }
+
+  .draw-board-panel-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 8px 0 6px;
+  }
+
+  .draw-board-panel-title,
+  .draw-board-panel-countdown {
+    position: static;
+    font-size: 14px;
+  }
+
+  .draw-board-panel-title {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .draw-board-panel-countdown {
+    flex: 0 0 auto;
+    text-align: right;
+  }
+
+  .draw-board-panel-balls {
+    gap: 3px;
+  }
+
+  .draw-board-ball {
+    height: 64px;
+    border-radius: 4px;
+  }
+
+  .draw-board-ball-code {
+    font-size: 20px;
+  }
+
+  .draw-board-ball-tag span {
+    font-size: 12px;
+  }
+
+  .draw-board-ball-plus {
+    flex-basis: 16px;
+  }
+
+  .draw-board-ball-plus span {
+    font-size: 22px;
+  }
+
+  .draw-board-panel-foot {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .draw-board-panel-next {
+    font-size: 13px;
+    white-space: normal;
+  }
+
+  .draw-board-refresh {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 13px;
+  }
+}

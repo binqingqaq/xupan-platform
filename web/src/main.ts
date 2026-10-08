@@ -24,7 +24,7 @@ import { adminRoutes } from './adminRoutes'
 import { getAuthAudience, restoreSession, subscribeAuthState } from './api'
 import { authEntryForRoute, loginPathForRoute, resolveRouteGuardDecision, type AuthEntry } from './consoleScope'
 import './styles.css'
-import './styles/display-mobile-home.css'
+import './styles/display-draw-board.css'
 import './styles/admin-retro.css'
 
 declare module 'vue-router' {
@@ -46,7 +46,7 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/room' },
     { path: '/display', redirect: '/display/mobile' },
-    { path: '/display/mobile', component: () => import('./views/DisplayMobileHome.vue'), meta: { title: '168开奖网移动端首页' } },
+    { path: '/display/mobile', component: () => import('./views/DisplayDrawBoard.vue'), meta: { title: '开奖首页' } },
     { path: '/login', component: LoginView, meta: { title: 'AI模型房间管理' } },
     { path: '/platform-admin/login', component: PlatformAdminLoginView, meta: { title: 'XUPAN 超级管理后台' } },
     { path: '/platform-admin', component: PlatformAdminHome, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_HOME_READ', title: 'XUPAN 超级管理后台' } },
