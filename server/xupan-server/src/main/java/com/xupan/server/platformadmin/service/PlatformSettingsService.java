@@ -25,10 +25,13 @@ public class PlatformSettingsService {
 
     private final JdbcTemplate jdbc;
     private final PermissionService permissionService;
+    private final AccountPurgeService accountPurgeService;
 
-    public PlatformSettingsService(JdbcTemplate jdbc, PermissionService permissionService) {
+    public PlatformSettingsService(JdbcTemplate jdbc, PermissionService permissionService,
+                                   AccountPurgeService accountPurgeService) {
         this.jdbc = jdbc;
         this.permissionService = permissionService;
+        this.accountPurgeService = accountPurgeService;
     }
 
     @Transactional(readOnly = true)
@@ -84,54 +87,22 @@ public class PlatformSettingsService {
         return new DeleteAllAccountsResult(true, counts, "预检完成");
     }
 
+    /**
+     * 删除全量账号：**物理删除**（对齐 BY220 {@code Gd.php::userDels}）。
+     *
+     * <p>BY220 该操作直接 {@code DELETE x_admin}（保留根管理员）、{@code x_robot}（保留平台直属主机器）、
+     * {@code x_rbuser}（全部玩家/托）与 {@code x_rbfly}；使用者 2026-10-03 确认本项目同样不保留，
+     * 因此这里改为物理删除（软删除会永久占用登录名并持续干扰列表与报表）。</p>
+     */
     @Transactional
     public DeleteAllAccountsResult deleteAllAccounts(String confirm, long operator) {
         requirePermission(operator, WRITE_PERMISSION);
         requireDeleteAllAccountsConfirm(confirm);
         DeleteAllAccountsCounts counts = deleteAllAccountsCounts();
-        Instant now = Instant.now();
-        Timestamp revokedAt = Timestamp.from(now);
-
-        jdbc.update("""
-                UPDATE agent_group
-                   SET status='DISABLED', deleted_at=?, deleted_by=?, updated_at=?
-                 WHERE deleted_at IS NULL
-                """, revokedAt, operator, revokedAt);
-        jdbc.update("""
-                UPDATE agent
-                   SET status='DISABLED', board_open=FALSE, deleted_at=?, deleted_by=?, updated_at=?,
-                       -- 原则 8：全量删除同样释放上游账号占用并清掉飞单密码密文
-                       report_username=NULL, report_password_ciphertext=NULL, report_online=FALSE
-                 WHERE system_owned=FALSE AND deleted_at IS NULL
-                """, revokedAt, operator, revokedAt);
-        jdbc.update("""
-                UPDATE demo_user_account
-                   SET status='DELETED', updated_at=?
-                 WHERE status <> 'DELETED'
-                """, revokedAt);
-        jdbc.update("""
-                UPDATE sys_user
-                   SET status='DELETED', failed_login_count=0, locked_until=NULL,
-                       security_version=security_version + 1, updated_at=?
-                 WHERE id <> ?
-                   AND id NOT IN (
-                       SELECT account_user_id FROM agent
-                        WHERE system_owned=TRUE AND account_user_id IS NOT NULL
-                   )
-                """, revokedAt, operator);
-        jdbc.update("""
-                UPDATE auth_session
-                   SET revoked_at=?, last_seen_at=COALESCE(last_seen_at, ?)
-                 WHERE revoked_at IS NULL
-                   AND user_id <> ?
-                   AND user_id NOT IN (
-                       SELECT account_user_id FROM agent
-                        WHERE system_owned=TRUE AND account_user_id IS NOT NULL
-                   )
-                """, revokedAt, revokedAt, operator);
+        accountPurgeService.purgeEverythingExcept(operator);
         auditDeleteAllAccounts(operator, counts);
         return new DeleteAllAccountsResult(false, counts,
-                "已软删除子账号 " + counts.admins() + " 个，机器 " + counts.robots()
+                "已删除子账号 " + counts.admins() + " 个，机器 " + counts.robots()
                         + " 个，玩家/托 " + counts.players() + " 个");
     }
 
@@ -212,15 +183,16 @@ public class PlatformSettingsService {
                 "已清理 " + cutoff + " 之前的数据，共 " + deleted + " 条");
     }
 
+    /**
+     * 预检计数：物理删除会把所有人删掉，所以这里统计的是**当前全部**实体，不再排除已软删除的行
+     * （历史软删除残留同样会被清掉）。
+     */
     private DeleteAllAccountsCounts deleteAllAccountsCounts() {
         return new DeleteAllAccountsCounts(
-                count("SELECT COUNT(*) FROM agent_group WHERE deleted_at IS NULL"),
-                count("SELECT COUNT(*) FROM agent WHERE system_owned=FALSE AND deleted_at IS NULL"),
-                count("SELECT COUNT(*) FROM demo_user_account WHERE status <> 'DELETED'"),
-                count("""
-                        SELECT COUNT(*) FROM agent_group
-                         WHERE deleted_at IS NULL AND report_username IS NOT NULL
-                        """));
+                count("SELECT COUNT(*) FROM agent_group"),
+                count("SELECT COUNT(*) FROM agent WHERE system_owned = FALSE"),
+                count("SELECT COUNT(*) FROM demo_user_account"),
+                count("SELECT COUNT(*) FROM agent_group WHERE report_username IS NOT NULL"));
     }
 
     private long count(String sql, Object... args) {

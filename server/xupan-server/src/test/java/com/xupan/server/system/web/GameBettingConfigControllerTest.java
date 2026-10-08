@@ -1,6 +1,7 @@
 package com.xupan.server.system.web;
 
 import com.jayway.jsonpath.JsonPath;
+import com.xupan.server.agent.service.AgentAdminService;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import org.junit.jupiter.api.AfterEach;
@@ -22,6 +23,18 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * 全局赔率/限额配置（{@code /api/admin/player-desk/betting-config}）的读写。
+ *
+ * <p>阶段 3（严格对齐 BY220，2026-10-08 使用者拍板）之后的**真实权限形状**：
+ * {@code /api/admin/player-desk/**} 只认机器账号（{@code PERM_AGENT_CONSOLE_READ}），
+ * 因此本端点<b>读</b>只能由机器账号发起（平台账号 403）；
+ * <b>写</b>仍由既有的 {@code PUT .../betting-config/**} → {@code PERM_USER_MANAGE} 规则把守
+ * （该规则不能删：{@code GameBettingConfigService} 没有权限校验，删掉会让机器账号能改全局赔率/限额）。</p>
+ *
+ * <p>因此本类用**机器账号读、平台管理员写**来验证同一份持久化事实；
+ * 这种"写读不同身份"的不对称正是该端点归属不清的证据，平台侧若确需读写应另开端点（见 SecurityConfig 注释）。</p>
+ */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -29,6 +42,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class GameBettingConfigControllerTest {
 
     private static final String USERNAME = "betting-config-admin";
+    private static final String MACHINE_USER = "betting-config-machine";
+    private static final String MACHINE_CODE = "BETTINGCONFIG_MACHINE";
     private static final String PASSWORD = "BettingConfig123";
 
     @Autowired
@@ -43,7 +58,11 @@ class GameBettingConfigControllerTest {
     @Autowired
     private PasswordPolicyService passwordPolicy;
 
+    @Autowired
+    private AgentAdminService agentAdminService;
+
     private String token;
+    private String machineToken;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -52,7 +71,9 @@ class GameBettingConfigControllerTest {
         long userId = userRepository.insert(USERNAME, "限额配置管理员",
                 passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(userId, "ADMIN");
+        agentAdminService.createAgent(MACHINE_CODE, MACHINE_USER, "限额配置机器", PASSWORD, null, userId);
         token = login();
+        machineToken = login(MACHINE_USER);
     }
 
     @AfterEach
@@ -63,8 +84,9 @@ class GameBettingConfigControllerTest {
 
     @Test
     void returnsPersistedDisplayValuesAndLimits() throws Exception {
+        // 读只允许机器账号（阶段 3：player-desk 仅机器账号）
         mockMvc.perform(get("/api/admin/player-desk/betting-config")
-                        .header("Authorization", bearer(token)))
+                        .header("Authorization", bearer(machineToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.displayOdds").value(95))
                 .andExpect(jsonPath("$.specialOdds").value(18.0))
@@ -72,10 +94,16 @@ class GameBettingConfigControllerTest {
                 .andExpect(jsonPath("$.playerMaxStake").value(5001))
                 .andExpect(jsonPath("$.playerMinStake").value(1))
                 .andExpect(jsonPath("$.specialLimit").value(200));
+
+        // 平台管理员读同一条路径 → 403（"超管不碰玩家"在服务端成立）
+        mockMvc.perform(get("/api/admin/player-desk/betting-config")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isForbidden());
     }
 
     @Test
     void savesDisplayValuesAndRejectsInvalidSpecialOdds() throws Exception {
+        // 写仍由平台管理员执行（既有 PUT 规则），读回用机器账号
         mockMvc.perform(put("/api/admin/player-desk/betting-config/display")
                         .header("Authorization", bearer(token))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -86,7 +114,7 @@ class GameBettingConfigControllerTest {
                 .andExpect(jsonPath("$.specialRebate").value(2));
 
         mockMvc.perform(get("/api/admin/player-desk/betting-config")
-                        .header("Authorization", bearer(token)))
+                        .header("Authorization", bearer(machineToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.displayOdds").value(96))
                 .andExpect(jsonPath("$.specialRebate").value(2));
@@ -145,7 +173,7 @@ class GameBettingConfigControllerTest {
                 .andExpect(jsonPath("$.code").value("BETTING_CONFIG_INVALID"));
 
         mockMvc.perform(get("/api/admin/player-desk/betting-config")
-                        .header("Authorization", bearer(token)))
+                        .header("Authorization", bearer(machineToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerMinStake").value(2));
     }
@@ -157,9 +185,13 @@ class GameBettingConfigControllerTest {
     }
 
     private String login() throws Exception {
+        return login(USERNAME);
+    }
+
+    private String login(String username) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"username\":\"" + USERNAME + "\",\"password\":\"" + PASSWORD + "\"}"))
+                        .content("{\"username\":\"" + username + "\",\"password\":\"" + PASSWORD + "\"}"))
                 .andExpect(status().isOk()).andReturn();
         return JsonPath.read(result.getResponse().getContentAsString(), "$.accessToken");
     }
@@ -180,12 +212,16 @@ class GameBettingConfigControllerTest {
 
     private void clean() {
         jdbc.update("DELETE FROM auth_session WHERE user_id IN "
-                + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);
-        jdbc.update("DELETE FROM sys_login_log WHERE username_snapshot = ?", USERNAME);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?))", USERNAME, MACHINE_USER);
+        jdbc.update("DELETE FROM sys_login_log WHERE username_snapshot IN (?, ?)", USERNAME, MACHINE_USER);
         jdbc.update("DELETE FROM sys_operation_log");
+        // demo_user_account.agent_id → agent 外键：本用例没有玩家账号，但顺序仍按"机器先于用户"处理
+        jdbc.update("DELETE FROM agent_game WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
         jdbc.update("DELETE FROM sys_user_role WHERE user_id IN "
-                + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);
-        jdbc.update("DELETE FROM sys_user WHERE username = ?", USERNAME);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?))", USERNAME, MACHINE_USER);
+        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?)", USERNAME, MACHINE_USER);
     }
 
     private static String bearer(String value) {

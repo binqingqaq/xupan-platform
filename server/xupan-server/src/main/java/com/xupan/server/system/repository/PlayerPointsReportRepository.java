@@ -56,9 +56,12 @@ public class PlayerPointsReportRepository {
 
     public List<BetEvent> findBetEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
                                         int perPlayerLimit, Scope scope) {
-        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive),
-                perPlayerLimit));
+        // 参数顺序必须与 SQL 里的占位符顺序一致：player_kind → 日期窗口 → 范围(agent_id) → row_no。
+        // 旧写法把 perPlayerLimit 放在范围参数**之前**，GLOBAL 范围（无 agent_id 占位符）时看不出问题，
+        // 但 MACHINE/GROUP 范围下会把 perPlayerLimit 绑到 agent_id、把 agentId 绑到 row_no，报表直接查空。
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive)));
         args.addAll(scope.agentIdParameters());
+        args.add(perPlayerLimit);
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.bet_code, x.issue_number, x.ball_number, x.play_type,
                        x.parameters_text, x.stake, x.odds_snapshot, x.settlement_status,
@@ -95,9 +98,10 @@ public class PlayerPointsReportRepository {
 
     public List<LedgerEvent> findLedgerEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
                                                int perPlayerLimit, Scope scope) {
-        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive),
-                perPlayerLimit));
+        // 同上：范围参数必须排在 row_no 之前，否则非 GLOBAL 范围下参数错位。
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive)));
         args.addAll(scope.agentIdParameters());
+        args.add(perPlayerLimit);
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.operation_type, x.amount, x.balance_before,
                        x.balance_after, x.operator_user_id, x.operator_name, x.idempotency_key,
@@ -134,9 +138,10 @@ public class PlayerPointsReportRepository {
 
     public List<ActionEvent> findActionEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
                                                int perPlayerLimit, Scope scope) {
-        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive),
-                perPlayerLimit));
+        // 同上：范围参数必须排在 row_no 之前，否则非 GLOBAL 范围下参数错位。
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive)));
         args.addAll(scope.agentIdParameters());
+        args.add(perPlayerLimit);
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.issue_number, x.action_no, x.action_type,
                        x.source_text, x.status, x.attempts, x.error_code, x.error_message,

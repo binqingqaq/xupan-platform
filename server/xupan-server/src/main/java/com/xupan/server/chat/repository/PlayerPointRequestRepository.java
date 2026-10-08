@@ -19,6 +19,21 @@ public class PlayerPointRequestRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /**
+     * 下分申请**预扣**流水的幂等键（BY220 {@code common.php:1874-1876} 的 {@code setDec}）。
+     *
+     * <p>键绑定申请编号，因此"客户端消息重发 / 创建流程重试"只会命中同一幂等键重放，
+     * 不会第二次扣玩家余额（表级 {@code uk_demo_balance_ledger_idempotency} 兜底）。</p>
+     */
+    public static String holdIdempotencyKey(long requestId) {
+        return "POINT-REQUEST-HOLD:" + requestId;
+    }
+
+    /** 下分申请**拒绝退回**流水的幂等键（BY220 {@code rbt/controller/Index.php:312-314} 的 {@code setInc}）。 */
+    public static String refundIdempotencyKey(long requestId) {
+        return "POINT-REQUEST-REFUND:" + requestId;
+    }
+
     public Request insertPending(long userId, String requestType, BigDecimal amount,
                                  String clientMessageId, long sourceMessageId, Instant requestedAt) {
         try {

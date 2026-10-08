@@ -3,11 +3,15 @@ package com.xupan.server.center.service;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
 import com.xupan.server.web.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -33,7 +37,9 @@ import java.util.Optional;
 @Service
 public class CenterOrderService {
 
-    /** 单笔上限与单期敞口上限（中心侧风控，虚拟积分）。 */
+    private static final Logger log = LoggerFactory.getLogger(CenterOrderService.class);
+
+    /** 单笔上限与单期敞口上限的**全局默认值**（代理级未配置时使用；虚拟积分）。 */
     private static final BigDecimal MAX_SINGLE_AMOUNT = new BigDecimal("100000.00");
     private static final BigDecimal MAX_ISSUE_EXPOSURE = new BigDecimal("500000.00");
     /**
@@ -54,13 +60,20 @@ public class CenterOrderService {
     private final CenterOrderRepository orderRepository;
     private final CenterAgentService agentService;
     private final CenterTokenService tokenService;
+    /** 异常行为识别的滚动窗口与命中阈值（P1-C1）。窗口为 0 或阈值 <= 0 时关闭该规则。 */
+    private final Duration behaviorWindow;
+    private final int behaviorHitThreshold;
 
     public CenterOrderService(CenterAgentRepository agentRepository, CenterOrderRepository orderRepository,
-                              CenterAgentService agentService, CenterTokenService tokenService) {
+                              CenterAgentService agentService, CenterTokenService tokenService,
+                              @Value("${xupan.center.risk.behavior-window:10m}") Duration behaviorWindow,
+                              @Value("${xupan.center.risk.behavior-hit-threshold:30}") int behaviorHitThreshold) {
         this.agentRepository = agentRepository;
         this.orderRepository = orderRepository;
         this.agentService = agentService;
         this.tokenService = tokenService;
+        this.behaviorWindow = behaviorWindow == null || behaviorWindow.isNegative() ? Duration.ZERO : behaviorWindow;
+        this.behaviorHitThreshold = behaviorHitThreshold;
     }
 
     /**
@@ -121,6 +134,7 @@ public class CenterOrderService {
             long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
                     issueNumber, playType, playText, odds, amount, "REJECTED", rejectCode,
                     rejectReason(rejectCode), BigDecimal.ZERO, null);
+            recordRiskHit(agent, rejectCode, gameCode, issueNumber, agentOrderNo, amount);
             return new Accepted(id, "REJECTED", rejectCode, rejectReason(rejectCode), false, BigDecimal.ZERO);
         }
 
@@ -130,8 +144,19 @@ public class CenterOrderService {
             long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
                     issueNumber, playType, playText, odds, amount, "REJECTED", "CENTER_AVAILABLE_INSUFFICIENT",
                     rejectReason("CENTER_AVAILABLE_INSUFFICIENT"), BigDecimal.ZERO, null);
+            recordRiskHit(agent, "CENTER_AVAILABLE_INSUFFICIENT", gameCode, issueNumber, agentOrderNo, amount);
             return new Accepted(id, "REJECTED", "CENTER_AVAILABLE_INSUFFICIENT",
                     rejectReason("CENTER_AVAILABLE_INSUFFICIENT"), false, BigDecimal.ZERO);
+        }
+
+        // 异常行为识别（P1-C1）：短时高频试探。放在最后一道，避免对正常单产生额外查询开销。
+        String behaviorCode = detectAbnormalBehavior(agent, agentOrderNo);
+        if (behaviorCode != null) {
+            long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
+                    issueNumber, playType, playText, odds, amount, "REJECTED", behaviorCode,
+                    rejectReason(behaviorCode), BigDecimal.ZERO, null);
+            recordRiskHit(agent, behaviorCode, gameCode, issueNumber, agentOrderNo, amount);
+            return new Accepted(id, "REJECTED", behaviorCode, rejectReason(behaviorCode), false, BigDecimal.ZERO);
         }
 
         Instant now = Instant.now();
@@ -148,6 +173,154 @@ public class CenterOrderService {
                 "接单冻结：期号 " + issueNumber, "CENTER_ORDER", Long.toString(id),
                 "CENTER-FREEZE-IN-" + id, null);
         return new Accepted(id, "ACCEPTED", null, null, false, normalizedAmount);
+    }
+
+    /**
+     * 处置一笔中心订单（C-2 / C-3）：把"状态未知"或需要人工介入的订单明确落到终态。
+     *
+     * <p>这是需求 §12.3「超时不算失败」在中心侧的落地。阶段 B 只有自动流转，
+     * 超时单会永远挂着；本方法提供四个明确动作：</p>
+     *
+     * <table>
+     *   <tr><td>{@code CONFIRM_ACCEPTED}</td><td>TIMEOUT/PENDING → ACCEPTED</td>
+     *       <td>查证后确认其实已受理，冻结额度保持占用</td></tr>
+     *   <tr><td>{@code CONFIRM_FAILED}</td><td>TIMEOUT/PENDING → REJECTED</td>
+     *       <td>查证后确认未受理，**不退款**（没有占用过额度）</td></tr>
+     *   <tr><td>{@code REFUND}</td><td>ACCEPTED → REFUNDED</td>
+     *       <td>已受理但要退回：冻结额度退回可用额度</td></tr>
+     *   <tr><td>{@code CANCEL}</td><td>ACCEPTED → CANCELLED</td>
+     *       <td>流局/取消：冻结额度退回可用额度</td></tr>
+     * </table>
+     *
+     * <p><b>幂等</b>：处置流水以 {@code idempotencyKey} 唯一。重复提交同一键直接回放首次结果，
+     * 不会二次改状态、更不会二次退额度。</p>
+     *
+     * <p><b>额度回流一律走账本</b>：冻结 → 可用的两层各写一条流水，保证
+     * {@code countInconsistentBuckets} 始终为 0。</p>
+     */
+    @Transactional
+    public DispositionResult dispose(long centerOrderId, String action, String reason,
+                                     String idempotencyKey, Long operatorUserId) {
+        if (action == null || action.isBlank()) {
+            throw BusinessException.badRequest("CENTER_DISPOSITION_ACTION_REQUIRED", "处置动作不能为空");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw BusinessException.badRequest("CENTER_DISPOSITION_KEY_REQUIRED", "处置幂等键不能为空");
+        }
+        String normalizedAction = action.trim().toUpperCase(java.util.Locale.ROOT);
+
+        // 幂等：同一幂等键只生效一次
+        Optional<CenterOrderRepository.DispositionRow> existing =
+                orderRepository.findDispositionByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            CenterOrderRepository.DispositionRow row = existing.get();
+            CenterOrderRepository.OrderRow order = orderRepository.findById(row.centerOrderId())
+                    .orElseThrow(() -> BusinessException.notFound("CENTER_ORDER_NOT_FOUND", "中心订单不存在"));
+            return new DispositionResult(row.centerOrderId(), order.status(), row.action(),
+                    row.amount(), order.settleAmount(), true);
+        }
+
+        CenterOrderRepository.OrderRow order = orderRepository.findById(centerOrderId)
+                .orElseThrow(() -> BusinessException.notFound("CENTER_ORDER_NOT_FOUND", "中心订单不存在"));
+        String from = order.status();
+
+        return switch (normalizedAction) {
+            case "CONFIRM_ACCEPTED" -> confirmAccepted(order, from, reason, idempotencyKey, operatorUserId);
+            case "CONFIRM_FAILED" -> confirmFailed(order, from, reason, idempotencyKey, operatorUserId);
+            case "REFUND" -> releaseWithStatus(order, from, "REFUNDED", "REFUND", reason,
+                    idempotencyKey, operatorUserId);
+            case "CANCEL" -> releaseWithStatus(order, from, "CANCELLED", "CANCEL", reason,
+                    idempotencyKey, operatorUserId);
+            default -> throw BusinessException.badRequest("CENTER_DISPOSITION_ACTION_INVALID",
+                    "处置动作必须是 CONFIRM_ACCEPTED / CONFIRM_FAILED / REFUND / CANCEL");
+        };
+    }
+
+    /** 查证后确认已受理：TIMEOUT/PENDING → ACCEPTED，额度保持冻结占用。 */
+    private DispositionResult confirmAccepted(CenterOrderRepository.OrderRow order, String from, String reason,
+                                              String idempotencyKey, Long operatorUserId) {
+        if (!List.of("TIMEOUT", "PENDING").contains(from)) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_STATUS_INVALID",
+                    "只有待处理或超时的订单才能确认受理，当前状态：" + from);
+        }
+        agentRepository.lockById(order.centerAgentId());
+        int updated = orderRepository.updateStatus(order.id(), "ACCEPTED", List.of("TIMEOUT", "PENDING"));
+        if (updated == 0) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_CONFLICT", "订单状态已变化，请刷新后重试");
+        }
+        orderRepository.insertDisposition(order.id(), "CONFIRM_ACCEPTED", from, "ACCEPTED",
+                BigDecimal.ZERO.setScale(2), reason, idempotencyKey, operatorUserId);
+        // 确认受理意味着这笔本来没有占用额度的订单现在要占用：可用 → 冻结。
+        BigDecimal amount = order.amount();
+        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
+                CenterAgentService.TYPE_BET_FREEZE, "OUT", amount,
+                "人工确认受理：订单 " + order.id(), "CENTER_ORDER", Long.toString(order.id()),
+                "CENTER-CONFIRM-FREEZE-OUT-" + order.id(), operatorUserId);
+        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
+                CenterAgentService.TYPE_BET_FREEZE, "IN", amount,
+                "人工确认受理：订单 " + order.id(), "CENTER_ORDER", Long.toString(order.id()),
+                "CENTER-CONFIRM-FREEZE-IN-" + order.id(), operatorUserId);
+        return new DispositionResult(order.id(), "ACCEPTED", "CONFIRM_ACCEPTED", amount, null, false);
+    }
+
+    /** 查证后确认未受理：TIMEOUT/PENDING → REJECTED。未占用过额度，因此**不退款**。 */
+    private DispositionResult confirmFailed(CenterOrderRepository.OrderRow order, String from, String reason,
+                                            String idempotencyKey, Long operatorUserId) {
+        if (!List.of("TIMEOUT", "PENDING").contains(from)) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_STATUS_INVALID",
+                    "只有待处理或超时的订单才能确认失败，当前状态：" + from);
+        }
+        int updated = orderRepository.updateStatus(order.id(), "REJECTED", List.of("TIMEOUT", "PENDING"));
+        if (updated == 0) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_CONFLICT", "订单状态已变化，请刷新后重试");
+        }
+        orderRepository.insertDisposition(order.id(), "CONFIRM_FAILED", from, "REJECTED",
+                BigDecimal.ZERO.setScale(2), reason, idempotencyKey, operatorUserId);
+        return new DispositionResult(order.id(), "REJECTED", "CONFIRM_FAILED", BigDecimal.ZERO.setScale(2),
+                null, false);
+    }
+
+    /** 已受理订单的退款/撤单：冻结额度退回可用额度，状态落 REFUNDED 或 CANCELLED。 */
+    private DispositionResult releaseWithStatus(CenterOrderRepository.OrderRow order, String from,
+                                                String toStatus, String action, String reason,
+                                                String idempotencyKey, Long operatorUserId) {
+        if (!"ACCEPTED".equals(from)) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_STATUS_INVALID",
+                    "只有已受理的订单才能" + ("REFUND".equals(action) ? "退款" : "撤单") + "，当前状态：" + from);
+        }
+        agentRepository.lockById(order.centerAgentId());
+        int updated = orderRepository.updateStatus(order.id(), toStatus, List.of("ACCEPTED"));
+        if (updated == 0) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_CONFLICT", "订单状态已变化，请刷新后重试");
+        }
+        BigDecimal amount = order.frozenAmount();
+        orderRepository.insertDisposition(order.id(), action, from, toStatus, amount, reason,
+                idempotencyKey, operatorUserId);
+        if (amount.signum() > 0) {
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
+                    CenterAgentService.TYPE_BET_UNFREEZE, "OUT", amount,
+                    ("REFUND".equals(action) ? "订单退款：" : "订单撤单：") + order.id(),
+                    "CENTER_ORDER", Long.toString(order.id()),
+                    "CENTER-" + action + "-OUT-" + order.id(), operatorUserId);
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
+                    CenterAgentService.TYPE_BET_UNFREEZE, "IN", amount,
+                    ("REFUND".equals(action) ? "订单退款：" : "订单撤单：") + order.id(),
+                    "CENTER_ORDER", Long.toString(order.id()),
+                    "CENTER-" + action + "-IN-" + order.id(), operatorUserId);
+        }
+        return new DispositionResult(order.id(), toStatus, action, amount, order.settleAmount(), false);
+    }
+
+    /** 某笔中心订单的处置历史。 */
+    @Transactional(readOnly = true)
+    public List<CenterOrderRepository.DispositionRow> dispositionHistory(long centerOrderId) {
+        return orderRepository.findDispositions(centerOrderId);
+    }
+
+    /** 需要人工处置的订单（{@code TIMEOUT} / {@code PENDING}）。 */
+    @Transactional(readOnly = true)
+    public List<CenterOrderRepository.OrderRow> pendingDispositions(int limit) {
+        return orderRepository.findByStatuses(List.of("TIMEOUT", "PENDING"), limit);
     }
 
     /**
@@ -193,6 +366,10 @@ public class CenterOrderService {
      * 接单校验：返回 {@code null} 表示通过，否则返回拒绝码。
      *
      * <p>顺序按"越便宜越先判"：格式 → 玩法 → 金额 → 赔率 → 敞口。</p>
+     *
+     * <p><b>限额取代理级优先、全局兜底</b>（P1-C1）：{@code center_agent.max_single_amount}
+     * 与 {@code max_issue_exposure} 为 {@code null} 时才用全局常量。这样既支持按代理差异化管理，
+     * 又保持与阶段 B 完全兼容（存量代理两列为 NULL，行为不变）。</p>
      */
     private String validate(CenterAgentRepository.AgentRow agent, String gameCode, String issueNumber,
                             String playType, BigDecimal odds, BigDecimal amount) {
@@ -209,17 +386,70 @@ public class CenterOrderService {
             return "CENTER_AMOUNT_INVALID";
         }
         BigDecimal normalizedAmount = amount.setScale(2, RoundingMode.HALF_UP);
-        if (normalizedAmount.compareTo(MAX_SINGLE_AMOUNT) > 0) {
+        BigDecimal singleLimit = agent.maxSingleAmount() != null ? agent.maxSingleAmount() : MAX_SINGLE_AMOUNT;
+        if (normalizedAmount.compareTo(singleLimit) > 0) {
             return "CENTER_AMOUNT_LIMIT_EXCEEDED";
         }
         if (odds == null || odds.signum() <= 0) {
             return "CENTER_ODDS_INVALID";
         }
+        BigDecimal exposureLimit =
+                agent.maxIssueExposure() != null ? agent.maxIssueExposure() : MAX_ISSUE_EXPOSURE;
         BigDecimal exposure = orderRepository.acceptedExposure(agent.id(), gameCode, issueNumber.trim());
-        if (exposure.add(normalizedAmount).compareTo(MAX_ISSUE_EXPOSURE) > 0) {
+        if (exposure.add(normalizedAmount).compareTo(exposureLimit) > 0) {
             return "CENTER_ISSUE_EXPOSURE_EXCEEDED";
         }
         return null;
+    }
+
+    /**
+     * 异常行为识别（P1-C1）：短时高频被拒。
+     *
+     * <p>为什么用"被拒次数"而不是"下单次数"：正常代理下单不会频繁被拒；
+     * 短时间内反复撞限额/敞口/额度，是"试探系统边界"的典型信号。
+     * 这里用滚动窗口内的命中次数做判定，阈值可配。</p>
+     *
+     * @return 命中时返回拒绝码，否则 {@code null}
+     */
+    private String detectAbnormalBehavior(CenterAgentRepository.AgentRow agent, String agentOrderNo) {
+        if (behaviorWindow.isZero() || behaviorHitThreshold <= 0) {
+            return null;
+        }
+        Instant since = Instant.now().minus(behaviorWindow);
+        long hits = agentRepository.countRiskHitsSince(agent.id(), since);
+        if (hits >= behaviorHitThreshold) {
+            log.warn("中心风控命中：短时高频试探 agentId={} hits={} window={} orderNo={}",
+                    agent.id(), hits, behaviorWindow, agentOrderNo);
+            return "CENTER_BEHAVIOR_RATE_ANOMALY";
+        }
+        return null;
+    }
+
+    /**
+     * 落一条风控命中记录。
+     *
+     * <p>记录**观测值与阈值**而不只是"被拒了"：事后复核时能直接回答"当时超了多少"，
+     * 否则只能靠猜。类别用于管理端分组统计。</p>
+     */
+    private void recordRiskHit(CenterAgentRepository.AgentRow agent, String ruleCode, String gameCode,
+                               String issueNumber, String agentOrderNo, BigDecimal amount) {
+        String category = switch (ruleCode) {
+            case "CENTER_AMOUNT_LIMIT_EXCEEDED", "CENTER_AMOUNT_INVALID" -> "LIMIT";
+            case "CENTER_ISSUE_EXPOSURE_EXCEEDED" -> "EXPOSURE";
+            case "CENTER_AVAILABLE_INSUFFICIENT" -> "ACCOUNT";
+            case "CENTER_BEHAVIOR_RATE_ANOMALY" -> "BEHAVIOR";
+            default -> "LIMIT";
+        };
+        BigDecimal threshold = switch (ruleCode) {
+            case "CENTER_AMOUNT_LIMIT_EXCEEDED" ->
+                    agent.maxSingleAmount() != null ? agent.maxSingleAmount() : MAX_SINGLE_AMOUNT;
+            case "CENTER_ISSUE_EXPOSURE_EXCEEDED" ->
+                    agent.maxIssueExposure() != null ? agent.maxIssueExposure() : MAX_ISSUE_EXPOSURE;
+            case "CENTER_AVAILABLE_INSUFFICIENT" -> agent.availableBalance();
+            default -> null;
+        };
+        agentRepository.recordRiskHit(agent.id(), ruleCode, category, amount, threshold,
+                gameCode, issueNumber, agentOrderNo, rejectReason(ruleCode));
     }
 
     private static String rejectReason(String code) {
@@ -232,6 +462,7 @@ public class CenterOrderService {
             case "CENTER_ODDS_INVALID" -> "赔率必须大于零";
             case "CENTER_ISSUE_EXPOSURE_EXCEEDED" -> "该期敞口超过中心上限";
             case "CENTER_AVAILABLE_INSUFFICIENT" -> "中心可用额度不足";
+            case "CENTER_BEHAVIOR_RATE_ANOMALY" -> "短时高频被拒，已触发异常行为风控";
             case "CENTER_AGENT_DISABLED" -> "中心代理已停用";
             default -> code;
         };
@@ -245,5 +476,10 @@ public class CenterOrderService {
     /** 受理结果。 */
     public record Accepted(long orderId, String status, String rejectCode, String rejectReason,
                            boolean duplicate, BigDecimal frozenAmount) {
+    }
+
+    /** 一次订单处置的结果。 */
+    public record DispositionResult(long orderId, String status, String action, BigDecimal frozenAmount,
+                                    BigDecimal settleAmount, boolean duplicate) {
     }
 }

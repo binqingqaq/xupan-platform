@@ -5,10 +5,12 @@ import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
+import com.xupan.server.center.repository.ReconciliationDispositionRepository;
 import com.xupan.server.center.service.CenterAgentService;
 import com.xupan.server.center.service.CenterOrderService;
 import com.xupan.server.center.service.CenterReconciliationService;
 import com.xupan.server.center.service.CenterSettlementService;
+import com.xupan.server.center.service.ReconciliationDispositionService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.core.Authentication;
@@ -98,6 +100,129 @@ public class CenterAdminController {
                                               @Valid @RequestBody CenterCreditLimitRequest request) {
         service.setCreditLimit(id, request.creditLimit(), operator(authentication), request.idempotencyKey());
         return CenterAgentResponse.from(service.require(id));
+    }
+
+    /**
+     * 设定**代理级风控上限**（P1-C1）。传 {@code null} 表示回退到全局默认。
+     *
+     * <p>为什么需要：阶段 B 的限额是全局常量，一个代理就能吃掉整期敞口。</p>
+     */
+    @PatchMapping("/{id}/risk-limits")
+    public CenterAgentResponse setRiskLimits(Authentication authentication, @PathVariable long id,
+                                             @RequestBody CenterRiskLimitRequest request) {
+        return CenterAgentResponse.from(service.setRiskLimits(id, request.maxSingleAmount(),
+                request.maxIssueExposure(), operator(authentication)));
+    }
+
+    /** 某代理最近的风控命中记录（管理端"风险"页下钻）。 */
+    @GetMapping("/{id}/risk-hits")
+    public List<RiskHitView> riskHits(Authentication authentication, @PathVariable long id,
+                                      @RequestParam(defaultValue = "20") int limit) {
+        requireAgentManager(authentication);
+        if (limit < 1 || limit > 200) {
+            throw com.xupan.server.web.BusinessException.badRequest(
+                    "CENTER_RISK_QUERY_INVALID", "limit 必须为 1 到 200");
+        }
+        return service.recentRiskHits(id, limit).stream().map(RiskHitView::from).toList();
+    }
+
+    /** 全量风控命中按规则聚合（管理端"风险"页总览）。 */
+    @GetMapping("/risk-hits/summary")
+    public List<RiskRuleSummary> riskHitSummary(Authentication authentication,
+                                                @RequestParam(defaultValue = "1440") int windowMinutes) {
+        requireOrderReader(authentication);
+        if (windowMinutes < 1 || windowMinutes > 43200) {
+            throw com.xupan.server.web.BusinessException.badRequest(
+                    "CENTER_RISK_QUERY_INVALID", "windowMinutes 必须为 1 到 43200");
+        }
+        return service.riskHitSummary(java.time.Instant.now()
+                .minusSeconds(windowMinutes * 60L)).stream().map(RiskRuleSummary::from).toList();
+    }
+
+    // ---------------------------------------------------------------------
+    // C-2 / C-3：中心侧订单处置（超时确认、失败确认、退款、撤单）
+    // ---------------------------------------------------------------------
+
+    /**
+     * 处置一笔中心订单（C-2）：确认受理 / 确认失败 / 退款 / 撤销。
+     *
+     * <p>这是"超时不等于失败"（需求 §12.3）在中心侧的落地：超时单必须由人工查证后
+     * 明确落到某个终态，而不是永远挂着。每个动作都带幂等键与审计。</p>
+     */
+    @PostMapping("/orders/{orderId}/disposition")
+    public CenterOrderDispositionResponse dispose(Authentication authentication, @PathVariable long orderId,
+                                                  @Valid @RequestBody CenterOrderDispositionRequest request) {
+        CenterOrderService.DispositionResult result = orderService.dispose(orderId, request.action(),
+                request.reason(), request.idempotencyKey(), operator(authentication));
+        return new CenterOrderDispositionResponse(result.orderId(), result.status(), result.action(),
+                result.frozenAmount(), result.settleAmount(), result.duplicate());
+    }
+
+    /** 中心订单的处置历史（审计回查）。 */
+    @GetMapping("/orders/{orderId}/dispositions")
+    public List<CenterOrderDispositionView> dispositions(Authentication authentication,
+                                                         @PathVariable long orderId) {
+        requireOrderReader(authentication);
+        return orderService.dispositionHistory(orderId).stream()
+                .map(CenterOrderDispositionView::from).toList();
+    }
+
+    // ---------------------------------------------------------------------
+    // C-2 ② / C-4 ③：对账差异的处置与保留策略
+    // ---------------------------------------------------------------------
+
+    /**
+     * 处置一条对账差异。
+     *
+     * <p><b>只记录判断，不修复数据。</b>规划明确"差异应先人工确认再自动化"，
+     * 自动改账会在真相未明时改写账本事实（这比差异本身更危险）。</p>
+     */
+    @PostMapping("/reconciliation/dispositions")
+    public ReconciliationDispositionResponse disposeDifference(
+            Authentication authentication,
+            @Valid @RequestBody ReconciliationDispositionRequest request) {
+        requireOrderReader(authentication);
+        // missingInLocal 这类差异代表"同一注单在两侧金额/状态不一致"，因此必须带注单号。
+        // 注单号在两侧都是可核对的锚点（本地 bet_id ↔ 中心 agent_order_no = BET-<betId>）。
+        ReconciliationDispositionService.DispositionResult result =
+                reconciliationService.disposeDifference(request.differenceType(), request.betId(),
+                        request.resolution(), request.centerAgentId(), request.reason(),
+                        request.effectiveDays() == null ? null
+                                : java.time.Duration.ofDays(request.effectiveDays()),
+                        request.idempotencyKey(), operator(authentication));
+        return ReconciliationDispositionResponse.from(result);
+    }
+
+    /** 撤销一条差异处置：差异重新回到待处置列表，判断历史保留。 */
+    @PostMapping("/reconciliation/dispositions/{id}/revoke")
+    public ReconciliationDispositionResponse revokeDifferenceDisposition(
+            Authentication authentication, @PathVariable long id) {
+        requireOrderReader(authentication);
+        return ReconciliationDispositionResponse.from(
+                reconciliationService.revokeDifferenceDisposition(id, operator(authentication)));
+    }
+
+    /** 当前生效的差异处置列表。 */
+    @GetMapping("/reconciliation/dispositions")
+    public List<ReconciliationDispositionView> effectiveDispositions(
+            Authentication authentication, @RequestParam(defaultValue = "50") int limit) {
+        requireOrderReader(authentication);
+        return reconciliationService.effectiveDispositions(limit).stream()
+                .map(ReconciliationDispositionView::from).toList();
+    }
+
+    /**
+     * 保留策略观察值（C-4 ③）：生效中与已失效的处置记录数量。
+     *
+     * <p>处置记录**不自动删除**——它是"差异为什么被认可"的凭据。
+     * 本接口只用于运维判断归档时机。</p>
+     */
+    @GetMapping("/reconciliation/retention")
+    public ReconciliationRetentionResponse retention(Authentication authentication) {
+        requireOrderReader(authentication);
+        ReconciliationDispositionService.RetentionStats stats =
+                reconciliationService.retentionStats();
+        return new ReconciliationRetentionResponse(stats.effective(), stats.expired());
     }
 
     /**
@@ -213,6 +338,15 @@ public class CenterAdminController {
         return user.getUserId();
     }
 
+    /** 账户管理权限：{@code CENTER_AGENT_MANAGE}（风控配置等写操作）。 */
+    private void requireAgentManager(Authentication authentication) {
+        long operator = operator(authentication);
+        if (!permissionService.hasPermission(operator, "CENTER_AGENT_MANAGE")) {
+            throw com.xupan.server.web.BusinessException.forbidden("CENTER_AGENT_FORBIDDEN",
+                    "没有中心上游管理权限");
+        }
+    }
+
     public record CenterAgentRequest(@NotBlank String agentCode, @NotBlank String agentName,
                                      @NotBlank String upstreamAccount, BigDecimal creditLimit) {
     }
@@ -226,15 +360,100 @@ public class CenterAdminController {
     public record CenterCreditLimitRequest(BigDecimal creditLimit, @NotBlank String idempotencyKey) {
     }
 
+    /** 代理级风控上限；缺省或为 {@code null} 表示回退全局默认。 */
+    public record CenterRiskLimitRequest(BigDecimal maxSingleAmount, BigDecimal maxIssueExposure) {
+    }
+
+    /** 一次风控命中（管理端展示）。 */
+    public record RiskHitView(long id, String ruleCode, String ruleCategory, BigDecimal observedValue,
+                              BigDecimal thresholdValue, String gameCode, String issueNumber,
+                              String agentOrderNo, String detail, Instant createdAt) {
+        static RiskHitView from(CenterAgentRepository.RiskHitRow row) {
+            return new RiskHitView(row.id(), row.ruleCode(), row.ruleCategory(), row.observedValue(),
+                    row.thresholdValue(), row.gameCode(), row.issueNumber(), row.agentOrderNo(),
+                    row.detail(), row.createdAt());
+        }
+    }
+
+    /** 按规则聚合的风控命中。 */
+    public record RiskRuleSummary(String ruleCode, String ruleCategory, long hitCount, long agentCount) {
+        static RiskRuleSummary from(CenterAgentRepository.RiskRuleCount count) {
+            return new RiskRuleSummary(count.ruleCode(), count.ruleCategory(), count.hitCount(),
+                    count.agentCount());
+        }
+    }
+
+    /**
+     * 中心订单处置请求（C-2 / C-3）。
+     *
+     * <p>{@code action} 取值为 {@code CONFIRM_ACCEPTED} / {@code CONFIRM_FAILED} /
+     * {@code REFUND} / {@code CANCEL}，语义见 {@code CenterOrderService#dispose}。</p>
+     */
+    public record CenterOrderDispositionRequest(@NotBlank String action, String reason,
+                                                @NotBlank String idempotencyKey) {
+    }
+
+    public record CenterOrderDispositionResponse(long orderId, String status, String action,
+                                                 BigDecimal frozenAmount, BigDecimal settleAmount,
+                                                 boolean duplicate) {
+    }
+
+    public record CenterOrderDispositionView(long id, long centerOrderId, String action, String fromStatus,
+                                             String toStatus, BigDecimal amount, String reason,
+                                             Long operatorUserId, Instant createdAt) {
+        static CenterOrderDispositionView from(CenterOrderRepository.DispositionRow row) {
+            return new CenterOrderDispositionView(row.id(), row.centerOrderId(), row.action(),
+                    row.fromStatus(), row.toStatus(), row.amount(), row.reason(), row.operatorUserId(),
+                    row.createdAt());
+        }
+    }
+
+    /** 对账差异处置请求。{@code effectiveDays} 为空时用默认 7 天（到期后差异重新待处置）。 */
+    public record ReconciliationDispositionRequest(@NotBlank String differenceType, long betId,
+                                                   @NotBlank String resolution, Long centerAgentId,
+                                                   String reason, Integer effectiveDays,
+                                                   @NotBlank String idempotencyKey) {
+    }
+
+    public record ReconciliationDispositionResponse(long id, String differenceType, long betId,
+                                                    String resolution, String reason, Instant expiresAt,
+                                                    Instant revokedAt, boolean duplicate) {
+        static ReconciliationDispositionResponse from(
+                ReconciliationDispositionService.DispositionResult result) {
+            return new ReconciliationDispositionResponse(result.id(), result.differenceType(),
+                    result.betId(), result.resolution(), result.reason(), result.expiresAt(),
+                    result.revokedAt(), result.duplicate());
+        }
+    }
+
+    public record ReconciliationDispositionView(long id, String differenceType, long betId,
+                                                String resolution, Long centerAgentId, String reason,
+                                                Instant expiresAt, Instant revokedAt, Instant createdAt) {
+        static ReconciliationDispositionView from(ReconciliationDispositionRepository.Row row) {
+            return new ReconciliationDispositionView(row.id(), row.differenceType(), row.betId(),
+                    row.resolution(), row.centerAgentId(), row.reason(), row.expiresAt(),
+                    row.revokedAt(), row.createdAt());
+        }
+    }
+
+    /** 保留策略观察值。 */
+    public record ReconciliationRetentionResponse(long effective, long expired) {
+    }
+
     /** 中心代理（**不含** Token 原文，只含可展示前缀）。 */
     public record CenterAgentResponse(long id, String agentCode, String agentName, String upstreamAccount,
                                       String tokenPrefix, String status, BigDecimal creditLimit,
                                       BigDecimal availableBalance, BigDecimal frozenBalance,
-                                      BigDecimal upstreamUnsettled, Instant createdAt, Instant updatedAt) {
+                                      BigDecimal upstreamUnsettled,
+                                      BigDecimal maxSingleAmount, BigDecimal maxIssueExposure,
+                                      String lastRejectCode, Instant lastRejectAt, long rejectCount,
+                                      Instant createdAt, Instant updatedAt) {
         static CenterAgentResponse from(CenterAgentRepository.AgentRow row) {
             return new CenterAgentResponse(row.id(), row.agentCode(), row.agentName(), row.upstreamAccount(),
                     row.tokenPrefix(), row.status(), row.creditLimit(), row.availableBalance(),
-                    row.frozenBalance(), row.upstreamUnsettled(), row.createdAt(), row.updatedAt());
+                    row.frozenBalance(), row.upstreamUnsettled(),
+                    row.maxSingleAmount(), row.maxIssueExposure(), row.lastRejectCode(),
+                    row.lastRejectAt(), row.rejectCount(), row.createdAt(), row.updatedAt());
         }
     }
 

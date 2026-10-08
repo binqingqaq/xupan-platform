@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.xupan.server.agent.service.AgentAdminService;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
+import com.xupan.server.game.service.VirtualWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +22,6 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -29,11 +29,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 运营后台（{@code /console}，BY220 {@code robot.php}）身份与数据范围验证。
+ * 运营后台（{@code /console}，BY220 {@code robot.php}）机器账号的身份与数据范围验证。
  *
- * <p>用户 2026-10-02 已确认：机器账号登录代理后台后只能看和操作自己名下的玩家/托；
- * 平台管理员保留全局视图；子账号限定在自己分组的机器内。范围外的玩家统一按"不存在"（404）处理，
- * 避免通过 403 暴露跨机器数据的存在性。</p>
+ * <p>阶段 3（严格对齐 BY220，2026-10-08 使用者拍板）：{@code /api/admin/player-desk/**} 只认机器账号
+ * （{@code AGENT_CONSOLE_READ}），超管与子账号一律 403，因此"平台全局视图 / 子账号分组视图"
+ * 在玩家运营面上**不再存在**（依据：
+ * {@code docs/plans/2026-10-08-严格对齐BY220-玩家运营归属机器账号与超管后台收口计划.md} §3.3）。</p>
+ *
+ * <p>机器账号的数据范围收敛为 {@code MACHINE}：只能看和操作自己名下的玩家/托；
+ * 范围外的玩家统一按"不存在"（404）处理，避免通过 403 暴露跨机器数据的存在性。</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -66,6 +70,9 @@ class PlayerDeskScopeTest {
     @Autowired
     private AgentAdminService agentAdminService;
 
+    @Autowired
+    private VirtualWalletService walletService;
+
     private long adminId;
     private long machineAId;
     private long machineBId;
@@ -85,9 +92,10 @@ class PlayerDeskScopeTest {
         machineAId = agentAdminService.createAgent(MACHINE_A_CODE, MACHINE_A_USER, "范围机器A", PASSWORD, null, adminId).id();
         machineBId = agentAdminService.createAgent(MACHINE_B_CODE, MACHINE_B_USER, "范围机器B", PASSWORD, groupId, adminId).id();
 
-        // 子账号：绑定到分组；AGENT 角色只用于让 URL 层放行（V56 才会正式授予子账号访问权限）。
+        // 子账号：用真实的 SUB_ACCOUNT 角色（V76 后不再持有 AGENT_CONSOLE_READ），并绑定分组，
+        // 用于验证"即使 GROUP 范围本可解析，玩家运营面也一律 403"。
         long subUserId = userRepository.insert(SUB_USER, "范围子账号", passwordPolicy.encode(PASSWORD), "ACTIVE");
-        userRepository.assignRole(subUserId, "AGENT");
+        userRepository.assignRole(subUserId, "SUB_ACCOUNT");
         jdbc.update("UPDATE agent_group SET sys_user_id=? WHERE id=?", subUserId, groupId);
 
         // 仅有普通玩家角色的账号：用于验证原有权限没有被放宽。
@@ -102,12 +110,16 @@ class PlayerDeskScopeTest {
 
     @Test
     void machineAccountSeesOnlyOwnPlayersAndItsOwnProfile() throws Exception {
-        String adminToken = login(ADMIN, PASSWORD);
-        long playerA1 = createNormalPlayer(adminToken, "范围玩家A1", machineAId);
-        long playerA2 = createNormalPlayer(adminToken, "范围玩家A2", machineAId);
-        long playerB1 = createNormalPlayer(adminToken, "范围玩家B1", machineBId);
-        long platformDirectPlayer = createNormalPlayer(adminToken, "范围平台直属玩家", null);
         String tokenA = login(MACHINE_A_USER, PASSWORD);
+        String tokenB = login(MACHINE_B_USER, PASSWORD);
+        // 夹具玩家必须由**归属机器**自己创建：机器账号的 MACHINE 范围会强制归属，
+        // 平台账号已经无法通过接口创建玩家（403）。
+        long playerA1 = createNormalPlayer(tokenA, "范围玩家A1", null);
+        long playerA2 = createNormalPlayer(tokenA, "范围玩家A2", null);
+        long playerB1 = createNormalPlayer(tokenB, "范围玩家B1", null);
+        // 平台直属玩家（不属于任何机器）在接口层已经无法创建，用 SQL 造夹具，
+        // 用于验证机器账号看不到"平台直属"这类范围外玩家。
+        long platformDirectPlayer = createPlatformDirectPlayer("范围平台直属玩家");
 
         // 头部身份档案来自机器自己的数据（BY220 robot.php 顶部栏语义）
         mockMvc.perform(get("/api/admin/player-desk/scope").header("Authorization", bearer(tokenA)))
@@ -150,66 +162,70 @@ class PlayerDeskScopeTest {
         assertThat(ledgerCount(playerB1)).isEqualTo(before);
     }
 
+    /**
+     * 子账号（真实 {@code SUB_ACCOUNT} 角色 + 已绑定分组）在玩家运营面上一律 403。
+     *
+     * <p>BY220 依据：上下分/审批/建玩家都在 {@code rbt/controller/Index.php}（机器账号），
+     * {@code admin.php} 的控制器从不查 {@code db('user')}。原用例断言"子账号只看本组机器玩家"
+     * 是按"平台侧也有玩家运营"的错误前提写的，已被业务决定推翻；
+     * 这里保留同等强度：**读与写都 403，且不落任何玩家数据**。</p>
+     */
     @Test
-    void groupAccountSeesOnlyItsOwnGroupMachinePlayers() throws Exception {
-        String adminToken = login(ADMIN, PASSWORD);
-        long playerA1 = createNormalPlayer(adminToken, "范围玩家A1", machineAId);
-        long playerB1 = createNormalPlayer(adminToken, "范围玩家B1", machineBId);
+    void groupBoundSubAccountIsRejectedFromPlayerDesk() throws Exception {
+        // 前置：分组范围本可解析（agent_group.sys_user_id 已绑定），403 只可能来自 URL 层权限
+        assertThat(jdbc.queryForObject("SELECT sys_user_id FROM agent_group WHERE id=?", Long.class, groupId))
+                .isEqualTo(userIdOf(SUB_USER));
 
         String subToken = login(SUB_USER, PASSWORD);
 
         mockMvc.perform(get("/api/admin/player-desk/scope").header("Authorization", bearer(subToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.mode").value("GROUP"))
-                .andExpect(jsonPath("$.groupId").value((int) groupId))
-                .andExpect(jsonPath("$.groupName").value("范围测试分组"));
-
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/player-desk/players").header("Authorization", bearer(subToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(1))
-                .andExpect(jsonPath("$.items[0].displayName").value("范围玩家B1"));
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/admin/player-desk/summary").header("Authorization", bearer(subToken)))
+                .andExpect(status().isForbidden());
 
-        mockMvc.perform(get("/api/admin/player-desk/players/" + playerB1).header("Authorization", bearer(subToken)))
-                .andExpect(status().isOk());
-        mockMvc.perform(get("/api/admin/player-desk/players/" + playerA1).header("Authorization", bearer(subToken)))
-                .andExpect(status().isNotFound());
-
-        // 子账号建玩家必须指定本分组机器
+        // 写：指定本组机器也进不去，且不落库
+        int playersBefore = playerCountOfMachine(machineBId);
         mockMvc.perform(post("/api/admin/player-desk/players/normal")
-                        .header("Authorization", bearer(subToken)).contentType("application/json")
-                        .content("{\"displayName\":\"范围子账号玩家-无机器\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_DESK_MACHINE_REQUIRED"));
-
-        mockMvc.perform(post("/api/admin/player-desk/players/normal")
-                        .header("Authorization", bearer(subToken)).contentType("application/json")
-                        .content("{\"displayName\":\"范围子账号玩家-跨组机器\",\"machineId\":" + machineAId + "}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_DESK_MACHINE_INVALID"));
-
-        MvcResult created = mockMvc.perform(post("/api/admin/player-desk/players/normal")
                         .header("Authorization", bearer(subToken)).contentType("application/json")
                         .content("{\"displayName\":\"范围子账号玩家\",\"machineId\":" + machineBId + "}"))
-                .andExpect(status().isOk())
-                .andReturn();
-        long createdUserId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.userId")).longValue();
-        createdPlayerUserIds.add(createdUserId);
-        assertThat(agentIdOf(createdUserId)).isEqualTo(machineBId);
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/api/admin/player-desk/players/bot")
+                        .header("Authorization", bearer(subToken)).contentType("application/json")
+                        .content("{\"userCode\":\"scopesubbot01\",\"displayName\":\"范围子账号托\",\"machineId\":"
+                                + machineBId + "}"))
+                .andExpect(status().isForbidden());
+        assertThat(playerCountOfMachine(machineBId)).isEqualTo(playersBefore);
     }
 
+    /**
+     * 超管（持 {@code USER_MANAGE}）不再拥有玩家运营面的"全局视图"：读与写一律 403。
+     *
+     * <p>机器账号自己的范围仍然是 {@code MACHINE}（不是 GLOBAL），即 player-desk 上已无全局范围入口。</p>
+     */
     @Test
-    void platformAdminKeepsGlobalScopeAndCanTargetAnyActiveMachine() throws Exception {
+    void platformAdminHasNoPlayerDeskEntryAndNoGlobalScope() throws Exception {
         String adminToken = login(ADMIN, PASSWORD);
-        createNormalPlayer(adminToken, "范围玩家A1", machineAId);
-        createNormalPlayer(adminToken, "范围玩家B1", machineBId);
 
         mockMvc.perform(get("/api/admin/player-desk/scope").header("Authorization", bearer(adminToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.mode").value("GLOBAL"));
-
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/player-desk/players").header("Authorization", bearer(adminToken)))
+                .andExpect(status().isForbidden());
+
+        int playersBefore = playerCountOfMachine(machineAId);
+        mockMvc.perform(post("/api/admin/player-desk/players/normal")
+                        .header("Authorization", bearer(adminToken)).contentType("application/json")
+                        .content("{\"displayName\":\"范围超管玩家\",\"machineId\":" + machineAId + "}"))
+                .andExpect(status().isForbidden());
+        assertThat(playerCountOfMachine(machineAId)).isEqualTo(playersBefore);
+
+        // 机器账号自己的范围是 MACHINE：player-desk 上不存在 GLOBAL 视图
+        String tokenA = login(MACHINE_A_USER, PASSWORD);
+        mockMvc.perform(get("/api/admin/player-desk/scope").header("Authorization", bearer(tokenA)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.total").value(greaterThanOrEqualTo(2)));
+                .andExpect(jsonPath("$.mode").value("MACHINE"))
+                .andExpect(jsonPath("$.machineId").value((int) machineAId));
     }
 
     @Test
@@ -253,7 +269,9 @@ class PlayerDeskScopeTest {
     void machineAccountCannotWriteGlobalBettingConfig() throws Exception {
         String tokenA = login(MACHINE_A_USER, PASSWORD);
 
-        // 全局赔率/限额属于平台管理员；机器账号的机器级配置入口在阶段 3 单独提供
+        // 全局赔率/限额：**读**走 player-desk 的通用规则（仅机器账号），**写**仍由既有的
+        // PUT → USER_MANAGE 规则把守（GameBettingConfigService 没有权限校验，删掉那条会让机器能改全局配置）。
+        // 机器级的赔率/返水走 /machine-config（见 MachineConfigConsoleTest）。
         mockMvc.perform(get("/api/admin/player-desk/betting-config").header("Authorization", bearer(tokenA)))
                 .andExpect(status().isOk());
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
@@ -263,12 +281,37 @@ class PlayerDeskScopeTest {
                 .andExpect(status().isForbidden());
     }
 
-    private long createNormalPlayer(String adminToken, String displayName, Long machineId) throws Exception {
+    /**
+     * 用 SQL 造一个"平台直属玩家"夹具（不属于任何机器）。
+     *
+     * <p>阶段 3 之后平台账号已无法通过接口创建玩家（403），而"机器账号看不到平台直属玩家"
+     * 这条范围断言必须保留，因此这里直接落库：{@code walletService.ensureWalletForUser}
+     * 建钱包账户时默认归属平台直属代理（{@code PLATFORM_DIRECT}）。</p>
+     */
+    private long createPlatformDirectPlayer(String displayName) {
+        long userId = userRepository.insert("playerscope-direct-" + System.nanoTime(), displayName,
+                passwordPolicy.encode(PASSWORD), "ACTIVE");
+        userRepository.assignRole(userId, "USER");
+        walletService.ensureWalletForUser(userId, displayName);
+        createdPlayerUserIds.add(userId);
+        return userId;
+    }
+
+    private long userIdOf(String username) {
+        return jdbc.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
+    }
+
+    private int playerCountOfMachine(long agentId) {
+        return jdbc.queryForObject("SELECT COUNT(*) FROM demo_user_account WHERE agent_id = ?",
+                Integer.class, agentId);
+    }
+
+    private long createNormalPlayer(String token, String displayName, Long machineId) throws Exception {
         String body = machineId == null
                 ? "{\"displayName\":\"" + displayName + "\"}"
                 : "{\"displayName\":\"" + displayName + "\",\"machineId\":" + machineId + "}";
         MvcResult result = mockMvc.perform(post("/api/admin/player-desk/players/normal")
-                        .header("Authorization", bearer(adminToken)).contentType("application/json").content(body))
+                        .header("Authorization", bearer(token)).contentType("application/json").content(body))
                 .andExpect(status().isOk())
                 .andReturn();
         long userId = ((Number) JsonPath.read(result.getResponse().getContentAsString(), "$.userId")).longValue();

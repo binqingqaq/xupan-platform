@@ -1,5 +1,6 @@
 package com.xupan.server.game.service;
 
+import com.xupan.server.config.ScheduledTaskLock;
 import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
@@ -40,6 +41,7 @@ public class 自动轮期服务 {
     private final Clock clock;
     private final boolean automationEnabled;
     private final GameSettingsService gameSettingsService;
+    private final ScheduledTaskLock taskLock;
 
     @Autowired
     public 自动轮期服务(GameDataRepository gameRepository,
@@ -48,9 +50,10 @@ public class 自动轮期服务 {
                         VirtualWalletService walletService,
                         ApplicationEventPublisher eventPublisher,
                         GameSettingsService gameSettingsService,
+                        ScheduledTaskLock taskLock,
                         @Value("${xupan.automation.enabled:true}") boolean automationEnabled) {
         this(gameRepository, eventRepository, settlementService, walletService,
-                eventPublisher, gameSettingsService, Clock.systemUTC(), automationEnabled);
+                eventPublisher, gameSettingsService, taskLock, Clock.systemUTC(), automationEnabled);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
@@ -61,7 +64,7 @@ public class 自动轮期服务 {
                  GameSettingsService gameSettingsService,
                  Clock clock) {
         this(gameRepository, eventRepository, settlementService, walletService, eventPublisher,
-                gameSettingsService, clock, true);
+                gameSettingsService, null, clock, true);
     }
 
     自动轮期服务(GameDataRepository gameRepository,
@@ -72,6 +75,23 @@ public class 自动轮期服务 {
                  GameSettingsService gameSettingsService,
                  Clock clock,
                  boolean automationEnabled) {
+        this(gameRepository, eventRepository, settlementService, walletService, eventPublisher,
+                gameSettingsService, null, clock, automationEnabled);
+    }
+
+    /**
+     * @param taskLock 定时任务互斥锁；为 {@code null} 时表示"直接执行"。
+     *                 测试与直接调用 {@link #advanceAllActive(Instant)} 的路径不需要锁。
+     */
+    自动轮期服务(GameDataRepository gameRepository,
+                 GameIssueEventRepository eventRepository,
+                 SettlementService settlementService,
+                 VirtualWalletService walletService,
+                 ApplicationEventPublisher eventPublisher,
+                 GameSettingsService gameSettingsService,
+                 ScheduledTaskLock taskLock,
+                 Clock clock,
+                 boolean automationEnabled) {
         this.gameRepository = gameRepository;
         this.eventRepository = eventRepository;
         this.settlementService = settlementService;
@@ -80,13 +100,23 @@ public class 自动轮期服务 {
         this.clock = clock;
         this.automationEnabled = automationEnabled;
         this.gameSettingsService = gameSettingsService;
+        this.taskLock = taskLock;
     }
 
+    /**
+     * 1 秒一次的自动轮期。
+     *
+     * <p><b>并发</b>：必须经 {@link ScheduledTaskLock} 互斥。多进程并存（滚动重启的新旧进程重叠、
+     * 或将来部署第二实例）时双跑会**重复开奖**，属错账级事故。这与"要不要扩容"无关。</p>
+     */
     @Scheduled(fixedDelay = 1000)
-    @Transactional
     public void scheduledAdvance() {
         if (!automationEnabled) return;
-        advanceAllActive(clock.instant());
+        if (taskLock == null) {
+            advanceAllActive(clock.instant());
+            return;
+        }
+        taskLock.runExclusively("xupan:auto-advance", () -> advanceAllActive(clock.instant()));
     }
 
     @Transactional

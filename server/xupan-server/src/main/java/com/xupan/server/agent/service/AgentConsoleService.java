@@ -13,12 +13,12 @@ import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.system.service.TestPlayerAdminService;
 import com.xupan.server.system.service.UserAdminService;
 import com.xupan.server.web.BusinessException;
+import com.xupan.server.web.MoneyAmounts;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -31,6 +31,9 @@ import java.util.Optional;
 public class AgentConsoleService {
 
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
+
+    /** 单次上下分的金额上限，保持修复前既有约束。 */
+    private static final BigDecimal MAX_SCORE_AMOUNT = new BigDecimal("1000000000.00");
 
     private final AgentRepository agentRepository;
     private final AgentLedgerService agentLedgerService;
@@ -109,13 +112,54 @@ public class AgentConsoleService {
         return requirePlayer(agent.id(), userId);
     }
 
+    /**
+     * 机器端（{@code /console}，BY220 {@code robot.php}）上下分：**从操作者反查自己那台机器**。
+     *
+     * <p>外部行为、异常与幂等语义保持修复前一字不变（本方法是既有 7 条回归用例的被测对象）；
+     * 池不足文案继续原文照抄 BY220（{@link AgentLedgerService#INSUFFICIENT_MACHINE_SCORE_MESSAGE}）。</p>
+     */
     @Transactional
     public ScoreChange changeScore(long accountUserId, long playerUserId, String direction,
                                    BigDecimal amount, String idempotencyKey) {
         requirePlayerManage(accountUserId);
         Agent agent = requireActiveAgent(accountUserId);
-        ensureOwnedByAgent(agent.id(), playerUserId);
-        AgentRepository.AgentPlayerRow player = requirePlayer(agent.id(), playerUserId);
+        return changeScoreForAgent(accountUserId, agent.id(), playerUserId, direction, amount, idempotencyKey,
+                AgentLedgerService.INSUFFICIENT_MACHINE_SCORE_MESSAGE);
+    }
+
+    /**
+     * 按**显式机器 + 显式操作者**给玩家上下分（计划 §3.5「Q1=A1 的实现口径」）。
+     *
+     * <p>平台侧（超管 {@code GLOBAL} / 子账号 {@code GROUP}）在 {@code /platform-admin} 的玩家工作台里
+     * 没有 {@code agent} 行，无法用旧的 {@link #changeScore} 反查机器，因此由调用方传入
+     * **玩家归属机器**（{@code demo_user_account.agent_id}，【R1=做法①】操作者不选机器）。</p>
+     *
+     * <p>本方法与 {@link #changeScore} 共用同一段上下分逻辑（幂等重放校验、机器积分扣/回、
+     * 钱包写入、{@code PLAYER_TOP_UP}/{@code PLAYER_DOWN} 流水、审计、托不联动），
+     * 只有"操作者 → 机器"的解析留在旧方法里。**仍然**校验该玩家确实归属这台机器
+     * （{@code ensureOwnedByAgent}），避免调用方传错机器造成跨机器串账。</p>
+     *
+     * <p>池不足文案默认走平台侧（见 {@link #changeScoreForAgent(long, long, long, String, BigDecimal, String, String)}）：
+     * 被扣的是玩家归属机器，不是操作者自己的账号。</p>
+     */
+    @Transactional
+    public ScoreChange changeScoreForAgent(long operatorUserId, long agentId, long playerUserId, String direction,
+                                           BigDecimal amount, String idempotencyKey) {
+        return changeScoreForAgent(operatorUserId, agentId, playerUserId, direction, amount, idempotencyKey,
+                AgentLedgerService.INSUFFICIENT_OWNER_MACHINE_SCORE_MESSAGE);
+    }
+
+    /**
+     * 同 {@link #changeScoreForAgent(long, long, long, String, BigDecimal, String)}，但可指定机器池不足时的文案。
+     *
+     * <p>错误码两条路径都是 {@code AGENT_SCORE_INSUFFICIENT}，协议不变（计划 §3.5「文案口径」）：
+     * 机器端原文照抄 BY220，平台侧用"该玩家所属机器…"，避免"您的账号"被读成操作者。</p>
+     */
+    @Transactional
+    public ScoreChange changeScoreForAgent(long operatorUserId, long agentId, long playerUserId, String direction,
+                                           BigDecimal amount, String idempotencyKey, String insufficientMessage) {
+        ensureOwnedByAgent(agentId, playerUserId);
+        AgentRepository.AgentPlayerRow player = requirePlayer(agentId, playerUserId);
         String normalizedDirection = direction == null ? "" : direction.trim().toUpperCase(Locale.ROOT);
         if (!"TOP_UP".equals(normalizedDirection) && !"DOWN".equals(normalizedDirection)) {
             throw BusinessException.badRequest("AGENT_SCORE_DIRECTION_INVALID", "上下分方向无效");
@@ -134,7 +178,7 @@ public class AgentConsoleService {
                     || !reason.equals(ledger.reason())) {
                 throw BusinessException.conflict("AGENT_SCORE_IDEMPOTENCY_CONFLICT", "上下分幂等键参数不一致");
             }
-            return new ScoreChange(normalizedDirection, normalizedAmount, agentRepository.findScore(agent.id()),
+            return new ScoreChange(normalizedDirection, normalizedAmount, agentRepository.findScore(agentId),
                     ledger.balanceAfter(), ledger.id(), true);
         }
 
@@ -143,24 +187,75 @@ public class AgentConsoleService {
             // 账本原则 2：代理积分变化必须同时写流水，且带幂等键，所以改由 AgentLedgerService 统一写。
             // 机器（BOT）玩家不扣代理积分：BY220 对托的上分不动代理余额。
             if (!"BOT".equals(player.playerKind())) {
-                agentLedgerService.changeMachineScore(agent.id(), normalizedAmount.negate(),
+                agentLedgerService.changeMachineScore(agentId, normalizedAmount.negate(),
                         AgentLedgerService.TYPE_PLAYER_TOP_UP, reason, "PLAYER",
-                        Long.toString(playerUserId), accountUserId, "AGENT-LEDGER-" + key);
+                        Long.toString(playerUserId), operatorUserId, "AGENT-LEDGER-" + key, insufficientMessage);
             }
-            wallet = walletService.grant(accountUserId, playerUserId, normalizedAmount, reason, key);
+            wallet = walletService.grant(operatorUserId, playerUserId, normalizedAmount, reason, key);
         } else {
-            wallet = walletService.adjust(accountUserId, playerUserId, normalizedAmount.negate(), reason, key);
+            wallet = walletService.adjust(operatorUserId, playerUserId, normalizedAmount.negate(), reason, key);
             if (!"BOT".equals(player.playerKind())) {
-                agentLedgerService.changeMachineScore(agent.id(), normalizedAmount,
+                agentLedgerService.changeMachineScore(agentId, normalizedAmount,
                         AgentLedgerService.TYPE_PLAYER_DOWN, reason, "PLAYER",
-                        Long.toString(playerUserId), accountUserId, "AGENT-LEDGER-" + key);
+                        Long.toString(playerUserId), operatorUserId, "AGENT-LEDGER-" + key, insufficientMessage);
             }
         }
-        BigDecimal agentScore = agentRepository.findScore(agent.id());
-        auditScoreChange(accountUserId, player, normalizedDirection, normalizedAmount, agentScore,
+        BigDecimal agentScore = agentRepository.findScore(agentId);
+        auditScoreChange(operatorUserId, player, normalizedDirection, normalizedAmount, agentScore,
                 wallet.wallet().balance(), wallet.ledger().id());
         return new ScoreChange(normalizedDirection, normalizedAmount, agentScore,
                 wallet.wallet().balance(), wallet.ledger().id(), false);
+    }
+
+    /**
+     * 审批**下分申请**时的机器池结算：**只给机器池加分，不动玩家余额**。
+     *
+     * <p>BY220 {@code application/rbt/controller/Index.php:280-286}（{@code type != 0} 分支）：
+     * 同意下分时只 {@code db('robot')->...->setInc('score', $res['score'])}（且仅当
+     * {@code $res['isTuo'] == 0}，即托不联动），随后把 {@code afterScore} 记成**当时的玩家余额**——
+     * **玩家余额不再变动**，因为钱已经在申请创建时被 {@code common.php:1874-1876} 扣走。
+     * 因此本方法刻意不调用 {@link #changeScoreForAgent}（那条路径会再扣一次玩家钱包）。</p>
+     *
+     * <p>机器范围（{@code /console} 机器账号）由操作者反查自己那台机器，与
+     * {@link #changeScore} 同口径、同池不足文案。</p>
+     */
+    @Transactional
+    public ScoreChange settleApprovedDownRequest(long accountUserId, long playerUserId, BigDecimal amount,
+                                                String idempotencyKey) {
+        requirePlayerManage(accountUserId);
+        Agent agent = requireActiveAgent(accountUserId);
+        return settleApprovedDownRequestForAgent(accountUserId, agent.id(), playerUserId, amount, idempotencyKey,
+                AgentLedgerService.INSUFFICIENT_MACHINE_SCORE_MESSAGE);
+    }
+
+    /**
+     * 同 {@link #settleApprovedDownRequest(long, long, BigDecimal, String)}，但由调用方显式传入机器
+     * （平台侧 {@code GLOBAL}/{@code GROUP} 用**玩家归属机器**，操作者不选机器）。
+     */
+    @Transactional
+    public ScoreChange settleApprovedDownRequestForAgent(long operatorUserId, long agentId, long playerUserId,
+                                                        BigDecimal amount, String idempotencyKey,
+                                                        String insufficientMessage) {
+        ensureOwnedByAgent(agentId, playerUserId);
+        AgentRepository.AgentPlayerRow player = requirePlayer(agentId, playerUserId);
+        BigDecimal normalizedAmount = positiveAmount(amount);
+        String key = requiredKey(idempotencyKey);
+        String reason = "代理下分：" + player.displayName();
+        Long machineLedgerId = null;
+        if (!"BOT".equals(player.playerKind())) {
+            // 幂等键沿用与 changeScoreForAgent 完全相同的 "AGENT-LEDGER-" + key 形态，
+            // 命中已有流水时按重放返回，不会重复给机器池加分。
+            agentLedgerService.changeMachineScore(agentId, normalizedAmount,
+                    AgentLedgerService.TYPE_PLAYER_DOWN, reason, "PLAYER",
+                    Long.toString(playerUserId), operatorUserId, "AGENT-LEDGER-" + key, insufficientMessage);
+            machineLedgerId = jdbc.query("SELECT id FROM agent_ledger WHERE idempotency_key = ?",
+                    (rs, rowNum) -> rs.getLong(1), "AGENT-LEDGER-" + key).stream().findFirst().orElse(null);
+        }
+        BigDecimal agentScore = agentRepository.findScore(agentId);
+        BigDecimal playerBalance = walletService.getForAdminHistory(playerUserId).balance();
+        auditScoreChange(operatorUserId, player, "DOWN", normalizedAmount, agentScore, playerBalance,
+                machineLedgerId == null ? 0L : machineLedgerId);
+        return new ScoreChange("DOWN", normalizedAmount, agentScore, playerBalance, machineLedgerId, false);
     }
 
     @Transactional
@@ -183,14 +278,16 @@ public class AgentConsoleService {
                        COALESCE(SUM(CASE WHEN b.settlement_status NOT IN ('PENDING', 'CANCELED')
                                          THEN b.net_profit ELSE 0 END), 0) net_profit,
                        COALESCE(SUM(CASE WHEN b.settlement_status = 'PENDING' THEN 1 ELSE 0 END), 0) pending_bet_count,
-                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' AND a.player_kind = 'NORMAL'
-                                         THEN b.stake ELSE 0 END), 0) normal_turnover,
-                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' AND a.player_kind = 'BOT'
-                                         THEN b.stake ELSE 0 END), 0) bot_turnover,
+                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED'
+                                          AND COALESCE(a.player_kind, b.player_kind_snapshot) = 'NORMAL'
+                                          THEN b.stake ELSE 0 END), 0) normal_turnover,
+                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED'
+                                          AND COALESCE(a.player_kind, b.player_kind_snapshot) = 'BOT'
+                                          THEN b.stake ELSE 0 END), 0) bot_turnover,
                        COUNT(DISTINCT CASE WHEN b.settlement_status <> 'CANCELED' THEN b.user_id END) active_player_count
                   FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE a.agent_id = ? AND b.created_at >= ? AND b.created_at < ?
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND b.created_at >= ? AND b.created_at < ?
                 """, (rs, rowNum) -> new OperationsSummary(
                 businessDay.toString(), rs.getLong("bet_count"), rs.getBigDecimal("turnover"),
                 rs.getBigDecimal("net_profit"), rs.getLong("pending_bet_count"),
@@ -356,12 +453,30 @@ public class AgentConsoleService {
                         + ",ledgerId=" + ledgerId);
     }
 
+    /**
+     * 机器给玩家上下分的金额口径（计划 §3.5）。
+     *
+     * <p>修复前是 {@code setScale(2, HALF_UP)}：0.001 会被**静默**变成 0.00，机器积分与玩家钱包都不会动，
+     * 使用者却看到"操作成功"。现在改为共享的两位小数严格校验：</p>
+     * <ul>
+     *   <li>超过两位小数 → 400 {@code MACHINE_SCORE_INVALID}「机器积分最多两位小数」；</li>
+     *   <li>负数 → 400 {@code MACHINE_SCORE_INVALID}「机器积分不能为负数」；</li>
+     *   <li>零 / {@code null} / 过大 → 保持修复前既有的 {@code AGENT_SCORE_AMOUNT_INVALID}，不扩大改动面。</li>
+     * </ul>
+     */
     private static BigDecimal positiveAmount(BigDecimal amount) {
         if (amount == null) {
             throw BusinessException.badRequest("AGENT_SCORE_AMOUNT_INVALID", "上下分金额必须大于零");
         }
-        BigDecimal normalized = amount.setScale(2, RoundingMode.HALF_UP);
-        if (normalized.signum() <= 0 || normalized.compareTo(new BigDecimal("1000000000.00")) > 0) {
+        BigDecimal normalized = MoneyAmounts.requireTwoDecimals(amount, "MACHINE_SCORE_INVALID",
+                "上下分金额不能过大", "机器积分最多两位小数");
+        if (normalized.signum() < 0) {
+            throw BusinessException.badRequest("MACHINE_SCORE_INVALID", "机器积分不能为负数");
+        }
+        if (normalized.signum() == 0) {
+            throw BusinessException.badRequest("AGENT_SCORE_AMOUNT_INVALID", "上下分金额必须大于零");
+        }
+        if (normalized.compareTo(MAX_SCORE_AMOUNT) > 0) {
             throw BusinessException.badRequest("AGENT_SCORE_AMOUNT_INVALID", "上下分金额必须大于零且不能过大");
         }
         return normalized;
@@ -410,8 +525,16 @@ public class AgentConsoleService {
     public record AgentPlayerPage(List<AgentRepository.AgentPlayerRow> items, int page, int pageSize, long total) {
     }
 
+    /**
+     * 上下分结果。
+     *
+     * @param ledgerId 流水编号：{@code changeScore}/{@code changeScoreForAgent} 为**玩家钱包流水**
+     *                 （{@code demo_balance_ledger.id}）；{@link #settleApprovedDownRequest} 为
+     *                 **机器账本流水**（{@code agent_ledger.id}，下分结算不动玩家钱包）；
+     *                 托的下分结算不写机器账本，因此为 {@code null}。
+     */
     public record ScoreChange(String direction, BigDecimal amount, BigDecimal agentScore,
-                              BigDecimal playerBalance, long ledgerId, boolean replay) {
+                              BigDecimal playerBalance, Long ledgerId, boolean replay) {
     }
 
     public record OperationsSummary(String day, long betCount, BigDecimal turnover, BigDecimal netProfit,

@@ -6,6 +6,18 @@ spring:
     username: ${XUPAN_DB_USERNAME:xupan_app}
     password: ${XUPAN_DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      # 显式配置连接池：不配就吃 Hikari 默认值 10，而本应用有 5 个 @Scheduled 任务
+      # 与 HTTP 请求共享同一个池，任一环节在事务里阻塞就会排队雪崩。
+      # 20 是按"单实例 + 峰值并发"给的起点，可用环境变量按机器调大。
+      maximum-pool-size: ${XUPAN_DB_POOL_MAX_SIZE:20}
+      minimum-idle: ${XUPAN_DB_POOL_MIN_IDLE:5}
+      connection-timeout: ${XUPAN_DB_POOL_CONNECTION_TIMEOUT_MS:10000}
+      idle-timeout: ${XUPAN_DB_POOL_IDLE_TIMEOUT_MS:600000}
+      max-lifetime: ${XUPAN_DB_POOL_MAX_LIFETIME_MS:1800000}
+      # 泄漏检测：连接借出超过 60 秒未归还就打日志，用来及早发现"长事务里做网络调用"。
+      leak-detection-threshold: ${XUPAN_DB_POOL_LEAK_DETECTION_MS:60000}
+      pool-name: xupan-pool
   flyway:
     enabled: true
 xupan:

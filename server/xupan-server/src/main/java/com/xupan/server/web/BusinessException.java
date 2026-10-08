@@ -8,12 +8,19 @@ public final class BusinessException extends RuntimeException {
     private final HttpStatus status;
     private final String code;
     private final String publicMessage;
+    /** 建议客户端等待的秒数（429 时使用）；{@code null} 表示不提供。 */
+    private final Long retryAfterSeconds;
 
     public BusinessException(HttpStatus status, String code, String publicMessage) {
+        this(status, code, publicMessage, null);
+    }
+
+    public BusinessException(HttpStatus status, String code, String publicMessage, Long retryAfterSeconds) {
         super(code);
         this.status = status;
         this.code = code;
         this.publicMessage = publicMessage;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
 
     public HttpStatus status() {
@@ -26,6 +33,10 @@ public final class BusinessException extends RuntimeException {
 
     public String publicMessage() {
         return publicMessage;
+    }
+
+    public Long retryAfterSeconds() {
+        return retryAfterSeconds;
     }
 
     public static BusinessException badRequest(String code, String message) {
@@ -53,5 +64,15 @@ public final class BusinessException extends RuntimeException {
      */
     public static BusinessException unauthorized(String code, String message) {
         return new BusinessException(HttpStatus.UNAUTHORIZED, code, message);
+    }
+
+    /**
+     * 请求过频或来源被锁（429）。
+     *
+     * @param retryAfterSeconds 建议客户端等待的秒数，会作为 {@code Retry-After} 响应头下发
+     */
+    public static BusinessException tooManyRequests(String code, String message, long retryAfterSeconds) {
+        return new BusinessException(HttpStatus.TOO_MANY_REQUESTS, code, message,
+                Math.max(1L, retryAfterSeconds));
     }
 }

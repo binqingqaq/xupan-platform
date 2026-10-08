@@ -47,11 +47,13 @@ public class PlatformReportService {
         Long scopedSubAccountId = accessService.scopedGroupId(operator, subAccountId);
         StringBuilder sql = new StringBuilder("""
                 SELECT l.id, l.created_at, l.operation_type, l.amount, l.balance_after, l.reason,
-                       a.member_code, a.display_name player_name, ag.id machine_id,
+                       COALESCE(a.member_code, l.player_code_snapshot) member_code,
+                       COALESCE(a.display_name, l.player_name_snapshot) player_name,
+                       ag.id machine_id,
                        ag.display_name machine_name, g.username sub_account
                   FROM demo_balance_ledger l
-                  JOIN demo_user_account a ON a.id = l.user_id
-                  JOIN agent ag ON ag.id = a.agent_id
+                  LEFT JOIN demo_user_account a ON a.id = l.user_id
+                  JOIN agent ag ON ag.id = COALESCE(a.agent_id, l.agent_id_snapshot)
                   LEFT JOIN agent_group g ON g.id = ag.group_id
                  WHERE l.created_at >= ? AND l.created_at < ?
                 """);
@@ -76,8 +78,9 @@ public class PlatformReportService {
                        COALESCE((SELECT SUM(a.balance) FROM demo_user_account a
                                   WHERE a.agent_id=ag.id AND a.status <> 'DELETED'), 0) player_balance,
                        COALESCE((SELECT SUM(b.stake) FROM game_bet b
-                                  JOIN demo_user_account a ON a.id=b.user_id
-                                 WHERE a.agent_id=ag.id AND b.created_at >= ? AND b.created_at < ?
+                                  LEFT JOIN demo_user_account a ON a.id=b.user_id
+                                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot)=ag.id
+                                   AND b.created_at >= ? AND b.created_at < ?
                                    AND b.settlement_status IN ('WIN','DRAW','LOSE')), 0) total_flow
                   FROM agent ag
                   LEFT JOIN agent_group g ON g.id=ag.group_id
@@ -136,12 +139,13 @@ public class PlatformReportService {
 
     private Map<Long, FlowMetrics> flowMetrics(BusinessRange range, Long subAccountId) {
         StringBuilder sql = new StringBuilder("""
-                SELECT a.agent_id, b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
+                SELECT COALESCE(a.agent_id, b.agent_id_snapshot) AS agent_id, b.play_type, b.parameters_text,
+                       b.stake, b.odds_snapshot,
                        b.net_profit, b.settlement_status, b.rebate_rate_snapshot,
                        b.special_rebate_rate_snapshot
                   FROM game_bet b
-                  JOIN demo_user_account a ON a.id=b.user_id
-                  JOIN agent ag ON ag.id=a.agent_id
+                  LEFT JOIN demo_user_account a ON a.id=b.user_id
+                  JOIN agent ag ON ag.id=COALESCE(a.agent_id, b.agent_id_snapshot)
                  WHERE ag.system_owned=FALSE
                    AND b.created_at >= ? AND b.created_at < ?
                    AND b.settlement_status IN ('WIN','DRAW','LOSE')
@@ -285,18 +289,18 @@ public class PlatformReportService {
 
     private Map<Long, BalanceMovement> balanceMovements(BusinessRange range, Long subAccountId) {
         StringBuilder sql = new StringBuilder("""
-                SELECT a.agent_id,
+                SELECT COALESCE(a.agent_id, l.agent_id_snapshot) AS agent_id,
                        COALESCE(SUM(CASE WHEN l.amount > 0 THEN l.amount ELSE 0 END), 0) total_up,
                        COALESCE(SUM(CASE WHEN l.amount < 0 THEN -l.amount ELSE 0 END), 0) total_down
                   FROM demo_balance_ledger l
-                  JOIN demo_user_account a ON a.id=l.user_id
-                  LEFT JOIN agent g ON g.id=a.agent_id
+                  LEFT JOIN demo_user_account a ON a.id=l.user_id
+                  LEFT JOIN agent g ON g.id=COALESCE(a.agent_id, l.agent_id_snapshot)
                  WHERE l.created_at >= ? AND l.created_at < ?
                    AND l.operation_type IN ('ADMIN_GRANT','ADMIN_ADJUST')
                 """);
         List<Object> args = new ArrayList<>(List.of(Timestamp.from(range.from()), Timestamp.from(range.to())));
         if (subAccountId != null) { sql.append(" AND g.group_id=?"); args.add(subAccountId); }
-        sql.append(" GROUP BY a.agent_id");
+        sql.append(" GROUP BY COALESCE(a.agent_id, l.agent_id_snapshot)");
         Map<Long, BalanceMovement> result = new HashMap<>();
         jdbc.query(sql.toString(), rs -> {
             result.put(rs.getLong("agent_id"),

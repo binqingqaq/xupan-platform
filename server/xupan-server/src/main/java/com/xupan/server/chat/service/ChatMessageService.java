@@ -341,24 +341,51 @@ public class ChatMessageService {
         return new ChatMessageSendOutcome(source, false);
     }
 
+    /**
+     * 聊天室上下分申请（BY220 玩家发「上100 / 下100」→ {@code x_folder} 建单待审批）。
+     *
+     * <p><b>下分创建即扣</b>（BY220 {@code application/common.php:1874-1876}）：
+     * BY220 在 {@code addJifen()} 里对 {@code $type == 1}（下分）先
+     * {@code db('rbuser')->...->setDec('score', $last)} 再写申请单，
+     * 即「钱在申请创建时就离开玩家余额」；同意后归机器池，拒绝则原路退回
+     * （{@code application/rbt/controller/Index.php:280-286} 同意、{@code :307-315} 拒绝）。</p>
+     *
+     * <p><b>余额不足拒绝创建</b>：BY220 不校验余额（可扣成负数）。我方刻意偏离——余额不足直接 400
+     * （WS 通道为 error 帧），复用既有「您当前积分不足X」文案，且余额一个字节都不动。
+     * 允许负余额会破坏钱包口径与报表，该偏离已在计划 §3.2 登记。</p>
+     *
+     * <p><b>竞态（已评估、刻意不消除）</b>：这里的余额预检与下面
+     * {@code holdForPointRequest} 的写入之间存在竞态窗口（例如同一瞬间的下注把余额花掉）。
+     * 竞态下的行为是确定的：钱包层抛**同一个 code** {@code WALLET_INSUFFICIENT_BALANCE}
+     * （HTTP 409，因为写入阶段只认钱包层错误），**事务整体回滚**——申请行、预扣流水、
+     * 余额变动一个都不留，不变量（不允许负余额）仍然成立。刻意不把校验并进写入路径：
+     * 那会把一次数据库写变成两次，收益不抵成本。</p>
+     */
     private void processPointRequest(long userId, String roomCode, String clientId, UserAccount user,
                                      ChatMessage source, ChatCommandParser.Command command, Instant now) {
         if (pointRequestRepository == null) {
             throw new IllegalStateException("上下分申请服务未配置");
         }
-        VirtualWallet balance = currentBalance(userId);
-        if (command.type() == ChatCommandParser.Type.DOWN
-                && balance.balance().compareTo(command.amount()) < 0) {
-            publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "POINT_REQUEST_REJECTED",
-                    "@" + user.displayName() + " 您当前积分不足" + formatMoney(command.amount()), now);
-            return;
+        boolean downRequest = command.type() == ChatCommandParser.Type.DOWN;
+        java.math.BigDecimal balanceBefore = currentBalance(userId).balance();
+        if (downRequest && balanceBefore.compareTo(command.amount()) < 0) {
+            throw BusinessException.badRequest("WALLET_INSUFFICIENT_BALANCE",
+                    "您当前积分不足" + formatMoney(command.amount()));
         }
-        pointRequestRepository.insertPending(userId, command.type().name(), command.amount(),
-                clientId, source.id(), now);
+        PlayerPointRequestRepository.Request request = pointRequestRepository.insertPending(userId,
+                command.type().name(), command.amount(), clientId, source.id(), now);
+        java.math.BigDecimal balanceAfter = balanceBefore;
+        if (downRequest) {
+            // 幂等：客户端消息重发时 insertPending 会返回同一条申请，预扣按申请编号命中同一幂等键重放，
+            // 不会第二次扣钱（uk_demo_balance_ledger_idempotency 兜底）。
+            balanceAfter = walletService.holdForPointRequest(userId, command.amount(),
+                    "下分申请预扣（聊天指令）：" + user.displayName(),
+                    PlayerPointRequestRepository.holdIdempotencyKey(request.id())).wallet().balance();
+        }
         String action = command.type() == ChatCommandParser.Type.TOP_UP ? "上分" : "下分";
         String content = "@" + user.displayName() + " " + action + formatMoney(command.amount()) + "，待审批！";
-        if (command.type() == ChatCommandParser.Type.DOWN) {
-            content += "，剩余" + formatMoney(balance.balance());
+        if (downRequest) {
+            content += "，剩余" + formatMoney(balanceAfter);
         }
         publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "POINT_REQUEST_CREATED",
                 content, now);

@@ -159,8 +159,67 @@ public class CenterOrderRepository {
         return total == null ? BigDecimal.ZERO.setScale(2) : total;
     }
 
-    private static OrderRow orderRow(ResultSet rs) throws SQLException {
-        return new OrderRow(rs.getLong("id"), rs.getLong("center_agent_id"), rs.getString("agent_order_no"),
+    // ---------------------------------------------------------------------
+    // C-2 / C-3：订单处置（超时确认、失败确认、退款、撤单）
+    // ---------------------------------------------------------------------
+
+    /** 追加一条处置流水。幂等键唯一，重复提交抛唯一键冲突而不是写第二行。 */
+    public long insertDisposition(long centerOrderId, String action, String fromStatus, String toStatus,
+                                  BigDecimal amount, String reason, String idempotencyKey,
+                                  Long operatorUserId) {
+        jdbc.update("""
+                INSERT INTO center_order_disposition
+                    (center_order_id, action, from_status, to_status, amount, reason,
+                     idempotency_key, operator_user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, centerOrderId, action, fromStatus, toStatus,
+                amount == null ? BigDecimal.ZERO.setScale(2) : amount, reason, idempotencyKey,
+                operatorUserId);
+        Long id = jdbc.queryForObject(
+                "SELECT id FROM center_order_disposition WHERE idempotency_key = ?", Long.class, idempotencyKey);
+        if (id == null) {
+            throw new IllegalStateException("写入中心订单处置后未找到记录");
+        }
+        return id;
+    }
+
+    public Optional<DispositionRow> findDispositionByIdempotencyKey(String idempotencyKey) {
+        return jdbc.query("""
+                SELECT id, center_order_id, action, from_status, to_status, amount, reason,
+                       idempotency_key, operator_user_id, created_at
+                  FROM center_order_disposition WHERE idempotency_key = ?
+                """, (rs, rowNum) -> dispositionRow(rs), idempotencyKey).stream().findFirst();
+    }
+
+    public List<DispositionRow> findDispositions(long centerOrderId) {
+        return jdbc.query("""
+                SELECT id, center_order_id, action, from_status, to_status, amount, reason,
+                       idempotency_key, operator_user_id, created_at
+                  FROM center_order_disposition WHERE center_order_id = ?
+                 ORDER BY id
+                """, (rs, rowNum) -> dispositionRow(rs), centerOrderId);
+    }
+
+    /** 按状态列出订单（管理端"待处置"列表：TIMEOUT / PENDING 需要人工介入）。 */
+    public List<OrderRow> findByStatuses(List<String> statuses, int limit) {
+        if (statuses == null || statuses.isEmpty() || limit <= 0) {
+            return List.of();
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(statuses.size(), "?"));
+        List<Object> args = new ArrayList<>(statuses);
+        args.add(limit);
+        return jdbc.query(COLUMNS + " WHERE status IN (" + placeholders + ") ORDER BY id LIMIT ?",
+                (rs, rowNum) -> orderRow(rs), args.toArray());
+    }
+
+    private static DispositionRow dispositionRow(ResultSet rs) throws SQLException {
+        return new DispositionRow(rs.getLong("id"), rs.getLong("center_order_id"), rs.getString("action"),
+                rs.getString("from_status"), rs.getString("to_status"), rs.getBigDecimal("amount"),
+                rs.getString("reason"), rs.getObject("operator_user_id", Long.class),
+                instant(rs.getTimestamp("created_at")));
+    }
+
+    private static OrderRow orderRow(ResultSet rs) throws SQLException {        return new OrderRow(rs.getLong("id"), rs.getLong("center_agent_id"), rs.getString("agent_order_no"),
                 rs.getObject("local_bet_id", Long.class), rs.getObject("local_agent_id", Long.class),
                 rs.getString("game_code"), rs.getString("issue_number"), rs.getString("play_type"),
                 rs.getString("play_text"), rs.getBigDecimal("odds"), rs.getBigDecimal("amount"),
@@ -186,5 +245,11 @@ public class CenterOrderRepository {
 
     /** 按状态的统计行。 */
     public record StatusCount(String status, long total, BigDecimal amount) {
+    }
+
+    /** 一条中心订单处置流水。 */
+    public record DispositionRow(long id, long centerOrderId, String action, String fromStatus,
+                                 String toStatus, BigDecimal amount, String reason,
+                                 Long operatorUserId, Instant createdAt) {
     }
 }

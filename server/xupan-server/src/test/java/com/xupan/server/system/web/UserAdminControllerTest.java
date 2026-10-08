@@ -229,6 +229,16 @@ class UserAdminControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code <> 'DEMO-USER'");
+        // 清 sys_user 前必须先解除所有指向它的外键引用：
+        //   * agent.account_user_id（FK_AGENT_ACCOUNT_USER）
+        //   * center_agent.created_by（FK_CENTER_AGENT_CREATOR，RESTRICT）
+        // center_risk_hit 随 center_agent 级联删除；center_order / center_agent_ledger 未设级联，按序先删。
+        jdbcTemplate.update("DELETE FROM report_upstream_order");
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code <> 'PLATFORM_DIRECT'");
+        jdbcTemplate.update("DELETE FROM center_order_disposition");
+        jdbcTemplate.update("DELETE FROM center_order");
+        jdbcTemplate.update("DELETE FROM center_agent_ledger");
+        jdbcTemplate.update("DELETE FROM center_agent");
         jdbcTemplate.update("DELETE FROM sys_user_role");
         jdbcTemplate.update("DELETE FROM sys_user");
     }

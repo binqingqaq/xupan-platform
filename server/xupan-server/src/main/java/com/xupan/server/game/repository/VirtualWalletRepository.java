@@ -220,6 +220,58 @@ public class VirtualWalletRepository {
                 betId, issue, "下注扣款:" + code);
     }
 
+    /**
+     * 聊天室「下分申请」创建时的**预扣**流水（BY220 {@code application/common.php:1874-1876}：
+     * {@code if ($type == 1 && $isjian == 0) db('rbuser')->...->setDec('score', $last);}）。
+     *
+     * <p>BY220 只改余额、不写资金流水；本方法按账本原则 2（余额变化必须同时写流水）补一条语义为
+     * 「下分预扣」的流水。玩家自助发起，没有人工操作者，因此 {@code operator_user_id} 为空、
+     * {@code operator_name} 记为 {@code SYSTEM}——与下注扣款（{@link #appendBetDebit}）、
+     * 结算加分（{@link #appendSettlementCredit}）同口径。</p>
+     *
+     * <p>记账类别沿用既有的 {@code ADMIN_ADJUST}（负向余额调整）：下分预扣在报表口径里就是一笔「下分」，
+     * 复用既有类别可让「最近上下分」、机器报表、平台报表的过滤条件保持零改动；
+     * 「预扣」这一细分语义由 {@code reason} 与幂等键承载。</p>
+     */
+    public WalletLedgerEntry appendPointRequestHold(long targetUserId, BigDecimal amount,
+                                                     String reason, String idempotencyKey) {
+        BigDecimal value = positiveMoney(amount, "WALLET_AMOUNT_INVALID");
+        String safeReason = reason(reason);
+        String key = idempotencyKey(idempotencyKey);
+        VirtualWallet wallet = lockWallet(targetUserId);
+        Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
+        if (replay.isPresent()) {
+            return replayOrConflict(replay.get(), WalletOperationType.ADMIN_ADJUST, value.negate(),
+                    targetUserId, safeReason, null);
+        }
+        return append(wallet, WalletOperationType.ADMIN_ADJUST, value.negate(), null, "SYSTEM",
+                key, null, null, safeReason);
+    }
+
+    /**
+     * 下分申请被驳回时的**退回**流水（BY220 {@code application/rbt/controller/Index.php:312-314}：
+     * {@code if ($res['type'] == 1) db('rbuser')->...->setInc('score', $res['score']);}）。
+     *
+     * <p>语义是「下分申请驳回退回」，记账类别沿用 {@code ADMIN_GRANT}（正向余额调整）：
+     * 钱确实回到了玩家余额，在报表口径里就是一笔「上分」。操作者是审批人（机器账号/子账号/超管）。</p>
+     */
+    public WalletLedgerEntry appendPointRequestRefund(long operatorUserId, long targetUserId,
+                                                       BigDecimal amount, String reason,
+                                                       String idempotencyKey) {
+        BigDecimal value = positiveMoney(amount, "WALLET_AMOUNT_INVALID");
+        String safeReason = reason(reason);
+        String key = idempotencyKey(idempotencyKey);
+        VirtualWallet wallet = lockWallet(targetUserId);
+        Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
+        if (replay.isPresent()) {
+            return replayOrConflict(replay.get(), WalletOperationType.ADMIN_GRANT, value,
+                    targetUserId, safeReason, null);
+        }
+        String operatorName = operatorName(operatorUserId);
+        return append(wallet, WalletOperationType.ADMIN_GRANT, value, operatorUserId, operatorName,
+                key, null, null, safeReason);
+    }
+
     public WalletLedgerEntry appendBetEditAdjustment(long operatorUserId, long targetUserId, long betId,
                                                        String issueNumber, BigDecimal delta,
                                                        String reason, String idempotencyKey) {

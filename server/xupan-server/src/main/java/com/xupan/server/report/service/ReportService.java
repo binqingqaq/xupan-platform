@@ -12,12 +12,18 @@ import com.xupan.server.report.repository.ReportConfigRepository;
 import com.xupan.server.report.repository.ReportUpstreamOrderRepository;
 import com.xupan.server.system.service.PlayerDeskScopeService;
 import com.xupan.server.web.BusinessException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -34,17 +40,26 @@ import java.util.Set;
  * （未传 → 400 {@code PLAYER_DESK_MACHINE_REQUIRED}，不落到平台直属代理），
  * 且目标机器必须在自己范围内，范围外按"不存在"返回 404。</p>
  *
- * <p>权限规则：读走 {@code AGENT_CONSOLE_READ}（由 URL 层放行），写操作要求
+ * <p>权限规则：读走范围解析（{@code /api/admin/player-desk/**} 由 URL 层按
+ * {@code USER_MANAGE | AGENT_PLAYER_MANAGE | AGENT_CONSOLE_READ} 放行，
+ * {@code /api/agent/**} 只认 {@code AGENT_CONSOLE_READ}——V76 之后只有机器账号持有它），写操作要求
  * {@code USER_MANAGE}（平台管理员）或 {@code AGENT_PLAYER_MANAGE}（机器/子账号）。</p>
  *
  * <p>密码规则：写接口只接受明文入参并**立即加密**，只落
  * {@code agent.report_password_ciphertext}；读接口只返回 {@code hasPassword} 布尔，
  * 明文与密文都不出现在响应、日志或审计里。</p>
+ *
+ * <p>统一飞单（BY220 {@code x_admin.feidan*}）：机器自身没有飞单账号时，读配置会
+ * **只读**回退到所属子账号的统一飞单账号/网盘/盘口/报网类型（见
+ * {@link ReportConfigRepository#findConfig(long)}），因此登录前置条件、自动上报、
+ * 人工重报都自然按子账号凭据判断；账号与密码始终留在子账号行，绝不复制到 {@code agent}。
+ * 报网类型（V73 {@code agent_group.report_type}）取子账号的值，子账号未设置时回退机器自身。
+ * 读取结果用 {@code inheritedFromGroup} 透出，前端可提示"当前使用子账号统一飞单"。</p>
  */
 @Service
 public class ReportService {
 
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ReportService.class);
+    private static final Logger log = LoggerFactory.getLogger(ReportService.class);
 
     /** 审计动作码（BY220 报网配置）。 */
     public static final String AUDIT_ACTION = "AGENT_REPORT_CONFIG";
@@ -63,13 +78,26 @@ public class ReportService {
      * 后三个由中心上游第二层结算写入。</p>
      */
     public static final Set<String> REPORT_STATUSES = Set.of(
-            "PENDING", "ACCEPTED", "REJECTED", "TIMEOUT", "CANCELLED", "REFUNDED", "SETTLED");
+            "PENDING", "ACCEPTED", "REJECTED", "TIMEOUT", "CANCELLED", "REFUNDED", "SETTLED", "MANUAL");
     /** 没有上报订单行时派生出来的状态：还没报过。 */
     public static final String STATUS_PENDING = "PENDING";
-    /** 允许重报的当前状态（对应 BY220 {@code reFeidan}：只重报未报/失败/超时）。 */
+    /**
+     * 允许重报的当前状态（对应 BY220 {@code reFeidan}：只重报未报/失败/超时）。
+     *
+     * <p>{@code MANUAL}（人工待处置）**刻意不在集合内**：它表示自动重报已达上限，
+     * 继续放进来就会重新造成"失败单占满批次"的头部阻塞。人工重报走
+     * {@link #resubmit} 显式入口。</p>
+     */
     public static final Set<String> RESUBMITTABLE_STATUSES = Set.of("PENDING", "REJECTED", "TIMEOUT");
     /** 尚未上报、可供自动上报链路处理的当前状态。 */
     public static final List<String> SUBMIT_FROM_STATUSES = List.of(STATUS_PENDING);
+    /**
+     * 自动上报链路的候选状态集合（含重报），供健康检查统计积压量使用。
+     *
+     * <p>刻意不含 {@code MANUAL}：它表示已转人工、不再参与自动重报，
+     * 把它算进"积压"会让告警永远无法恢复。</p>
+     */
+    public static final List<String> RESUBMITTABLE_REPORT_STATUSES = List.of("PENDING", "REJECTED", "TIMEOUT");
     /** BY220 报网类型里的"无"。 */
     private static final String TYPE_NONE = "NONE";
     private static final int MAX_NETWORK_CODE_LENGTH = 64;
@@ -90,6 +118,12 @@ public class ReportService {
     private final GameDataRepository gameDataRepository;
     private final VirtualWalletService walletService;
     private final ChatMessageService chatMessageService;
+    /** 只用于把"本地模拟登录/退出"的结果同步到子账号的统一飞单上游状态（V74 {@code agent_group.report_*}）。 */
+    private final JdbcTemplate jdbc;
+    /** 自动重报的次数上限；达到后转 MANUAL 人工处置（P0-2）。 */
+    private final int retryMaxAttempts;
+    /** 分级退避梯度；索引 = 第 N 次失败。为空表示不延迟（等同 BY220 每轮无条件重报）。 */
+    private final List<Duration> retryBackoff;
 
     public ReportService(ReportConfigRepository repository, ReportUpstreamOrderRepository orderRepository,
                          PlayerDeskScopeService scopeService,
@@ -97,7 +131,10 @@ public class ReportService {
                          ReportAdapter reportAdapter, CenterReportAdapter centerReportAdapter,
                          PlayerLinkTokenCipher passwordCipher,
                          GameDataRepository gameDataRepository, VirtualWalletService walletService,
-                         ChatMessageService chatMessageService) {
+                         ChatMessageService chatMessageService,
+                         JdbcTemplate jdbc,
+                         @Value("${xupan.report.retry.max-attempts:5}") int retryMaxAttempts,
+                         @Value("${xupan.report.retry.backoff:30s,2m,10m,1h}") String retryBackoffSpec) {
         this.repository = repository;
         this.orderRepository = orderRepository;
         this.scopeService = scopeService;
@@ -109,6 +146,50 @@ public class ReportService {
         this.gameDataRepository = gameDataRepository;
         this.walletService = walletService;
         this.chatMessageService = chatMessageService;
+        this.jdbc = jdbc;
+        this.retryMaxAttempts = Math.max(1, retryMaxAttempts);
+        this.retryBackoff = parseBackoff(retryBackoffSpec);
+    }
+
+    /** 解析退避梯度，例如 {@code "30s,2m,10m,1h"}。非法项跳过，不影响启动。 */
+    private static List<Duration> parseBackoff(String spec) {
+        if (spec == null || spec.isBlank()) {
+            return List.of();
+        }
+        List<Duration> parsed = new ArrayList<>();
+        for (String part : spec.split(",")) {
+            String token = part.trim();
+            if (token.isEmpty()) {
+                continue;
+            }
+            Duration duration = parseDuration(token);
+            if (duration != null) {
+                parsed.add(duration);
+            }
+        }
+        return List.copyOf(parsed);
+    }
+
+    /** 支持 {@code 30s} / {@code 2m} / {@code 1h} / {@code 500ms} 四种简写，也接受纯秒数。 */
+    private static Duration parseDuration(String token) {
+        String lower = token.toLowerCase();
+        try {
+            if (lower.endsWith("ms")) {
+                return Duration.ofMillis(Long.parseLong(lower.substring(0, lower.length() - 2)));
+            }
+            char unit = lower.charAt(lower.length() - 1);
+            if (unit == 's' || unit == 'm' || unit == 'h') {
+                long value = Long.parseLong(lower.substring(0, lower.length() - 1));
+                return switch (unit) {
+                    case 's' -> Duration.ofSeconds(value);
+                    case 'm' -> Duration.ofMinutes(value);
+                    default -> Duration.ofHours(value);
+                };
+            }
+            return Duration.ofSeconds(Long.parseLong(lower));
+        } catch (NumberFormatException exception) {
+            return null;
+        }
     }
 
     /** 读取机器报网配置 + 上报状态统计（超时 / 未报 / 失败）。密码只返回 {@code hasPassword}。 */
@@ -129,18 +210,40 @@ public class ReportService {
     public ReportConfigView saveConfig(long operator, Long machineId, ReportConfigUpdate update) {
         long targetAgentId = targetAgentIdForWrite(operator, machineId);
         ReportConfigRepository.ReportConfigRow current = requireConfig(targetAgentId);
+        // 统一飞单回退只作用于**读取**：写入合并的"保持原值"必须以机器自身列为基准。
+        // 若直接沿用回退后的值，一次"只改盘口线路"的保存就会把子账号的飞单账号/网盘/盘口
+        // 复制到 agent 行——既可能撞 uk_agent_report_username 唯一约束，
+        // 也会破坏"一台机器一个上游账号"的账本原则（原则 8）。
+        String baseUsername = current.inheritedFromGroup() ? null : current.reportUsername();
+        String baseNetworkCode = current.inheritedFromGroup() ? null : current.reportNetworkCode();
+        String baseRouteCode = current.inheritedFromGroup() ? null : current.reportRouteCode();
+        // 报网类型同理必须落到**机器自身列**：继承态下 current.reportType() 是子账号的类型
+        // （V73 起统一飞单也管类型），直接当基准就把子账号的类型复制进 agent 行；
+        // 因此用 current.ownReportType()（机器自身列的原始值，不做任何回退），
+        // 既不会复制子账号的值，也不会把机器自己原有的类型冲成 NULL。
+        String baseReportType = current.ownReportType();
+        // 统一飞单账号是**子账号的共享账号**，机器不能把它复制成"自己的"：
+        // 否则一台机器会占住该上游账号（撞 uk_agent_report_username），兄弟机器立刻报
+        // REPORT_USERNAME_TAKEN，而且这台机器以后不再跟随子账号轮换（静默漂移）。
+        // 界面在继承态已不再回填该值，这里是对接口调用方与旧前端的兜底。
+        if (current.inheritedFromGroup() && update.reportUsername() != null
+                && !update.reportUsername().isBlank()
+                && update.reportUsername().trim().equals(current.reportUsername())) {
+            throw BusinessException.conflict("REPORT_USERNAME_INHERITED",
+                    "该飞单账号来自所属子账号的统一飞单，不能写成机器自身账号：请留空以继续沿用，或填写机器专属账号");
+        }
         ReportConfigRepository.ReportConfigUpdate applied = new ReportConfigRepository.ReportConfigUpdate(
-                resolveReportType(update.reportType(), current.reportType()),
+                resolveReportType(update.reportType(), baseReportType),
                 update.reportAuto() == null ? current.reportAuto() : update.reportAuto(),
                 update.reportWithdraw() == null ? current.reportWithdraw() : update.reportWithdraw(),
-                update.reportUsername() == null ? current.reportUsername()
+                update.reportUsername() == null ? baseUsername
                         : optionalText(update.reportUsername(), MAX_USERNAME_LENGTH, "REPORT_USERNAME_INVALID", "飞单账号无效"),
                 passwordCiphertext(update.reportPassword()),
                 update.reportUrl() == null ? current.reportUrl() : validateUrl(update.reportUrl()),
-                update.reportNetworkCode() == null ? current.reportNetworkCode()
+                update.reportNetworkCode() == null ? baseNetworkCode
                         : optionalText(update.reportNetworkCode(), MAX_NETWORK_CODE_LENGTH,
                         "REPORT_NETWORK_CODE_INVALID", "网盘编码无效"),
-                update.reportRouteCode() == null ? current.reportRouteCode()
+                update.reportRouteCode() == null ? baseRouteCode
                         : resolveRouteCode(update.reportRouteCode()));
         requireReportUsernameAvailable(applied.reportUsername(), targetAgentId);
         repository.updateConfig(targetAgentId, applied);
@@ -158,6 +261,10 @@ public class ReportService {
      *
      * <p>前置条件（不满足则 400 {@code REPORT_CONFIG_INCOMPLETE}）：已有报网类型（非空且不是 {@code NONE}）、
      * 网盘编码、盘口线路与飞单账号。</p>
+     *
+     * <p>统一飞单继承态下，登录成功还会把子账号（V74 {@code agent_group.report_*}）的上游状态置为
+     * 在线并把本次读到的余额/未结算下注同步过去，见
+     * {@link #syncSubAccountReportOnline(long, ReportConfigRepository.ReportConfigRow, boolean)}。</p>
      */
     @Transactional
     public ReportConfigView login(long operator, Long machineId) {
@@ -169,6 +276,7 @@ public class ReportService {
                     "报网配置不完整：需要报网类型、网盘编码、盘口线路与飞单账号");
         }
         repository.markOnline(targetAgentId, Instant.now());
+        syncSubAccountReportOnline(targetAgentId, current, true);
         audit(operator, "POST", "/api/admin/player-desk/report/login", targetAgentId, "reportOnline=true");
         return view(targetAgentId);
     }
@@ -186,13 +294,66 @@ public class ReportService {
         });
     }
 
-    /** 退出报网：只置 {@code report_online=false}，保留配置与上次登录时间。 */    @Transactional
+    /**
+     * 退出报网：只置 {@code report_online=false}，保留配置与上次登录时间。
+     *
+     * <p>统一飞单继承态下，退出还会把子账号（V74 {@code agent_group.report_online}）置为离线，
+     * 但**保留**已读到的余额/下注（BY220 {@code Websocket.php:329} 也只改 {@code feidanonline}）。</p>
+     */
+    @Transactional
     public ReportConfigView logout(long operator, Long machineId) {
         long targetAgentId = targetAgentIdForWrite(operator, machineId);
-        requireConfig(targetAgentId);
+        ReportConfigRepository.ReportConfigRow current = requireConfig(targetAgentId);
         repository.markOffline(targetAgentId);
+        syncSubAccountReportOnline(targetAgentId, current, false);
         audit(operator, "POST", "/api/admin/player-desk/report/logout", targetAgentId, "reportOnline=false");
         return view(targetAgentId);
+    }
+
+    /**
+     * 把本地模拟的"报网登录成功 / 退出"同步到所属子账号的统一飞单上游状态
+     * （V74 {@code agent_group.report_online / report_balance / report_stake}）。
+     *
+     * <p><b>BY220 依据</b>：{@code console/Websocket.php:307-318} 上游返回成功时把子账号的
+     * {@code feidanonline=1}、{@code feidanmoney=上游余额}、{@code feidanbetting=上游未结算下注额}
+     * 一起写回；{@code admin/controller/Users.php:111-122}（被注释掉的 subLogin 分支）子账号登录
+     * 上游成功后 {@code feidanonline=1}；{@code Websocket.php:328-330} 重新登录失败 → {@code feidanonline=0}。
+     * 注意 {@code Users.php:73-78} 开启飞单只重置**机器**的 {@code x_rbfly.flyers_online}，
+     * 不动子账号状态——本方法因此只由登录/退出驱动，不由开关驱动。</p>
+     *
+     * <p><b>本地模拟边界</b>：本项目不接任何真实外部上游、不发起任何网络请求，"机器的报网登录成功"
+     * 就是 BY220 上游读数的本地等价物，所以这里把子账号的余额/下注直接取**那台机器**的
+     * {@code report_balance} / {@code report_stake}（即本次读到的"上游余额 / 未结算下注"）。
+     * 退出只置离线并保留余额/下注读数。</p>
+     *
+     * <p>只有"继承该子账号统一飞单"的机器（{@code inheritedFromGroup = TRUE}，判定与
+     * {@link ReportConfigRepository#findConfig(long)} 完全一致）才动子账号状态；
+     * 机器自己有飞单账号时不碰子账号（这类机器的上游读数是机器自己的）。</p>
+     *
+     * @param online true = 登录成功（同步在线与余额/下注），false = 退出（只置离线）
+     */
+    private void syncSubAccountReportOnline(long agentId, ReportConfigRepository.ReportConfigRow config,
+                                            boolean online) {
+        if (!config.inheritedFromGroup()) {
+            return;
+        }
+        Long groupId = jdbc.query("SELECT group_id FROM agent WHERE id = ?",
+                rs -> rs.next() ? rs.getObject("group_id", Long.class) : null, agentId);
+        if (groupId == null) {
+            return;
+        }
+        if (online) {
+            jdbc.update("""
+                    UPDATE agent_group
+                       SET report_online=TRUE, report_balance=?, report_stake=?, updated_at=CURRENT_TIMESTAMP
+                     WHERE id=? AND deleted_at IS NULL
+                    """, config.reportBalance(), config.reportStake(), groupId);
+        } else {
+            jdbc.update("""
+                    UPDATE agent_group SET report_online=FALSE, updated_at=CURRENT_TIMESTAMP
+                     WHERE id=? AND deleted_at IS NULL
+                    """, groupId);
+        }
     }
 
     /** 按派生上报状态（可空=全部）列出本机器范围内的注单。 */
@@ -219,15 +380,42 @@ public class ReportService {
     @Transactional
     public ResubmitResult resubmit(long operator, Long machineId, long betId) {
         long targetAgentId = targetAgentIdForWrite(operator, machineId);
+        return doResubmit(operator, targetAgentId, betId, false);
+    }
+
+    /**
+     * 人工重报（P0-2 附带能力）：把已达自动重试上限、转入 {@code MANUAL} 的注单重新交给上报链路。
+     *
+     * <p>为什么必须有这个入口：{@code MANUAL} 被刻意排除在自动候选集合之外（否则失败单会重新
+     * 堵死批次），因此如果不提供显式重报，人工处置后这些单就永远报不出去了。
+     * 重报会**清零尝试计数并解除人工标记**，让退避从第一档重新开始。</p>
+     */
+    @Transactional
+    public ResubmitResult resubmitManual(long operator, Long machineId, long betId) {
+        long targetAgentId = targetAgentIdForWrite(operator, machineId);
+        return doResubmit(operator, targetAgentId, betId, true);
+    }
+
+    private ResubmitResult doResubmit(long operator, long targetAgentId, long betId, boolean allowManual) {
         ReportUpstreamOrderRepository.BetRow bet = orderRepository.findBetForAgent(betId, targetAgentId)
                 .orElseThrow(() -> BusinessException.notFound("REPORT_BET_NOT_FOUND", "注单不存在或不在当前机器范围内"));
-        if (!RESUBMITTABLE_STATUSES.contains(bet.reportStatus())) {
+        boolean manual = "MANUAL".equals(bet.reportStatus());
+        if (manual && !allowManual) {
+            throw BusinessException.conflict("REPORT_BET_STATUS_INVALID",
+                    "该注单已转人工待处置，请走人工重报入口");
+        }
+        if (!manual && !RESUBMITTABLE_STATUSES.contains(bet.reportStatus())) {
             throw BusinessException.conflict("REPORT_BET_STATUS_INVALID", "该注单当前上报状态不允许重报");
+        }
+        if (manual) {
+            // 解除人工标记并清零退避，让重试梯度重新开始。
+            orderRepository.resetForManualResubmit(betId);
         }
         ReportConfigRepository.ReportConfigRow config = requireConfig(targetAgentId);
         String newStatus = submitAttempt(bet, config);
-        audit(operator, "POST", "/api/admin/player-desk/report/orders/" + betId + "/resubmit", targetAgentId,
-                "betId=" + betId + ",reportStatus=" + newStatus);
+        audit(operator, "POST", "/api/admin/player-desk/report/orders/" + betId
+                        + (manual ? "/manual-resubmit" : "/resubmit"), targetAgentId,
+                "betId=" + betId + ",reportStatus=" + newStatus + ",fromManual=" + manual);
         return new ResubmitResult(betId, newStatus, view(targetAgentId));
     }
 
@@ -294,8 +482,47 @@ public class ReportService {
         if ("ACCEPTED".equals(newStatus)) {
             // 押注为本地模拟值：累计"已成功上报"的投注额（BY220 本地登录时 betting 也为 0，真值来自真实上游）
             repository.addReportedStake(bet.agentId(), bet.stake());
+            return newStatus;
         }
+        // 失败或超时：安排下一次重报时间点，并检查是否已达重试上限。
+        scheduleRetryOrManual(bet.betId(), newStatus);
         return newStatus;
+    }
+
+    /**
+     * 安排重报退避；超过上限转人工待处置（P0-2）。
+     *
+     * <p>没有这一步，失败单会每 2.4 秒无条件重报，并且永远留在候选集合里——
+     * 这正是"累积 50 笔坏单就堵死整条上报链路"的根因。</p>
+     *
+     * <p>退避梯度默认 30s → 2min → 10min → 1h，第 5 次起转 {@code MANUAL}。
+     * 全部可用配置覆盖；把 {@code report.retry.max-attempts} 设为很大的值、
+     * 退避梯度全设 0，即可退回 BY220 的"每轮无条件重报"行为。</p>
+     */
+    private void scheduleRetryOrManual(long betId, String newStatus) {
+        int attempts = orderRepository.scheduleRetry(betId, null);
+        int maxAttempts = retryMaxAttempts;
+        if (attempts >= maxAttempts) {
+            orderRepository.markManual(betId, "RETRY_EXHAUSTED",
+                    "自动重报已达上限 " + maxAttempts + " 次，转人工处置");
+            log.warn("上报重试达上限，转人工处置 betId={} attempts={} lastStatus={}",
+                    betId, attempts, newStatus);
+            auditRepository.record(0L, AUDIT_ACTION, "PATCH", "/api/admin/player-desk/report/manual",
+                    Long.toString(betId), "SUCCESS", null,
+                    "reason=RETRY_EXHAUSTED,attempts=" + attempts + ",lastStatus=" + newStatus, null,
+                    Instant.now());
+            return;
+        }
+        orderRepository.scheduleRetry(betId, Instant.now().plus(retryBackoff(attempts)));
+    }
+
+    /** 第 {@code attempts} 次失败后的退避时长（越界取最后一档）。 */
+    private Duration retryBackoff(int attempts) {
+        if (retryBackoff.isEmpty()) {
+            return Duration.ZERO;
+        }
+        int index = Math.min(Math.max(attempts, 1), retryBackoff.size()) - 1;
+        return retryBackoff.get(index);
     }
 
     /**
@@ -427,7 +654,7 @@ public class ReportService {
                 config.reportOnline(), config.reportWithdraw(), config.reportUsername(), config.hasPassword(),
                 config.reportUrl(), config.reportNetworkCode(), config.reportRouteCode(), config.reportBalance(),
                 config.reportStake(), config.reportLastLoginAt(), counts.timeoutCount(), counts.unreportedCount(),
-                counts.failedCount());
+                counts.failedCount(), config.inheritedFromGroup());
     }
 
     private ReportConfigRepository.ReportConfigRow requireConfig(long agentId) {
@@ -555,12 +782,18 @@ public class ReportService {
                 null, "machineId=" + machineId + "," + summary, null, Instant.now());
     }
 
-    /** 报网配置读模型；只暴露 {@code hasPassword}，永远不含密码明文或密文。 */
+    /**
+     * 报网配置读模型；只暴露 {@code hasPassword}，永远不含密码明文或密文。
+     *
+     * @param reportUsername     飞单账号；{@code inheritedFromGroup = TRUE} 时来自子账号统一飞单
+     * @param inheritedFromGroup 本次读取是否走了子账号统一飞单回退（机器自身没有飞单账号时）
+     */
     public record ReportConfigView(long machineId, String reportType, boolean reportAuto, boolean reportOnline,
                                    boolean reportWithdraw, String reportUsername, boolean hasPassword,
                                    String reportUrl, String reportNetworkCode, String reportRouteCode,
                                    BigDecimal reportBalance, BigDecimal reportStake, Instant reportLastLoginAt,
-                                   long timeoutOrderCount, long unreportedCount, long failedOrderCount) {
+                                   long timeoutOrderCount, long unreportedCount, long failedOrderCount,
+                                   boolean inheritedFromGroup) {
     }
 
     /** 报网配置写模型；{@code null} 表示保持原值，{@code reportPassword} 只在非空时覆盖。 */

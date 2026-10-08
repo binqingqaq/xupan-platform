@@ -28,11 +28,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * 运营后台（{@code /console}，BY220 {@code robot.php}）上下分联动代理积分。
+ * 运营后台（{@code /console}，BY220 {@code robot.php}）上下分联动机器积分。
  *
- * <p>BY220 语义：机器账号给自己名下**普通玩家**上分时先扣机器（代理）积分、下分时回补；
- * **托**的上下分只改玩家钱包，不动机器积分；机器积分不足时直接失败且不产生任何写入。
- * 平台管理员在运营后台直接调整玩家钱包，不联动机器积分（对应 BY220 超管在 {@code admin.php} 的操作）。</p>
+ * <p>BY220 语义：给**普通玩家**上分时先扣机器（代理）积分、下分时回补；**托**的上下分只改玩家钱包，
+ * 不动机器积分；机器积分不足时直接失败且不产生任何写入。</p>
+ *
+ * <p>阶段 3（严格对齐 BY220，2026-10-08 使用者拍板）：{@code /api/admin/player-desk/**} 只认机器账号，
+ * 超管/子账号一律 403（依据：
+ * {@code docs/plans/2026-10-08-严格对齐BY220-玩家运营归属机器账号与超管后台收口计划.md} §3.3）。
+ * 因此本类只覆盖**机器账号**路径；原平台侧（{@code GLOBAL}）的三个用例随业务不可达被删除（见下方说明）。</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -199,10 +203,15 @@ class AgentScoreLinkageConsoleTest {
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("{\"amount\":100,\"reason\":\"代理上分\",\"idempotencyKey\":\"link-insufficient-1\"}"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("AGENT_SCORE_INSUFFICIENT"));
+                .andExpect(jsonPath("$.code").value("AGENT_SCORE_INSUFFICIENT"))
+                // 机器端文案原文照抄 BY220（application/rbt/controller/Index.php:618-620）。
+                // 阶段 3 收紧为仅机器账号后，这是唯一可达的池不足文案。
+                .andExpect(jsonPath("$.message").value("您的账号剩余积分不足以完成本次上分！"));
 
+        // 机器池、玩家钱包、机器账本三者都不变：余额不足的校验发生在写任何余额之前
         assertThat(agentScore()).isEqualByComparingTo("50.00");
         assertThat(balanceOf(player)).isEqualByComparingTo("0.00");
+        assertThat(ledgerEntryCount()).isZero();
     }
 
     @Test
@@ -231,20 +240,17 @@ class AgentScoreLinkageConsoleTest {
                 .andExpect(jsonPath("$.code").value("AGENT_BOT_LIMIT_REACHED"));
     }
 
-    @Test
-    void platformAdminAdjustmentDoesNotDebitMachineScore() throws Exception {
-        String adminToken = login(ADMIN, PASSWORD);
-        String machineToken = login(MACHINE_USER, PASSWORD);
-        long player = createNormalPlayer(machineToken, "管理员调整玩家");
-
-        mockMvc.perform(post("/api/admin/player-desk/players/" + player + "/balance/grants")
-                        .header("Authorization", bearer(adminToken)).contentType("application/json")
-                        .content("{\"amount\":25,\"reason\":\"管理员上分\",\"idempotencyKey\":\"link-admin-1\"}"))
-                .andExpect(status().isOk());
-
-        assertThat(agentScore()).isEqualByComparingTo("1000.00");
-        assertThat(balanceOf(player)).isEqualByComparingTo("25.00");
-    }
+    // 阶段 3（严格对齐 BY220，2026-10-08 使用者拍板）：`/api/admin/player-desk/**` 收紧为
+    // **仅机器账号**（`PERM_AGENT_CONSOLE_READ`），超管/子账号一律 403。
+    // 因此原先在这里的 3 个「平台侧（GLOBAL）上下分」用例随业务不可达而删除：
+    //   * platformAdminAdjustmentDebitsMachineScoreAndCreditsItBackOnDown
+    //   * platformAdminInsufficientOwnerMachineScoreFailsWithoutAnyWrite
+    //   * platformAdminBotTopUpDoesNotTouchAgentScore
+    // 它们覆盖的机器池语义（扣/回池、池不足三者不变、托不联动）在**机器账号**路径上
+    // 已由本类 machineTopUpDebitsAgentScoreAndDownAdjustmentCreditsItBack、
+    // insufficientAgentScoreFailsWithoutAnyWrite、botTopUpDoesNotTouchAgentScore 完整覆盖；
+    // 平台侧那句「该玩家所属机器的积分不足以完成本次上分！」也随链路一起不可达。
+    // 参考：docs/plans/2026-10-08-严格对齐BY220-玩家运营归属机器账号与超管后台收口计划.md §3.3/§3.4
 
     private long createNormalPlayer(String token, String displayName) throws Exception {
         return postPlayer(token, "/api/admin/player-desk/players/normal", "{\"displayName\":\"" + displayName + "\"}");
@@ -273,6 +279,13 @@ class AgentScoreLinkageConsoleTest {
         Long total = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM agent_ledger WHERE agent_id=?", Long.class, machineId);
         return total == null ? 0L : total;
+    }
+
+    /** 最新一条机器流水的类型（{@code PLAYER_TOP_UP} / {@code PLAYER_DOWN}）。 */
+    private String lastLedgerEntryType() {
+        return jdbc.queryForObject("""
+                SELECT entry_type FROM agent_ledger WHERE agent_id=? ORDER BY id DESC LIMIT 1
+                """, String.class, machineId);
     }
 
     /** 最新一条机器流水的方向。 */

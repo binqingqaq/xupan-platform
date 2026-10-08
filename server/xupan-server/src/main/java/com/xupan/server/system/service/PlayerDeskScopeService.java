@@ -124,9 +124,10 @@ public class PlayerDeskScopeService {
     /**
      * 供服务层使用：解析范围，无权限时抛出稳定的 403 业务错误。
      *
-     * <p>注意：子账号（{@code agent_group.sys_user_id}）当前只有分组身份，
-     * 尚未拿到 {@code AGENT_CONSOLE_READ}；生产环境需要由后续迁移（V56）把
-     * {@code /console} 访问权限授予子账号角色，阶段 1 不改 Flyway。</p>
+     * <p>当前事实：子账号（{@code agent_group.sys_user_id}）的 {@code AGENT_CONSOLE_READ}
+     * 已在 V76 被撤销（/console 严格对齐 BY220 robot.php，只接受机器账号），
+     * 子账号走平台后台的玩家工作台，靠 {@code AGENT_PLAYER_MANAGE} 进入
+     * {@code /api/admin/player-desk/**}；这里的范围解析只负责 GLOBAL / GROUP / MACHINE 的归属判定。</p>
      */
     @Transactional(readOnly = true)
     public Scope requireAccess(long operatorUserId) {

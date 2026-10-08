@@ -50,7 +50,19 @@ public class TokenService {
     }
 
     public IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata) {
-        return issue(userId, deviceLabel, metadata, "PASSWORD", null);
+        return issue(userId, deviceLabel, metadata, SessionRecord.ENTRY_PLATFORM);
+    }
+
+    /**
+     * 按**入口**签发密码会话（Flyway V75 的会话入口维度）。
+     *
+     * <p>BY220 的 {@code admin.php}（平台后台）与 {@code robot.php}（代理后台，机器账号）是两套独立入口，
+     * 使用者 2026-10-08 确认 Q2 = C1：两入口各自独立会话、独立退出、可同时并存。
+     * 入口只允许 {@link SessionRecord#ENTRY_PLATFORM} / {@link SessionRecord#ENTRY_CONSOLE}，
+     * 未知值一律按平台入口处理（未知即最保守的老行为）。</p>
+     */
+    public IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata, String entry) {
+        return issue(userId, deviceLabel, metadata, "PASSWORD", null, normalizeEntry(entry));
     }
 
     public IssuedTokens issueChatOnly(long userId, String deviceLabel, RequestMetadata metadata) {
@@ -62,21 +74,24 @@ public class TokenService {
     }
 
     private IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata,
-                               String authMode, String scope) {
+                               String authMode, String scope, String entry) {
         Instant now = clock.instant();
         UserAccount user = activeUser(userId, now);
-        return issueSession(user, deviceLabel, metadata, authMode, scope, now);
+        return issueSession(user, deviceLabel, metadata, authMode, scope, entry, now);
     }
 
     private IssuedTokens issuePlayerLinkSession(long userId, String deviceLabel,
                                                 RequestMetadata metadata, String scope) {
         Instant now = clock.instant();
         UserAccount user = activeUserForSession(userId, "PLAYER_LINK", now);
-        return issueSession(user, deviceLabel, metadata, "PLAYER_LINK", scope, now);
+        // 玩家链接不是后台入口，不参与入口隔离；仍按平台入口落库（见 V75 说明），
+        // 其刷新鉴权由 authMode = 'PLAYER_LINK' 承担。
+        return issueSession(user, deviceLabel, metadata, "PLAYER_LINK", scope,
+                SessionRecord.ENTRY_PLATFORM, now);
     }
 
     private IssuedTokens issueSession(UserAccount user, String deviceLabel, RequestMetadata metadata,
-                                      String authMode, String scope, Instant now) {
+                                      String authMode, String scope, String entry, Instant now) {
         String accessToken = randomToken(ACCESS_TOKEN_BYTES);
         String refreshToken = randomToken(REFRESH_TOKEN_BYTES);
         Instant accessExpiresAt = now.plus(ACCESS_TOKEN_LIFETIME);
@@ -99,15 +114,31 @@ public class TokenService {
                 now,
                 user.securityVersion(),
                 authMode,
-                scope));
+                scope,
+                entry));
         return new IssuedTokens(accessToken, refreshToken, sessionId, accessExpiresAt, refreshExpiresAt);
     }
 
     public IssuedTokens refresh(String rawRefreshToken, RequestMetadata metadata) {
-        return refresh(rawRefreshToken, metadata, null);
+        return refresh(rawRefreshToken, metadata, null, null);
     }
 
     public IssuedTokens refresh(String rawRefreshToken, RequestMetadata metadata, String requiredAuthMode) {
+        return refresh(rawRefreshToken, metadata, requiredAuthMode, null);
+    }
+
+    /**
+     * 刷新会话，并校验**入口**一致。
+     *
+     * <p>阶段 5 的核心约束：请求入口与会话 {@code entry} 不一致时抛
+     * {@link InvalidTokenException}（→ 401），**绝不静默把会话切换成另一个入口的身份**。
+     * 例如把 /console 的刷新 Cookie 放进平台入口的 Cookie 名里刷新，会被这里挡下。</p>
+     *
+     * <p>{@code requiredEntry} 为 {@code null} 表示该使用端没有入口维度（玩家链接），
+     * 此时不做入口校验，身份隔离仍由 {@code requiredAuthMode} 完成。</p>
+     */
+    public IssuedTokens refresh(String rawRefreshToken, RequestMetadata metadata, String requiredAuthMode,
+                                String requiredEntry) {
         String refreshHash = sha256Required(rawRefreshToken);
         Instant now = clock.instant();
         SessionRecord current = sessionRepository.findByRefreshTokenHash(refreshHash)
@@ -115,6 +146,9 @@ public class TokenService {
                 .orElseThrow(() -> new InvalidTokenException("刷新令牌无效"));
         if (requiredAuthMode != null && !requiredAuthMode.equals(current.authMode())) {
             throw new InvalidTokenException("刷新身份不匹配");
+        }
+        if (requiredEntry != null && !requiredEntry.equals(current.entry())) {
+            throw new InvalidTokenException("刷新入口不匹配");
         }
         UserAccount user = activeUserForSession(current.userId(), current.authMode(), now);
         if (current.securityVersion() != user.securityVersion()) {
@@ -160,6 +194,26 @@ public class TokenService {
     public Optional<SessionRecord> findSessionForLogout(String rawAccessToken) {
         String accessHash = sha256Optional(rawAccessToken);
         return accessHash == null ? Optional.empty() : sessionRepository.findByAccessTokenHash(accessHash);
+    }
+
+    /**
+     * 会话的入口维度（Flyway V75）。退出登录时用它决定"只清哪个入口的刷新 Cookie"：
+     * 平台入口清 {@code xupan_refresh}，代理入口清 {@code xupan_console_refresh}。
+     *
+     * <p>会话不存在时返回 {@code null}（调用方按平台入口兜底），不抛异常，
+     * 以保证退出登录的幂等性（会话已被撤销时仍能正确清 Cookie）。</p>
+     */
+    public String sessionEntry(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return null;
+        }
+        return sessionRepository.findBySessionId(sessionId).map(SessionRecord::entry).orElse(null);
+    }
+
+    /** 会话入口归一：只认 CONSOLE，其余（含 null / 未知值）一律平台入口。 */
+    public static String normalizeEntry(String entry) {
+        return SessionRecord.ENTRY_CONSOLE.equalsIgnoreCase(entry == null ? null : entry.trim())
+                ? SessionRecord.ENTRY_CONSOLE : SessionRecord.ENTRY_PLATFORM;
     }
 
     public IssuedWsTicket issueWsTicket(long userId, String sessionId, String roomCode) {

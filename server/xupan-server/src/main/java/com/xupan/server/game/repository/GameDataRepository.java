@@ -259,7 +259,9 @@ public class GameDataRepository {
             return List.of();
         }
         return jdbcTemplate.query("""
-                SELECT b.id, a.user_code, a.display_name, b.ball_number, b.play_type,
+                SELECT b.id, COALESCE(a.user_code, b.player_code_snapshot) AS user_code,
+                       COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                       b.ball_number, b.play_type,
                        b.stake, b.net_profit
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
@@ -476,9 +478,10 @@ public class GameDataRepository {
 
     public List<BetAuditRecord> findBetAuditByIssue(String issueNumber) {
         return jdbcTemplate.query("""
-                SELECT b.id, a.display_name, b.play_type, b.parameters_text, b.stake
+                SELECT b.id, COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                       b.play_type, b.parameters_text, b.stake
                   FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
                  WHERE b.issue_number = ?
                  ORDER BY b.id
                 """, (rs, rowNum) -> new BetAuditRecord(

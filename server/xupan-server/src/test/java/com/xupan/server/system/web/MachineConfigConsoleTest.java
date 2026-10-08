@@ -133,27 +133,32 @@ class MachineConfigConsoleTest {
         assertThat(effective.rebateMode()).isEqualTo("DOUBLE");
     }
 
+    /**
+     * 阶段 3（严格对齐 BY220）：机器级配置属于**机器账号**（{@code /console}），
+     * 超管不再能通过玩家运营接口读写任意机器的配置，一律 403。
+     *
+     * <p>BY220 里超管的同类字段走的是「机器管理」表单（{@code rb/form.html} 平移，
+     * 即 {@code /api/admin/machines/**}），不是 robot.php 的机器运营面。原用例
+     * {@code platformAdminCanReadAndWriteSelectedMachine} 的期望已被业务决定推翻。</p>
+     */
     @Test
-    void platformAdminCanReadAndWriteSelectedMachine() throws Exception {
+    void platformAdminCannotReadOrWriteMachineConsoleConfig() throws Exception {
         String adminToken = login(ADMIN, PASSWORD);
 
-        // 管理员必须显式选择机器
         mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(adminToken)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_DESK_MACHINE_REQUIRED"));
+                .andExpect(status().isForbidden());
 
         mockMvc.perform(get("/api/admin/player-desk/machine-config").param("machineId", String.valueOf(machineBId))
                         .header("Authorization", bearer(adminToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.machineId").value((int) machineBId));
+                .andExpect(status().isForbidden());
 
         mockMvc.perform(put("/api/admin/player-desk/machine-config")
                         .header("Authorization", bearer(adminToken)).contentType("application/json")
                         .content(configBody(machineBId, "93", "17.5", "4.5", "1", "SINGLE", 60, 0, "1500")))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.machineId").value((int) machineBId))
-                .andExpect(jsonPath("$.rebateRate").value(4.5000));
-        assertThat(oddsRateOf(machineBId)).isEqualByComparingTo("93.0000");
+                .andExpect(status().isForbidden());
+
+        // 被拒不得写库：两台机器的赔率都保持初始值
+        assertThat(oddsRateOf(machineBId)).isEqualByComparingTo("0.0000");
         assertThat(oddsRateOf(machineAId)).isEqualByComparingTo("0.0000");
     }
 

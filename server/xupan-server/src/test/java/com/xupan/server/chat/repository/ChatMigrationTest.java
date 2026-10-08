@@ -21,7 +21,8 @@ class ChatMigrationTest {
 
     @Test
     void chatMigrationsCreateRequiredTablesAndMainRoom() {
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("64");
+        // 最新迁移版本：V75（会话入口维度 entry）+ V76（后台入口权限收敛）落地后为 76。
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("77");
         assertThat(tableCount("chat_room")).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_room WHERE room_code = 'main'", Integer.class)).isEqualTo(1);

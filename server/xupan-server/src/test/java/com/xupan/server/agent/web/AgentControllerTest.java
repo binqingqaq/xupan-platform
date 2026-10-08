@@ -164,14 +164,14 @@ class AgentControllerTest {
                      play_type, parameters_text, stake, odds_snapshot, settlement_status, net_profit,
                      created_at, settled_at)
                 VALUES ('AU8', ?, 'AGENT_CONTROLLER_SETTLED', 'agent-controller-settled', '3000000', 1,
-                        'FAN', '1', 10.00, 3.850, 'WIN', 5.00, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        'FAN', '1', 10.00, 3.850, 'WIN', 5.00, '2026-10-02 12:00:00', '2026-10-02 12:00:00')
                 """, normalAccountId);
         jdbcTemplate.update("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, settlement_status, created_at)
                 VALUES ('AU8', ?, 'AGENT_CONTROLLER_PENDING', 'agent-controller-pending', '3000000', 1,
-                        'FAN', '1', 20.00, 3.850, 'PENDING', CURRENT_TIMESTAMP)
+                        'FAN', '1', 20.00, 3.850, 'PENDING', '2026-10-02 12:00:00')
                 """, normalAccountId);
         mockMvc.perform(get("/api/agent/operations")
                         .header("Authorization", bearer(agentToken)).param("day", "2026-10-02"))

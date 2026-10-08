@@ -1,5 +1,6 @@
 package com.xupan.server.center.service;
 
+import com.xupan.server.center.repository.ReconciliationDispositionRepository;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,9 +32,15 @@ public class CenterReconciliationService {
     public static final String ORDER_NO_PREFIX = "BET-";
 
     private final JdbcTemplate jdbc;
+    private final ReconciliationDispositionRepository dispositionRepository;
+    private final ReconciliationDispositionService dispositionService;
 
-    public CenterReconciliationService(JdbcTemplate jdbc) {
+    public CenterReconciliationService(JdbcTemplate jdbc,
+                                       ReconciliationDispositionRepository dispositionRepository,
+                                       ReconciliationDispositionService dispositionService) {
         this.jdbc = jdbc;
+        this.dispositionRepository = dispositionRepository;
+        this.dispositionService = dispositionService;
     }
 
     /**
@@ -137,8 +144,50 @@ public class CenterReconciliationService {
         all.addAll(amountMismatch);
         int differenceCount = (int) (countMissingInCenter(machineId) + countMissingInLocal(machineId)
                 + countStatusMismatch(machineId) + countAmountMismatch(machineId));
-        return new Report(counts, differenceCount, all,
+
+        // C-2 ②：把"这条差异是否已被人工处置"标在每条差异上。
+        // 刻意**不**把已处置的差异从结果里过滤掉——事实不能被隐藏，
+        // 但运营需要一眼看出哪些已经看过、哪些还没人管。
+        List<Difference> annotated = all.stream().map(item -> item.withDisposed(
+                dispositionRepository.isEffectivelyDisposed(item.type(), item.betId()))).toList();
+
+        return new Report(counts, differenceCount, annotated,
                 missingInCenter.size(), missingInLocal.size(), statusMismatch.size(), amountMismatch.size());
+    }
+
+    /**
+     * 处置一条对账差异（C-2 ②）。
+     *
+     * <p><b>只记录判断，不修复数据。</b>规划明确"差异应先人工确认再自动化"，
+     * 自动改账会在真相未明时改写账本事实。这里记录"这笔差异被判断为什么、依据是什么、何时失效"。</p>
+     *
+     * <p>幂等：{@code idempotencyKey} 唯一，重复提交回放首次结果。</p>
+     */
+    @Transactional
+    public ReconciliationDispositionService.DispositionResult disposeDifference(
+            String differenceType, long betId, String resolution, Long centerAgentId, String reason,
+            java.time.Duration effectiveFor, String idempotencyKey, Long operatorUserId) {
+        return dispositionService.dispose(differenceType, betId, resolution, centerAgentId, reason,
+                effectiveFor, idempotencyKey, operatorUserId);
+    }
+
+    /** 撤销一条差异处置。 */
+    @Transactional
+    public ReconciliationDispositionService.DispositionResult revokeDifferenceDisposition(
+            long dispositionId, Long operatorUserId) {
+        return dispositionService.revoke(dispositionId, operatorUserId);
+    }
+
+    /** 当前生效的差异处置列表。 */
+    @Transactional(readOnly = true)
+    public List<ReconciliationDispositionRepository.Row> effectiveDispositions(int limit) {
+        return dispositionService.effectiveDispositions(limit);
+    }
+
+    /** 保留策略观察值（C-4 ③）。 */
+    @Transactional(readOnly = true)
+    public ReconciliationDispositionService.RetentionStats retentionStats() {
+        return dispositionService.retentionStats();
     }
 
     /**
@@ -232,7 +281,17 @@ public class CenterReconciliationService {
 
     /** 一条差异。 */
     public record Difference(String type, long betId, String localStatus, String centerStatus,
-                             BigDecimal localAmount, BigDecimal centerAmount) {
+                             BigDecimal localAmount, BigDecimal centerAmount, boolean disposed) {
+
+        /** 兼容旧调用点：默认未处置；已处置由 {@link #withDisposed} 标注。 */
+        public Difference(String type, long betId, String localStatus, String centerStatus,
+                          BigDecimal localAmount, BigDecimal centerAmount) {
+            this(type, betId, localStatus, centerStatus, localAmount, centerAmount, false);
+        }
+
+        Difference withDisposed(boolean value) {
+            return new Difference(type, betId, localStatus, centerStatus, localAmount, centerAmount, value);
+        }
     }
 
     /** 两侧计数（含未解决项）。 */

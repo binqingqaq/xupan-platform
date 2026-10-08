@@ -47,7 +47,8 @@ public class CenterAgentRepository {
     public Optional<AgentRow> findById(long id) {
         return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
-                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
+                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at,
+                       max_single_amount, max_issue_exposure, last_reject_code, last_reject_at, reject_count
                   FROM center_agent WHERE id = ?
                 """, (rs, rowNum) -> agentRow(rs), id).stream().findFirst();
     }
@@ -55,21 +56,24 @@ public class CenterAgentRepository {
     public Optional<AgentRow> findByTokenHash(String tokenHash) {
         return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
-                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
+                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at,
+                       max_single_amount, max_issue_exposure, last_reject_code, last_reject_at, reject_count
                   FROM center_agent WHERE token_hash = ?
                 """, (rs, rowNum) -> agentRow(rs), tokenHash).stream().findFirst();
     }
 
     public Optional<AgentRow> findByUpstreamAccount(String upstreamAccount) {        return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
-                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
+                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at,
+                       max_single_amount, max_issue_exposure, last_reject_code, last_reject_at, reject_count
                   FROM center_agent WHERE upstream_account = ?
                 """, (rs, rowNum) -> agentRow(rs), upstreamAccount).stream().findFirst();
     }
 
     public List<AgentRow> findAll() {        return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
-                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
+                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at,
+                       max_single_amount, max_issue_exposure, last_reject_code, last_reject_at, reject_count
                   FROM center_agent ORDER BY id
                 """, (rs, rowNum) -> agentRow(rs));
     }
@@ -95,7 +99,8 @@ public class CenterAgentRepository {
     public Optional<AgentRow> lockById(long id) {
         return jdbc.query("""
                 SELECT id, agent_code, agent_name, upstream_account, token_prefix, status,
-                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at
+                       credit_limit, available_balance, frozen_balance, upstream_unsettled, created_at, updated_at,
+                       max_single_amount, max_issue_exposure, last_reject_code, last_reject_at, reject_count
                   FROM center_agent WHERE id = ? FOR UPDATE
                 """, (rs, rowNum) -> agentRow(rs), id).stream().findFirst();
     }
@@ -111,6 +116,86 @@ public class CenterAgentRepository {
         };
         return jdbc.update("UPDATE center_agent SET " + column
                 + " = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", value, id);
+    }
+
+    /** 设置代理级风控上限；{@code null} 表示回退到全局默认。 */
+    public int updateRiskLimits(long id, BigDecimal maxSingleAmount, BigDecimal maxIssueExposure) {
+        return jdbc.update("""
+                UPDATE center_agent
+                   SET max_single_amount = ?, max_issue_exposure = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, maxSingleAmount, maxIssueExposure, id);
+    }
+
+    /**
+     * 记录一次风控命中：追加风控记录行 + 更新代理上的"最近拒绝"摘要与计数。
+     *
+     * <p>两件事必须一起做：明细表用于按规则聚合与时间序列分析，摘要列用于管理端列表
+     * 直接展示而不用逐单回查。</p>
+     */
+    public void recordRiskHit(long centerAgentId, String ruleCode, String ruleCategory,
+                              BigDecimal observedValue, BigDecimal thresholdValue,
+                              String gameCode, String issueNumber, String agentOrderNo, String detail) {
+        jdbc.update("""
+                INSERT INTO center_risk_hit
+                    (center_agent_id, rule_code, rule_category, observed_value, threshold_value,
+                     game_code, issue_number, agent_order_no, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, centerAgentId, ruleCode, ruleCategory, observedValue, thresholdValue,
+                gameCode, issueNumber, agentOrderNo, detail);
+        jdbc.update("""
+                UPDATE center_agent
+                   SET last_reject_code = ?, last_reject_at = CURRENT_TIMESTAMP,
+                       reject_count = reject_count + 1, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, ruleCode, centerAgentId);
+    }
+
+    /** 某个代理在时间窗口内的命中次数（异常行为识别的基础查询）。 */
+    public long countRiskHitsSince(long centerAgentId, Instant since) {
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM center_risk_hit
+                 WHERE center_agent_id = ? AND created_at >= ?
+                """, Long.class, centerAgentId, Timestamp.from(since));
+        return total == null ? 0 : total;
+    }
+
+    /** 某代理在时间窗口内、指定规则的命中次数。 */
+    public long countRiskHitsSince(long centerAgentId, String ruleCode, Instant since) {
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM center_risk_hit
+                 WHERE center_agent_id = ? AND rule_code = ? AND created_at >= ?
+                """, Long.class, centerAgentId, ruleCode, Timestamp.from(since));
+        return total == null ? 0 : total;
+    }
+
+    /** 某代理最近的风控命中记录（管理端展示）。 */
+    public List<RiskHitRow> findRecentRiskHits(long centerAgentId, int limit) {
+        return jdbc.query("""
+                SELECT id, center_agent_id, rule_code, rule_category, observed_value, threshold_value,
+                       game_code, issue_number, agent_order_no, detail, created_at
+                  FROM center_risk_hit
+                 WHERE center_agent_id = ?
+                 ORDER BY id DESC LIMIT ?
+                """, (rs, rowNum) -> new RiskHitRow(rs.getLong("id"), rs.getLong("center_agent_id"),
+                rs.getString("rule_code"), rs.getString("rule_category"),
+                rs.getBigDecimal("observed_value"), rs.getBigDecimal("threshold_value"),
+                rs.getString("game_code"), rs.getString("issue_number"), rs.getString("agent_order_no"),
+                rs.getString("detail"), instant(rs.getTimestamp("created_at"))), centerAgentId, limit);
+    }
+
+    /** 全量风控命中按规则聚合（管理端"风险"页用）。 */
+    public List<RiskRuleCount> countRiskHitsByRule(Instant since) {
+        return jdbc.query("""
+                SELECT rule_code, rule_category, COUNT(*) AS hit_count,
+                       COUNT(DISTINCT center_agent_id) AS agent_count
+                  FROM center_risk_hit
+                 WHERE created_at >= ?
+                 GROUP BY rule_code, rule_category
+                 ORDER BY hit_count DESC, rule_code
+                """, (rs, rowNum) -> new RiskRuleCount(rs.getString("rule_code"),
+                rs.getString("rule_category"), rs.getLong("hit_count"), rs.getLong("agent_count")),
+                Timestamp.from(since));
     }
 
     public long insertLedgerEntry(long centerAgentId, String bucket, String entryType, String direction,
@@ -182,7 +267,10 @@ public class CenterAgentRepository {
                 rs.getString("upstream_account"), rs.getString("token_prefix"), rs.getString("status"),
                 rs.getBigDecimal("credit_limit"), rs.getBigDecimal("available_balance"),
                 rs.getBigDecimal("frozen_balance"), rs.getBigDecimal("upstream_unsettled"),
-                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("updated_at")));
+                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("updated_at")),
+                rs.getBigDecimal("max_single_amount"), rs.getBigDecimal("max_issue_exposure"),
+                rs.getString("last_reject_code"), instant(rs.getTimestamp("last_reject_at")),
+                rs.getLong("reject_count"));
     }
 
     private static LedgerRow ledgerRow(ResultSet rs) throws SQLException {
@@ -201,7 +289,9 @@ public class CenterAgentRepository {
     public record AgentRow(long id, String agentCode, String agentName, String upstreamAccount,
                            String tokenPrefix, String status, BigDecimal creditLimit,
                            BigDecimal availableBalance, BigDecimal frozenBalance,
-                           BigDecimal upstreamUnsettled, Instant createdAt, Instant updatedAt) {
+                           BigDecimal upstreamUnsettled, Instant createdAt, Instant updatedAt,
+                           BigDecimal maxSingleAmount, BigDecimal maxIssueExposure,
+                           String lastRejectCode, Instant lastRejectAt, long rejectCount) {
     }
 
     /** 一行中心账本流水。 */
@@ -209,5 +299,15 @@ public class CenterAgentRepository {
                             BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter, String reason,
                             String referenceType, String referenceId, String idempotencyKey,
                             Long operatorUserId, Instant createdAt) {
+    }
+
+    /** 一次风控命中。 */
+    public record RiskHitRow(long id, long centerAgentId, String ruleCode, String ruleCategory,
+                             BigDecimal observedValue, BigDecimal thresholdValue, String gameCode,
+                             String issueNumber, String agentOrderNo, String detail, Instant createdAt) {
+    }
+
+    /** 按规则聚合的风控命中统计。 */
+    public record RiskRuleCount(String ruleCode, String ruleCategory, long hitCount, long agentCount) {
     }
 }

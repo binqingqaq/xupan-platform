@@ -118,7 +118,7 @@ public class PlayerLinkAuthenticationService {
 
     /**
      * 创建/复用玩家链接。{@code scope} 非空时表示已按运营后台范围校验过归属，
-     * 审计权限码按范围取值（管理员 {@code USER_MANAGE}，机器账号/子账号 {@code AGENT_CONSOLE_READ}）。
+     * 审计权限码按范围取值（管理员 {@code USER_MANAGE}，机器账号/子账号 {@code AGENT_PLAYER_MANAGE}）。
      */
     private IssuedLink issueAfterValidation(long userId, long operatorUserId, String permission,
                                             String auditPath, PlayerDeskScopeService.Scope scope) {
@@ -341,9 +341,14 @@ public class PlayerLinkAuthenticationService {
         return scope;
     }
 
-    /** 审计权限码：平台管理员记 {@code USER_MANAGE}，机器账号/子账号记 {@code AGENT_CONSOLE_READ}。 */
+    /**
+     * 审计权限码：平台管理员记 {@code USER_MANAGE}，机器账号/子账号记 {@code AGENT_PLAYER_MANAGE}。
+     *
+     * <p>V76 之后 ADMIN / SUB_ACCOUNT 已不再持有 {@code AGENT_CONSOLE_READ}（/console 只认机器账号），
+     * 若这里继续写 {@code AGENT_CONSOLE_READ}，子账号的审计记录会指向它并不持有的权限。</p>
+     */
     private static String auditPermission(PlayerDeskScopeService.Scope scope, String globalPermission) {
-        return scope != null && scope.global() ? globalPermission : "AGENT_CONSOLE_READ";
+        return scope != null && scope.global() ? globalPermission : "AGENT_PLAYER_MANAGE";
     }
 
     private void requirePermission(long operatorUserId, String permission, String code, String message) {

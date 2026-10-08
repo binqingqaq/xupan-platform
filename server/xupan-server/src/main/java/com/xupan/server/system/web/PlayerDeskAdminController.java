@@ -227,8 +227,8 @@ import java.util.List;
     }
 
     @DeleteMapping("/players/{userId}")
-    public Detail delete(Authentication auth, @PathVariable long userId) {
-        return Detail.from(service.delete(userId, user(auth)));
+    public Deleted delete(Authentication auth, @PathVariable long userId) {
+        return Deleted.from(service.delete(userId, user(auth)));
     }
 
     @PostMapping("/players/{userId}/balance/grants")
@@ -322,6 +322,19 @@ import java.util.List;
                     p.playerKind(), p.userType(), p.balance(), p.createdAt(), p.lastLoginAt(), p.behaviorEnabled(), p.lastActionAt(),
                     link, WalletStats.from(x.walletStatistics()), x.ledger().stream().map(Ledger::from).toList(),
                     x.actions().stream().map(Action::from).toList(), Behavior.from(x.behavior()), x.bets().stream().map(Bet::from).toList());
+        }
+    }
+    /**
+     * 删除玩家的返回体：BY220 只回传 {@code 0}（成功标志），这里额外回传审计需要的金额信息。
+     *
+     * <p>物理删除后已无 {@code Detail} 可返回（玩家行不存在了），因此删除接口不再返回玩家详情；
+     * 前端只需要成功/失败，不需要新业务名词。</p>
+     */
+    public record Deleted(long userId, String memberCode, String playerName, BigDecimal refundedAmount,
+                          Long machineId, boolean alreadyDeleted) {
+        static Deleted from(com.xupan.server.system.service.PlayerPhysicalDeleteService.Outcome x) {
+            return new Deleted(x.userId(), x.memberCode(), x.playerName(), x.refundedAmount(),
+                    x.machineId(), x.alreadyDeleted());
         }
     }
     public record PointsReport(String businessDate, Instant fromInclusive, Instant toExclusive, List<String> availableDates, String playerKind,
@@ -493,17 +506,24 @@ import java.util.List;
     }
     /** 只带机器选择的报网请求体（登录/退出/重报）。 */
     public record ReportMachineRequest(Long machineId) {}
-    /** 报网配置响应；只含 {@code hasPassword} 布尔，绝不含密码明文或密文。 */
+    /**
+     * 报网配置响应；只含 {@code hasPassword} 布尔，绝不含密码明文或密文。
+     *
+     * <p>{@code inheritedFromGroup} 表示本次读到的飞单账号/网盘/盘口是否来自子账号"统一飞单"
+     * （BY220 {@code x_admin.feidan*}）的只读回退：机器自身没有飞单账号、子账号已开启统一飞单
+     * 且配好账号时才为 {@code true}；此时账号与密码仍只存在子账号行，未被复制到机器行。</p>
+     */
     public record ReportConfigResponse(long machineId, String reportType, boolean reportAuto, boolean reportOnline,
                                        boolean reportWithdraw, String reportUsername, boolean hasPassword,
                                        String reportUrl, String reportNetworkCode, String reportRouteCode,
                                        BigDecimal reportBalance, BigDecimal reportStake, Instant reportLastLoginAt,
-                                       long timeoutOrderCount, long unreportedCount, long failedOrderCount) {
+                                       long timeoutOrderCount, long unreportedCount, long failedOrderCount,
+                                       boolean inheritedFromGroup) {
         static ReportConfigResponse from(ReportService.ReportConfigView x) {
             return new ReportConfigResponse(x.machineId(), x.reportType(), x.reportAuto(), x.reportOnline(),
                     x.reportWithdraw(), x.reportUsername(), x.hasPassword(), x.reportUrl(), x.reportNetworkCode(),
                     x.reportRouteCode(), x.reportBalance(), x.reportStake(), x.reportLastLoginAt(),
-                    x.timeoutOrderCount(), x.unreportedCount(), x.failedOrderCount());
+                    x.timeoutOrderCount(), x.unreportedCount(), x.failedOrderCount(), x.inheritedFromGroup());
         }
     }
     /** 报网订单分页响应。 */

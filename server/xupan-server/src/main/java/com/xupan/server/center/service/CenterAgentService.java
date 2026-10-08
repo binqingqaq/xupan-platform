@@ -64,6 +64,53 @@ public class CenterAgentService {
         }
     }
 
+    /**
+     * 设定代理级风控上限（P1-C1）。
+     *
+     * <p>传 {@code null} 表示该维度回退到全局默认值（单笔 10 万 / 单期敞口 50 万）。
+     * 非空时必须为正数——0 或负数会让该代理完全无法下单，属于误配置而不是"收紧"，
+     * 因此直接拒绝并给出可读错误。</p>
+     */
+    @Transactional
+    public CenterAgentRepository.AgentRow setRiskLimits(long id, BigDecimal maxSingleAmount,
+                                                        BigDecimal maxIssueExposure, Long operator) {
+        requireManage(operator);
+        CenterAgentRepository.AgentRow existing = require(id);
+        BigDecimal single = positiveOrNull(maxSingleAmount, "CENTER_RISK_SINGLE_INVALID", "代理级单笔上限必须大于零");
+        BigDecimal exposure = positiveOrNull(maxIssueExposure, "CENTER_RISK_EXPOSURE_INVALID",
+                "代理级单期敞口上限必须大于零");
+        if (single != null && exposure != null && exposure.compareTo(single) < 0) {
+            // 敞口上限低于单笔上限时，任何一笔都必然被拒——这是配置错误，提前拦住。
+            throw BusinessException.badRequest("CENTER_RISK_LIMIT_CONFLICT",
+                    "代理级单期敞口上限不得低于单笔上限");
+        }
+        repository.updateRiskLimits(existing.id(), single, exposure);
+        return require(id);
+    }
+
+    /** 某代理最近的风控命中记录。 */
+    @Transactional(readOnly = true)
+    public List<CenterAgentRepository.RiskHitRow> recentRiskHits(long id, int limit) {
+        require(id);
+        return repository.findRecentRiskHits(id, limit);
+    }
+
+    /** 全量风控命中按规则聚合。 */
+    @Transactional(readOnly = true)
+    public List<CenterAgentRepository.RiskRuleCount> riskHitSummary(java.time.Instant since) {
+        return repository.countRiskHitsByRule(since);
+    }
+
+    private static BigDecimal positiveOrNull(BigDecimal value, String code, String message) {
+        if (value == null) {
+            return null;
+        }
+        if (value.signum() <= 0) {
+            throw BusinessException.badRequest(code, message);
+        }
+        return value.setScale(2, java.math.RoundingMode.HALF_UP);
+    }
+
     /** 创建中心代理并返回一次性的 Token 原文。 */
     @Transactional
     public Created create(String agentCode, String agentName, String upstreamAccount, BigDecimal creditLimit,

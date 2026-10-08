@@ -108,6 +108,12 @@ class ActuatorSecurityTest {
         jdbcTemplate.update("DELETE FROM auth_session");
         jdbcTemplate.update("DELETE FROM sys_login_log");
         jdbcTemplate.update("DELETE FROM sys_operation_log");
+        // 清 sys_user 前先解除 agent.account_user_id 与 center_agent.created_by 的引用。
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code <> 'PLATFORM_DIRECT'");
+        jdbcTemplate.update("DELETE FROM center_order_disposition");
+        jdbcTemplate.update("DELETE FROM center_order");
+        jdbcTemplate.update("DELETE FROM center_agent_ledger");
+        jdbcTemplate.update("DELETE FROM center_agent");
         jdbcTemplate.update("DELETE FROM sys_user_role");
         jdbcTemplate.update("DELETE FROM sys_user");
     }

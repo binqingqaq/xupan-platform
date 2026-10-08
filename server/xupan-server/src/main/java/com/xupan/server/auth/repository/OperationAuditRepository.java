@@ -1,5 +1,8 @@
 package com.xupan.server.auth.repository;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -27,6 +30,8 @@ import java.util.Objects;
  */
 @Repository
 public class OperationAuditRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(OperationAuditRepository.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final TransactionTemplate auditTransaction;
@@ -61,6 +66,26 @@ public class OperationAuditRepository {
                 LoginAuditRepository.truncate(requestSummary, 2000), "requestSummary");
         String safeResourceId = LoginAuditRepository.rejectSensitive(
                 LoginAuditRepository.truncate(resourceId, 128), "resourceId");
+        try {
+            insert(operatorUserId, permissionCode, httpMethod, requestPath, safeResourceId, result,
+                    errorCode, safeSummary, ip, createdAt);
+        } catch (DataIntegrityViolationException exception) {
+            // 账号已被物理删除（2026-10-03 起机器/子账号/全量账号删除都是物理删除）时，
+            // 待写审计的操作者外键会失效。审计行本身仍要留下，只是把操作者置空，
+            // 避免"删除账号"这类操作反而把自己的审计记录丢掉。
+            if (operatorUserId == null) {
+                throw exception;
+            }
+            log.warn("操作审计的操作者账号已不存在，退化为无操作者写入 path={} operatorUserId={}",
+                    requestPath, operatorUserId);
+            insert(null, permissionCode, httpMethod, requestPath, safeResourceId, result,
+                    errorCode, safeSummary, ip, createdAt);
+        }
+    }
+
+    private void insert(Long operatorUserId, String permissionCode, String httpMethod, String requestPath,
+                        String safeResourceId, String result, String errorCode, String safeSummary,
+                        String ip, Instant createdAt) {
         auditTransaction.executeWithoutResult(status -> jdbcTemplate.update("""
                 INSERT INTO sys_operation_log
                     (operator_user_id, permission_code, http_method, request_path, resource_id,

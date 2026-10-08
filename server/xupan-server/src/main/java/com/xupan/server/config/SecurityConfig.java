@@ -98,17 +98,32 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/password").hasAuthority("PERM_PLATFORM_PASSWORD_MANAGE")
                         .requestMatchers(HttpMethod.PATCH, "/api/admin/report-networks/**").hasAuthority("PERM_REPORT_NETWORK_WRITE")
                         .requestMatchers(HttpMethod.DELETE, "/api/admin/report-networks/**").hasAuthority("PERM_REPORT_NETWORK_WRITE")
+                        // 代理后台接口（/api/agent/**，BY220 robot.php）：只认 AGENT_CONSOLE_READ。
+                        // V76 已从 ADMIN / SUB_ACCOUNT 撤销该权限，因此收敛后只有机器账号能调（符合预期）。
                         .requestMatchers("/api/agent", "/api/agent/**").hasAuthority("PERM_AGENT_CONSOLE_READ")
                         .requestMatchers("/api/admin/users", "/api/admin/users/**").hasAuthority("PERM_USER_MANAGE")
-                        .requestMatchers("/api/admin/test-players", "/api/admin/test-players/**")
-                        .hasAuthority("PERM_USER_MANAGE")
-                        // 投注赔率/限额当前仍是全局配置：只读可以展示，写入只允许平台管理员（机器级配置留到阶段 3）。
+                        // 全局赔率/限额配置（`/api/admin/player-desk/betting-config`）的现状事实：
+                        //   * 它**原本就挂在 player-desk 路径下**，但当前**没有任何前端调用方**
+                        //     （`api.getBettingConfig()` 的唯一调用点 AdminWelcomeControlPanel.vue 的 GLOBAL 分支，
+                        //     随平台侧玩家工作台一起删除；该组件现只挂 /console，机器账号恒为 MACHINE 级别）；
+                        //   * 因此 GET 不再给平台账号任何豁免：整段 `/api/admin/player-desk/**` 只有
+                        //     AGENT_CONSOLE_READ（机器账号）能过，"超管不碰玩家"可用一条断言锁死。
+                        //   * 唯一保留的 PUT 规则是**既有配置**（不是本次新增），且**不能删**：
+                        //     GameBettingConfigService 没有任何权限校验，删掉这条会让机器账号能改**全局**
+                        //     赔率/限额（PlayerDeskScopeTest.machineAccountCannotWriteGlobalBettingConfig 锁的就是
+                        //     "机器只能读全局配置、不能写"）。若要连它一起收敛，必须先给该服务加 USER_MANAGE 校验，
+                        //     属另议。
+                        // 若平台侧将来确实需要读写全局赔率/限额，应**另开归属正确的端点**
+                        // （对齐 BY220 admin.php 的「设置」），不要回到 player-desk 路径下开后门。
                         .requestMatchers(HttpMethod.PUT, "/api/admin/player-desk/betting-config",
                                 "/api/admin/player-desk/betting-config/**")
                         .hasAuthority("PERM_USER_MANAGE")
-                        // 运营后台（/console，BY220 robot.php）：平台管理员全局，机器账号按 agent_id 收敛在服务层。
+                        // 玩家/托运营接口（BY220 robot.php 的代理后台，机器账号）：
+                        // 严格对齐 BY220 —— application/admin/controller/* 从不查 db('user')，超管对玩家没有任何
+                        // 操作面，因此这里只认 AGENT_CONSOLE_READ（只有机器账号可调）；
+                        // 超管（USER_MANAGE）与子账号（AGENT_PLAYER_MANAGE）一律 403，数据范围由服务层收敛为 MACHINE。
                         .requestMatchers("/api/admin/player-desk", "/api/admin/player-desk/**")
-                        .hasAnyAuthority("PERM_USER_MANAGE", "PERM_AGENT_CONSOLE_READ")
+                        .hasAuthority("PERM_AGENT_CONSOLE_READ")
                         .requestMatchers("/api/admin/roles").hasAuthority("PERM_USER_MANAGE")
                         .requestMatchers(HttpMethod.GET, "/api/chat/rooms/*", "/api/chat/rooms/*/messages")
                         .hasAnyAuthority("PERM_CHAT_ROOM_READ", "SCOPE_CHAT_ONLY")

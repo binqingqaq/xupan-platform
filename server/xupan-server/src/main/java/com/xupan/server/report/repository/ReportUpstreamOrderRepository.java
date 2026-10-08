@@ -38,19 +38,24 @@ public class ReportUpstreamOrderRepository {
             """;
 
     private static final String BET_COLUMNS = """
-            SELECT b.id, b.user_id, a.sys_user_id, a.agent_id, b.issue_number, b.play_type, b.parameters_text,
+            SELECT b.id, b.user_id, a.sys_user_id,
+                   COALESCE(a.agent_id, b.agent_id_snapshot) AS agent_id,
+                   b.issue_number, b.play_type, b.parameters_text,
                    b.stake, b.odds_snapshot, b.settlement_status, %s AS report_status, o.id AS order_id
               FROM game_bet b
-              JOIN demo_user_account a ON a.id = b.user_id
+              LEFT JOIN demo_user_account a ON a.id = b.user_id
             """.formatted(DERIVED_STATUS);
 
     /** 上报订单列表用的列集（含展示字段）。 */
     private static final String ORDER_COLUMNS = """
-            SELECT b.id, b.bet_code, b.user_id, a.member_code, a.display_name, b.issue_number, b.ball_number,
+            SELECT b.id, b.bet_code, b.user_id,
+                   COALESCE(a.member_code, b.player_code_snapshot) AS member_code,
+                   COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                   b.issue_number, b.ball_number,
                    b.play_type, b.parameters_text, b.stake, b.odds_snapshot, b.settlement_status,
                    %s AS report_status, b.created_at
               FROM game_bet b
-              JOIN demo_user_account a ON a.id = b.user_id
+              LEFT JOIN demo_user_account a ON a.id = b.user_id
             """.formatted(DERIVED_STATUS);
 
     private final JdbcTemplate jdbc;
@@ -135,9 +140,9 @@ public class ReportUpstreamOrderRepository {
                        COALESCE(SUM(CASE WHEN o.id IS NULL THEN 1 ELSE 0 END), 0) AS unreported_count,
                        COALESCE(SUM(CASE WHEN %s = 'REJECTED' THEN 1 ELSE 0 END), 0) AS failed_count
                   FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
                 %s
-                 WHERE a.agent_id = ?
+                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ?
                 """.formatted(DERIVED_STATUS, DERIVED_STATUS, LATEST_ORDER_JOIN),
                 (rs, rowNum) -> new StatusCounts(rs.getLong("timeout_count"),
                         rs.getLong("unreported_count"), rs.getLong("failed_count")), agentId);
@@ -147,7 +152,7 @@ public class ReportUpstreamOrderRepository {
     public List<OrderRow> findOrders(long agentId, String status, int page, int pageSize) {
         StringBuilder sql = new StringBuilder(ORDER_COLUMNS)
                 .append(LATEST_ORDER_JOIN)
-                .append(" WHERE a.agent_id = ?");
+                .append(" WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ?");
         List<Object> args = new ArrayList<>();
         args.add(agentId);
         if (status != null && !status.isBlank()) {
@@ -170,8 +175,8 @@ public class ReportUpstreamOrderRepository {
         StringBuilder sql = new StringBuilder("""
                 SELECT COUNT(*)
                   FROM game_bet b
-                  JOIN demo_user_account a ON a.id = b.user_id
-                """).append(LATEST_ORDER_JOIN).append(" WHERE a.agent_id = ?");
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                """).append(LATEST_ORDER_JOIN).append(" WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ?");
         List<Object> args = new ArrayList<>();
         args.add(agentId);
         if (status != null && !status.isBlank()) {
@@ -190,7 +195,8 @@ public class ReportUpstreamOrderRepository {
 
     /** 按注单 id + 机器范围读取快照；范围外的注单按"不存在"处理。 */
     public Optional<BetRow> findBetForAgent(long betId, long agentId) {
-        return jdbc.query(BET_COLUMNS + LATEST_ORDER_JOIN + " WHERE b.id = ? AND a.agent_id = ?",
+        return jdbc.query(BET_COLUMNS + LATEST_ORDER_JOIN
+                        + " WHERE b.id = ? AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?",
                 (rs, rowNum) -> betRow(rs), betId, agentId).stream().findFirst();
     }
 
@@ -200,6 +206,17 @@ public class ReportUpstreamOrderRepository {
      * <p>只取"已开启自动上报、当前在线、报网类型已配置"的机器名下的注单，且派生状态在
      * {@code statuses} 内：从未上报（{@code PENDING} 且没有上报订单行）或上次结果为
      * {@code REJECTED/TIMEOUT}。</p>
+     *
+     * <p><b>退避与上限（P0-2 修复）</b>：这是原实现的缺陷点。
+     * 原来用 {@code ORDER BY b.id LIMIT ?}，注单按 id 升序取，最老的 50 笔一旦长期停留在
+     * {@code REJECTED/TIMEOUT}，批次会被它们**永久占满**，此后新注单再也排不上上报。
+     * 现在改为：</p>
+     * <ul>
+     *   <li>新增注单（从未上报）优先，用 {@code order_id IS NULL} 判定，它们不受退避影响；</li>
+     *   <li>重报单必须 {@code next_retry_at} 已到期才参与，避免失败单每轮都抢占批次；</li>
+     *   <li>已转人工（{@code MANUAL}）的单不在 {@code statuses} 内，自然不再被捞取；</li>
+     *   <li>排序改为"新单优先、重报按到点时间"，使批次总是先服务没报过的单。</li>
+     * </ul>
      *
      * @param statuses 允许上报的派生状态集合
      * @param limit    单次上限
@@ -212,16 +229,151 @@ public class ReportUpstreamOrderRepository {
         List<Object> args = new ArrayList<>(statuses);
         args.add(limit);
         String sql = BET_COLUMNS + LATEST_ORDER_JOIN
-                + "  JOIN agent ag ON ag.id = a.agent_id\n"
+                + "  JOIN agent ag ON ag.id = COALESCE(a.agent_id, b.agent_id_snapshot)\n"
+                + UNIFIED_REPORT_GROUP_JOIN
                 + " WHERE " + DERIVED_STATUS + " IN (" + placeholders + ")\n"
                 + "   AND ag.deleted_at IS NULL\n"
                 + "   AND ag.report_auto = TRUE\n"
                 + "   AND ag.report_online = TRUE\n"
-                + "   AND ag.report_type IS NOT NULL\n"
-                + "   AND ag.report_type <> 'NONE'\n"
-                + " ORDER BY b.id\n"
+                + "   AND " + EFFECTIVE_REPORT_TYPE + " IS NOT NULL\n"
+                + "   AND " + EFFECTIVE_REPORT_TYPE + " <> 'NONE'\n"
+                // 从未上报的注单立即可报；重报单必须等到退避时间点。
+                + "   AND (o.id IS NULL OR o.next_retry_at IS NULL OR o.next_retry_at <= CURRENT_TIMESTAMP)\n"
+                // 新单优先，其次按到点时间从早到晚；这样老失败单不会饿死新单。
+                + " ORDER BY CASE WHEN o.id IS NULL THEN 0 ELSE 1 END, o.next_retry_at, b.id\n"
                 + " LIMIT ?\n";
         return jdbc.query(sql, (rs, rowNum) -> betRow(rs), args.toArray());
+    }
+
+    /**
+     * 统一飞单（子账号级）左连接：机器自身没有飞单账号、且所属子账号开启了统一飞单并配好账号时生效。
+     *
+     * <p>与 {@code ReportConfigRepository.findConfig} 的回退条件逐字一致，避免"读配置时能继承、
+     * 轮询却捞不到"的两套口径。</p>
+     */
+    private static final String UNIFIED_REPORT_GROUP_JOIN = """
+              LEFT JOIN agent_group g ON g.id = ag.group_id AND g.deleted_at IS NULL
+            """;
+
+    /**
+     * 生效的报网类型（BY220：机器的 {@code flyers_type} 由所选网盘/统一飞单决定）。
+     *
+     * <p>继承态取子账号的 {@code report_type}，为空则回退机器自身；非继承态取机器自身。
+     * 以前这里直接判 {@code ag.report_type}，会让"只靠子账号统一飞单类型"的机器被自动上报轮询漏掉。</p>
+     */
+    private static final String EFFECTIVE_REPORT_TYPE = """
+            COALESCE(NULLIF(CASE
+                WHEN (ag.report_username IS NULL OR ag.report_username = '')
+                 AND g.unified_report_enabled = TRUE
+                 AND g.report_username IS NOT NULL AND g.report_username <> ''
+                THEN g.report_type END, ''), ag.report_type)
+            """;
+
+    /**
+     * 安排一次重报时间点并累加尝试计数。
+     *
+     * <p>作用于该注单**最新**的那次上报尝试行。用 {@code (SELECT MAX(id) ...)} 定位而不是传入 orderId，
+     * 是为了让调用方（轮询）不必关心当前是哪一行。</p>
+     *
+     * @param betId    注单 id
+     * @param nextAt   下次可重报时间；{@code null} 表示立即可重报
+     * @return 本次累加后的尝试次数
+     */
+    public int scheduleRetry(long betId, Instant nextAt) {
+        jdbc.update("""
+                UPDATE report_upstream_order
+                   SET attempt_count = attempt_count + 1,
+                       next_retry_at = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = (SELECT MAX(id) FROM report_upstream_order WHERE bet_id = ?)
+                """, nextAt == null ? null : Timestamp.from(nextAt), betId);
+        return currentAttemptCount(betId);
+    }
+
+    /** 把最新一次上报尝试转为人工待处置（不再自动重报）。 */
+    public int markManual(long betId, String responseCode, String responseMessage) {
+        return jdbc.update("""
+                UPDATE report_upstream_order
+                   SET status = 'MANUAL', response_code = ?, response_message = ?,
+                       next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = (SELECT MAX(id) FROM report_upstream_order WHERE bet_id = ?)
+                """, responseCode, responseMessage, betId);
+    }
+
+    /**
+     * 人工重报前清障：清零该注单最新尝试的计数与退避，并解除 {@code MANUAL} 标记。
+     *
+     * <p>状态回到 {@code REJECTED}（"上次失败、可再试"）而不是 {@code PENDING}
+     * （{@code PENDING} 语义是"已发出但结果未回"，会让恢复扫描误以为有悬挂请求）。</p>
+     */
+    public int resetForManualResubmit(long betId) {
+        return jdbc.update("""
+                UPDATE report_upstream_order
+                   SET attempt_count = 0,
+                       next_retry_at = NULL,
+                       status = CASE WHEN status = 'MANUAL' THEN 'REJECTED' ELSE status END,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = (SELECT MAX(id) FROM report_upstream_order WHERE bet_id = ?)
+                """, betId);
+    }
+
+    /** 人工待处置（{@code MANUAL}）的注单数量，供监控与界面提示。 */
+    public long manualCount(long agentId) {
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                """ + LATEST_ORDER_JOIN + " WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND " + DERIVED_STATUS + " = 'MANUAL'",
+                Long.class, agentId);
+        return total == null ? 0 : total;
+    }
+
+    /** 全量人工待处置注单数量（健康检查用，不限机器）。 */
+    public long manualCountAll() {
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                """ + LATEST_ORDER_JOIN + " WHERE " + DERIVED_STATUS + " = 'MANUAL'",
+                Long.class);
+        return total == null ? 0 : total;
+    }
+
+    /** 注单最新一次上报尝试已累计的尝试次数（无上报行为 0）。 */
+    public int currentAttemptCount(long betId) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COALESCE((SELECT attempt_count FROM report_upstream_order
+                                  WHERE bet_id = ? ORDER BY id DESC LIMIT 1), 0)
+                """, Integer.class, betId);
+        return count == null ? 0 : count;
+    }
+
+    /**
+     * 待上报积压量（未被退避推迟、且未被转人工的候选数量）。
+     *
+     * <p>用于 P0-2 的告警与监控：正常运行时该值应随时间下降；若长期不降，
+     * 说明上报链路已经堵住，需要立刻排查，而不是等业务方发现"单没报上去"。</p>
+     */
+    public long backlogCount(List<String> statuses) {
+        if (statuses == null || statuses.isEmpty()) {
+            return 0;
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(statuses.size(), "?"));
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                """ + LATEST_ORDER_JOIN
+                + "  JOIN agent ag ON ag.id = COALESCE(a.agent_id, b.agent_id_snapshot)\n"
+                + UNIFIED_REPORT_GROUP_JOIN
+                + " WHERE " + DERIVED_STATUS + " IN (" + placeholders + ")\n"
+                + "   AND ag.deleted_at IS NULL\n"
+                + "   AND ag.report_auto = TRUE\n"
+                + "   AND ag.report_online = TRUE\n"
+                + "   AND " + EFFECTIVE_REPORT_TYPE + " IS NOT NULL\n"
+                + "   AND " + EFFECTIVE_REPORT_TYPE + " <> 'NONE'\n",
+                Long.class, statuses.toArray());
+        return total == null ? 0 : total;
     }
 
     /** 注单是否仍未结算（失败退单时用于审计留痕）。 */

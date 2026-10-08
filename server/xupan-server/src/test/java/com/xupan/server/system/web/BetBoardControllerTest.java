@@ -1,6 +1,7 @@
 package com.xupan.server.system.web;
 
 import com.jayway.jsonpath.JsonPath;
+import com.xupan.server.agent.service.AgentAdminService;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.game.repository.GameDataRepository;
@@ -35,6 +36,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class BetBoardControllerTest {
 
     private static final String ADMIN = "bet-board-admin";
+    private static final String MACHINE_USER = "bet-board-machine";
+    private static final String MACHINE_CODE = "BETBOARD_MACHINE";
     private static final String NORMAL = "bet-board-normal";
     private static final String BOT = "bet-board-bot";
     private static final String PASSWORD = "BetBoardPassword123";
@@ -58,14 +61,21 @@ class BetBoardControllerTest {
     @Autowired
     private GameDataRepository gameDataRepository;
 
+    @Autowired
+    private AgentAdminService agentAdminService;
+
     private long normalAccountId;
     private long botAccountId;
+    private long machineId;
 
     @BeforeEach
     void setUp() {
         clean();
         long adminId = userRepository.insert(ADMIN, "下注榜管理员", passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
+        // 下注榜属于机器账号的代理后台（BY220 robot.php），因此夹具玩家必须归属一台测试机器
+        machineId = agentAdminService.createAgent(
+                MACHINE_CODE, MACHINE_USER, "下注榜机器", PASSWORD, null, adminId).id();
 
         long normalId = userRepository.insert(NORMAL, "普通下注玩家", passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(normalId, "USER");
@@ -75,6 +85,8 @@ class BetBoardControllerTest {
         userRepository.assignRole(botId, "USER");
         botAccountId = walletService.ensureWalletForUser(botId, "托下注玩家");
         jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE id=?", botAccountId);
+        jdbc.update("UPDATE demo_user_account SET agent_id=? WHERE id IN (?, ?)",
+                machineId, normalAccountId, botAccountId);
 
         Instant now = Instant.now();
         jdbc.update("""
@@ -105,7 +117,7 @@ class BetBoardControllerTest {
 
     @Test
     void returnsCurrentBetBoardAndLatestEighteenDraws() throws Exception {
-        String token = login(ADMIN, PASSWORD);
+        String token = login(MACHINE_USER, PASSWORD);
 
         mockMvc.perform(get("/api/admin/player-desk/bet-board")
                         .param("kind", "BOT")
@@ -140,12 +152,13 @@ class BetBoardControllerTest {
      */
     @Test
     void returnsReportStatusOnEveryBetSoConsoleCanResubmit() throws Exception {
-        long accountId = jdbc.queryForObject(
-                "SELECT id FROM demo_user_account WHERE player_kind = 'NORMAL' LIMIT 1", Long.class);
+        // 注单必须挂在本机器的夹具玩家上：机器账号的数据范围是 MACHINE，
+        // 否则下注榜（按机器范围过滤）看不到这些注单。
+        long accountId = normalAccountId;
         insertBetWithReportStatus(accountId, "BB-REPORT-REJECTED", "FAN", "1", "10.00", "PENDING", "REJECTED");
         insertBetWithReportStatus(accountId, "BB-REPORT-ACCEPTED", "FAN", "2", "10.00", "PENDING", "ACCEPTED");
 
-        String token = login(ADMIN, PASSWORD);
+        String token = login(MACHINE_USER, PASSWORD);
         mockMvc.perform(get("/api/admin/player-desk/bet-board")
                         .param("kind", "NORMAL")
                         .header("Authorization", bearer(token)))
@@ -214,10 +227,14 @@ class BetBoardControllerTest {
         jdbc.update("DELETE FROM game_bet WHERE issue_number = ? OR bet_code LIKE 'BB-%'", CURRENT_ISSUE);
         jdbc.update("DELETE FROM game_issue WHERE issue_number = ? OR issue_number LIKE '85%'", CURRENT_ISSUE);
         jdbc.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?))", NORMAL, BOT, ADMIN, MACHINE_USER);
+        // demo_user_account.agent_id → agent 外键：账号删完才能删机器
+        jdbc.update("DELETE FROM agent_game WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
         jdbc.update("DELETE FROM sys_user_role WHERE user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", NORMAL, BOT, ADMIN);
-        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?)", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?))", NORMAL, BOT, ADMIN, MACHINE_USER);
+        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?, ?)", NORMAL, BOT, ADMIN, MACHINE_USER);
     }
 
     private static String bearer(String token) {

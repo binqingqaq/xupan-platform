@@ -17,7 +17,7 @@ public class SessionRepository {
             s.id, s.session_id, s.user_id, s.access_token_hash, s.access_expires_at,
             s.refresh_token_hash, s.refresh_expires_at, s.device_label, s.ip_digest,
             s.user_agent_digest, s.last_seen_at, s.revoked_at, s.created_at,
-            s.security_version, s.auth_mode, s.scope
+            s.security_version, s.auth_mode, s.scope, s.entry
             """;
     private static final String WS_TICKET_COLUMNS = """
             t.id, t.ticket_hash, t.user_id, t.session_id, t.room_code,
@@ -37,13 +37,13 @@ public class SessionRepository {
                     (session_id, user_id, access_token_hash, access_expires_at,
                      refresh_token_hash, refresh_expires_at, device_label, ip_digest,
                      user_agent_digest, last_seen_at, revoked_at, created_at, security_version,
-                     auth_mode, scope)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     auth_mode, scope, entry)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, session.sessionId(), session.userId(), session.accessTokenHash(),
                 timestamp(session.accessExpiresAt()), session.refreshTokenHash(), timestamp(session.refreshExpiresAt()),
                 session.deviceLabel(), session.ipDigest(), session.userAgentDigest(), timestamp(session.lastSeenAt()),
                 timestamp(session.revokedAt()), timestamp(session.createdAt()), session.securityVersion(),
-                session.authMode(), session.scope());
+                session.authMode(), session.scope(), session.entry());
     }
 
     public Optional<SessionRecord> findByAccessTokenHash(String tokenHash) {
@@ -275,7 +275,8 @@ public class SessionRepository {
                         rs.getString("device_label"), rs.getString("ip_digest"),
                         rs.getString("user_agent_digest"), instant(rs.getTimestamp("last_seen_at")),
                         instant(rs.getTimestamp("revoked_at")), instant(rs.getTimestamp("created_at")),
-                        rs.getLong("security_version"), rs.getString("auth_mode"), rs.getString("scope")), args).stream().findFirst();
+                        rs.getLong("security_version"), rs.getString("auth_mode"), rs.getString("scope"),
+                        rs.getString("entry")), args).stream().findFirst();
     }
 
     private static WsTicket mapWsTicket(java.sql.ResultSet resultSet)

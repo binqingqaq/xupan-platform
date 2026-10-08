@@ -120,6 +120,53 @@ class TokenServiceTest {
                 .isInstanceOf(TokenService.InvalidTokenException.class);
     }
 
+    /** V75：签发时按入口落库；未知/空入口一律平台入口（未知即最保守的老行为）。 */
+    @Test
+    void issuePersistsRequestedSessionEntryAndDefaultsToPlatform() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        UserRepository users = mock(UserRepository.class);
+        when(users.findById(7L)).thenReturn(Optional.of(activeUser(7L, 0L)));
+        TokenService service = service(sessions, users);
+
+        service.issue(7L, "browser", TokenService.RequestMetadata.empty(), "CONSOLE");
+        service.issue(7L, "browser", TokenService.RequestMetadata.empty(), "ADMIN");
+        service.issue(7L, "browser", TokenService.RequestMetadata.empty());
+
+        ArgumentCaptor<SessionRecord> captor = ArgumentCaptor.forClass(SessionRecord.class);
+        verify(sessions, org.mockito.Mockito.times(3)).insert(captor.capture());
+        assertThat(captor.getAllValues().get(0).entry()).isEqualTo(SessionRecord.ENTRY_CONSOLE);
+        assertThat(captor.getAllValues().get(1).entry()).isEqualTo(SessionRecord.ENTRY_PLATFORM);
+        assertThat(captor.getAllValues().get(2).entry()).isEqualTo(SessionRecord.ENTRY_PLATFORM);
+    }
+
+    /** V75：刷新时校验请求入口与会话入口一致；不一致抛异常（→ 401），绝不静默切换入口身份。 */
+    @Test
+    void refreshRejectsEntryMismatchAndAcceptsMatchingEntry() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        UserRepository users = mock(UserRepository.class);
+        when(users.findById(7L)).thenReturn(Optional.of(activeUser(7L, 0L)));
+        TokenService service = service(sessions, users);
+        SessionRecord consoleSession = new SessionRecord(1L, "session", 7L, "access-hash",
+                NOW.plusSeconds(60), TokenService.sha256("refresh-one"), NOW.plusSeconds(3600),
+                null, null, null, NOW, null, NOW, 0L, "PASSWORD", null, SessionRecord.ENTRY_CONSOLE);
+        when(sessions.findByRefreshTokenHash(TokenService.sha256("refresh-one")))
+                .thenReturn(Optional.of(consoleSession));
+        when(sessions.rotateTokensIfCurrent(eq("session"), eq(TokenService.sha256("refresh-one")),
+                any(), any(), any(), any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.refresh("refresh-one", TokenService.RequestMetadata.empty(),
+                "PASSWORD", SessionRecord.ENTRY_PLATFORM))
+                .isInstanceOf(TokenService.InvalidTokenException.class)
+                .hasMessage("刷新入口不匹配");
+
+        assertThat(service.refresh("refresh-one", TokenService.RequestMetadata.empty(),
+                "PASSWORD", SessionRecord.ENTRY_CONSOLE).sessionId()).isEqualTo("session");
+
+        // 不传入口（玩家链接使用端）时跳过入口校验，身份隔离仍由 authMode 负责
+        assertThat(service.refresh("refresh-one", TokenService.RequestMetadata.empty(), "PASSWORD", null)
+                .sessionId()).isEqualTo("session");
+    }
+
     @Test
     void refreshRejectsSessionIssuedBeforeSecurityVersionChange() {
         SessionRepository sessions = mock(SessionRepository.class);

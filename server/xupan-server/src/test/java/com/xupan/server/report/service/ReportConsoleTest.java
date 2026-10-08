@@ -225,27 +225,23 @@ class ReportConsoleTest {
         String adminToken = login(ADMIN, PASSWORD);
         String token = login(MACHINE_A_USER, PASSWORD);
 
-        // 非机器身份未传机器 → 400（不落到平台直属代理）
+        // 阶段 3（严格对齐 BY220）：报网登录/配置属于机器账号的代理后台（robot.php），
+        // 超管/子账号调 /api/admin/player-desk/report** 一律 403；
+        // 原"非机器身份未传机器 → 400 PLAYER_DESK_MACHINE_REQUIRED"与
+        // "管理员可以显式选择机器 → 200"、"不存在的机器 → 400 PLAYER_DESK_MACHINE_INVALID"
+        // 三条平台侧期望随 GLOBAL/GROUP 链路一起不可达。
         mockMvc.perform(get("/api/admin/player-desk/report").header("Authorization", bearer(adminToken)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_DESK_MACHINE_REQUIRED"));
+                .andExpect(status().isForbidden());
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(adminToken)).contentType("application/json")
                         .content("{\"reportType\":\"TT\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_DESK_MACHINE_REQUIRED"));
-
-        // 管理员可以显式选择机器
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/player-desk/report").param("machineId", String.valueOf(machineAId))
                         .header("Authorization", bearer(adminToken)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.machineId").value((int) machineAId));
-
-        // 不存在的机器 → 400（机器范围校验的稳定错误码）
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/player-desk/report").param("machineId", "999999")
                         .header("Authorization", bearer(adminToken)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("PLAYER_DESK_MACHINE_INVALID"));
+                .andExpect(status().isForbidden());
 
         // 机器账号传别人的机器 → 404（范围外按"不存在"处理，不静默改写）
         mockMvc.perform(get("/api/admin/player-desk/report").param("machineId", String.valueOf(machineBId))

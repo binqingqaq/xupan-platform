@@ -138,6 +138,14 @@ class AgentConsoleReadPermissionTest {
                 .andExpect(status().isForbidden());
     }
 
+    /**
+     * 机器账号持有 {@code /console} 所需的最小权限；平台侧角色（ADMIN / SUB_ACCOUNT）不持有它。
+     *
+     * <p>V76（阶段 4 入口收敛）：BY220 {@code application/rbt/controller/Login.php:55-77} 与
+     * {@code application/rbt/common/Base.php:9-20} 表明代理后台只认 {@code x_robot} 表账号，
+     * 因此从 ADMIN / SUB_ACCOUNT 撤销 {@code AGENT_CONSOLE_READ}；
+     * 两者仍保留 {@code AGENT_PLAYER_MANAGE}——平台后台的玩家工作台要靠它。</p>
+     */
     @Test
     void agentRoleHasCurrentIssueReadButKeepsMinimalConsolePermissions() {
         List<String> permissions = jdbc.queryForList("""
@@ -151,6 +159,22 @@ class AgentConsoleReadPermissionTest {
                 .contains("GAME_CURRENT_READ", "AGENT_CONSOLE_READ", "AGENT_PLAYER_MANAGE")
                 .doesNotContain("USER_MANAGE", "MACHINE_MANAGE", "GAME_ODDS_WRITE", "GAME_BET_PLACE",
                         "PLATFORM_SETTINGS_WRITE", "REPORT_READ", "SUB_ACCOUNT_MANAGE", "WALLET_ADJUST");
+
+        // V76 之后：平台侧两个角色都进不了 /console（不再持有 AGENT_CONSOLE_READ），
+        // 但必须保留 AGENT_PLAYER_MANAGE，否则子账号会失去 /api/admin/player-desk/**。
+        for (String platformRole : List.of("ADMIN", "SUB_ACCOUNT")) {
+            List<String> rolePermissions = jdbc.queryForList("""
+                    SELECT p.permission_code FROM sys_role r
+                      JOIN sys_role_permission rp ON rp.role_id = r.id
+                      JOIN sys_permission p ON p.id = rp.permission_id
+                     WHERE r.role_code = ?
+                    """, String.class, platformRole);
+            org.assertj.core.api.Assertions.assertThat(rolePermissions)
+                    .as("%s 不应再持有 AGENT_CONSOLE_READ（/console 只认机器账号）", platformRole)
+                    .doesNotContain("AGENT_CONSOLE_READ")
+                    .as("%s 必须保留 AGENT_PLAYER_MANAGE（平台侧玩家工作台）", platformRole)
+                    .contains("AGENT_PLAYER_MANAGE");
+        }
     }
 
     private String login(String username, String password) throws Exception {

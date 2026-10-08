@@ -34,6 +34,7 @@ public class PlayerDeskAdminService {
     private final TestPlayerAdminService testPlayerAdminService;
     private final VirtualWalletService walletService;
     private final com.xupan.server.agent.service.AgentConsoleService agentConsoleService;
+    private final com.xupan.server.agent.repository.AgentRepository agentRepository;
     private final OperationAuditRepository auditRepository;
     private final TestPlayerBehaviorService behaviorService;
     private final ChatMessageService chatMessageService;
@@ -44,6 +45,7 @@ public class PlayerDeskAdminService {
     private final PlayerAccessLinkRepository accessLinkRepository;
     private final PlayerLinkAuthenticationService playerLinkAuthenticationService;
     private final AvatarPresetService avatarPresetService;
+    private final PlayerPhysicalDeleteService playerPhysicalDeleteService;
 
     public PlayerDeskAdminService(PlayerDeskRepository repository, PermissionService permissionService,
                                   PlayerDeskScopeService scopeService,
@@ -55,7 +57,9 @@ public class PlayerDeskAdminService {
                                   PlayerAccessLinkRepository accessLinkRepository,
                                   PlayerLinkAuthenticationService playerLinkAuthenticationService,
                                   AvatarPresetService avatarPresetService,
-                                  com.xupan.server.agent.service.AgentConsoleService agentConsoleService) {
+                                  com.xupan.server.agent.service.AgentConsoleService agentConsoleService,
+                                  com.xupan.server.agent.repository.AgentRepository agentRepository,
+                                  PlayerPhysicalDeleteService playerPhysicalDeleteService) {
         this.repository = repository;
         this.permissionService = permissionService;
         this.scopeService = scopeService;
@@ -73,6 +77,8 @@ public class PlayerDeskAdminService {
         this.playerLinkAuthenticationService = playerLinkAuthenticationService;
         this.avatarPresetService = avatarPresetService;
         this.agentConsoleService = agentConsoleService;
+        this.agentRepository = agentRepository;
+        this.playerPhysicalDeleteService = playerPhysicalDeleteService;
     }
 
     @Transactional(readOnly = true)
@@ -328,30 +334,44 @@ public class PlayerDeskAdminService {
         return detail(userId, false, scope);
     }
 
+    /**
+     * 删除玩家：**严格对齐 BY220 的物理删除**（{@code application/rbt/controller/Index.php:235-243}）。
+     *
+     * <p>①玩家余额退回归属机器（写 {@code agent_ledger}，超集）②物理删除玩家行
+     * ③不再重算持久化统计（我们的人数/余额统计本来就是实时派生，删除后自然收敛）。
+     * 注单、余额流水、改单记录、上下分申请与换名记录**全部保留**，删除前把玩家与机器快照写入。</p>
+     *
+     * <p>幂等：目标已经不存在时按成功返回且**不二次退款**；不是玩家（例如管理员账号）
+     * 或不在自己机器范围内仍然 404。权限不变：{@code /api/admin/player-desk/**} 只认机器账号，
+     * 且数据范围收敛为 {@code MACHINE}。</p>
+     */
     @Transactional
-    public Detail delete(long userId, long operator) {
+    public PlayerPhysicalDeleteService.Outcome delete(long userId, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         if (userId == operator) {
             throw BusinessException.conflict("PLAYER_SELF_OPERATION_FORBIDDEN", "不能删除当前登录管理员");
         }
-        PlayerDeskRepository.PlayerRow player = row(userId, true, scope);
+        PlayerDeskRepository.PlayerRow player = repository.findByUserId(userId, true, scope).orElse(null);
+        if (player == null) {
+            // 已物理删除 → 幂等成功（第二次删除不得再退款、也不得再报错）；
+            // 账号行/登录账号还在却查不到，说明不是玩家或不在自己机器范围内 → 沿用 404。
+            if (playerPhysicalDeleteService.isPurged(userId)) {
+                return PlayerPhysicalDeleteService.Outcome.alreadyDeleted(userId);
+            }
+            throw BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在");
+        }
         if (permissionService.hasPermission(userId, "USER_MANAGE")) {
             throw BusinessException.forbidden("PLAYER_DELETE_FORBIDDEN", "不能通过玩家工作台删除管理员");
         }
         avatarPresetService.release(userId);
-        if ("DELETED".equals(player.userStatus()) && "DELETED".equals(player.accountStatus())) {
-            return detail(userId, true, scope);
-        }
-        userRepository.softDelete(userId);
-        repository.softDelete(userId);
-        repository.disableBehavior(userId);
-        Instant now = Instant.now();
-        sessionRepository.revokeAllActiveByUserId(userId, now);
-        accessLinkRepository.revokeAllByUserId(userId, now);
+        PlayerPhysicalDeleteService.Outcome outcome = playerPhysicalDeleteService.delete(userId, operator);
         audit(operator, "DELETE", "/api/admin/player-desk/players/" + userId,
                 player.internalCode(), "userId=" + userId + ",internalCode=" + player.internalCode()
-                        + ",memberCode=" + player.memberCode() + ",displayName=" + player.displayName() + ",status=DELETED");
-        return detail(userId, true, scope);
+                        + ",memberCode=" + player.memberCode() + ",displayName=" + player.displayName()
+                        + ",status=DELETED_PHYSICAL,refundedAmount=" + outcome.refundedAmount()
+                        + ",machineId=" + outcome.machineId()
+                        + ",alreadyDeleted=" + outcome.alreadyDeleted());
+        return outcome;
     }
 
     @Transactional
@@ -362,7 +382,10 @@ public class PlayerDeskAdminService {
             // BY220 robot.php：机器账号给普通玩家上分要先扣自己的代理积分；托不联动（由共用服务判定）。
             agentConsoleService.changeScore(operator, userId, "TOP_UP", amount, key);
         } else {
-            walletService.grant(operator, userId, amount, reason, key);
+            // 计划 §3.5「Q1=A1 的实现口径」/ 需求基线 §3.1：平台侧（超管 GLOBAL / 子账号 GROUP）
+            // 也必须沿「机器 → 玩家」这条链走，按**玩家归属机器**扣池（R1=做法①，操作者不选机器），
+            // 修复前"凭空给玩家钱包加分、不扣任何池"是既有偏离。
+            agentConsoleService.changeScoreForAgent(operator, ownerMachineId(userId), userId, "TOP_UP", amount, key);
         }
         return detail(userId, false, scope);
     }
@@ -376,9 +399,26 @@ public class PlayerDeskAdminService {
             BigDecimal magnitude = amount == null ? BigDecimal.ZERO : amount.abs();
             agentConsoleService.changeScore(operator, userId, "DOWN", magnitude, key);
         } else {
-            walletService.adjust(operator, userId, amount, reason, key);
+            // 平台侧下分：与 MACHINE 分支同一协议口径（收负数金额），把分回补到玩家归属机器。
+            BigDecimal magnitude = amount == null ? BigDecimal.ZERO : amount.abs();
+            agentConsoleService.changeScoreForAgent(operator, ownerMachineId(userId), userId, "DOWN", magnitude, key);
         }
         return detail(userId, false, scope);
+    }
+
+    /**
+     * 平台侧上下分要扣/回的机器：按**玩家归属**自动判定（计划 §3.5【R1=做法①】，操作者不选机器）。
+     *
+     * <p>玩家没有归属机器时**拒绝**而不是退回"直接改钱包"的老路径：BY220 里分只能沿
+     * 「子账号池/超管 → 机器 → 玩家」单向流转，没有"平台直接给玩家发分"这条链路
+     * （需求基线 §3.1、§3.6）。退回老路径会把刚修掉的"凭空发分"重新引回来，
+     * 使机器池与玩家钱包总数对不平；这里宁可 400 明确报错。正常数据不会走到这一步——
+     * 建玩家/托时必然写入 {@code agent_id}（平台直属玩家落到 {@code PLATFORM_DIRECT} 机器）。</p>
+     */
+    private long ownerMachineId(long userId) {
+        return agentRepository.findCurrentAgentId(userId)
+                .orElseThrow(() -> BusinessException.badRequest("PLAYER_DESK_MACHINE_REQUIRED",
+                        "该玩家未归属任何机器，无法从机器积分池扣减"));
     }
 
     @Transactional

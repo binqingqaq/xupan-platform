@@ -1,6 +1,7 @@
 package com.xupan.server.system.web;
 
 import com.jayway.jsonpath.JsonPath;
+import com.xupan.server.agent.service.AgentAdminService;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.game.service.VirtualWalletService;
@@ -33,6 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PlayerPointsReportControllerTest {
 
     private static final String ADMIN = "points-report-admin";
+    private static final String MACHINE_USER = "points-report-machine";
+    private static final String MACHINE_CODE = "POINTSREPORT_MACHINE";
     private static final String NORMAL = "points-report-normal";
     private static final String BOT = "points-report-bot";
     private static final String PASSWORD = "PointsReportPassword123";
@@ -53,6 +56,9 @@ class PlayerPointsReportControllerTest {
     @Autowired
     private VirtualWalletService walletService;
 
+    @Autowired
+    private AgentAdminService agentAdminService;
+
     private long normalId;
     private long botId;
     private long normalAccountId;
@@ -63,6 +69,9 @@ class PlayerPointsReportControllerTest {
         clean();
         long adminId = userRepository.insert(ADMIN, "报表管理员", passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
+        // 上下分报表属于机器账号的代理后台（BY220 robot.php），夹具玩家必须归属一台测试机器
+        long machineId = agentAdminService.createAgent(
+                MACHINE_CODE, MACHINE_USER, "报表机器", PASSWORD, null, adminId).id();
 
         normalId = userRepository.insert(NORMAL, "普通报表玩家", passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(normalId, "USER");
@@ -72,6 +81,8 @@ class PlayerPointsReportControllerTest {
         userRepository.assignRole(botId, "USER");
         botAccountId = walletService.ensureWalletForUser(botId, "托报表玩家");
         jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE id=?", botAccountId);
+        jdbc.update("UPDATE demo_user_account SET agent_id=? WHERE id IN (?, ?)",
+                machineId, normalAccountId, botAccountId);
 
         insertLedger(normalAccountId, "ADMIN_GRANT", "100.00", "0.00", "100.00", "上分");
         insertLedger(normalAccountId, "ADMIN_ADJUST", "-25.00", "100.00", "75.00", "下分");
@@ -105,7 +116,7 @@ class PlayerPointsReportControllerTest {
 
     @Test
     void reportQueriesNormalAndBotByBusinessDate() throws Exception {
-        String token = login(ADMIN, PASSWORD);
+        String token = login(MACHINE_USER, PASSWORD);
 
         mockMvc.perform(get("/api/admin/player-desk/points-records")
                         .param("kind", "NORMAL").param("date", "2026-09-21")
@@ -133,7 +144,7 @@ class PlayerPointsReportControllerTest {
 
     @Test
     void futureBusinessDateIsRejected() throws Exception {
-        String token = login(ADMIN, PASSWORD);
+        String token = login(MACHINE_USER, PASSWORD);
 
         mockMvc.perform(get("/api/admin/player-desk/points-records")
                         .param("kind", "NORMAL").param("date", "2999-01-01")
@@ -166,21 +177,25 @@ class PlayerPointsReportControllerTest {
         jdbc.update("DELETE FROM sys_operation_log");
         jdbc.update("DELETE FROM test_player_action WHERE account_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?)))", NORMAL, BOT, ADMIN, MACHINE_USER);
         jdbc.update("DELETE FROM test_player_behavior WHERE account_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?)))", NORMAL, BOT, ADMIN, MACHINE_USER);
         jdbc.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?)))", NORMAL, BOT, ADMIN, MACHINE_USER);
         jdbc.update("DELETE FROM game_bet WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?)))", NORMAL, BOT, ADMIN, MACHINE_USER);
         jdbc.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?))", NORMAL, BOT, ADMIN, MACHINE_USER);
+        // demo_user_account.agent_id → agent 外键：账号删完才能删机器
+        jdbc.update("DELETE FROM agent_game WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
         jdbc.update("DELETE FROM sys_user_role WHERE user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", NORMAL, BOT, ADMIN);
-        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?)", NORMAL, BOT, ADMIN);
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?))", NORMAL, BOT, ADMIN, MACHINE_USER);
+        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?, ?)", NORMAL, BOT, ADMIN, MACHINE_USER);
     }
 
     private static Timestamp timestamp(Instant value) {

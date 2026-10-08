@@ -10,12 +10,12 @@ import com.xupan.server.game.domain.WalletStatistics;
 import com.xupan.server.game.repository.VirtualWalletRepository;
 import com.xupan.server.identity.service.PlayerIdentityService;
 import com.xupan.server.web.BusinessException;
+import com.xupan.server.web.MoneyAmounts;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -157,6 +157,48 @@ public class VirtualWalletService {
         WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendCancellationRefund(
                 targetUserId, betId, accountId, requiredText(issueNumber, "期号不能为空", 64), normalizedAmount));
         return resultFor(targetUserId, ledger);
+    }
+
+    /**
+     * 聊天室**下分申请创建时的即时预扣**（BY220 {@code application/common.php:1874-1876}）。
+     *
+     * <p>BY220 在下分申请建单时就把玩家余额 {@code setDec} 掉，钱先离开玩家余额；同意后归机器池，
+     * 拒绝则原路退回。本方法只负责「离开玩家余额」这一步，且必须同时写流水（账本原则 2）。</p>
+     *
+     * <p>发起人是玩家本人（自助指令），没有人工审批人，流水操作者记为 {@code SYSTEM}。
+     * 余额不足时钱包层抛 {@code WALLET_INSUFFICIENT_BALANCE}（调用方在创建申请前已做业务校验并给 400）。</p>
+     *
+     * <p><b>竞态兜底</b>：调用方的余额预检与本方法的写入之间存在竞态窗口（例如同一瞬间的下注
+     * 把余额花掉）。此时本方法抛**同一个 code** {@code WALLET_INSUFFICIENT_BALANCE}
+     * （经 {@code translateWalletFailure} 转成 HTTP 409），外层事务整体回滚，
+     * 申请行/预扣流水/余额变动都不落地——不变量（不允许负余额）仍然成立。</p>
+     */
+    @Transactional
+    public WalletOperationResult holdForPointRequest(long targetUserId, BigDecimal amount,
+                                                     String reason, String idempotencyKey) {
+        requireActiveUser(targetUserId);
+        BigDecimal normalizedAmount = positiveAmount(amount);
+        String normalizedReason = requiredText(reason, "预扣原因不能为空", 255);
+        String normalizedKey = requiredText(idempotencyKey, "幂等键不能为空", 128);
+        return resultFor(targetUserId, walletOperation(() -> walletRepository.appendPointRequestHold(
+                targetUserId, normalizedAmount, normalizedReason, normalizedKey)));
+    }
+
+    /**
+     * **下分申请被驳回时的退回**（BY220 {@code application/rbt/controller/Index.php:312-314}）。
+     *
+     * @param operatorUserId 审批人（机器账号 / 子账号 / 超管），写入流水的操作者列
+     */
+    @Transactional
+    public WalletOperationResult refundForPointRequest(long operatorUserId, long targetUserId, BigDecimal amount,
+                                                       String reason, String idempotencyKey) {
+        requireActiveUser(operatorUserId);
+        requireActiveUser(targetUserId);
+        BigDecimal normalizedAmount = positiveAmount(amount);
+        String normalizedReason = requiredText(reason, "退回原因不能为空", 255);
+        String normalizedKey = requiredText(idempotencyKey, "幂等键不能为空", 128);
+        return resultFor(targetUserId, walletOperation(() -> walletRepository.appendPointRequestRefund(
+                operatorUserId, targetUserId, normalizedAmount, normalizedReason, normalizedKey)));
     }
 
     @Transactional(readOnly = true)
@@ -325,15 +367,16 @@ public class VirtualWalletService {
         return normalized;
     }
 
+    /**
+     * 玩家钱包金额的两位小数口径。
+     *
+     * <p>语义与修复前完全一致（超精度一律 400、禁止静默四舍五入），实现改为复用全站共享校验
+     * {@link MoneyAmounts#requireTwoDecimals}，与代理账本（机器/子账号积分）走同一口径，
+     * 见计划 §3.5。</p>
+     */
     private static BigDecimal normalizedAmount(BigDecimal amount) {
-        if (amount == null || amount.scale() > 2 || amount.precision() - amount.scale() > 16) {
-            throw BusinessException.badRequest("WALLET_AMOUNT_INVALID", "金额格式无效");
-        }
-        try {
-            return amount.setScale(2, RoundingMode.UNNECESSARY);
-        } catch (ArithmeticException exception) {
-            throw BusinessException.badRequest("WALLET_AMOUNT_INVALID", "金额最多保留两位小数");
-        }
+        return MoneyAmounts.requireTwoDecimals(amount, "WALLET_AMOUNT_INVALID",
+                "金额格式无效", "金额最多保留两位小数");
     }
 
     private static String requiredText(String value, String message, int maxLength) {

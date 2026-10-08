@@ -71,6 +71,16 @@ class FlywayAuthMigrationTest {
             "CENTER_AGENT_MANAGE",
             "CENTER_ORDER_READ");
 
+    /**
+     * V76 之后 ADMIN 的权限集合：全部权限码 **减去已撤销的 {@code AGENT_CONSOLE_READ}**。
+     *
+     * <p>{@link #PERMISSION_CODES} 表达的是"权限码本身仍然存在"（sys_permission 行不删），
+     * 而角色授权集合由本常量表达，两者不能混为一谈。</p>
+     */
+    private static final Set<String> ADMIN_PERMISSION_CODES = PERMISSION_CODES.stream()
+            .filter(code -> !"AGENT_CONSOLE_READ".equals(code))
+            .collect(Collectors.toUnmodifiableSet());
+
     private static final Map<String, Set<String>> EXPECTED_ROLE_PERMISSIONS = Map.of(
             "USER", Set.of(
                     "CHAT_ROOM_READ", "CHAT_MESSAGE_SEND", "GAME_CURRENT_READ", "GAME_BET_PLACE",
@@ -85,7 +95,11 @@ class FlywayAuthMigrationTest {
             "OPERATOR", Set.of(
                     "GAME_CURRENT_READ", "GAME_ODDS_READ", "GAME_ODDS_WRITE",
                     "ROBOT_READ", "ROBOT_WRITE", "ROBOT_TEMPLATE_WRITE"),
-            "ADMIN", PERMISSION_CODES);
+            // V76（阶段 4 入口收敛）：/console 严格对齐 BY220 robot.php，只接受机器账号，
+            // 因此从 ADMIN / SUB_ACCOUNT 撤销 AGENT_CONSOLE_READ；
+            // 权限码本身保留（sys_permission 行与 PermissionCode 枚举都不动），
+            // AGENT_PLAYER_MANAGE 保留给两者（平台后台的玩家工作台要用）。
+            "ADMIN", ADMIN_PERMISSION_CODES);
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
@@ -98,7 +112,7 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77");
     }
 
     @Test
@@ -120,7 +134,9 @@ class FlywayAuthMigrationTest {
         assertThat(columnNames("AUTH_SESSION")).containsExactlyInAnyOrder(
                 "ID", "SESSION_ID", "USER_ID", "ACCESS_TOKEN_HASH", "ACCESS_EXPIRES_AT",
                 "REFRESH_TOKEN_HASH", "REFRESH_EXPIRES_AT", "DEVICE_LABEL", "IP_DIGEST",
-                "USER_AGENT_DIGEST", "LAST_SEEN_AT", "REVOKED_AT", "CREATED_AT", "SECURITY_VERSION", "AUTH_MODE", "SCOPE");
+                "USER_AGENT_DIGEST", "LAST_SEEN_AT", "REVOKED_AT", "CREATED_AT", "SECURITY_VERSION", "AUTH_MODE", "SCOPE",
+                // V75：会话入口维度（PLATFORM / CONSOLE）
+                "ENTRY");
         assertThat(columnNames("AUTH_WS_TICKET")).contains("SCOPE");
         assertThat(columnNames("PLAYER_ACCESS_LINK")).containsExactlyInAnyOrder(
                 "ID", "USER_ID", "TOKEN_HASH", "SCOPE", "EXPIRES_AT", "REVOKED_AT",
@@ -140,7 +156,9 @@ class FlywayAuthMigrationTest {
         assertThat(constraintNames("AUTH_SESSION")).contains(
                 "UK_AUTH_SESSION_ID", "UK_AUTH_SESSION_ACCESS_HASH", "UK_AUTH_SESSION_REFRESH_HASH",
                 "FK_AUTH_SESSION_USER", "CK_AUTH_SESSION_SECURITY_VERSION");
-        assertThat(constraintNames("AUTH_SESSION")).contains("CK_AUTH_SESSION_AUTH_MODE", "CK_AUTH_SESSION_SCOPE");
+        assertThat(constraintNames("AUTH_SESSION")).contains("CK_AUTH_SESSION_AUTH_MODE", "CK_AUTH_SESSION_SCOPE",
+                // V75：会话入口只允许 PLATFORM / CONSOLE
+                "CK_AUTH_SESSION_ENTRY");
         assertThat(constraintNames("AUTH_WS_TICKET")).contains(
                 "UK_AUTH_WS_TICKET_HASH", "FK_AUTH_WS_TICKET_USER", "FK_AUTH_WS_TICKET_SESSION", "CK_AUTH_WS_TICKET_SCOPE");
         assertThat(constraintNames("PLAYER_ACCESS_LINK")).contains(
@@ -190,6 +208,62 @@ class FlywayAuthMigrationTest {
         assertThat(permissionCodesForRole("USER")).doesNotContain("SYSTEM_MONITOR_READ");
         assertThat(permissionCodesForRole("MODERATOR")).doesNotContain("SYSTEM_MONITOR_READ");
         assertThat(permissionCodesForRole("OPERATOR")).doesNotContain("SYSTEM_MONITOR_READ");
+    }
+
+    /**
+     * V75：会话入口维度的默认值与 CHECK 约束。
+     *
+     * <p>{@code DEFAULT 'PLATFORM'} 是刻意设计：升级前已签发的会话没有入口信息，
+     * 统一按"老会话只对平台入口有效"处理，代理入口需要重登一次（计划 §9）。</p>
+     */
+    @Test
+    void appliesSessionEntryDefaultAndConstraint() {
+        long userId = insertUser("migration-session-entry");
+        try {
+            insertSession(userId, "migration-session-entry-default", hash('m'), hash('n'));
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT entry FROM auth_session WHERE session_id = ?", String.class,
+                    "migration-session-entry-default")).isEqualTo("PLATFORM");
+
+            jdbcTemplate.update("UPDATE auth_session SET entry = 'CONSOLE' WHERE session_id = ?",
+                    "migration-session-entry-default");
+            assertThat(jdbcTemplate.queryForObject(
+                    "SELECT entry FROM auth_session WHERE session_id = ?", String.class,
+                    "migration-session-entry-default")).isEqualTo("CONSOLE");
+
+            assertThatThrownBy(() -> jdbcTemplate.update(
+                    "UPDATE auth_session SET entry = 'PLAYER' WHERE session_id = ?",
+                    "migration-session-entry-default"))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            jdbcTemplate.update("DELETE FROM auth_session WHERE session_id = ?",
+                    "migration-session-entry-default");
+            jdbcTemplate.update("DELETE FROM sys_user WHERE id = ?", userId);
+        }
+    }
+
+    /**
+     * V76：从 ADMIN / SUB_ACCOUNT 撤销 {@code AGENT_CONSOLE_READ}，
+     * 但权限码本身保留，且 {@code AGENT_PLAYER_MANAGE} 必须留在两个角色上。
+     *
+     * <p>BY220 依据：{@code application/rbt/controller/Login.php:55-77} 与
+     * {@code application/rbt/common/Base.php:9-20} —— 代理后台只认 {@code x_robot} 表账号。</p>
+     */
+    @Test
+    void v76RevokesConsoleReadFromPlatformRolesAndKeepsPlayerManage() {
+        assertThat(permissionCodesForRole("ADMIN")).doesNotContain("AGENT_CONSOLE_READ");
+        assertThat(permissionCodesForRole("SUB_ACCOUNT")).doesNotContain("AGENT_CONSOLE_READ");
+        assertThat(permissionCodesForRole("AGENT")).contains("AGENT_CONSOLE_READ");
+
+        assertThat(permissionCodesForRole("ADMIN")).contains("AGENT_PLAYER_MANAGE");
+        assertThat(permissionCodesForRole("SUB_ACCOUNT")).contains("AGENT_PLAYER_MANAGE");
+        assertThat(permissionCodesForRole("AGENT")).contains("AGENT_PLAYER_MANAGE");
+
+        // 权限码本身保留：sys_permission 行与 PermissionCode 枚举都不动，
+        // /api/agent/** 仍然只认 AGENT_CONSOLE_READ（收敛后只有机器账号能调）。
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM sys_permission WHERE permission_code = 'AGENT_CONSOLE_READ'",
+                Integer.class)).isEqualTo(1);
     }
 
     @Test
