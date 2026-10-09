@@ -132,7 +132,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .message-mine .reference-bubble::after { left: auto; right: -16px; border-color: transparent transparent transparent #a1e85a; }
 .message-mine .reference-avatar { left: auto; right: -60px; }
 .message-mine .reference-name { left: auto; right: 0; }
-.reference-time { position: relative; z-index: 1; width: 100%; height: 0; margin: 0; line-height: 16px; text-align: center; }
+.reference-time { --reference-time-name-gap: clamp(14px, 2vw, 30px); position: relative; z-index: 1; width: 100%; height: calc(8px + var(--reference-time-name-gap)); margin: 0; line-height: 16px; text-align: center; }
 .reference-time span { position: relative; top: 4px; display: inline-block; border-radius: 4px; padding: 2px 5px; background: var(--reference-muted); color: #fff; font-size: 12px; line-height: 12px; }
 .chat-state { padding: 48px 20px; color: #888; text-align: center; }
 .chat-history-state { padding: 14px; color: #888; font-size: 12px; text-align: center; }
@@ -213,7 +213,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-room.interface-two .reference-name { top: -17px; font-size: 12px; }
 .reference-room.interface-two .reference-pre { margin: 4px; font-size: 16px; line-height: 22px; }
 .reference-room.interface-two .reference-message-time { margin: 0 4px 3px; font-size: 11px; line-height: 14px; }
-.reference-room.interface-two .reference-time { height: 0; margin: 0; line-height: 14px; }
+.reference-room.interface-two .reference-time { height: calc(14px + var(--reference-time-name-gap)); margin: 0; line-height: 14px; }
 .reference-room.interface-two .reference-time span { top: 2px; font-size: 11px; line-height: 11px; }
 .reference-room.interface-two .composer-row { min-height: 46px; }
 .reference-room.interface-two .reference-input { height: 30px; margin-top: 7px; margin-bottom: 7px; border-radius: 2px; }

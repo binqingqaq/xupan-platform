@@ -451,30 +451,32 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="center-admin">
+  <main class="platform-admin-page">
     <PlatformAdminNav />
-    <header class="center-header">
-      <h1>中心上游</h1>
-      <p class="center-hint">
-        中心是代理的上级盘口：代理上报订单到这里，中心按开奖结果与代理做第二层结算。
-        额度三层（可用 / 冻结 / 上游未结算）是三个独立事实。全部金额为虚拟积分。
-      </p>
-    </header>
+    <div class="center-admin">
+      <header class="center-header">
+        <h1>中心上游</h1>
+        <p class="center-hint">
+          中心是代理的上级盘口：代理上报订单到这里，中心按开奖结果与代理做第二层结算。
+          额度三层（可用 / 冻结 / 上游未结算）是三个独立事实。全部金额为虚拟积分。
+        </p>
+      </header>
 
-    <nav class="center-tabs">
-      <button
-        v-for="item in tabs"
-        :key="item.key"
-        type="button"
-        :class="{ active: tab === item.key }"
-        @click="tab = item.key"
-      >
-        {{ item.label }}
-      </button>
-      <button type="button" class="center-refresh" :disabled="loading" @click="refresh">
-        {{ loading ? '加载中…' : '刷新' }}
-      </button>
-    </nav>
+      <nav class="center-tabs" aria-label="中心上游模块">
+        <button
+          v-for="item in tabs"
+          :key="item.key"
+          type="button"
+          :class="{ active: tab === item.key }"
+          :aria-pressed="tab === item.key"
+          @click="tab = item.key"
+        >
+          {{ item.label }}
+        </button>
+        <button type="button" class="center-refresh" :disabled="loading" @click="refresh">
+          {{ loading ? '加载中…' : '刷新' }}
+        </button>
+      </nav>
 
     <p v-if="error" class="center-error">{{ error }}</p>
     <p v-if="feedback" class="center-feedback">{{ feedback }}</p>
@@ -898,36 +900,72 @@ onMounted(async () => {
         </table>
       </div>
     </section>
-  </div>
+    </div>
+  </main>
 </template>
 
 <style scoped>
-.center-admin { max-width: 1280px; margin: 0 auto; padding: 16px; }
-.center-header h1 { margin: 0 0 6px; font-size: 20px; }
-.center-hint { color: #666; font-size: 13px; margin: 4px 0 12px; line-height: 1.6; }
-.center-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.center-tabs button { padding: 6px 12px; border: 1px solid #d0d5dd; background: #fff; border-radius: 4px; cursor: pointer; }
-.center-tabs button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.center-refresh { margin-left: auto; }
-.center-error { color: #b42318; background: #fef3f2; padding: 8px 10px; border-radius: 4px; }
-.center-feedback { color: #067647; background: #ecfdf3; padding: 8px 10px; border-radius: 4px; }
-.center-token { border: 1px solid #f79009; background: #fffaeb; padding: 12px; border-radius: 4px; margin-bottom: 12px; }
-.center-token code { display: block; margin: 8px 0; word-break: break-all; font-size: 13px; }
-.center-panel h2 { font-size: 15px; margin: 18px 0 8px; }
-.center-cards { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-.center-card { border: 1px solid #e4e7ec; border-radius: 6px; padding: 10px 14px; min-width: 150px; }
-.center-card span { display: block; color: #667085; font-size: 12px; }
-.center-card strong { font-size: 18px; }
-.center-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.center-table th, .center-table td { border: 1px solid #e4e7ec; padding: 6px 8px; text-align: left; }
-.center-table th { background: #f9fafb; font-weight: 600; }
-.center-empty { text-align: center; color: #98a2b3; }
-.center-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
-.center-form-block { border: 1px solid #e4e7ec; border-radius: 6px; padding: 12px; }
-.center-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #475467; }
-.center-form input, .center-form select { padding: 6px 8px; border: 1px solid #d0d5dd; border-radius: 4px; min-width: 130px; }
-.center-actions { margin-bottom: 12px; }
-.center-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
-.center-row-actions button, .center-actions button, .center-form button { padding: 4px 10px; border: 1px solid #d0d5dd; background: #fff; border-radius: 4px; cursor: pointer; }
-.center-settle-result { margin-top: 12px; }
+.platform-admin-page { min-height: 100vh; background: #eaf4fb; color: #1d2933; }
+.center-admin { width: min(1600px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 36px; }
+.center-header { margin-bottom: 18px; }
+.center-header h1 { margin: 0; font-size: 24px; line-height: 1.3; }
+.center-hint { margin: 6px 0 12px; color: #5f7280; font-size: 13px; line-height: 1.55; }
+.center-header .center-hint { max-width: 1100px; margin-bottom: 0; }
+.center-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid #bfd1da; }
+.center-tabs button { min-height: 38px; padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; background: transparent; color: #435766; font: inherit; cursor: pointer; }
+.center-tabs button:hover { background: #f3f8fa; color: #155d79; }
+.center-tabs button.active { border-color: #bfd1da; background: #fff; color: #155d79; font-weight: 600; }
+.center-tabs button:focus-visible, .center-admin button:focus-visible, .center-admin input:focus-visible, .center-admin select:focus-visible { outline: 2px solid #1685a5; outline-offset: 2px; }
+.center-refresh { margin-left: auto; min-height: 34px !important; align-self: center; border: 1px solid #8ba9b7 !important; border-radius: 4px !important; background: #fff !important; color: #253b48 !important; }
+.center-refresh:disabled, .center-admin button:disabled { color: #8998a0; cursor: not-allowed; opacity: .7; }
+.center-error, .center-feedback { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid; border-radius: 3px; }
+.center-error { border-color: #c43e36; background: #fff0ee; color: #8f261f; }
+.center-feedback { border-color: #24835f; background: #edf8f2; color: #205c45; }
+.center-token { margin-bottom: 14px; padding: 12px 14px; border: 1px solid #d4a84d; border-radius: 4px; background: #fff9e8; }
+.center-token code { display: block; margin: 8px 0; overflow-wrap: anywhere; font-size: 13px; }
+.center-token button { min-height: 34px; padding: 6px 12px; border: 1px solid #8ba9b7; border-radius: 4px; background: #fff; cursor: pointer; }
+.center-panel { min-width: 0; overflow-x: auto; padding-bottom: 8px; }
+.center-panel h2 { margin: 22px 0 10px; padding-bottom: 8px; border-bottom: 1px solid #ccdbe1; color: #293e4a; font-size: 16px; line-height: 1.4; }
+.center-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.center-card { display: flex; min-height: 72px; flex-direction: column; justify-content: center; gap: 6px; padding: 10px 14px; border: 1px solid #d4e0e5; border-left: 3px solid #1b91a0; border-radius: 4px; background: #fff; }
+.center-card span { color: #61717a; font-size: 12px; }
+.center-card strong { color: #253a45; font-size: 19px; font-variant-numeric: tabular-nums; }
+.center-table { width: 100%; min-width: 760px; border-collapse: collapse; background: #fff; font-size: 13px; font-variant-numeric: tabular-nums; }
+.center-table th, .center-table td { padding: 9px 10px; border-bottom: 1px solid #dce5e9; text-align: left; vertical-align: top; }
+.center-table th { border-top: 1px solid #cbdbe1; background: #e6f1f5; color: #304957; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.center-table tbody tr:hover { background: #f5fafb; }
+.center-table code { color: #315a6b; font-size: 12px; }
+.center-table small { color: #62737c; }
+.center-empty { padding: 24px 12px !important; color: #75858d; text-align: center !important; }
+.center-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 0 0 14px; }
+.center-form-block { width: 100%; padding: 14px; border: 1px solid #d3e0e5; border-radius: 4px; background: #fff; }
+.center-form-block > strong { flex-basis: 100%; color: #344b57; }
+.center-form label { display: flex; min-width: 180px; flex: 1 1 180px; flex-direction: column; gap: 5px; color: #465c67; font-size: 12px; }
+.center-form input, .center-form select { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid #bacbd2; border-radius: 3px; background: #fff; color: #202f36; font: inherit; }
+.center-form button, .center-actions button, .center-row-actions button { min-height: 32px; padding: 6px 10px; border: 1px solid #8ba9b7; border-radius: 3px; background: #fff; color: #284554; font: inherit; white-space: nowrap; cursor: pointer; }
+.center-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+.center-actions button { min-height: 36px; border-color: #146f8d; background: #146f8d; color: #fff; }
+.center-row-actions { display: flex; min-width: 190px; flex-wrap: wrap; gap: 5px; }
+.center-row-actions button { min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.center-row-actions button:hover, .center-form button:hover, .center-token button:hover { background: #eef6f8; }
+.center-actions button:hover { background: #0f5b75; }
+.center-settle-result { margin-top: 14px; padding-top: 2px; }
+@media (max-width: 900px) {
+  .center-admin { width: calc(100% - 24px); padding-top: 14px; }
+  .center-tabs { gap: 2px; }
+  .center-tabs button { padding: 8px 10px; }
+  .center-refresh { margin-left: auto; }
+  .center-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .center-admin { width: calc(100% - 20px); padding-top: 12px; }
+  .center-header h1 { font-size: 21px; }
+  .center-tabs button { min-height: 40px; padding: 7px 9px; font-size: 13px; }
+  .center-refresh { margin-left: 0; }
+  .center-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .center-card { min-height: 66px; padding: 8px 10px; }
+  .center-card strong { font-size: 17px; }
+  .center-form label { min-width: 100%; }
+  .center-row-actions { min-width: 180px; }
+}
 </style>

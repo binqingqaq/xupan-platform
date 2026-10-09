@@ -4,6 +4,8 @@ import PlatformAdminHome from './views/PlatformAdminHome.vue'
 import { api } from './api'
 
 vi.mock('vue-router', () => ({
+  RouterLink: { name: 'RouterLink', props: { to: { type: [String, Object] } }, template: '<a><slot /></a>' },
+  useRoute: () => ({ path: '/platform-admin' }),
   useRouter: () => ({ replace: vi.fn() }),
 }))
 
@@ -24,7 +26,7 @@ beforeEach(() => {
   vi.mocked(api.me).mockResolvedValue({
     displayName: '超级管理员',
     username: 'admin',
-    permissions: ['PLATFORM_HOME_READ'],
+    permissions: ['PLATFORM_HOME_READ', 'CENTER_AGENT_MANAGE'],
   } as never)
   vi.mocked(api.getGameCatalog).mockResolvedValue([
     { gameCode: 'AU8', displayName: '澳8番摊', sortOrder: 1 },
@@ -70,6 +72,8 @@ describe('platform admin home', () => {
     expect(api.getGameCatalog).toHaveBeenCalledTimes(1)
     expect(api.listDrawHistory).toHaveBeenCalledWith({ gameCode: 'AU8', pageSize: 48 })
     expect(container.querySelectorAll('.platform-admin-route-color')).toHaveLength(1)
+    expect(Array.from(container.querySelectorAll('.platform-admin-nav a')).map(link => link.textContent?.trim()))
+      .toContain('中心上游')
 
     const select = container.querySelector<HTMLSelectElement>('select[aria-label="选择游戏"]')
     if (!select) throw new Error('missing game selector')

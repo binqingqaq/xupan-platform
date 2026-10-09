@@ -73,6 +73,7 @@ function isItemVisible(item: PlatformAdminNavItem): boolean {
 
 const visibleItems = computed(() => items.filter(isItemVisible))
 const activePath = computed(() => route.path)
+const accountName = ref('')
 /**
  * BY220 `public/head.html:192` 顶部欢迎语：
  * `{if $Think.session.user_uid != '1'}&nbsp;&nbsp;&nbsp;&nbsp;可用积分：<span>{:sprintf('%.0f', x_admin.score)}</span>{else/}，<span>超级管理员</span>{/if}`
@@ -81,13 +82,14 @@ const activePath = computed(() => route.path)
  */
 const subAccountScore = ref<number | null>(null)
 const welcomeText = computed(() => {
-  const name = props.displayName || '超级管理员'
+  const name = props.displayName || accountName.value || '超级管理员'
   if (subAccountScore.value === null || subAccountScore.value === undefined) return `欢迎您：${name}，超级管理员`
   return `欢迎您：${name}，可用积分：${Math.round(subAccountScore.value)}`
 })
 onMounted(async () => {
   const me = await api.me()
   permissions.value = me.permissions
+  accountName.value = me.displayName || me.username || ''
   subAccountScore.value = me.subAccountScore ?? null
 })
 async function logout() {
