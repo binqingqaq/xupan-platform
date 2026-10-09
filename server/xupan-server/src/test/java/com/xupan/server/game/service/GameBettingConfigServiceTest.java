@@ -105,14 +105,12 @@ class GameBettingConfigServiceTest {
     @Test
     void limitsMustBePositiveIntegersWithValidStakeRange() {
         assertThatThrownBy(() -> service.updateLimits(new GameBettingConfigService.LimitConfigRequest(
-                200, 5000, 20000, 1000, 20000, 20000, 20000, 20000, 20000, 20000, 20000, 0, 1,
-                20, 5000, null)))
+                200, 5000, 20000, 1000, 20000, 20000, 20000, 20000, 20000, 20000, 20000, 0, 1)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("BETTING_CONFIG_INVALID");
 
         assertThatThrownBy(() -> service.updateLimits(new GameBettingConfigService.LimitConfigRequest(
-                200, 5000, 20000, 1000, 20000, 20000, 20000, 20000, 20000, 20000, 20000, 10, 20,
-                20, 5000, null)))
+                200, 5000, 20000, 1000, 20000, 20000, 20000, 20000, 20000, 20000, 20000, 10, 20)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("BETTING_CONFIG_INVALID");
     }
@@ -120,13 +118,13 @@ class GameBettingConfigServiceTest {
     private static GameBettingConfigRepository.ConfigRecord config() {
         return new GameBettingConfigRepository.ConfigRecord(95, 1,
                 200, 5000, 20000, 1000, 20000, 2000, 20000, 20000, 20000, 10000, 20000,
-                11000, 1, 20, 5000, null);
+                11000, 1);
     }
 
     private static GameBettingConfigRepository.ConfigRecord configWith(int playerMaxStake,
                                                                       int issueTotalLimit) {
         return new GameBettingConfigRepository.ConfigRecord(95, 1,
                 200, issueTotalLimit, 20000, 1000, 20000, 2000, 20000, 20000, 20000, 10000, 20000,
-                playerMaxStake, 1, 20, 5000, null);
+                playerMaxStake, 1);
     }
 }

@@ -103,47 +103,15 @@ export function validatePointOperation(amount: number, reason: string, idempoten
   return errors
 }
 
-export const STAKE_RANGE_CODES = ['RANDOM', '30-300', '300-1000', '1000-3000', '3000-10000', '10000-30000'] as const
-export const STAKE_RANGE_LABELS: Record<string, string> = {
-  RANDOM: '随机',
-  '30-300': '30-300',
-  '300-1000': '300-1000',
-  '1000-3000': '1000-3000',
-  '3000-10000': '3000-10000',
-  '10000-30000': '10000-30000',
-}
-export const STAKE_ROUND_TEN_OPTIONS = ['RANDOM', 'OFF', 'ON'] as const
-export const STAKE_ROUND_TEN_LABELS: Record<string, string> = { RANDOM: '随机', OFF: '关', ON: '开' }
-export const BOT_PLAY_TYPES = [
-  { code: 'ANGLE', label: '角' },
-  { code: 'POSITIVE', label: '正' },
-  { code: 'FAN', label: '番' },
-  { code: 'CAR', label: '车' },
-  { code: 'STRICT', label: '念' },
-  { code: 'ADD', label: '加' },
-  { code: 'TONG', label: '通' },
-  { code: 'NONE', label: '无' },
-  { code: 'ODD_EVEN', label: '单双' },
-  { code: 'BIG_SMALL', label: '大小' },
-  { code: 'SPECIAL', label: '特' },
-] as const
-export const BOT_PLAY_TYPE_CODES: string[] = BOT_PLAY_TYPES.map(play => play.code)
+export const STAKE_RANGE_CODES = ['30-300', '300-1000', '1000-3000', '3000-10000', '10000-30000'] as const
+export const STAKE_RANGE_LABELS: Record<string, string> = Object.fromEntries(STAKE_RANGE_CODES.map(code => [code, code]))
 
 export function validateBehaviorDraft(draft: Pick<PlayerDeskBehavior,
-  'mode' | 'betsPerIssue' | 'stakeRangeCode' | 'stakeRoundTen' | 'activityPercent' | 'playRandom'
-  | 'playTypes' | 'topupProbabilityPercent' | 'topupMin' | 'topupMax'>): string[] {
+  'mode' | 'stakeRangeCode' | 'chaseEnabled' | 'feidanEnabled'>): string[] {
   const errors: string[] = []
   if (draft.mode !== 'AUTOMATIC' && draft.mode !== 'MANUAL') errors.push('行为模式必须选择自动或手动')
-  if (!Number.isInteger(draft.betsPerIssue) || draft.betsPerIssue < 0 || draft.betsPerIssue > 20) errors.push('每期注单必须是 0 到 20 的整数')
-  if (!(STAKE_RANGE_CODES as readonly string[]).includes(draft.stakeRangeCode)) errors.push('下注范围不在允许的档位内')
-  if (!(STAKE_ROUND_TEN_OPTIONS as readonly string[]).includes(draft.stakeRoundTen)) errors.push('下注金额整十选项无效')
-  if (!Number.isInteger(draft.activityPercent) || draft.activityPercent < 0 || draft.activityPercent > 100) errors.push('活跃比例必须是 0 到 100 的整数')
-  const plays = Array.isArray(draft.playTypes) ? draft.playTypes : []
-  if (!draft.playRandom && plays.length === 0) errors.push('未选择随机时必须至少勾选一个玩法')
-  if (plays.some(code => !BOT_PLAY_TYPE_CODES.includes(code))) errors.push('玩法选择包含不支持的玩法')
-  if (!Number.isInteger(draft.topupProbabilityPercent) || draft.topupProbabilityPercent < 0 || draft.topupProbabilityPercent > 100) errors.push('随机上分概率必须是 0 到 100 的整数')
-  if (!Number.isFinite(draft.topupMin) || draft.topupMin <= 0 || !Number.isInteger(draft.topupMin)) errors.push('上分金额下限必须是大于 0 的整数')
-  if (!Number.isFinite(draft.topupMax) || draft.topupMax < draft.topupMin || !Number.isInteger(draft.topupMax)) errors.push('上分金额上限不能小于下限，且必须是整数')
+  if (!(STAKE_RANGE_CODES as readonly string[]).includes(draft.stakeRangeCode)) errors.push('下注范围不在 BY220 的五档内')
+  if (typeof draft.chaseEnabled !== 'boolean' || typeof draft.feidanEnabled !== 'boolean') errors.push('托状态配置无效')
   return errors
 }
 

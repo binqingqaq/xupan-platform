@@ -24,6 +24,7 @@ public final class ChatCommandParser {
             case "玩法", "说明" -> Optional.of(new Command(Type.RULES, null));
             case "取消" -> Optional.of(new Command(Type.CANCEL, null));
             case "流水" -> Optional.of(new Command(Type.DAILY_SUMMARY, null));
+            case "历史" -> Optional.of(new Command(Type.HISTORY, null));
             default -> parsePointRequest(text.trim());
         };
     }
@@ -52,6 +53,7 @@ public final class ChatCommandParser {
         RULES,
         CANCEL,
         DAILY_SUMMARY,
+        HISTORY,
         TOP_UP,
         DOWN
     }

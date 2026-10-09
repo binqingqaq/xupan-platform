@@ -41,20 +41,16 @@ describe('player desk helpers', () => {
     expect(validateBotPlayerDraft({ userCode: 'bot_1', displayName: '托1' })).toEqual([])
   })
 
-  it('validates points, behavior and manual message constraints', () => {
+  it('validates BY220 bot mode, fixed stake tiers, and state flags', () => {
+    expect(validateBehaviorDraft({ mode: 'AUTOMATIC', stakeRangeCode: '30-300', chaseEnabled: false, feidanEnabled: false })).toEqual([])
+    expect(validateBehaviorDraft({ mode: 'MANUAL', stakeRangeCode: '10000-30000', chaseEnabled: true, feidanEnabled: true })).toEqual([])
+    expect(validateBehaviorDraft({ mode: 'MANUAL', stakeRangeCode: 'RANDOM', chaseEnabled: false, feidanEnabled: false })).toContain('下注范围不在 BY220 的五档内')
+  })
+
+  it('validates points and manual message constraints', () => {
     expect(validatePointOperation(0, '', '', 'grant')).toHaveLength(3)
     expect(validatePointOperation(10.5, '测试上分', 'grant-1', 'grant')).toEqual([])
-    expect(validateBehaviorDraft({
-      mode: 'AUTOMATIC', betsPerIssue: 2, stakeRangeCode: '30-300', stakeRoundTen: 'ON',
-      activityPercent: 80, playRandom: true, playTypes: [], topupProbabilityPercent: 10,
-      topupMin: 100, topupMax: 1000,
-    })).toEqual([])
-    expect(validateBehaviorDraft({
-      mode: 'MANUAL', betsPerIssue: 21, stakeRangeCode: '999', stakeRoundTen: 'ON' as 'RANDOM',
-      activityPercent: 101, playRandom: false, playTypes: ['UNKNOWN'], topupProbabilityPercent: 101,
-      topupMin: 1000, topupMax: 100,
-    })).toHaveLength(6)
     expect(validatePlayerMessage('', '')).toHaveLength(2)
     expect(validatePlayerMessage('本期跟投', 'message-1')).toEqual([])
-  })
+})
 })

@@ -109,10 +109,6 @@ public class AccountPurgeService {
                     OR related_bet_id IN (SELECT id FROM game_bet WHERE user_id = ?)
                 """, accountId, accountId);
         jdbc.update("DELETE FROM game_bet WHERE user_id = ?", accountId);
-        jdbc.update("""
-                DELETE FROM test_player_behavior_play_type
-                 WHERE behavior_id IN (SELECT id FROM test_player_behavior WHERE account_id = ?)
-                """, accountId);
         jdbc.update("DELETE FROM test_player_behavior WHERE account_id = ?", accountId);
         if (sysUserId != null && sysUserId > 0) {
             jdbc.update("DELETE FROM player_access_link WHERE user_id = ?", sysUserId);

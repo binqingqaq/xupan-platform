@@ -124,9 +124,6 @@ function globalBettingConfig(overrides: Partial<BettingConfigView> = {}): Bettin
     addLimit: 0,
     playerMaxStake: 100000,
     playerMinStake: 10,
-    botIssueTotalBets: 0,
-    botIssueTotalStake: 0,
-    botNightActivityOverridePercent: null,
     ...overrides,
   }
 }

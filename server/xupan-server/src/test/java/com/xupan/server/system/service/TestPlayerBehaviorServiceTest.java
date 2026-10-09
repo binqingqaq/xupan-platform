@@ -1,5 +1,6 @@
 package com.xupan.server.system.service;
 
+import com.xupan.server.agent.repository.AgentRepository;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.game.domain.PlayType;
@@ -18,9 +19,11 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 import java.math.BigDecimal;
-import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -28,289 +31,162 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @TestPropertySource(properties = {"xupan.automation.enabled=false", "xupan.test-player.behavior-enabled=false"})
 class TestPlayerBehaviorServiceTest {
-
     private static final String ADMIN = "behavior-test-admin";
+    private static final String MACHINE = "behavior-test-machine";
     private static final String BOT = "behavior-test-bot";
-    private static final String ISSUE = "3000000";
 
-    @Autowired
-    private JdbcTemplate jdbc;
-    @Autowired
-    private UserRepository userRepository;
-    @Autowired
-    private PasswordPolicyService passwordPolicy;
-    @Autowired
-    private VirtualWalletService walletService;
-    @Autowired
-    private PlayerLinkAuthenticationService playerLinkAuthenticationService;
-    @Autowired
-    private PlayerDeskRepository playerDeskRepository;
-    @Autowired
-    private TestPlayerBehaviorService behaviorService;
-    @Autowired
-    private GameDataRepository gameRepository;
+    @Autowired private JdbcTemplate jdbc;
+    @Autowired private UserRepository userRepository;
+    @Autowired private AgentRepository agentRepository;
+    @Autowired private PasswordPolicyService passwordPolicy;
+    @Autowired private VirtualWalletService walletService;
+    @Autowired private PlayerLinkAuthenticationService playerLinkAuthenticationService;
+    @Autowired private PlayerDeskRepository playerDeskRepository;
+    @Autowired private TestPlayerBehaviorService behaviorService;
+    @Autowired private GameDataRepository gameRepository;
 
     private long adminId;
+    private long machineUserId;
+    private long agentId;
     private long botId;
     private long accountId;
     private long linkId;
+    private String issue;
 
     @BeforeEach
     void setUp() {
         clean();
-        resetBettingConfig();
         adminId = userRepository.insert(ADMIN, "行为管理员", passwordPolicy.encode("BehaviorAdmin123"), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
-        walletService.ensureWalletForUser(adminId, "行为管理员");
+        machineUserId = userRepository.insert(MACHINE, "行为机器", passwordPolicy.encode("BehaviorMachine123"), "ACTIVE");
+        userRepository.assignRole(machineUserId, "AGENT");
+        agentId = agentRepository.createAgent("behavior-machine-code", "行为机器", null, machineUserId, adminId);
+        jdbc.update("UPDATE agent SET board_open=TRUE,chase_enabled=TRUE,score=5000 WHERE id=?", agentId);
+
         botId = userRepository.insertTestPlayer(BOT, "行为托", null, passwordPolicy.encode("BehaviorBot123"));
         userRepository.assignRole(botId, "USER");
         accountId = walletService.ensureTestWalletForUser(botId, BOT, "行为托");
-        jdbc.update("UPDATE demo_user_account SET player_kind='BOT' WHERE id=?", accountId);
+        jdbc.update("UPDATE demo_user_account SET player_kind='BOT',agent_id=? WHERE id=?", agentId, accountId);
         jdbc.update("UPDATE sys_user SET auth_mode='BOT_SERVICE' WHERE id=?", botId);
         linkId = playerLinkAuthenticationService.issue(botId, adminId).linkId();
         playerDeskRepository.ensureBehavior(accountId);
-        gameRepository.saveBettingIssue(ISSUE, Instant.now());
+
+        issue = "BOT-BY220-" + System.nanoTime();
+        gameRepository.saveBettingIssue(issue, Instant.now());
     }
 
     @AfterEach
-    void tearDown() {
-        clean();
-        resetBettingConfig();
+    void tearDown() { clean(); }
+
+    @Test
+    void newBotBehaviorDefaultsToAutomaticAndBy220FirstStakeTier() {
+        PlayerDeskRepository.Behavior behavior = playerDeskRepository.findBehavior(botId).orElseThrow();
+        assertThat(behavior.mode()).isEqualTo("AUTOMATIC");
+        assertThat(behavior.enabled()).isTrue();
+        assertThat(behavior.stakeRangeCode()).isEqualTo("30-300");
+        assertThat(behavior.stakeMin()).isEqualByComparingTo("30");
+        assertThat(behavior.stakeMax()).isEqualByComparingTo("300");
+        assertThat(behavior.machineChaseEnabled()).isTrue();
     }
 
     @Test
-    void plansBetsAcrossBettingWindowWithoutAutoChat() {
-        grant("BEHAVIOR-GRANT-PLAN");
-        configure("AUTOMATIC", 3, "30-300", "OFF", 100, true, 0);
+    void automaticPoolProducesParserAcceptedBetsForAllThirteenLeafOutcomes() {
+        Set<String> outcomes = new HashSet<>();
+        for (int i = 0; i < 12000; i++) {
+            String text = BotBetTextGenerator.by220AutomaticBet(new BigDecimal("100"));
+            BetTextParser.ParseResult parsed = BetTextParser.parse(text);
+            assertThat(parsed.accepted()).as(text).isTrue();
+            assertThat(parsed.bets()).hasSize(1);
+            BetTextParser.ParsedBet bet = parsed.bets().get(0);
+            if (bet.playType() == PlayType.ODD_EVEN) outcomes.add(bet.parameters().get(0) == 1 ? "单" : "双");
+            else if (bet.playType() == PlayType.BIG_SMALL) outcomes.add(bet.parameters().get(0) == 1 ? "大" : "小");
+            else outcomes.add(bet.playType().name());
+        }
+        assertThat(outcomes).contains("FAN", "ANGLE", "ADD", "CAR", "STRICT", "POSITIVE", "TONG",
+                "NONE", "单", "双", "大", "小", "SPECIAL");
+        assertThat(BotBetTextGenerator.approvedWeights()).containsExactlyInAnyOrderEntriesOf(Map.ofEntries(
+                Map.entry("SPECIAL", 216), Map.entry("NONE", 216), Map.entry("CAR", 72),
+                Map.entry("STRICT", 72), Map.entry("ANGLE", 36), Map.entry("FAN", 36),
+                Map.entry("POSITIVE", 36), Map.entry("ODD", 9), Map.entry("EVEN", 9),
+                Map.entry("BIG", 9), Map.entry("SMALL", 9), Map.entry("ADD", 40), Map.entry("TONG", 40)));
+        assertThat(BotBetTextGenerator.approvedWeights().values().stream().mapToInt(Integer::intValue).sum()).isEqualTo(800);
+    }
 
+    @Test
+    void automaticBetPlanCreatesAtMostOnePersistedTicketForSingleEligibleBot() {
+        walletService.grant(adminId, botId, new BigDecimal("1000"), "测试初始虚拟积分", "BOT-PLAN-GRANT");
         List<PlayerDeskRepository.ActionRow> executed = behaviorService.dispatch(botId);
-
-        assertThat(executed).as("首轮不应有到期动作").isEmpty();
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='BET_TEXT'", botId))
-                .isEqualTo(3);
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='CHAT_TEXT'", botId))
-                .as("自动模式不再生成闲聊动作").isZero();
-
-        List<Timestamp> schedule = jdbc.queryForList(
-                "SELECT scheduled_at FROM test_player_action WHERE user_id=? AND action_type='BET_TEXT' ORDER BY action_no",
-                Timestamp.class, botId);
-        Instant bettingEndsAt = jdbc.queryForObject(
-                "SELECT betting_ends_at FROM game_issue WHERE issue_number=?", Timestamp.class, ISSUE).toInstant();
-        Instant lowerBound = Instant.now().plusSeconds(1);
-        for (Timestamp scheduled : schedule) {
-            assertThat(scheduled).isNotNull();
-            assertThat(scheduled.toInstant()).isAfter(lowerBound);
-            assertThat(scheduled.toInstant()).isBeforeOrEqualTo(bettingEndsAt.minusSeconds(1));
-        }
-        assertThat(schedule.get(0).toInstant()).isBeforeOrEqualTo(schedule.get(2).toInstant());
+        assertThat(executed).isEmpty(); // Ticket is scheduled inside the current issue window.
+        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='BET_TEXT'", botId, issue))
+                .isEqualTo(1);
+        String text = jdbc.queryForObject("SELECT source_text FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='BET_TEXT'", String.class, botId, issue);
+        assertThat(BetTextParser.parse(text).accepted()).isTrue();
     }
 
     @Test
-    void doesNothingWhenLinkInvalid() {
-        grant("BEHAVIOR-GRANT-LINK");
-        configure("AUTOMATIC", 2, "30-300", "OFF", 100, true, 0);
-        playerLinkAuthenticationService.revoke(botId, linkId, adminId);
-
+    void manualBotDoesNotReceiveAutomaticBetPlan() {
+        playerDeskRepository.updateBehavior(botId, "MANUAL", new BigDecimal("30"), new BigDecimal("300"),
+                "30-300", false, false);
         assertThat(behaviorService.dispatch(botId)).isEmpty();
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=?", botId))
-                .as("链接失效期间不创建任何动作").isZero();
+        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='BET_TEXT'", botId)).isZero();
     }
 
     @Test
-    void skipsPlannedBetsAfterLinkRevoked() {
-        grant("BEHAVIOR-GRANT-SKIP");
-        configure("AUTOMATIC", 2, "30-300", "OFF", 100, true, 0);
-        behaviorService.dispatch(botId);
+    void automaticTopUpAndDownChangeOnlyBotWalletAndWriteNoApprovalRequest() {
+        walletService.grant(adminId, botId, new BigDecimal("10"), "测试低余额", "BOT-LOW-GRANT");
+        BigDecimal machineBefore = jdbc.queryForObject("SELECT score FROM agent WHERE id=?", BigDecimal.class, agentId);
+        for (int i = 0; i < 300 && balance().compareTo(new BigDecimal("10")) == 0; i++) {
+            behaviorService.dispatchPeriodicActivity(botId);
+        }
+        assertThat(balance()).isGreaterThan(new BigDecimal("10"));
+        assertThat(count("SELECT COUNT(*) FROM player_point_request WHERE user_id=? AND status='PENDING'", botId)).isZero();
+        assertThat(jdbc.queryForObject("SELECT score FROM agent WHERE id=?", BigDecimal.class, agentId))
+                .isEqualByComparingTo(machineBefore);
 
+        walletService.grant(adminId, botId, new BigDecimal("4000"), "测试下分条件", "BOT-DOWN-GRANT");
+        for (int i = 0; i < 300 && count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='AUTO_DOWN' AND status='SUCCEEDED'", botId, issue) == 0; i++) {
+            behaviorService.dispatchPeriodicActivity(botId);
+        }
+        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='AUTO_DOWN' AND status='SUCCEEDED'", botId, issue)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT score FROM agent WHERE id=?", BigDecimal.class, agentId))
+                .isEqualByComparingTo(machineBefore);
+    }
+
+    @Test
+    void revokedPlayerLinkStopsBotActions() {
         playerLinkAuthenticationService.revoke(botId, linkId, adminId);
-        behaviorService.dispatch(botId);
-
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND status='SKIPPED' "
-                + "AND error_code='LINK_INVALID'", botId)).isEqualTo(2);
-    }
-
-    @Test
-    void reducesStakeWhenBalanceIsLowerThanConfiguredRange() {
-        jdbc.update("UPDATE demo_user_account SET balance=7.00 WHERE id=?", accountId);
-        configure("AUTOMATIC", 1, "30-300", "OFF", 100, true, 0);
-
-        behaviorService.dispatch(botId, true);
-
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND status='SUCCEEDED' "
-                + "AND bet_id IS NOT NULL", botId)).isEqualTo(1);
-        BigDecimal stake = jdbc.queryForObject("SELECT stake FROM game_bet WHERE user_id=?",
-                BigDecimal.class, accountId);
-        assertThat(stake).as("余额不足时按可用余额降额下注").isEqualByComparingTo("7.00");
-    }
-
-    @Test
-    void manualModeDoesNotCreateOrExecuteBets() {
-        grant("BEHAVIOR-GRANT-MANUAL");
-        configure("MANUAL", 2, "30-300", "OFF", 100, true, 0);
-
         assertThat(behaviorService.dispatch(botId)).isEmpty();
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=?", botId)).isZero();
+        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='BET_TEXT'", botId, issue)).isZero();
     }
 
-    @Test
-    void activityPercentShrinksPlannedSlotCount() {
-        assertThat(TestPlayerBehaviorService.slotCount(4, 100, true)).isEqualTo(4);
-        assertThat(TestPlayerBehaviorService.slotCount(4, 50, true)).isEqualTo(2);
-        assertThat(TestPlayerBehaviorService.slotCount(4, 30, true)).isEqualTo(1);
-        assertThat(TestPlayerBehaviorService.slotCount(4, 100, false)).isZero();
-        assertThat(TestPlayerBehaviorService.slotCount(0, 100, true)).isZero();
+    private BigDecimal balance() {
+        return jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id=?", BigDecimal.class, accountId);
     }
 
-    @Test
-    void activityZeroPlansNothing() {
-        grant("BEHAVIOR-GRANT-ZERO");
-        configure("AUTOMATIC", 3, "30-300", "OFF", 0, true, 0);
-
-        behaviorService.dispatch(botId, true);
-
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='BET_TEXT'", botId))
-                .isZero();
-    }
-
-    @Test
-    void roundTenProducesWholeTensWithoutDecimals() {
-        grant("BEHAVIOR-GRANT-ROUND");
-        configure("AUTOMATIC", 4, "30-300", "ON", 100, true, 0);
-
-        behaviorService.dispatch(botId);
-
-        List<String> texts = jdbc.queryForList("SELECT source_text FROM test_player_action "
-                + "WHERE user_id=? AND action_type='BET_TEXT'", String.class, botId);
-        assertThat(texts).hasSize(4);
-        for (String text : texts) {
-            BetTextParser.ParseResult parsed = BetTextParser.parse(text);
-            assertThat(parsed.accepted()).as(text).isTrue();
-            BigDecimal stake = parsed.bets().get(0).stake();
-            assertThat(stake.remainder(BigDecimal.TEN)).as("整十金额：%s", text).isEqualByComparingTo(BigDecimal.ZERO);
-            assertThat(text).doesNotContain(".");
-        }
-    }
-
-    @Test
-    void playTypeSelectionRestrictsGeneratedBets() {
-        grant("BEHAVIOR-GRANT-PLAY");
-        configure("AUTOMATIC", 3, "30-300", "OFF", 100, false, 0, List.of("SPECIAL"));
-
-        behaviorService.dispatch(botId);
-
-        List<String> texts = jdbc.queryForList("SELECT source_text FROM test_player_action "
-                + "WHERE user_id=? AND action_type='BET_TEXT'", String.class, botId);
-        assertThat(texts).hasSize(3);
-        for (String text : texts) {
-            BetTextParser.ParseResult parsed = BetTextParser.parse(text);
-            assertThat(parsed.accepted()).as(text).isTrue();
-            assertThat(parsed.bets().get(0).playType()).as(text).isEqualTo(PlayType.SPECIAL);
-        }
-    }
-
-    @Test
-    void globalBotIssueCapSkipsExtraBets() {
-        grant("BEHAVIOR-GRANT-CAP");
-        setBotCaps(1, 5000);
-        configure("AUTOMATIC", 3, "30-300", "OFF", 100, true, 0);
-
-        behaviorService.dispatch(botId, true);
-
-        List<String> rows = jdbc.queryForList("SELECT status || ':' || COALESCE(error_code, '-') || ':' || source_text "
-                + "FROM test_player_action WHERE user_id=? ORDER BY action_no", String.class, botId);
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND status='SUCCEEDED' "
-                + "AND bet_id IS NOT NULL", botId)).as("达到全局上限后只保留 1 单：%s", rows).isEqualTo(1);
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND status='SKIPPED' "
-                + "AND error_code='BOT_ISSUE_CAP'", botId)).isEqualTo(2);
-    }
-
-    @Test
-    void randomTopUpRequestLandsInApprovalQueue() {
-        jdbc.update("UPDATE demo_user_account SET balance=10.00 WHERE id=?", accountId);
-        configure("AUTOMATIC", 0, "30-300", "OFF", 100, true, 100);
-
-        behaviorService.dispatch(botId, true);
-
-        assertThat(count("SELECT COUNT(*) FROM player_point_request WHERE user_id=? AND status='PENDING'", botId))
-                .as("随机上分申请进入后台审批队列").isEqualTo(1);
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='TOP_UP_REQUEST' "
-                + "AND status='SUCCEEDED'", botId)).isEqualTo(1);
-        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='CHAT_TEXT'", botId))
-                .as("上分申请不在聊天室发消息").isZero();
-    }
-
-    private void grant(String key) {
-        walletService.grant(adminId, botId, new BigDecimal("1000.00"), "托行为测试充值", key);
-    }
-
-    private void configure(String mode, int bets, String rangeCode, String roundTen, int activity,
-                           boolean playRandom, int topupProbability) {
-        configure(mode, bets, rangeCode, roundTen, activity, playRandom, topupProbability, List.of());
-    }
-
-    private void configure(String mode, int bets, String rangeCode, String roundTen, int activity,
-                           boolean playRandom, int topupProbability, List<String> playTypes) {
-        BigDecimal[] bounds = switch (rangeCode) {
-            case "RANDOM" -> new BigDecimal[]{new BigDecimal("30"), new BigDecimal("30000")};
-            case "1000-3000" -> new BigDecimal[]{new BigDecimal("1000"), new BigDecimal("3000")};
-            default -> new BigDecimal[]{new BigDecimal("30"), new BigDecimal("300")};
-        };
-        PlayerDeskRepository.Behavior behavior = playerDeskRepository.updateBehavior(botId, mode, bets,
-                bounds[0], bounds[1], false, 0, rangeCode, roundTen, activity, playRandom,
-                topupProbability, new BigDecimal("100.00"), new BigDecimal("1000.00"));
-        playerDeskRepository.replacePlayTypes(behavior.id(), playTypes);
-    }
-
-    private void setBotCaps(int bets, int stake) {
-        jdbc.update("UPDATE game_betting_config SET bot_issue_total_bets=?, bot_issue_total_stake=? WHERE id=1",
-                bets, stake);
-    }
-
-    private void resetBettingConfig() {
-        jdbc.update("UPDATE game_betting_config SET bot_issue_total_bets=20, bot_issue_total_stake=5000, "
-                + "bot_night_activity_override_percent=NULL WHERE id=1");
-    }
-
-    private int count(String sql, Object... arguments) {
-        Integer value = jdbc.queryForObject(sql, Integer.class, arguments);
+    private int count(String sql, Object... args) {
+        Integer value = jdbc.queryForObject(sql, Integer.class, args);
         return value == null ? 0 : value;
     }
 
     private void clean() {
-        jdbc.update("DELETE FROM test_player_action WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM player_point_request WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM test_player_behavior_play_type WHERE behavior_id IN "
-                + "(SELECT b.id FROM test_player_behavior b JOIN demo_user_account a ON a.id=b.account_id "
-                + "JOIN sys_user u ON u.id=a.sys_user_id WHERE u.username IN (?, ?))", ADMIN, BOT);
-        jdbc.update("DELETE FROM test_player_behavior WHERE account_id IN "
-                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?)))", ADMIN, BOT);
-        jdbc.update("DELETE FROM player_access_link WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM chat_outbox WHERE message_id IN "
-                + "(SELECT id FROM chat_message WHERE sender_id IN (SELECT id FROM sys_user WHERE username IN (?, ?)))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM chat_message WHERE sender_id IN (SELECT id FROM sys_user WHERE username IN (?, ?))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
-                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?)))", ADMIN, BOT);
-        jdbc.update("DELETE FROM game_bet WHERE user_id IN "
-                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?)))", ADMIN, BOT);
-        jdbc.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?))", ADMIN, BOT);
-        jdbc.update("DELETE FROM auth_session WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?))", ADMIN, BOT);
-        jdbc.update("DELETE FROM sys_login_log WHERE username_snapshot IN (?, ?)", ADMIN, BOT);
-        jdbc.update("DELETE FROM sys_user_role WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?))",
-                ADMIN, BOT);
-        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?)", ADMIN, BOT);
-        jdbc.update("DELETE FROM game_issue_event");
-        jdbc.update("DELETE FROM game_issue");
+        jdbc.update("DELETE FROM test_player_action WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM player_point_request WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM player_access_link WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM chat_outbox WHERE message_id IN (SELECT id FROM chat_message WHERE agent_id IN (SELECT id FROM agent WHERE agent_code='behavior-machine-code'))");
+        jdbc.update("DELETE FROM chat_message WHERE agent_id IN (SELECT id FROM agent WHERE agent_code='behavior-machine-code')");
+        jdbc.update("DELETE FROM demo_balance_ledger WHERE user_id IN (SELECT id FROM demo_user_account WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM game_bet WHERE user_id IN (SELECT id FROM demo_user_account WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM test_player_behavior WHERE account_id IN (SELECT id FROM demo_user_account WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM demo_user_account WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM auth_session WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM sys_user_role WHERE user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM agent WHERE agent_code='behavior-machine-code'");
+        jdbc.update("DELETE FROM sys_operation_log WHERE operator_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?))", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM sys_login_log WHERE username_snapshot IN (?, ?, ?)", ADMIN, MACHINE, BOT);
+        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?)", ADMIN, MACHINE, BOT);
+        if (issue != null) {
+            jdbc.update("DELETE FROM game_issue_event WHERE issue_number=?", issue);
+            jdbc.update("DELETE FROM game_issue WHERE issue_number=?", issue);
+        }
     }
 }

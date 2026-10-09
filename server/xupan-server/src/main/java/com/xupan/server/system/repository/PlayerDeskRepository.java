@@ -72,62 +72,43 @@ public class PlayerDeskRepository {
     }
 
     public Optional<Behavior> findBehavior(long userId) {
-        return jdbc.query("SELECT b.* FROM test_player_behavior b JOIN demo_user_account a ON a.id=b.account_id WHERE a.sys_user_id=?",
-                (rs, n) -> new Behavior(rs.getLong("id"), rs.getLong("account_id"), rs.getString("run_mode"),
-                        rs.getBoolean("enabled"),
-                        rs.getInt("bets_per_issue"), rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"),
-                        rs.getBoolean("chat_enabled"), rs.getInt("messages_per_issue"), instant(rs.getTimestamp("next_run_at")),
-                        rs.getString("last_issue_number"), rs.getString("last_error_code"), rs.getString("last_error_message"),
-                        rs.getLong("version"), instant(rs.getTimestamp("updated_at")),
-                        rs.getString("stake_range_code"), rs.getString("stake_round_ten"),
-                        rs.getInt("activity_percent"), rs.getBoolean("play_random"),
-                        rs.getInt("topup_probability_percent"), rs.getBigDecimal("topup_min"),
-                        rs.getBigDecimal("topup_max")), userId).stream().findFirst();
+        return jdbc.query("SELECT b.*, COALESCE(ag.chase_enabled,FALSE) machine_chase_enabled "
+                        + "FROM test_player_behavior b JOIN demo_user_account a ON a.id=b.account_id "
+                        + "LEFT JOIN agent ag ON ag.id=a.agent_id WHERE a.sys_user_id=?",
+                this::mapBehavior, userId).stream().findFirst();
     }
 
     public Behavior ensureBehavior(long accountId) {
         try {
             jdbc.update("INSERT INTO test_player_behavior(account_id) VALUES (?)", accountId);
         } catch (DuplicateKeyException ignored) {
-            // The behavior row is created lazily and the unique account_id makes this idempotent.
+            // The unique account_id makes creation idempotent.
         }
-        return jdbc.queryForObject("SELECT * FROM test_player_behavior WHERE account_id=?", (rs, n) -> new Behavior(
-                rs.getLong("id"), rs.getLong("account_id"), rs.getString("run_mode"), rs.getBoolean("enabled"), rs.getInt("bets_per_issue"),
-                rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"), rs.getBoolean("chat_enabled"),
-                rs.getInt("messages_per_issue"), instant(rs.getTimestamp("next_run_at")), rs.getString("last_issue_number"),
-                rs.getString("last_error_code"), rs.getString("last_error_message"), rs.getLong("version"),
-                instant(rs.getTimestamp("updated_at")), rs.getString("stake_range_code"),
-                rs.getString("stake_round_ten"), rs.getInt("activity_percent"), rs.getBoolean("play_random"),
-                rs.getInt("topup_probability_percent"), rs.getBigDecimal("topup_min"),
-                rs.getBigDecimal("topup_max")), accountId);
+        return jdbc.queryForObject("SELECT b.*, COALESCE(ag.chase_enabled,FALSE) machine_chase_enabled "
+                        + "FROM test_player_behavior b JOIN demo_user_account a ON a.id=b.account_id "
+                        + "LEFT JOIN agent ag ON ag.id=a.agent_id WHERE b.account_id=?",
+                this::mapBehavior, accountId);
     }
 
-    public Behavior updateBehavior(long userId, String mode, int bets, BigDecimal min, BigDecimal max,
-                                   boolean chat, int messages, String stakeRangeCode, String stakeRoundTen,
-                                   int activityPercent, boolean playRandom, int topupProbabilityPercent,
-                                   BigDecimal topupMin, BigDecimal topupMax) {
+    public Behavior updateBehavior(long userId, String mode, BigDecimal min, BigDecimal max,
+                                   String stakeRangeCode, boolean chaseEnabled, boolean feidanEnabled) {
         PlayerRow row = findByUserId(userId).orElseThrow();
         ensureBehavior(row.accountId());
-        jdbc.update("UPDATE test_player_behavior SET run_mode=?, enabled=?, bets_per_issue=?, stake_min=?, stake_max=?, "
-                        + "chat_enabled=?, messages_per_issue=?, stake_range_code=?, stake_round_ten=?, "
-                        + "activity_percent=?, play_random=?, topup_probability_percent=?, topup_min=?, topup_max=?, "
+        jdbc.update("UPDATE test_player_behavior SET run_mode=?, enabled=?, stake_min=?, stake_max=?, "
+                        + "stake_range_code=?, player_chase_enabled=?, player_feidan_enabled=?, "
                         + "version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE account_id=?",
-                mode, "AUTOMATIC".equals(mode), bets, min, max, chat, messages, stakeRangeCode, stakeRoundTen,
-                activityPercent, playRandom, topupProbabilityPercent, topupMin, topupMax, row.accountId());
+                mode, "AUTOMATIC".equals(mode), min, max, stakeRangeCode, chaseEnabled, feidanEnabled, row.accountId());
         return ensureBehavior(row.accountId());
     }
 
-    public List<String> findPlayTypes(long behaviorId) {
-        return jdbc.queryForList("SELECT play_type FROM test_player_behavior_play_type WHERE behavior_id=? ORDER BY play_type",
-                String.class, behaviorId);
-    }
-
-    public void replacePlayTypes(long behaviorId, List<String> playTypes) {
-        jdbc.update("DELETE FROM test_player_behavior_play_type WHERE behavior_id=?", behaviorId);
-        for (String playType : playTypes) {
-            jdbc.update("INSERT INTO test_player_behavior_play_type(behavior_id, play_type) VALUES (?, ?)",
-                    behaviorId, playType);
-        }
+    private Behavior mapBehavior(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        return new Behavior(rs.getLong("id"), rs.getLong("account_id"), rs.getString("run_mode"),
+                rs.getBoolean("enabled"), rs.getBigDecimal("stake_min"), rs.getBigDecimal("stake_max"),
+                instant(rs.getTimestamp("next_run_at")), rs.getString("last_issue_number"),
+                rs.getString("last_error_code"), rs.getString("last_error_message"), rs.getLong("version"),
+                instant(rs.getTimestamp("updated_at")), rs.getString("stake_range_code"),
+                rs.getBoolean("player_chase_enabled"), rs.getBoolean("player_feidan_enabled"),
+                rs.getBoolean("machine_chase_enabled"));
     }
 
     public int updateStatus(long userId, String status) {
@@ -193,12 +174,11 @@ public class PlayerDeskRepository {
                             String memberCode, String displayName, String avatarKey, String authMode,
                             String userStatus, String accountStatus, String playerKind, String userType,
                             BigDecimal balance, Instant createdAt, Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt) {}
-    public record Behavior(long id, long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin,
-                           BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt,
-                           String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version,
-                           Instant updatedAt, String stakeRangeCode, String stakeRoundTen, int activityPercent,
-                           boolean playRandom, int topupProbabilityPercent, BigDecimal topupMin,
-                           BigDecimal topupMax) {}
+    public record Behavior(long id, long accountId, String mode, boolean enabled, BigDecimal stakeMin,
+                           BigDecimal stakeMax, Instant nextRunAt, String lastIssueNumber,
+                           String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt,
+                           String stakeRangeCode, boolean chaseEnabled, boolean feidanEnabled,
+                           boolean machineChaseEnabled) {}
     public record ActionRow(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status,
                             int attempts, String errorCode, String errorMessage, Long messageId, Long betId,
                             Instant createdAt, Instant updatedAt) {}

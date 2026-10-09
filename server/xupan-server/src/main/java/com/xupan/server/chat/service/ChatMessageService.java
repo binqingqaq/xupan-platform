@@ -349,6 +349,17 @@ public class ChatMessageService {
                         "@" + user.displayName() + " 累计今日流水：" + formatMoney(statistics.turnover())
                                 + "，盈亏：" + formatMoney(statistics.netProfit()) + "，期数：" + issues, now);
             }
+            case HISTORY -> {
+                List<GameDataRepository.IssueRecord> settled = gameDataRepository.findLatestSettledBlock(5);
+                StringBuilder history = new StringBuilder("@").append(user.displayName()).append(" 历史：");
+                if (settled.isEmpty()) history.append("暂无开奖");
+                else for (int i = 0; i < settled.size(); i++) {
+                    if (i > 0) history.append("；");
+                    GameDataRepository.IssueRecord row = settled.get(i);
+                    history.append(row.issueNumber()).append("期 ").append(row.numbers());
+                }
+                publishFeedback(roomCode, issueNumber, clientId, source.id(), "HISTORY", history.toString(), now);
+            }
             case TOP_UP, DOWN -> processPointRequest(userId, roomCode, clientId, user, source, command, now);
             case CANCEL -> processCancellation(userId, roomCode, clientId, user, source, now);
         }

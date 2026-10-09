@@ -5,6 +5,7 @@ import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import QuickBetPanel from '../components/QuickBetPanel.vue'
 import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
+import { isKeyRobotTimestampMessage } from '../chatMessageTime'
 import { ChatSocket } from '../services/chatSocket'
 import { isPointRequestCommand, submissionAffectsAccount } from '../chatSubmission'
 import { DEFAULT_QUICK_BET_AMOUNTS } from '../quickBet'
@@ -43,6 +44,7 @@ interface RoomMessage {
   body: string
   drawPayload: RobotDrawPayload | null
   time: string
+  showTimestamp: boolean
   mine: boolean
 }
 
@@ -278,6 +280,7 @@ const displayMessages = computed<RoomMessage[]>(() => {
     body: pending.body,
     drawPayload: null,
     time: pending.status === 'sending' ? '发送中...' : '发送失败',
+    showTimestamp: false,
     mine: true,
   }]
 })
@@ -305,6 +308,7 @@ function toRoomMessage(message: ChatMessage): RoomMessage {
     body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
     drawPayload: type === 'robot' && message.status === 'ACTIVE' ? parseRobotDrawPayload(message.payloadJson) : null,
     time: formatMessageTime(message.createdAt),
+    showTimestamp: isKeyRobotTimestampMessage(message),
     mine: type === 'user' && message.senderId !== null && message.senderId === currentUser.value?.id,
   }
 }
@@ -1004,25 +1008,6 @@ function messageClass(message: RoomMessage) {
   return [`message-${message.type}`, message.mine ? 'message-mine' : '']
 }
 
-function messageTimeInMinutes(value: string) {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value)
-  if (!match) return null
-  return Number(match[1]) * 60 + Number(match[2])
-}
-
-function shouldShowMessageTime(index: number) {
-  if (index === 0) return true
-  const currentMessage = displayMessages.value[index]
-  const previousMessage = displayMessages.value[index - 1]
-  if (!currentMessage || !previousMessage) return true
-  const currentMinutes = messageTimeInMinutes(currentMessage.time)
-  const previousMinutes = messageTimeInMinutes(previousMessage.time)
-  if (currentMinutes === null || previousMinutes === null) return true
-  let difference = currentMinutes - previousMinutes
-  if (difference < 0) difference += 24 * 60
-  return difference >= 5
-}
-
 function avatarText(name: string) {
   return name === '机器人' ? '机' : name.slice(0, 1)
 }
@@ -1216,8 +1201,8 @@ onUnmounted(() => {
         </div>
         <div v-if="chatLoading && !displayMessages.length" class="chat-state">正在加载消息...</div>
         <div v-else-if="!displayMessages.length" class="chat-state">还没有消息，发出第一条消息吧。</div>
-        <template v-else v-for="(message, messageIndex) in displayMessages" :key="message.id">
-          <div v-if="shouldShowMessageTime(messageIndex)" class="reference-time"><span>{{ message.time }}</span></div>
+        <template v-else v-for="message in displayMessages" :key="message.id">
+          <div v-if="message.showTimestamp" class="reference-time"><span>{{ message.time }}</span></div>
           <article class="reference-message" :class="messageClass(message)">
             <div class="reference-bubble" :class="{ 'has-robot-image': Boolean(message.drawPayload) }">
               <div class="reference-avatar" :class="{ 'is-robot': message.type === 'robot' }">

@@ -231,19 +231,12 @@ export interface PlayerDeskBehavior {
   accountId?: number
   mode: 'AUTOMATIC' | 'MANUAL'
   enabled?: boolean
-  betsPerIssue: number
   stakeMin: number
   stakeMax: number
-  chatEnabled: boolean
-  messagesPerIssue: number
   stakeRangeCode: string
-  stakeRoundTen: 'RANDOM' | 'OFF' | 'ON'
-  activityPercent: number
-  playRandom: boolean
-  playTypes: string[]
-  topupProbabilityPercent: number
-  topupMin: number
-  topupMax: number
+  chaseEnabled: boolean
+  feidanEnabled: boolean
+  machineChaseEnabled: boolean
   nextRunAt?: string | null
   lastIssueNumber?: string | null
   lastErrorCode?: string | null
@@ -252,7 +245,7 @@ export interface PlayerDeskBehavior {
   updatedAt?: string
 }
 
-export type PlayerActionType = 'CHAT_TEXT' | 'BET_TEXT' | 'TOP_UP_REQUEST'
+export type PlayerActionType = 'CHAT_TEXT' | 'BET_TEXT' | 'AUTO_UP' | 'AUTO_DOWN' | 'AUTO_QUERY' | 'LEGACY_BET_TEXT' | 'LEGACY_TOP_UP_REQUEST' | 'TOP_UP_REQUEST'
 export type PlayerActionStatus = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'SKIPPED' | 'FAILED'
 
 export interface PlayerActionSummary {
@@ -472,9 +465,6 @@ export interface BettingLimits {
   addLimit: number
   playerMaxStake: number
   playerMinStake: number
-  botIssueTotalBets: number
-  botIssueTotalStake: number
-  botNightActivityOverridePercent: number | null
 }
 
 export interface BettingConfigView extends BettingLimits {
@@ -612,15 +602,9 @@ export interface PlayerBalanceAdjustmentRequest {
 
 export interface TestPlayerBehaviorRequest {
   mode: 'AUTOMATIC' | 'MANUAL'
-  betsPerIssue: number
   stakeRangeCode: string
-  stakeRoundTen: 'RANDOM' | 'OFF' | 'ON'
-  activityPercent: number
-  playRandom: boolean
-  playTypes: string[]
-  topupProbabilityPercent: number
-  topupMin: number
-  topupMax: number
+  chaseEnabled: boolean
+  feidanEnabled: boolean
 }
 
 export interface TestPlayerMessageRequest {

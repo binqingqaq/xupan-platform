@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../../api'
-import { BOT_PLAY_TYPES, BOT_PLAY_TYPE_CODES, STAKE_RANGE_CODES, STAKE_RANGE_LABELS, STAKE_ROUND_TEN_LABELS, STAKE_ROUND_TEN_OPTIONS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation } from '../../playerDesk'
+import { STAKE_RANGE_CODES, STAKE_RANGE_LABELS, businessDateAt0600, createPlayerIdempotencyKey, formatPoints, playerDisplayName, playerInitial, playerKindClass, playerKindLabel, playerStatusClass, playerStatusLabel, validateBehaviorDraft, validateBotPlayerDraft, validateNormalPlayerDraft, validatePointOperation } from '../../playerDesk'
 import type { AvatarPresetOption, PlayerAccessLinkView, PlayerDeskBehavior, PlayerDeskDetail, PlayerDeskItem, PlayerDeskPage, PlayerDeskPointRecords, PlayerDeskSummary, PlayerNameHistory } from '../../types'
 
 const props = withDefaults(defineProps<{ embedded?: boolean; machineId?: number | null }>(), { embedded: false, machineId: null })
@@ -40,41 +40,13 @@ const normalDraft = reactive({ displayName: '' })
 const botDraft = reactive({ displayName: '' })
 const pointDraft = reactive({ amount: 100, reason: '', direction: 'grant' as 'grant' | 'adjust' })
 const behaviorDraft = reactive({
-  mode: 'MANUAL' as 'AUTOMATIC' | 'MANUAL',
-  betsPerIssue: 0,
+  mode: 'AUTOMATIC' as 'AUTOMATIC' | 'MANUAL',
   stakeRangeCode: '30-300',
-  stakeRoundTen: 'OFF' as 'RANDOM' | 'OFF' | 'ON',
-  activityPercent: 100,
-  playRandom: true,
-  playTypes: [] as string[],
-  topupProbabilityPercent: 0,
-  topupMin: 100,
-  topupMax: 1000,
-})
-const playModalOpen = ref(false)
-const playDraft = ref<string[]>([])
-const playSummary = computed(() => {
-  if (behaviorDraft.playRandom || behaviorDraft.playTypes.length >= BOT_PLAY_TYPE_CODES.length) return '全部玩法（随机）'
-  if (!behaviorDraft.playTypes.length) return '未选择'
-  return BOT_PLAY_TYPES.filter(play => behaviorDraft.playTypes.includes(play.code))
-    .map(play => play.label).join('、')
+  chaseEnabled: false,
+  feidanEnabled: false,
+  machineChaseEnabled: false,
 })
 
-function openPlayModal() { playDraft.value = [...behaviorDraft.playTypes]; playModalOpen.value = true }
-function closePlayModal() { playModalOpen.value = false }
-function togglePlayDraft(code: string) {
-  playDraft.value = playDraft.value.includes(code)
-    ? playDraft.value.filter(item => item !== code)
-    : [...playDraft.value, code]
-}
-function selectAllPlays() { playDraft.value = [...BOT_PLAY_TYPE_CODES] }
-function selectRandomPlays() { selectAllPlays() }
-function clearPlays() { playDraft.value = [] }
-function confirmPlays() {
-  behaviorDraft.playTypes = [...playDraft.value]
-  behaviorDraft.playRandom = playDraft.value.length >= BOT_PLAY_TYPE_CODES.length
-  playModalOpen.value = false
-}
 const selectedIsBot = computed(() => selected.value?.playerKind === 'BOT')
 const canSubmitPoints = computed(() => validatePointOperation(pointDraft.amount, pointDraft.direction === 'grant' ? '管理员上分' : '管理员下分', 'local', pointDraft.direction).length === 0)
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -202,11 +174,11 @@ async function selectPlayer(userId: number) {
 }
 function syncBehavior(behavior: PlayerDeskBehavior | null) {
   Object.assign(behaviorDraft, behavior ?? {
-    mode: 'MANUAL', betsPerIssue: 0, stakeRangeCode: '30-300', stakeRoundTen: 'OFF',
-    activityPercent: 100, playRandom: true, playTypes: [], topupProbabilityPercent: 0,
-    topupMin: 100, topupMax: 1000,
+    mode: 'AUTOMATIC', stakeRangeCode: '30-300', chaseEnabled: false,
+    feidanEnabled: false, machineChaseEnabled: false,
   })
 }
+
 async function createNormal() {
   createError.value = ''; const errors = validateNormalPlayerDraft(normalDraft); if (errors.length) { createError.value = errors[0]; return }
   saving.value = true
@@ -216,7 +188,7 @@ async function createNormal() {
 async function createBot() {
   createError.value = ''; const errors = validateBotPlayerDraft(botDraft); if (errors.length) { createError.value = errors[0]; return }
   saving.value = true
-  try { const created = await api.createBotPlayer({ displayName: botDraft.displayName.trim(), ...machineIdPayload() }); const id = created.userId; Object.assign(botDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '托已创建，登录链接已生成，默认未启用自动行为' }
+  try { const created = await api.createBotPlayer({ displayName: botDraft.displayName.trim(), ...machineIdPayload() }); const id = created.userId; Object.assign(botDraft, { displayName: '' }); createMode.value = null; await refresh(id); actionMessage.value = '托已创建，默认自动，下注范围 30–300' }
   catch (cause) { createError.value = cause instanceof Error ? cause.message : '托创建失败' } finally { saving.value = false }
 }
 async function openAvatarPicker() {
@@ -314,9 +286,12 @@ async function saveBehavior() {
   if (!selected.value) return
   behaviorError.value = ''; const errors = validateBehaviorDraft(behaviorDraft); if (errors.length) { behaviorError.value = errors[0]; return }
   saving.value = true
-  try { const behavior = await api.updatePlayerBehavior(selected.value.userId, behaviorDraft); syncBehavior(behavior); await refresh(selected.value.userId); actionMessage.value = '托行为配置已保存' }
-  catch (cause) { behaviorError.value = cause instanceof Error ? cause.message : '托行为配置保存失败' } finally { saving.value = false }
+  try { const behavior = await api.updatePlayerBehavior(selected.value.userId, { mode: behaviorDraft.mode, stakeRangeCode: behaviorDraft.stakeRangeCode, chaseEnabled: behaviorDraft.chaseEnabled, feidanEnabled: behaviorDraft.feidanEnabled }); syncBehavior(behavior); await refresh(selected.value.userId); actionMessage.value = '托配置已保存' }
+  catch (cause) { behaviorError.value = cause instanceof Error ? cause.message : '托配置保存失败' } finally { saving.value = false }
 }
+async function toggleBotMode() { behaviorDraft.mode = behaviorDraft.mode === 'AUTOMATIC' ? 'MANUAL' : 'AUTOMATIC'; await saveBehavior() }
+async function toggleBotChase() { behaviorDraft.chaseEnabled = !behaviorDraft.chaseEnabled; await saveBehavior() }
+async function toggleBotFeidan() { behaviorDraft.feidanEnabled = !behaviorDraft.feidanEnabled; await saveBehavior() }
 
 function avatar(player: PlayerDeskItem) { return player.avatarKey ? api.avatarUrl(player.avatarKey) : '' }
 function money(value: number) { return formatPoints(value) }
@@ -448,23 +423,14 @@ onBeforeUnmount(() => {
           <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
 
           <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="point-form"><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('grant')">上分</button><button class="outline-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('adjust')">下分</button></div></section>
-          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><h3>托行为模式</h3></div><form class="behavior-form" @submit.prevent="saveBehavior">
-            <fieldset class="mode-field wide">
-              <legend>执行模式</legend>
-              <label><input v-model="behaviorDraft.mode" type="radio" value="AUTOMATIC" /> 自动：按计划下注</label>
-              <label><input v-model="behaviorDraft.mode" type="radio" value="MANUAL" /> 手动：等同普通玩家</label>
-            </fieldset>
-            <label>下注范围<select v-model="behaviorDraft.stakeRangeCode"><option v-for="code in STAKE_RANGE_CODES" :key="code" :value="code">{{ STAKE_RANGE_LABELS[code] }}</option></select></label>
-            <label>下注金额整十<select v-model="behaviorDraft.stakeRoundTen"><option v-for="code in STAKE_ROUND_TEN_OPTIONS" :key="code" :value="code">{{ STAKE_ROUND_TEN_LABELS[code] }}</option></select></label>
-            <div class="behavior-play-field">下注指定玩法<button class="outline-button" type="button" @click="openPlayModal">选择玩法</button><small>{{ playSummary }}</small></div>
-            <label>活跃比例(%)<input v-model.number="behaviorDraft.activityPercent" type="number" min="0" max="100" /></label>
-            <label>每期注单<input v-model.number="behaviorDraft.betsPerIssue" type="number" min="0" max="20" /></label>
-            <label>随机上分概率(%)<input v-model.number="behaviorDraft.topupProbabilityPercent" type="number" min="0" max="100" /></label>
-            <label>上分金额下限<input v-model.number="behaviorDraft.topupMin" type="number" min="1" step="1" /></label>
-            <label>上分金额上限<input v-model.number="behaviorDraft.topupMax" type="number" min="1" step="1" /></label>
+          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><h3>托状态与行为</h3></div><div class="behavior-form">
+            <div class="behavior-toggle wide"><span class="mode-badge" :class="behaviorDraft.mode === 'AUTOMATIC' ? 'mode-auto' : 'mode-manual'">{{ behaviorDraft.mode === 'AUTOMATIC' ? '自动' : '手动' }}</span><button class="outline-button" type="button" :disabled="saving" @click="toggleBotMode">{{ behaviorDraft.mode === 'AUTOMATIC' ? '改手动' : '改自动' }}</button></div>
+            <label>下注范围<select v-model="behaviorDraft.stakeRangeCode" :disabled="saving" @change="saveBehavior"><option v-for="code in STAKE_RANGE_CODES" :key="code" :value="code">{{ STAKE_RANGE_LABELS[code] }}</option></select></label>
+            <div class="behavior-toggle"><button class="outline-button" type="button" :disabled="saving || !behaviorDraft.machineChaseEnabled" @click="toggleBotChase">{{ behaviorDraft.chaseEnabled ? '关闭追' : '开通追' }}</button><small>{{ behaviorDraft.machineChaseEnabled ? '机器追单权限已开放' : '机器账号尚未开通追单权限' }}</small></div>
+            <button class="outline-button behavior-toggle" type="button" :disabled="saving" @click="toggleBotFeidan">{{ behaviorDraft.feidanEnabled ? '停止' : '飞单' }}</button>
             <p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p>
-            <button class="secondary-button wide" :disabled="saving" type="submit">保存托配置</button>
-          </form></section>
+            <p v-if="actionMessage" class="feedback wide">{{ actionMessage }}</p>
+          </div></section>
         </template>
       </section>
     </section>
@@ -512,26 +478,7 @@ onBeforeUnmount(() => {
     </Teleport>
   </section>
 
-  <Teleport to="body">
-    <div v-if="playModalOpen" class="play-modal-layer" @click.self="closePlayModal">
-      <section class="play-modal" role="dialog" aria-modal="true" aria-labelledby="play-modal-title">
-        <h3 id="play-modal-title">当前托允许下注的玩法</h3>
-        <div class="play-grid">
-          <label v-for="play in BOT_PLAY_TYPES" :key="play.code" class="play-option">
-            <input type="checkbox" :checked="playDraft.includes(play.code)" @change="togglePlayDraft(play.code)" />
-            <span>{{ play.label }}</span>
-          </label>
-        </div>
-        <div class="play-modal-actions">
-          <button class="outline-button" type="button" @click="selectRandomPlays">随机</button>
-          <button class="outline-button" type="button" @click="selectAllPlays">全选</button>
-          <button class="outline-button" type="button" @click="clearPlays">清空</button>
-          <button class="primary-button" type="button" @click="confirmPlays">确定</button>
-          <button class="outline-button" type="button" @click="closePlayModal">取消</button>
-        </div>
-      </section>
-    </div>
-  </Teleport></template>
+</template>
 
 <style scoped>
 :global(body) { background: #f4f7fb; }
@@ -554,7 +501,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
 }
 .player-desk-page.player-desk-embedded { max-width: none; margin: 0; padding: 0; }
-.player-desk-page *, .player-desk-page *::before, .player-desk-page *::after, .create-modal, .create-modal *, .play-modal, .play-modal * { box-sizing: border-box; }
+.player-desk-page *, .player-desk-page *::before, .player-desk-page *::after, .create-modal, .create-modal * { box-sizing: border-box; }
 
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 4px; font-size: 20px; }
@@ -732,6 +679,11 @@ em { font-style: normal; }
 .mode-field { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; padding: 5px 6px; border: 1px solid #b7d2e8; border-radius: 2px; background: #f8fcff; }
 .mode-field legend { padding: 0 3px; color: #50687e; font-size: 10px; font-weight: 700; }
 .mode-field label { display: flex; align-items: center; gap: 4px; }
+.behavior-toggle { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.behavior-toggle small { color: #667c90; font-size: 10px; }
+.mode-badge { border-radius: 10px; padding: 2px 8px; font-size: 10px; }
+.mode-auto { color: #257044; background: #e7f4e9; }
+.mode-manual { color: #5b6670; background: #eef0f2; }
 .behavior-play-field { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; color: #3f596f; font-size: 11px; }
 .behavior-play-field small { overflow: hidden; color: #667c90; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .message-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px; margin-top: 6px; }
@@ -826,12 +778,6 @@ em { font-style: normal; }
 .bet-row em { color: #1265a5; }
 .bet-row b { color: #15803d; font-variant-numeric: tabular-nums; text-align: right; }
 
-.play-modal-layer { position: fixed; inset: 0; z-index: 2600; display: grid; place-items: center; overflow: auto; padding: 12px; background: rgb(38 61 82 / 48%); }
-.play-modal { width: min(440px, 100%); padding: 8px; border: 1px solid #6f9fc6; border-radius: 2px; background: #fff; box-shadow: 0 5px 24px rgb(20 50 75 / 30%); }
-.play-modal h3 { margin: 0 0 7px; padding-bottom: 5px; border-bottom: 1px solid #bcd3e8; color: #1e3a5f; font-size: 13px; }
-.play-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px 7px; }
-.play-option { display: flex; align-items: center; gap: 4px; color: #334155; font-size: 11px; }
-.play-modal-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-top: 8px; }
 
 @media (max-width: 900px) {
   .player-desk-page { padding: 6px; }

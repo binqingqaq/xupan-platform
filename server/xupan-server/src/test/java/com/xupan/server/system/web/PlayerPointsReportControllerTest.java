@@ -102,8 +102,8 @@ class PlayerPointsReportControllerTest {
                 """, normalAccountId, timestamp(IN_DAY));
 
         jdbc.update("""
-                INSERT INTO test_player_behavior(account_id, run_mode, enabled, bets_per_issue, stake_min, stake_max)
-                VALUES (?, 'MANUAL', FALSE, 0, 100.00, 100.00)
+                INSERT INTO test_player_behavior(account_id, run_mode, enabled, stake_min, stake_max)
+                VALUES (?, 'MANUAL', FALSE, 100.00, 100.00)
                 """, botAccountId);
         long actualBehaviorId = jdbc.queryForObject("SELECT id FROM test_player_behavior WHERE account_id=?",
                 Long.class, botAccountId);

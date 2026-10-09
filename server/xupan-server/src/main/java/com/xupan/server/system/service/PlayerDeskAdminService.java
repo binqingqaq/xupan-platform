@@ -282,7 +282,7 @@ public class PlayerDeskAdminService {
                 link.revokedAt() == null && link.expiresAt().isAfter(Instant.now()), accessLinkRepository.findConfiguredDays(userId, 7));
         PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId).orElse(null);
         return new Detail(player, linkStatus,
-                behavior == null ? null : new BehaviorConfig(behavior, repository.findPlayTypes(behavior.id())),
+                behavior == null ? null : new BehaviorConfig(behavior),
                 statistics, ledger, repository.actions(userId, 20), gameDataRepository.findBetsByAccountId(wallet.accountId(), null, 20));
     }
 
@@ -463,34 +463,31 @@ public class PlayerDeskAdminService {
         if (!"BOT".equals(player.playerKind())) return null;
         PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId)
                 .orElseGet(() -> repository.ensureBehavior(player.accountId()));
-        return new BehaviorConfig(behavior, repository.findPlayTypes(behavior.id()));
+        return new BehaviorConfig(behavior);
     }
 
     @Transactional
-    public BehaviorConfig updateBehavior(long userId, String mode, int bets, String stakeRangeCode,
-                                         String stakeRoundTen, int activityPercent, boolean playRandom,
-                                         List<String> playTypes, int topupProbabilityPercent,
-                                         BigDecimal topupMin, BigDecimal topupMax, long operator) {
+    public BehaviorConfig updateBehavior(long userId, String mode, String stakeRangeCode,
+                                         boolean chaseEnabled, boolean feidanEnabled, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
-        if (!"BOT".equals(player.playerKind())) throw BusinessException.badRequest("PLAYER_BEHAVIOR_NOT_APPLICABLE", "普通玩家不支持托行为配置");
+        if (!"BOT".equals(player.playerKind())) {
+            throw BusinessException.badRequest("PLAYER_BEHAVIOR_NOT_APPLICABLE", "普通玩家不支持托行为配置");
+        }
         BigDecimal[] bounds = stakeBounds(stakeRangeCode);
-        List<String> selected = playTypes == null ? List.of() : playTypes.stream().distinct().toList();
-        if (!isMode(mode) || bets < 0 || bets > 20 || bounds == null
-                || !isRoundTen(stakeRoundTen) || activityPercent < 0 || activityPercent > 100
-                || selected.isEmpty() && !playRandom
-                || selected.stream().anyMatch(playType -> !isPlayType(playType))
-                || topupProbabilityPercent < 0 || topupProbabilityPercent > 100
-                || topupMin == null || topupMax == null || topupMin.signum() <= 0
-                || topupMax.compareTo(topupMin) < 0) {
+        if (!isMode(mode) || bounds == null) {
             throw BusinessException.badRequest("PLAYER_BEHAVIOR_INVALID", "托行为配置无效");
         }
-        PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, mode, bets, bounds[0], bounds[1],
-                false, 0, stakeRangeCode, stakeRoundTen, activityPercent, playRandom,
-                topupProbabilityPercent, topupMin, topupMax);
-        repository.replacePlayTypes(result.id(), selected);
-        audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/behavior", Long.toString(userId), "mode=" + mode);
-        return new BehaviorConfig(result, repository.findPlayTypes(result.id()));
+        PlayerDeskRepository.Behavior current = repository.findBehavior(userId)
+                .orElseGet(() -> repository.ensureBehavior(player.accountId()));
+        if (chaseEnabled && !current.machineChaseEnabled()) {
+            throw BusinessException.badRequest("PLAYER_CHASE_NOT_ENABLED", "机器账号尚未开通追单权限");
+        }
+        PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, mode, bounds[0], bounds[1],
+                stakeRangeCode, chaseEnabled, feidanEnabled);
+        audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/behavior", Long.toString(userId),
+                "mode=" + mode + ",chase=" + chaseEnabled + ",feidan=" + feidanEnabled);
+        return new BehaviorConfig(result);
     }
 
     @Transactional
@@ -552,11 +549,10 @@ public class PlayerDeskAdminService {
         }
     }
 
-    /** 下注范围档位；RANDOM 表示在全局最小到最大之间随机。 */
+    /** BY220 固定的五档托下注范围。 */
     private static BigDecimal[] stakeBounds(String code) {
         if (code == null) return null;
         return switch (code) {
-            case "RANDOM" -> new BigDecimal[]{new BigDecimal("30"), new BigDecimal("30000")};
             case "30-300" -> new BigDecimal[]{new BigDecimal("30"), new BigDecimal("300")};
             case "300-1000" -> new BigDecimal[]{new BigDecimal("300"), new BigDecimal("1000")};
             case "1000-3000" -> new BigDecimal[]{new BigDecimal("1000"), new BigDecimal("3000")};
@@ -566,21 +562,8 @@ public class PlayerDeskAdminService {
         };
     }
 
-    private static boolean isRoundTen(String value) {
-        return "RANDOM".equals(value) || "OFF".equals(value) || "ON".equals(value);
-    }
-
-    private static boolean isPlayType(String value) {
-        try {
-            com.xupan.server.game.domain.PlayType.valueOf(value);
-            return true;
-        } catch (Exception ignored) {
-            return false;
-        }
-    }
-
     public record Page(List<PlayerDeskRepository.PlayerRow> items, int page, int pageSize, long total) {}
-    public record BehaviorConfig(PlayerDeskRepository.Behavior behavior, List<String> playTypes) {}
+    public record BehaviorConfig(PlayerDeskRepository.Behavior behavior) {}
     public record Detail(PlayerDeskRepository.PlayerRow player, LinkStatus linkStatus, BehaviorConfig behavior,
                          WalletStatistics walletStatistics, List<WalletLedgerEntry> ledger,
                          List<PlayerDeskRepository.ActionRow> actions, List<GameDataRepository.BetRecord> bets) {}

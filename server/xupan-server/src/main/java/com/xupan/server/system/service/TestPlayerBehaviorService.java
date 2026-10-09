@@ -1,11 +1,12 @@
 package com.xupan.server.system.service;
 
-import com.xupan.server.chat.repository.PlayerPointRequestRepository;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.BetTextParser;
 import com.xupan.server.game.service.GameBettingConfigService;
+import com.xupan.server.game.service.VirtualWalletService;
+import com.xupan.server.game.domain.WalletOperationResult;
 import com.xupan.server.game.service.自动轮期服务;
 import com.xupan.server.system.domain.TestPlayerBehaviorMode;
 import com.xupan.server.system.repository.PlayerDeskRepository;
@@ -20,20 +21,14 @@ import java.math.RoundingMode;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 
 /**
- * 托的自动行为。
- *
- * <p>工作前提：账号可用并且存在未拉黑、未过期的玩家链接；链接失效期间不产生任何动作，
- * 已有待执行动作按 {@code LINK_INVALID} 收尾。
- *
- * <p>自动模式下不发送闲聊消息，只按下注计划工作：
- * 活跃比例先决定本期是否参与，再按比例收缩本期注单数；每单在投注窗口内随机时刻执行；
- * 金额按配置档位随机、可要求整十、只使用整数，并按余额和剩余额度降额。
+ * 托的自动行为：按机器和期号选择自动托、生成加权下注动作，并独立派发上下分与查询行为。
+ * 所有注单、消息和积分流水均通过玩家正式业务链路产生；每个持久化动作带有执行状态与幂等标识。
  */
 @Service
 public class TestPlayerBehaviorService {
@@ -41,33 +36,30 @@ public class TestPlayerBehaviorService {
     /** 期初缓冲，避免所有托抢在开盘瞬间下注；末尾不再留缓冲，最后 30 秒仍属正常活动范围。 */
     private static final Duration SCHEDULE_LEAD = Duration.ofSeconds(3);
     private static final Duration SCHEDULE_TAIL = Duration.ofSeconds(1);
-    private static final BigDecimal RANDOM_RANGE_MIN = new BigDecimal("30");
-    private static final BigDecimal RANDOM_RANGE_MAX = new BigDecimal("30000");
-    /** 全局随机档位下，单笔不超过当前余额的 20%，避免一下子梭哈。 */
-    private static final BigDecimal RANDOM_BALANCE_RATIO = new BigDecimal("0.20");
-    private static final int LIMIT_RETRY_ROUNDS = 4;
-    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
-    private static final int NIGHT_END_HOUR = 6;
 
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final String[] ACTIVITY_TYPES = {
+            "UP", "BET", "DOWN", "BET", "UP", "TURNOVER", "BET", "BALANCE",
+            "DOWN", "BET", "HISTORY", "TURNOVER", "BET", "UP"
+    };
 
     private final JdbcTemplate jdbc;
     private final PlayerDeskRepository repository;
     private final GameDataRepository gameRepository;
     private final ChatMessageService chatMessageService;
     private final GameBettingConfigService bettingConfigService;
-    private final PlayerPointRequestRepository pointRequestRepository;
+    private final VirtualWalletService walletService;
 
     public TestPlayerBehaviorService(JdbcTemplate jdbc, PlayerDeskRepository repository,
                                      GameDataRepository gameRepository, ChatMessageService chatMessageService,
                                      GameBettingConfigService bettingConfigService,
-                                     PlayerPointRequestRepository pointRequestRepository) {
+                                     VirtualWalletService walletService) {
         this.jdbc = jdbc;
         this.repository = repository;
         this.gameRepository = gameRepository;
         this.chatMessageService = chatMessageService;
         this.bettingConfigService = bettingConfigService;
-        this.pointRequestRepository = pointRequestRepository;
+        this.walletService = walletService;
     }
 
     @Transactional
@@ -107,113 +99,119 @@ public class TestPlayerBehaviorService {
         return executeDueActions(userId, issue.issueNumber(), force);
     }
 
-    /**
-     * 按活跃比例生成本期计划：先决定本期是否参与（A），参与时把注单数按比例收缩（B）。
-     * 已存在同槽位动作时保持原计划，不重复创建。
-     */
+    /** One BY220-style automatic bet per selected bot and issue, with no per-bot count/activity controls. */
     private void ensureIssuePlan(PlayerDeskRepository.Behavior behavior, PlayerDeskRepository.PlayerRow player,
                                  GameDataRepository.IssueRecord issue, boolean force) {
+        if (hasAction(player.userId(), issue.issueNumber(), "BET_TEXT")) return;
+        Long agentId = agentId(player.userId());
+        if (agentId == null) return;
+        if (!force && !selectedForIssue(eligibleBots(agentId), player.userId(), agentId, issue.issueNumber())) return;
+        BigDecimal stake = randomIntegerBetween(behavior.stakeMin(), behavior.stakeMax());
+        String text = BotBetTextGenerator.by220AutomaticBet(stake);
         Instant now = Instant.now();
-        int configured = Math.max(0, behavior.betsPerIssue());
-        int activity = effectiveActivityPercent(behavior, now);
-        int slots = slotCount(configured, activity, force || rollPercent(activity));
-        if (slots > 0) {
-            List<PlayType> allowed = allowedPlayTypes(behavior);
-            List<Instant> schedule = scheduleTimes(slots, issue, now, force);
-            for (int index = 0; index < slots; index++) {
-                PlayType playType = allowed.get(RANDOM.nextInt(allowed.size()));
-                List<Integer> parameters = BotBetTextGenerator.randomParameters(playType);
-                BigDecimal planned = plannedStake(behavior, balance(player.accountId()));
-                String text = BotBetTextGenerator.format(playType, parameters,
-                        planned == null ? RANDOM_RANGE_MIN : planned);
-                createAction(behavior.id(), player.userId(), player.accountId(), issue.issueNumber(), index + 1,
-                        "BET_TEXT", text, schedule.get(index));
-            }
+        createAction(behavior.id(), player.userId(), player.accountId(), issue.issueNumber(), 1,
+                "BET_TEXT", text, scheduleTimes(1, issue, now, force).get(0));
+    }
+
+    /** BY220 selected without replacement up to 90 percent of each machine's automatic bot set. */
+    private boolean selectedForIssue(List<Long> candidates, long userId, long agentId, String issueNumber) {
+        if (candidates.isEmpty()) return false;
+        List<Long> shuffled = new ArrayList<>(candidates);
+        Collections.shuffle(shuffled, new java.util.Random((((long) agentId) << 32) ^ issueNumber.hashCode()));
+        int limit = Math.max(1, (int) Math.ceil(shuffled.size() * 0.9d));
+        return shuffled.subList(0, Math.min(limit, shuffled.size())).contains(userId);
+    }
+
+    private List<Long> eligibleBots(long agentId) {
+        return jdbc.queryForList("""
+                SELECT u.id FROM sys_user u
+                JOIN demo_user_account a ON a.sys_user_id=u.id
+                JOIN test_player_behavior b ON b.account_id=a.id
+                JOIN agent ag ON ag.id=a.agent_id
+                WHERE a.agent_id=? AND a.player_kind='BOT'
+                  AND u.status='ACTIVE' AND a.status='ACTIVE'
+                  AND b.run_mode='AUTOMATIC' AND b.enabled=TRUE
+                  AND ag.status='ACTIVE' AND ag.board_open=TRUE
+                  AND (ag.expires_at IS NULL OR ag.expires_at>CURRENT_TIMESTAMP(6))
+                  AND EXISTS (SELECT 1 FROM player_access_link l
+                               WHERE l.user_id=u.id AND l.scope='PLAYER_FULL'
+                                 AND l.revoked_at IS NULL AND l.expires_at>CURRENT_TIMESTAMP(6))
+                ORDER BY u.id
+                """, Long.class, agentId);
+    }
+
+    private Long agentId(long userId) {
+        return jdbc.query("SELECT agent_id FROM demo_user_account WHERE sys_user_id=?",
+                rs -> rs.next() ? (Long) rs.getObject(1) : null, userId);
+    }
+
+    private BigDecimal randomIntegerBetween(BigDecimal min, BigDecimal max) {
+        int low = min.setScale(0, RoundingMode.DOWN).intValueExact();
+        int high = max.setScale(0, RoundingMode.DOWN).intValueExact();
+        if (high <= low) return BigDecimal.valueOf(low);
+        return BigDecimal.valueOf(low + RANDOM.nextInt(high - low + 1));
+    }
+
+    private boolean hasAction(long userId, String issueNumber, String actionType) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM test_player_action "
+                + "WHERE user_id=? AND issue_number=? AND action_type=?", Integer.class,
+                userId, issueNumber, actionType);
+        return count != null && count > 0;
+    }
+
+    /** BY220's periodic action lottery runs independently from the once-per-issue bet planner. */
+    @Transactional
+    public void dispatchPeriodicActivity(long userId) {
+        PlayerDeskRepository.PlayerRow player = repository.findByUserId(userId)
+                .orElseThrow(() -> BusinessException.notFound("PLAYER_NOT_FOUND", "玩家不存在"));
+        if (!"BOT".equals(player.playerKind())) return;
+        PlayerDeskRepository.Behavior behavior = repository.findBehavior(userId)
+                .orElseGet(() -> repository.ensureBehavior(player.accountId()));
+        if (!TestPlayerBehaviorMode.AUTOMATIC.name().equals(behavior.mode())) return;
+        GameDataRepository.IssueRecord issue = gameRepository.findCurrentIssue().orElse(null);
+        if (issue == null || !自动轮期服务.BETTING.equals(issue.phase()) || workabilityFailure(userId) != null) return;
+
+        String action = ACTIVITY_TYPES[RANDOM.nextInt(ACTIVITY_TYPES.length)];
+        Instant now = Instant.now();
+        int slot = (int) (now.getEpochSecond() / 15 % 100000);
+        if ("UP".equals(action)) {
+            BigDecimal balance = balance(player.accountId());
+            if (balance.compareTo(behavior.stakeMin()) >= 0 || hasAction(userId, issue.issueNumber(), "AUTO_UP")) return;
+            int[] amounts = {500, 7000, 1800, 800, 3000, 1500, 8000, 1000, 10000, 5000, 2500, 6000, 2000};
+            int amount = amounts[RANDOM.nextInt(amounts.length)];
+            PlayerDeskRepository.ActionRow row = createAction(behavior.id(), userId, player.accountId(),
+                    issue.issueNumber(), 200 + slot, "AUTO_UP", Integer.toString(amount), now);
+            execute(row.id());
+        } else if ("DOWN".equals(action)) {
+            BigDecimal balance = balance(player.accountId());
+            if (balance.compareTo(new BigDecimal("2000")) <= 0 || hasAction(userId, issue.issueNumber(), "AUTO_DOWN")
+                    || hasRecentAutomaticDown(userId, now.minus(Duration.ofMinutes(30)))) return;
+            BigDecimal amount = balance.divide(new BigDecimal("2"), 0, RoundingMode.HALF_UP)
+                    .divide(new BigDecimal("1000"), 0, RoundingMode.HALF_UP).multiply(new BigDecimal("1000"));
+            if (amount.signum() <= 0 || amount.compareTo(balance) >= 0) return;
+            PlayerDeskRepository.ActionRow row = createAction(behavior.id(), userId, player.accountId(),
+                    issue.issueNumber(), 200 + slot, "AUTO_DOWN", amount.toPlainString(), now);
+            execute(row.id());
+        } else if ("BALANCE".equals(action) || "TURNOVER".equals(action) || "HISTORY".equals(action)) {
+            String command = switch (action) {
+                case "BALANCE" -> "查";
+                case "TURNOVER" -> "流水";
+                default -> "历史";
+            };
+            PlayerDeskRepository.ActionRow row = createAction(behavior.id(), userId, player.accountId(),
+                    issue.issueNumber(), 200 + slot, "AUTO_QUERY", command, now);
+            execute(row.id());
         }
-        planTopUpRequest(behavior, player, issue, now, force);
+        // BY220's weighted selector also contains BET slots; issue betting is dispatched by the issue planner.
     }
 
-    /**
-     * 活跃比例的 A+B 口径：A 决定本期是否参与（由调用方先掷概率），
-     * B 在参与时把本期注单数按比例收缩，至少 1 单且不超过配置值。
-     */
-    static int slotCount(int configured, int activityPercent, boolean participate) {
-        if (configured <= 0 || activityPercent <= 0 || !participate) return 0;
-        int slots = Math.max(1, (int) Math.round(configured * activityPercent / 100.0));
-        return Math.min(slots, configured);
+    private boolean hasRecentAutomaticDown(long userId, Instant since) {
+        Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM test_player_action WHERE user_id=? "
+                + "AND action_type='AUTO_DOWN' AND status='SUCCEEDED' AND updated_at>=?", Integer.class,
+                userId, java.sql.Timestamp.from(since));
+        return count != null && count > 0;
     }
 
-    /** 随机上分申请：按概率触发，同一次申请只进后台审批队列，不在聊天室发消息。 */
-    private void planTopUpRequest(PlayerDeskRepository.Behavior behavior, PlayerDeskRepository.PlayerRow player,
-                                  GameDataRepository.IssueRecord issue, Instant now, boolean force) {
-        int probability = behavior.topupProbabilityPercent();
-        if (probability <= 0 || !rollPercent(probability)) return;
-        if (hasPendingPointRequest(player.userId())) return;
-        BigDecimal amount = randomBetween(behavior.topupMin(), behavior.topupMax());
-        if (amount.signum() <= 0) return;
-        Instant at = scheduleTimes(1, issue, now, force).get(0);
-        createAction(behavior.id(), player.userId(), player.accountId(), issue.issueNumber(), 0,
-                "TOP_UP_REQUEST", "上" + amount.stripTrailingZeros().toPlainString(), at);
-    }
-
-    private List<PlayType> allowedPlayTypes(PlayerDeskRepository.Behavior behavior) {
-        if (behavior.playRandom()) return List.of(PlayType.values());
-        List<String> codes = repository.findPlayTypes(behavior.id());
-        if (codes.isEmpty()) return List.of(PlayType.values());
-        return codes.stream().map(PlayType::valueOf).toList();
-    }
-
-    private int effectiveActivityPercent(PlayerDeskRepository.Behavior behavior, Instant now) {
-        Integer override = bettingConfigService.get().botNightActivityOverridePercent();
-        if (override != null && isNight(now)) return override;
-        return behavior.activityPercent();
-    }
-
-    private static boolean isNight(Instant now) {
-        ZonedDateTime local = now.atZone(BUSINESS_ZONE);
-        return local.getHour() < NIGHT_END_HOUR;
-    }
-
-    /** 配置档位内随机；全局随机档位额外受“当前余额 20%”限制，并偏向较小金额。 */
-    private BigDecimal plannedStake(PlayerDeskRepository.Behavior behavior, BigDecimal balance) {
-        if ("RANDOM".equals(behavior.stakeRangeCode())) {
-            BigDecimal max = RANDOM_RANGE_MAX;
-            if (balance != null && balance.signum() > 0) {
-                BigDecimal cap = balance.multiply(RANDOM_BALANCE_RATIO).setScale(0, RoundingMode.DOWN);
-                if (cap.compareTo(max) < 0) max = cap;
-            }
-            if (max.compareTo(RANDOM_RANGE_MIN) < 0) return null;
-            BigDecimal first = randomBetween(RANDOM_RANGE_MIN, max);
-            BigDecimal second = randomBetween(RANDOM_RANGE_MIN, max);
-            return applyRoundTen(first.min(second), behavior.stakeRoundTen());
-        }
-        if (behavior.stakeMax().compareTo(behavior.stakeMin()) < 0) return null;
-        return applyRoundTen(randomBetween(behavior.stakeMin(), behavior.stakeMax()), behavior.stakeRoundTen());
-    }
-
-    private static BigDecimal randomBetween(BigDecimal min, BigDecimal max) {
-        if (max.compareTo(min) <= 0) return min.setScale(0, RoundingMode.DOWN);
-        BigDecimal range = max.subtract(min);
-        BigDecimal value = min.add(range.multiply(BigDecimal.valueOf(RANDOM.nextDouble())));
-        return value.setScale(0, RoundingMode.DOWN);
-    }
-
-    /** 整十=开 向下取到 10 的倍数；随机 表示每单随机决定；其余保持整数原值。 */
-    private static BigDecimal applyRoundTen(BigDecimal value, String rule) {
-        boolean roundTen = switch (rule == null ? "OFF" : rule) {
-            case "ON" -> true;
-            case "RANDOM" -> RANDOM.nextBoolean();
-            default -> false;
-        };
-        BigDecimal result = roundTen
-                ? value.divide(BigDecimal.TEN, 0, RoundingMode.DOWN).multiply(BigDecimal.TEN)
-                : value;
-        return result.setScale(0, RoundingMode.DOWN);
-    }
-
-    /**
-     * 在投注窗口内生成排序后的随机执行时刻：每个槽位一个时刻，按顺序递增。
-     */
     private List<Instant> scheduleTimes(int total, GameDataRepository.IssueRecord issue, Instant now, boolean force) {
         List<Instant> times = new ArrayList<>(Math.max(total, 0));
         if (total <= 0) return times;
@@ -262,10 +260,14 @@ public class TestPlayerBehaviorService {
                 return skipAction(actionId, notWorkable, skipMessage(notWorkable));
             }
             String idempotencyKey = jdbc.queryForObject("SELECT idempotency_key FROM test_player_action WHERE id=?", String.class, actionId);
-            if ("TOP_UP_REQUEST".equals(action.actionType())) {
-                return executeTopUpRequest(actionId, userId, action, idempotencyKey);
+            if ("AUTO_UP".equals(action.actionType()) || "AUTO_DOWN".equals(action.actionType())) {
+                return executeAutomaticPoints(actionId, userId, action);
             }
-            return executeBet(actionId, userId, action, idempotencyKey);
+            if ("AUTO_QUERY".equals(action.actionType())) {
+                return executeAutomaticQuery(actionId, userId, action, idempotencyKey);
+            }
+            if ("BET_TEXT".equals(action.actionType())) return executeBet(actionId, userId, action, idempotencyKey);
+            return skipAction(actionId, "LEGACY_ACTION", "旧托行为动作已停用");
         } catch (RuntimeException exception) {
             jdbc.update("UPDATE test_player_action SET status='FAILED', error_code=?, error_message=?, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
                     "ACTION_EXECUTION_FAILED", safe(exception.getMessage()), actionId);
@@ -274,36 +276,23 @@ public class TestPlayerBehaviorService {
     }
 
     private PlayerDeskRepository.ActionRow executeBet(long actionId, long userId,
-                                                      PlayerDeskRepository.ActionRow action, String idempotencyKey) {
+                                                       PlayerDeskRepository.ActionRow action, String idempotencyKey) {
         BetTextParser.ParseResult parsed = BetTextParser.parse(action.sourceText());
         if (!parsed.accepted() || parsed.bets().size() != 1) {
             return skipAction(actionId, "INVALID_BET_TEXT", "生成的托下注文本无法解析");
         }
         BetTextParser.ParsedBet bet = parsed.bets().get(0);
-        String text = action.sourceText();
-        BigDecimal stake = bet.stake();
-        if (action.attempts() == 0) {
-            BigDecimal executable = executableStake(userId, action.issueNumber(), bet.playType(), bet.stake());
-            if (executable == null) {
-                return skipAction(actionId, "INSUFFICIENT_BALANCE", "余额或剩余额度不足以完成本单");
-            }
-            stake = executable;
-            String executableText = BotBetTextGenerator.format(bet.playType(), bet.parameters(), stake);
-            if (!executableText.equals(text)) {
-                jdbc.update("UPDATE test_player_action SET source_text=? WHERE id=?", executableText, actionId);
-                text = executableText;
-            }
-        }
-        if (botIssueCapReached(action.issueNumber(), stake)) {
-            return skipAction(actionId, "BOT_ISSUE_CAP", "已达到所有托本期的总注单或总积分上限");
+        BigDecimal executable = executableStake(userId, action.issueNumber(), bet.playType(), bet.stake());
+        if (executable == null) {
+            return skipAction(actionId, "INSUFFICIENT_BALANCE_OR_LIMIT", "余额或玩法限额不允许本次下注");
         }
         ChatMessageService.ChatMessageSendOutcome outcome = chatMessageService.sendUserMessageWithOutcome(
-                userId, "main", idempotencyKey, text, Instant.now());
-        Long betId = jdbc.query("SELECT id FROM game_bet WHERE request_idempotency_key=?", rs -> rs.next() ? rs.getLong(1) : null,
-                "CHAT-" + idempotencyKey);
+                userId, "main", idempotencyKey, action.sourceText(), Instant.now());
+        Long betId = jdbc.query("SELECT id FROM game_bet WHERE request_idempotency_key=?",
+                rs -> rs.next() ? rs.getLong(1) : null, "CHAT-" + idempotencyKey);
         if (betId == null) {
             jdbc.update("UPDATE test_player_action SET status='SKIPPED', message_id=?, bet_id=NULL, error_code=?, error_message=?, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
-                    outcome.message().id(), "LIMIT_EXCEEDED", "注单被限额或封盘拦截", actionId);
+                    outcome.message().id(), "LIMIT_EXCEEDED", "注单被封盘或限额拦截", actionId);
             return loadAction(actionId);
         }
         jdbc.update("UPDATE test_player_action SET status='SUCCEEDED', message_id=?, bet_id=?, error_code=NULL, error_message=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
@@ -311,116 +300,95 @@ public class TestPlayerBehaviorService {
         return loadAction(actionId);
     }
 
-    /** 随机上分申请直接写入后台审批队列，不产生聊天消息。 */
-    private PlayerDeskRepository.ActionRow executeTopUpRequest(long actionId, long userId,
-                                                               PlayerDeskRepository.ActionRow action,
-                                                               String idempotencyKey) {
-        BigDecimal amount = topUpAmount(action.sourceText());
-        if (amount == null || amount.signum() <= 0) {
-            return skipAction(actionId, "INVALID_TOPUP_AMOUNT", "上分申请金额无效");
+    private PlayerDeskRepository.ActionRow executeAutomaticPoints(long actionId, long userId,
+                                                                   PlayerDeskRepository.ActionRow action) {
+        BigDecimal amount = new BigDecimal(action.sourceText());
+        long operatorUserId = machineOperatorUserId(userId);
+        long agentId = machineId(userId);
+        String name = displayName(userId);
+        WalletOperationResult operation;
+        if ("AUTO_UP".equals(action.actionType())) {
+            operation = walletService.grant(operatorUserId, userId, amount, "托自动上分：" + name,
+                    "AUTO-UP-" + actionId);
+            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-UP-WAIT-" + actionId,
+                    "@" + name + ", 上分" + money(amount) + ",待审批!", agentId, Instant.now());
+            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-UP-DONE-" + actionId,
+                    "@" + name + ", 成功上分" + money(amount) + ", 剩" + money(operation.wallet().balance()), agentId, Instant.now());
+        } else {
+            operation = walletService.adjust(operatorUserId, userId, amount.negate(), "托自动下分：" + name,
+                    "AUTO-DOWN-" + actionId);
+            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-DOWN-WAIT-" + actionId,
+                    "@" + name + ", 下分" + money(amount) + ",待审批!, 剩" + money(operation.wallet().balance()), agentId, Instant.now());
+            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-DOWN-DONE-" + actionId,
+                    "@" + name + ", 成功下分" + money(amount), agentId, Instant.now());
         }
-        if (hasPendingPointRequest(userId)) {
-            return skipAction(actionId, "TOPUP_PENDING", "已有待审批的上分申请");
-        }
-        pointRequestRepository.insertPending(userId, "TOP_UP", amount, idempotencyKey, 0L, Instant.now());
-        jdbc.update("UPDATE test_player_action SET status='SUCCEEDED', error_code=NULL, error_message=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
-                actionId);
+        jdbc.update("UPDATE test_player_action SET status='SUCCEEDED', error_code=NULL, error_message=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?", actionId);
         return loadAction(actionId);
     }
 
-    private static BigDecimal topUpAmount(String text) {
-        if (text == null || !text.startsWith("上")) return null;
-        try {
-            return new BigDecimal(text.substring(1).trim());
-        } catch (NumberFormatException exception) {
-            return null;
-        }
+    private PlayerDeskRepository.ActionRow executeAutomaticQuery(long actionId, long userId,
+                                                                  PlayerDeskRepository.ActionRow action,
+                                                                  String idempotencyKey) {
+        ChatMessageService.ChatMessageSendOutcome outcome = chatMessageService.sendUserMessageWithOutcome(
+                userId, "main", idempotencyKey, action.sourceText(), Instant.now());
+        jdbc.update("UPDATE test_player_action SET status='SUCCEEDED', message_id=?, error_code=NULL, error_message=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
+                outcome.message().id(), actionId);
+        return loadAction(actionId);
     }
 
-    private boolean hasPendingPointRequest(long userId) {
-        Integer pending = jdbc.queryForObject("SELECT COUNT(*) FROM player_point_request WHERE user_id=? AND status='PENDING'",
-                Integer.class, userId);
-        return pending != null && pending > 0;
+    private static String money(BigDecimal amount) {
+        return amount.stripTrailingZeros().toPlainString();
     }
 
-    /**
-     * 计算本单实际可下金额：计划金额依次被余额、全局随机档位的 20% 上限和剩余额度压降。
-     * 压降后仍低于最小注额时返回 null，由调用方记为跳过。
-     */
+    private long machineOperatorUserId(long userId) {
+        Long operator = jdbc.queryForObject("SELECT COALESCE(ag.account_user_id,ag.created_by) "
+                + "FROM demo_user_account a JOIN agent ag ON ag.id=a.agent_id WHERE a.sys_user_id=?", Long.class, userId);
+        if (operator == null) throw BusinessException.conflict("BOT_MACHINE_OPERATOR_MISSING", "托所属机器账号不可用");
+        return operator;
+    }
+
+    private long machineId(long userId) {
+        Long id = jdbc.queryForObject("SELECT agent_id FROM demo_user_account WHERE sys_user_id=?", Long.class, userId);
+        if (id == null) throw BusinessException.conflict("BOT_MACHINE_MISSING", "托未归属机器");
+        return id;
+    }
+
+    private String displayName(long userId) {
+        return jdbc.queryForObject("SELECT display_name FROM sys_user WHERE id=?", String.class, userId);
+    }
+
     private BigDecimal executableStake(long userId, String issueNumber, PlayType playType, BigDecimal planned) {
-        List<AccountState> states = jdbc.query("SELECT a.id, a.balance, b.stake_range_code, b.stake_round_ten "
-                        + "FROM demo_user_account a JOIN test_player_behavior b ON b.account_id=a.id "
-                        + "WHERE a.sys_user_id=?",
-                (rs, rowNum) -> new AccountState(rs.getLong("id"), rs.getBigDecimal("balance"),
-                        rs.getString("stake_range_code"), rs.getString("stake_round_ten")), userId);
-        if (states.isEmpty()) return null;
-        AccountState state = states.get(0);
-        if (state.balance() == null || state.balance().signum() <= 0) return null;
-        BigDecimal stake = planned.setScale(0, RoundingMode.DOWN);
-        if ("RANDOM".equals(state.stakeRangeCode())) {
-            BigDecimal cap = state.balance().multiply(RANDOM_BALANCE_RATIO).setScale(0, RoundingMode.DOWN);
-            if (stake.compareTo(cap) > 0) stake = cap;
-        }
-        if (stake.compareTo(state.balance()) > 0) stake = state.balance().setScale(0, RoundingMode.DOWN);
-        stake = applyRoundTen(stake, state.stakeRoundTen());
-        for (int round = 0; round < LIMIT_RETRY_ROUNDS; round++) {
-            if (stake.signum() <= 0) return null;
-            var usage = bettingConfigService.loadUsage(state.accountId(), issueNumber);
-            var rejection = bettingConfigService.evaluate(playType, stake, usage);
-            if (rejection == null) return stake.setScale(2, RoundingMode.DOWN);
-            if (rejection.kind() == GameBettingConfigService.LimitKind.MIN
-                    || rejection.remaining().signum() <= 0) {
-                return null;
-            }
-            stake = applyRoundTen(rejection.remaining().setScale(0, RoundingMode.DOWN), state.stakeRoundTen());
-        }
-        return null;
-    }
-
-    /** 所有托在本期的总注单数和总积分上限；达到上限的动作直接跳过。 */
-    private boolean botIssueCapReached(String issueNumber, BigDecimal stake) {
-        var config = bettingConfigService.get();
-        Integer bets = jdbc.queryForObject("SELECT COUNT(*) FROM game_bet b "
-                        + "JOIN demo_user_account a ON a.id=b.user_id "
-                        + "WHERE b.issue_number=? AND a.player_kind='BOT' AND b.settlement_status <> 'CANCELED'",
-                Integer.class, issueNumber);
-        BigDecimal staked = jdbc.queryForObject("SELECT COALESCE(SUM(b.stake), 0) FROM game_bet b "
-                        + "JOIN demo_user_account a ON a.id=b.user_id "
-                        + "WHERE b.issue_number=? AND a.player_kind='BOT' AND b.settlement_status <> 'CANCELED'",
-                BigDecimal.class, issueNumber);
-        if (bets != null && bets >= config.botIssueTotalBets()) return true;
-        BigDecimal total = (staked == null ? BigDecimal.ZERO : staked).add(stake);
-        return total.compareTo(BigDecimal.valueOf(config.botIssueTotalStake())) > 0;
+        AccountState state = jdbc.query("SELECT id,balance FROM demo_user_account WHERE sys_user_id=?",
+                (rs,n) -> new AccountState(rs.getLong("id"),rs.getBigDecimal("balance")),userId)
+                .stream().findFirst().orElse(null);
+        if (state == null || state.balance() == null || state.balance().compareTo(planned) <= 0) return null;
+        var usage = bettingConfigService.loadUsage(state.accountId(), issueNumber);
+        return bettingConfigService.evaluate(playType, planned, usage) == null ? planned : null;
     }
 
     private BigDecimal balance(long accountId) {
         return jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id=?", BigDecimal.class, accountId);
     }
 
-    private static boolean rollPercent(int percent) {
-        if (percent <= 0) return false;
-        if (percent >= 100) return true;
-        return RANDOM.nextInt(100) < percent;
-    }
-
-    /** 返回 null 表示可工作；否则返回停止原因代码。链接是托工作的前提。 */
+    /** Returns the BY220-equivalent stop reason for a bot action. */
     private String workabilityFailure(long userId) {
         List<Workability> rows = jdbc.query("""
-                SELECT u.status AS user_status, a.status AS account_status,
-                       (SELECT COUNT(*) FROM player_access_link l
-                         WHERE l.user_id = u.id AND l.scope = 'PLAYER_FULL'
-                           AND l.revoked_at IS NULL AND l.expires_at > CURRENT_TIMESTAMP(6)) AS usable_links
-                  FROM sys_user u
-                  JOIN demo_user_account a ON a.sys_user_id = u.id
-                 WHERE u.id = ? AND a.player_kind = 'BOT'
-                """, (rs, rowNum) -> new Workability(rs.getString("user_status"),
-                rs.getString("account_status"), rs.getInt("usable_links")), userId);
+                SELECT u.status user_status,a.status account_status,ag.status machine_status,ag.board_open,
+                       ag.expires_at,
+                       (SELECT COUNT(*) FROM player_access_link l WHERE l.user_id=u.id AND l.scope='PLAYER_FULL'
+                        AND l.revoked_at IS NULL AND l.expires_at>CURRENT_TIMESTAMP(6)) usable_links
+                  FROM sys_user u JOIN demo_user_account a ON a.sys_user_id=u.id
+                  LEFT JOIN agent ag ON ag.id=a.agent_id
+                 WHERE u.id=? AND a.player_kind='BOT'
+                """, (rs,n) -> new Workability(rs.getString("user_status"),rs.getString("account_status"),
+                rs.getString("machine_status"),rs.getBoolean("board_open"),rs.getTimestamp("expires_at"),
+                rs.getInt("usable_links")), userId);
         if (rows.isEmpty()) return "PLAYER_INACTIVE";
-        Workability state = rows.get(0);
-        if (!"ACTIVE".equals(state.userStatus()) || !"ACTIVE".equals(state.accountStatus())) {
-            return "PLAYER_INACTIVE";
-        }
-        return state.usableLinks() > 0 ? null : "LINK_INVALID";
+        Workability state=rows.get(0);
+        if (!"ACTIVE".equals(state.userStatus()) || !"ACTIVE".equals(state.accountStatus())) return "PLAYER_INACTIVE";
+        if (!"ACTIVE".equals(state.machineStatus()) || !state.boardOpen()
+                || state.machineExpiresAt()!=null && state.machineExpiresAt().toInstant().isBefore(Instant.now())) return "MACHINE_CLOSED";
+        return state.usableLinks()>0 ? null : "LINK_INVALID";
     }
 
     private void skipOtherIssues(long userId, String currentIssueNumber) {
@@ -450,6 +418,7 @@ public class TestPlayerBehaviorService {
             case "LINK_INVALID" -> "链接已过期或已拉黑，托停止工作";
             case "PLAYER_INACTIVE" -> "玩家已停用或删除";
             case "ISSUE_CLOSED" -> "期号已封盘或开奖，动作不再执行";
+            case "MACHINE_CLOSED" -> "机器已停用、闭盘或到期，托停止工作";
             default -> reasonCode;
         };
     }
@@ -511,9 +480,9 @@ public class TestPlayerBehaviorService {
         return value.length() > 255 ? value.substring(0, 255) : value;
     }
 
-    private record Workability(String userStatus, String accountStatus, int usableLinks) {
+    private record Workability(String userStatus, String accountStatus, String machineStatus, boolean boardOpen, java.sql.Timestamp machineExpiresAt, int usableLinks) {
     }
 
-    private record AccountState(long accountId, BigDecimal balance, String stakeRangeCode, String stakeRoundTen) {
+    private record AccountState(long accountId, BigDecimal balance) {
     }
 }

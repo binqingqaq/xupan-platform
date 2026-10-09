@@ -27,9 +27,6 @@ export const LIMIT_FIELDS: LimitFieldDefinition[] = [
   { key: 'addLimit', label: '加限额' },
   { key: 'playerMaxStake', label: '玩家最高注额' },
   { key: 'playerMinStake', label: '玩家最小注额' },
-  { key: 'botIssueTotalBets', label: '所有托每期总注单' },
-  { key: 'botIssueTotalStake', label: '所有托每期总积分' },
-  { key: 'botNightActivityOverridePercent', label: '深夜活跃比例覆盖(%)' },
 ]
 
 export function createDisplayDraft(config: BettingConfigView): BettingDisplayDraft {
@@ -84,18 +81,6 @@ export function validateLimitDraft(
   const limits = {} as BettingLimits
   for (const field of LIMIT_FIELDS) {
     const raw = (draft[field.key] ?? '').trim()
-    if (field.key === 'botNightActivityOverridePercent') {
-      if (!raw) {
-        limits.botNightActivityOverridePercent = null
-        continue
-      }
-      const override = parseIntegerInput(raw)
-      if (override === null || override < 0 || override > 100) {
-        return { ok: false, message: `${field.label}必须是 0 到 100 的整数，留空表示不覆盖` }
-      }
-      limits.botNightActivityOverridePercent = override
-      continue
-    }
     const parsed = parseIntegerInput(raw)
     if (parsed === null || parsed <= 0) {
       return { ok: false, message: `${field.label}必须是大于 0 的整数，且不能为空` }

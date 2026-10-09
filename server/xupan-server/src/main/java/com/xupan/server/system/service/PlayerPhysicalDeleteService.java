@@ -242,10 +242,6 @@ public class PlayerPhysicalDeleteService {
 
         // 托行为与动作：属于玩家自身的运行态配置（不是业务历史）
         jdbc.update("DELETE FROM test_player_action WHERE user_id = ? OR account_id = ?", userId, accountId);
-        jdbc.update("""
-                DELETE FROM test_player_behavior_play_type
-                 WHERE behavior_id IN (SELECT id FROM test_player_behavior WHERE account_id = ?)
-                """, accountId);
         jdbc.update("DELETE FROM test_player_behavior WHERE account_id = ?", accountId);
     }
 

@@ -256,10 +256,8 @@ import java.util.List;
 
     @PutMapping("/players/{userId}/behavior")
     public Behavior updateBehavior(Authentication auth, @PathVariable long userId, @Valid @RequestBody BehaviorRequest request) {
-        return Behavior.from(service.updateBehavior(userId, request.mode(), request.betsPerIssue(),
-                request.stakeRangeCode(), request.stakeRoundTen(), request.activityPercent(),
-                request.playRandom(), request.playTypes(), request.topupProbabilityPercent(),
-                request.topupMin(), request.topupMax(), user(auth)));
+        return Behavior.from(service.updateBehavior(userId, request.mode(), request.stakeRangeCode(),
+                request.chaseEnabled(), request.feidanEnabled(), user(auth)));
     }
 
     @PostMapping("/players/{userId}/behavior/run-now")
@@ -400,17 +398,16 @@ import java.util.List;
     public record Ledger(long id, long accountId, long userId, String operationType, BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter, Long operatorUserId, String operatorName, String idempotencyKey, Long relatedBetId, String issueNumber, String reason, Instant createdAt) {
         static Ledger from(WalletLedgerEntry x) { return new Ledger(x.id(), x.accountId(), x.userId(), x.operationType().name(), x.amount(), x.balanceBefore(), x.balanceAfter(), x.operatorUserId(), x.operatorName(), x.idempotencyKey(), x.relatedBetId(), x.issueNumber(), x.reason(), x.createdAt()); }
     }
-    public record Behavior(Long id, Long accountId, String mode, boolean enabled, int betsPerIssue, BigDecimal stakeMin, BigDecimal stakeMax, boolean chatEnabled, int messagesPerIssue, Instant nextRunAt, String lastIssueNumber, String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt,
-                           String stakeRangeCode, String stakeRoundTen, int activityPercent, boolean playRandom, List<String> playTypes,
-                           int topupProbabilityPercent, BigDecimal topupMin, BigDecimal topupMax) {
+    public record Behavior(Long id, Long accountId, String mode, boolean enabled, BigDecimal stakeMin,
+                           BigDecimal stakeMax, Instant nextRunAt, String lastIssueNumber, String lastErrorCode,
+                           String lastErrorMessage, long version, Instant updatedAt, String stakeRangeCode,
+                           boolean chaseEnabled, boolean feidanEnabled, boolean machineChaseEnabled) {
         static Behavior from(PlayerDeskAdminService.BehaviorConfig x) {
             if (x == null) return null;
             PlayerDeskRepository.Behavior b = x.behavior();
-            return new Behavior(b.id(), b.accountId(), b.mode(), b.enabled(), b.betsPerIssue(), b.stakeMin(),
-                    b.stakeMax(), b.chatEnabled(), b.messagesPerIssue(), b.nextRunAt(), b.lastIssueNumber(),
-                    b.lastErrorCode(), b.lastErrorMessage(), b.version(), b.updatedAt(), b.stakeRangeCode(),
-                    b.stakeRoundTen(), b.activityPercent(), b.playRandom(), x.playTypes(),
-                    b.topupProbabilityPercent(), b.topupMin(), b.topupMax());
+            return new Behavior(b.id(), b.accountId(), b.mode(), b.enabled(), b.stakeMin(), b.stakeMax(),
+                    b.nextRunAt(), b.lastIssueNumber(), b.lastErrorCode(), b.lastErrorMessage(), b.version(),
+                    b.updatedAt(), b.stakeRangeCode(), b.chaseEnabled(), b.feidanEnabled(), b.machineChaseEnabled());
         }
     }
     public record Action(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status, int attempts, String errorCode, String errorMessage, Long messageId, Long betId, Instant createdAt, Instant updatedAt) {
@@ -456,12 +453,8 @@ import java.util.List;
             return new NameChange(x.id(), x.oldName(), x.newName(), x.changedAt());
         }
     }
-    public record BehaviorRequest(@NotBlank String mode, @Min(0) @Max(20) int betsPerIssue,
-                                  @NotBlank String stakeRangeCode, @NotBlank String stakeRoundTen,
-                                  @Min(0) @Max(100) int activityPercent, boolean playRandom,
-                                  List<String> playTypes, @Min(0) @Max(100) int topupProbabilityPercent,
-                                  @NotNull @DecimalMin("0.01") BigDecimal topupMin,
-                                  @NotNull @DecimalMin("0.01") BigDecimal topupMax) {}
+    public record BehaviorRequest(@NotBlank String mode, @NotBlank String stakeRangeCode,
+                                  boolean chaseEnabled, boolean feidanEnabled) {}
     public record MessageRequest(@NotBlank String content, @NotBlank String clientMessageId) {}
     public record ReviewRequest(String reason) {}
     public record PointRequest(long id, long userId, String requestType, BigDecimal amount, String status,
