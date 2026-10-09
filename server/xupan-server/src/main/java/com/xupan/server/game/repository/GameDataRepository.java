@@ -490,6 +490,41 @@ public class GameDataRepository {
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake")), issueNumber);
     }
 
+    public List<BetAuditRecord> findBetAuditByIssueAndAgent(String issueNumber, long agentId) {
+        if (issueNumber == null || issueNumber.isBlank() || agentId <= 0) return List.of();
+        return jdbcTemplate.query("""
+                SELECT b.id, COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                       b.play_type, b.parameters_text, b.stake
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.issue_number = ?
+                   AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
+                   AND b.settlement_status <> 'CANCELED'
+                 ORDER BY b.id
+                """, (rs, rowNum) -> new BetAuditRecord(
+                rs.getLong("id"), rs.getString("display_name"),
+                PlayType.valueOf(rs.getString("play_type")),
+                parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake")),
+                issueNumber.trim(), agentId);
+    }
+
+    public List<WinnerBetAuditRecord> findWinningBetAuditByIssueAndAgent(String issueNumber, long agentId) {
+        if (issueNumber == null || issueNumber.isBlank() || agentId <= 0) return List.of();
+        return jdbcTemplate.query("""
+                SELECT b.id, COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                       b.ball_number, b.play_type, b.parameters_text, b.stake, b.net_profit
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.issue_number = ? AND b.settlement_status = 'WIN'
+                   AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
+                 ORDER BY b.id
+                """, (rs, rowNum) -> new WinnerBetAuditRecord(rs.getLong("id"),
+                rs.getString("display_name"), rs.getInt("ball_number"),
+                PlayType.valueOf(rs.getString("play_type")),
+                parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
+                rs.getBigDecimal("net_profit")), issueNumber.trim(), agentId);
+    }
+
     public List<BetRecord> findBetsByAccountId(long accountId, SettlementStatus status, int limit) {
         if (accountId <= 0 || limit < 1 || limit > 100) {
             throw new IllegalArgumentException("注单查询参数无效");
@@ -545,10 +580,12 @@ public class GameDataRepository {
         }
         return jdbcTemplate.queryForObject("""
                 SELECT COALESCE(SUM(stake), 0) AS turnover,
-                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN net_profit ELSE 0 END), 0)
+                       COALESCE(SUM(CASE WHEN settlement_status NOT IN ('PENDING', 'CANCELED')
+                                         THEN net_profit ELSE 0 END), 0)
                            AS net_profit
                   FROM game_bet
-                 WHERE user_id = ? AND created_at >= ? AND created_at < ?
+                 WHERE user_id = ? AND settlement_status <> 'CANCELED'
+                   AND created_at >= ? AND created_at < ?
                 """, (rs, rowNum) -> new BetDayStatistics(
                 rs.getBigDecimal("turnover"), rs.getBigDecimal("net_profit")),
                 accountId, timestamp(fromInclusive), timestamp(toExclusive));
@@ -562,7 +599,8 @@ public class GameDataRepository {
         Long count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(DISTINCT issue_number)
                   FROM game_bet
-                 WHERE user_id = ? AND created_at >= ? AND created_at < ?
+                 WHERE user_id = ? AND settlement_status <> 'CANCELED'
+                   AND created_at >= ? AND created_at < ?
                 """, Long.class, accountId, timestamp(fromInclusive), timestamp(toExclusive));
         return count == null ? 0 : count;
     }
@@ -712,6 +750,10 @@ public class GameDataRepository {
 
     public record BetAuditRecord(long id, String displayName, PlayType playType,
                                  List<Integer> parameters, BigDecimal stake) {
+    }
+
+    public record WinnerBetAuditRecord(long id, String displayName, int ballNumber, PlayType playType,
+                                       List<Integer> parameters, BigDecimal stake, BigDecimal netProfit) {
     }
 
     public record BetUsage(PlayType playType, BigDecimal stake) {

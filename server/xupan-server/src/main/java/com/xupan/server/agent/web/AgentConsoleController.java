@@ -144,11 +144,14 @@ public class AgentConsoleController {
     public record AgentPlayerPageResponse(List<AgentPlayerResponse> items, int page, int pageSize, long total) {
     }
 
-    public record OperationsResponse(String day, long betCount, BigDecimal turnover, BigDecimal netProfit,
+    public record OperationsResponse(String day, long betCount, BigDecimal grossTurnover,
+                                     BigDecimal singleFlow, BigDecimal doubleFlow, BigDecimal turnover,
+                                     String rebateMode, BigDecimal netProfit,
                                      long pendingBetCount, BigDecimal normalTurnover, BigDecimal botTurnover,
                                      long activePlayerCount) {
         static OperationsResponse from(AgentConsoleService.OperationsSummary summary) {
-            return new OperationsResponse(summary.day(), summary.betCount(), summary.turnover(),
+            return new OperationsResponse(summary.day(), summary.betCount(), summary.grossTurnover(),
+                    summary.singleFlow(), summary.doubleFlow(), summary.turnover(), summary.rebateMode(),
                     summary.netProfit(), summary.pendingBetCount(), summary.normalTurnover(),
                     summary.botTurnover(), summary.activePlayerCount());
         }

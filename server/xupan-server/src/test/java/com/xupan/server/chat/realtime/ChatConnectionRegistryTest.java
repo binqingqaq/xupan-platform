@@ -1,5 +1,6 @@
 package com.xupan.server.chat.realtime;
 
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -55,6 +56,36 @@ class ChatConnectionRegistryTest {
         verify(mainSession).sendMessage(org.mockito.ArgumentMatchers.any());
         org.mockito.Mockito.verify(otherSession, org.mockito.Mockito.never())
                 .sendMessage(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void machineMessageBroadcastDoesNotReachAnotherAgentsConnections() throws Exception {
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties(3, 10), allowedAccessService());
+        WebSocketSession firstSession = openSession();
+        WebSocketSession sameAgentSession = openSession();
+        WebSocketSession otherAgentSession = openSession();
+        ChatConnection first = new ChatConnection("machine-1", 7L, "session-7", "main", 101L,
+                firstSession, Instant.parse("2026-09-11T00:00:00Z"));
+        ChatConnection sameAgent = new ChatConnection("machine-1-peer", 8L, "session-8", "main", 101L,
+                sameAgentSession, Instant.parse("2026-09-11T00:00:01Z"));
+        ChatConnection otherAgent = new ChatConnection("machine-2", 9L, "session-9", "main", 202L,
+                otherAgentSession, Instant.parse("2026-09-11T00:00:02Z"));
+        first.markSubscribed();
+        sameAgent.markSubscribed();
+        otherAgent.markSubscribed();
+        registry.register(first);
+        registry.register(sameAgent);
+        registry.register(otherAgent);
+
+        assertThat(registry.broadcast("main", ChatMessageVisibility.MACHINE, 101L, "private"))
+                .isEqualTo(2);
+        verify(firstSession).sendMessage(org.mockito.ArgumentMatchers.any());
+        verify(sameAgentSession).sendMessage(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(otherAgentSession, org.mockito.Mockito.never())
+                .sendMessage(org.mockito.ArgumentMatchers.any());
+
+        assertThat(registry.broadcast("main", ChatMessageVisibility.PUBLIC, null, "draw"))
+                .isEqualTo(3);
     }
 
     @Test

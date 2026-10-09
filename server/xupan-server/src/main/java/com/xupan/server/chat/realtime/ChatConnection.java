@@ -25,6 +25,7 @@ public final class ChatConnection {
     private final long userId;
     private final String sessionId;
     private final String roomCode;
+    private final Long agentId;
     private final WebSocketSession session;
     private final Instant connectedAt;
     private final AtomicInteger pendingMessages = new AtomicInteger();
@@ -34,10 +35,16 @@ public final class ChatConnection {
 
     public ChatConnection(String connectionId, long userId, String sessionId, String roomCode,
                           WebSocketSession session, Instant connectedAt) {
+        this(connectionId, userId, sessionId, roomCode, null, session, connectedAt);
+    }
+
+    public ChatConnection(String connectionId, long userId, String sessionId, String roomCode,
+                          Long agentId, WebSocketSession session, Instant connectedAt) {
         this.connectionId = requireText(connectionId, "connectionId");
         this.userId = userId;
         this.sessionId = requireText(sessionId, "sessionId");
         this.roomCode = requireText(roomCode, "roomCode");
+        this.agentId = agentId;
         this.session = Objects.requireNonNull(session, "session");
         this.connectedAt = Objects.requireNonNull(connectedAt, "connectedAt");
         this.lastPongMillis = new AtomicLong(connectedAt.toEpochMilli());
@@ -57,6 +64,10 @@ public final class ChatConnection {
 
     public String roomCode() {
         return roomCode;
+    }
+
+    public Long agentId() {
+        return agentId;
     }
 
     public WebSocketSession session() {

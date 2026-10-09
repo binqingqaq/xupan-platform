@@ -627,7 +627,7 @@ public class ReportService {
         try {
             chatMessageService.publishSystemMessage("main", bet.issueNumber(),
                     "CHAT-REPORT-WITHDRAW-" + bet.betId(),
-                    "@" + bet.betId() + " 注单取消（上报失败自动退单）", Instant.now());
+                    "@" + bet.betId() + " 注单取消（上报失败自动退单）", bet.agentId(), Instant.now());
         } catch (RuntimeException feedbackFailure) {
             log.warn("失败退单的聊天室取消反馈写入失败 betId={} {}", bet.betId(),
                     feedbackFailure.getMessage());

@@ -21,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RobotDispatchServiceTest {
 
     private static final String ISSUE_PREFIX = "robot-service-test-";
+    private static final String MACHINE_CODE = "ROBOT_DISPATCH_MACHINE";
     private static final Instant NOW = Instant.parse("2026-09-14T00:00:00Z");
 
     @Autowired
@@ -36,6 +37,7 @@ class RobotDispatchServiceTest {
     void setUp() {
         connectionRegistry.closeAll();
         clean();
+        insertMachine();
         jdbcTemplate.update("UPDATE chat_robot SET status = 'ENABLED' WHERE robot_code = 'issue-helper'");
         resetDrawComponents();
     }
@@ -113,6 +115,15 @@ class RobotDispatchServiceTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_message WHERE issue_number = ? AND message_type = 'ROBOT'",
                 Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT' AND visibility = 'PUBLIC'
+                """, Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT' AND visibility = 'MACHINE'
+                   AND agent_id = (SELECT id FROM agent WHERE agent_code = ?)
+                """, Integer.class, ISSUE_PREFIX + "draw-structured", MACHINE_CODE)).isEqualTo(1);
         assertThat(jdbcTemplate.queryForList("""
                 SELECT payload_json
                   FROM chat_message
@@ -180,8 +191,10 @@ class RobotDispatchServiceTest {
 
         String audit = jdbcTemplate.queryForObject("""
                 SELECT content FROM chat_message
-                 WHERE issue_number = ? AND message_type = 'ROBOT' AND content LIKE '%核对列表%'
-                 """, String.class, ISSUE_PREFIX + "audit-total");
+                 WHERE issue_number = ? AND message_type = 'ROBOT' AND visibility = 'MACHINE'
+                   AND agent_id = (SELECT id FROM agent WHERE agent_code = ?)
+                   AND content LIKE '%核对列表%'
+                 """, String.class, ISSUE_PREFIX + "audit-total", MACHINE_CODE);
         assertThat(audit).contains("核对列表:(30.5)");
         // 占位实现会产生一个四位随机数字，这里同时确认没有退化成哈希
         assertThat(audit).doesNotContain(String.format("%04d",
@@ -196,16 +209,19 @@ class RobotDispatchServiceTest {
 
         String audit = jdbcTemplate.queryForObject("""
                 SELECT content FROM chat_message
-                 WHERE issue_number = ? AND message_type = 'ROBOT' AND content LIKE '%核对列表%'
-                """, String.class, ISSUE_PREFIX + "audit-empty");
+                 WHERE issue_number = ? AND message_type = 'ROBOT' AND visibility = 'MACHINE'
+                   AND agent_id = (SELECT id FROM agent WHERE agent_code = ?)
+                   AND content LIKE '%核对列表%'
+                """, String.class, ISSUE_PREFIX + "audit-empty", MACHINE_CODE);
         assertThat(audit).contains("核对列表:(0)");
     }
 
     private long insertAuditAccount() {
         jdbcTemplate.update("""
-                INSERT INTO demo_user_account (user_code, display_name, member_code, balance, status)
-                VALUES (?, '核对列表测试玩家', ?, 1000.00, 'ACTIVE')
-                """, ISSUE_PREFIX + "account", ISSUE_PREFIX + "member");
+                INSERT INTO demo_user_account (user_code, display_name, member_code, balance, status, agent_id)
+                VALUES (?, '核对列表测试玩家', ?, 1000.00, 'ACTIVE',
+                        (SELECT id FROM agent WHERE agent_code = ?))
+                """, ISSUE_PREFIX + "account", ISSUE_PREFIX + "member", MACHINE_CODE);
         return jdbcTemplate.queryForObject("SELECT id FROM demo_user_account WHERE user_code = ?",
                 Long.class, ISSUE_PREFIX + "account");
     }
@@ -239,13 +255,29 @@ class RobotDispatchServiceTest {
     private void clean() {
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch WHERE issue_number LIKE ?",
                 ISSUE_PREFIX + "%");
-        jdbcTemplate.update("DELETE FROM chat_outbox WHERE message_id IN (SELECT id FROM chat_message WHERE issue_number LIKE ?)",
-                ISSUE_PREFIX + "%");
-        jdbcTemplate.update("DELETE FROM chat_message WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM chat_outbox WHERE message_id IN (SELECT id FROM chat_message "
+                        + "WHERE issue_number LIKE ? OR agent_id IN (SELECT id FROM agent WHERE agent_code = ?))",
+                ISSUE_PREFIX + "%", MACHINE_CODE);
+        jdbcTemplate.update("DELETE FROM chat_message WHERE issue_number LIKE ? OR agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?)", ISSUE_PREFIX + "%", MACHINE_CODE);
         jdbcTemplate.update("DELETE FROM game_issue_event WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM game_bet WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
-        jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code LIKE ?", ISSUE_PREFIX + "%");
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code LIKE ? OR agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?)", ISSUE_PREFIX + "%", MACHINE_CODE);
+        jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
         jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number LIKE ?", ISSUE_PREFIX + "%");
+    }
+
+    private void insertMachine() {
+        jdbcTemplate.update("""
+                INSERT INTO agent (agent_code, display_name, system_owned, status)
+                VALUES (?, '开奖派发测试机器', TRUE, 'ACTIVE')
+                """, MACHINE_CODE);
+        Long agentId = jdbcTemplate.queryForObject(
+                "SELECT id FROM agent WHERE agent_code = ?", Long.class, MACHINE_CODE);
+        jdbcTemplate.update("INSERT INTO agent_game (agent_id, game_code) VALUES (?, 'AU8')", agentId);
     }
 
     private void insertSettledIssue(String suffix) {

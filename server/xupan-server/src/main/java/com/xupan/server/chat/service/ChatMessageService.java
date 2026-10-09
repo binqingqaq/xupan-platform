@@ -6,6 +6,7 @@ import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.chat.domain.ChatMessage;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.domain.ChatMessagePage;
 import com.xupan.server.chat.domain.ChatRoom;
 import com.xupan.server.chat.repository.ChatMessageRepository;
@@ -17,6 +18,7 @@ import com.xupan.server.chat.repository.ChatRoomRepository;
 import com.xupan.server.chat.realtime.ChatMessageCreatedEvent;
 import com.xupan.server.chat.realtime.ChatProtocol;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.repository.PlayerBetSummaryRepository;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.service.BetTextParser;
@@ -69,6 +71,7 @@ public class ChatMessageService {
     private final VirtualWalletService walletService;
     private final TransactionTemplate transactionTemplate;
     private PlayerPointRequestRepository pointRequestRepository;
+    private PlayerBetSummaryRepository playerBetSummaryRepository;
 
     private static final String FEEDBACK_ROBOT_CODE = "issue-helper";
     private static final String ROOM_CODE = "main";
@@ -111,6 +114,11 @@ public class ChatMessageService {
     @Autowired(required = false)
     public void setPointRequestRepository(PlayerPointRequestRepository pointRequestRepository) {
         this.pointRequestRepository = pointRequestRepository;
+    }
+
+    @Autowired(required = false)
+    public void setPlayerBetSummaryRepository(PlayerBetSummaryRepository repository) {
+        this.playerBetSummaryRepository = repository;
     }
 
     /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
@@ -169,6 +177,7 @@ public class ChatMessageService {
         }
         int pageSize = contentPolicy.validateLimit(limit);
         ChatRoom room = requireRoom(roomCode);
+        Long agentId = userRepository.findPlayerAgentId(userId).orElse(null);
         if (beforeSequence != null && beforeSequence > room.nextSequenceNo() + 1
                 || afterSequence != null && afterSequence > room.nextSequenceNo()) {
             throw BusinessException.badRequest("CHAT_CURSOR_INVALID", "消息游标超过房间当前序号");
@@ -177,10 +186,10 @@ public class ChatMessageService {
         List<ChatMessage> queried;
         boolean before = beforeSequence != null || afterSequence == null;
         if (afterSequence != null) {
-            queried = messageRepository.findAfterSequence(room.id(), afterSequence, pageSize);
+            queried = messageRepository.findAfterSequence(room.id(), afterSequence, pageSize, agentId);
         } else {
             long cursor = beforeSequence == null ? room.nextSequenceNo() + 1 : beforeSequence;
-            queried = messageRepository.findBeforeSequence(room.id(), cursor, pageSize);
+            queried = messageRepository.findBeforeSequence(room.id(), cursor, pageSize, agentId);
         }
         boolean hasMore = queried.size() > pageSize;
         List<ChatMessage> items = new ArrayList<>(queried.subList(0, Math.min(pageSize, queried.size())));
@@ -226,6 +235,7 @@ public class ChatMessageService {
                                                          Instant now) {
         requirePositiveUser(userId);
         UserAccount user = requireActiveUser(userId);
+        long agentId = requireMachineAgentId(userId);
         String clientId = contentPolicy.requireClientMessageId(clientMessageId);
         String normalizedContent = contentPolicy.normalize(content);
         ChatRoom room = requireRoomForUpdate(roomCode);
@@ -246,7 +256,7 @@ public class ChatMessageService {
         if (command.isPresent()) {
             ChatMessage message = messageRepository.insertUserMessage(room.id(),
                     roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo()), userId,
-                    user.displayName(), clientId, normalizedContent, now);
+                    user.displayName(), clientId, agentId, normalizedContent, now);
             publishUserMessage(message, now);
             return processCommand(userId, roomCode, clientId, user, message, command.get(), now);
         }
@@ -277,7 +287,7 @@ public class ChatMessageService {
             long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
             if (placedBets.isEmpty()) {
                 ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
-                        user.displayName(), clientId, normalizedContent, now);
+                        user.displayName(), clientId, agentId, normalizedContent, now);
                 publishUserMessage(message, now);
                 publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
                         "BET_LIMIT_REJECTED", "@" + user.displayName() + "  下注未成功"
@@ -287,7 +297,8 @@ public class ChatMessageService {
             DemoGameService.BetView firstBet = placedBets.get(0);
             String betPayload = betPayload(placedBets);
             ChatMessage message = messageRepository.insertUserBetMessage(room.id(), sequence, userId,
-                    user.displayName(), clientId, firstBet.issueNumber(), normalizedContent, betPayload, now);
+                    user.displayName(), clientId, firstBet.issueNumber(), normalizedContent, betPayload,
+                    agentId, now);
             publishUserMessage(message, now);
             if (walletService == null || robotRepository == null) {
                 throw new IllegalStateException("下注反馈服务未配置");
@@ -304,7 +315,7 @@ public class ChatMessageService {
         }
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
-                user.displayName(), clientId, normalizedContent, now);
+                user.displayName(), clientId, agentId, normalizedContent, now);
         publishUserMessage(message, now);
         publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
                 "INVALID_COMMAND", "@" + user.displayName() + ", 指令格式不正确!", now);
@@ -327,7 +338,10 @@ public class ChatMessageService {
             case DAILY_SUMMARY -> {
                 VirtualWallet balance = currentBalance(userId);
                 DayRange range = currentBusinessDay(now);
-                GameDataRepository.BetDayStatistics statistics = gameDataRepository.findBetDayStatistics(
+                if (playerBetSummaryRepository == null) {
+                    throw new IllegalStateException("玩家流水汇总查询未配置");
+                }
+                GameDataRepository.BetDayStatistics statistics = playerBetSummaryRepository.findBetDayStatistics(
                         balance.accountId(), range.fromInclusive(), range.toExclusive());
                 long issues = gameDataRepository.countBetIssues(balance.accountId(),
                         range.fromInclusive(), range.toExclusive());
@@ -425,6 +439,7 @@ public class ChatMessageService {
                                                          BusinessException rejection) {
         requirePositiveUser(userId);
         UserAccount user = requireActiveUser(userId);
+        long agentId = requireMachineAgentId(userId);
         String clientId = contentPolicy.requireClientMessageId(clientMessageId);
         String normalizedContent = contentPolicy.normalize(content);
         ChatRoom room = requireRoomForUpdate(roomCode);
@@ -440,7 +455,7 @@ public class ChatMessageService {
         }
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
-                user.displayName(), clientId, normalizedContent, now);
+                user.displayName(), clientId, agentId, normalizedContent, now);
         publishUserMessage(message, now);
         publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
                 "BET_REJECTED", rejectedFeedback(user.displayName(), rejection), now);
@@ -460,9 +475,12 @@ public class ChatMessageService {
         }
         ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
                 .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
+        long agentId = messageRepository.findMachineAgentId(sourceMessageId)
+                .orElseThrow(() -> new IllegalStateException("聊天反馈来源消息缺少机器归属"));
         publishRobotMessage(robot.id(), robot.displayName(), roomCode, issueNumber,
                 feedbackIdempotencyKey(roomCode, sourceMessageId, clientMessageId), content,
-                feedbackPayload(sourceMessageId, feedbackType), createdAt);
+                feedbackPayload(sourceMessageId, feedbackType), ChatMessageVisibility.MACHINE,
+                agentId, createdAt);
     }
 
     private String feedbackPayload(long sourceMessageId, String feedbackType) {
@@ -646,7 +664,8 @@ public class ChatMessageService {
     @Transactional
     public ChatMessage publishRobotMessage(long robotId, String robotName, String roomCode,
                                            String issueNumber, String idempotencyKey, String content,
-                                           String payloadJson, Instant createdAt) {
+                                           String payloadJson, ChatMessageVisibility visibility,
+                                           Long agentId, Instant createdAt) {
         requirePositiveRobot(robotId);
         String normalizedRobotName = requireRobotName(robotName);
         String normalizedRoomCode = requireRoomCode(roomCode);
@@ -656,6 +675,7 @@ public class ChatMessageService {
                 "CHAT_ROBOT_IDEMPOTENCY_KEY_INVALID", "机器人幂等键无效", 128);
         String normalizedContent = contentPolicy.normalize(content);
         String normalizedPayloadJson = requirePayloadJson(payloadJson);
+        requireVisibility(visibility, agentId);
         if (createdAt == null) {
             throw BusinessException.badRequest("CHAT_ROBOT_TIME_INVALID", "机器人消息时间不能为空");
         }
@@ -663,20 +683,22 @@ public class ChatMessageService {
         Optional<ChatMessage> existing = messageRepository.findByIdempotencyKey(normalizedIdempotencyKey);
         if (existing.isPresent()) {
             return requireSameRobotMessage(existing.get(), robotId, normalizedRobotName,
-                    normalizedRoomCode, normalizedIssueNumber, normalizedContent, normalizedPayloadJson);
+                    normalizedRoomCode, normalizedIssueNumber, normalizedContent, normalizedPayloadJson,
+                    visibility, agentId);
         }
 
         ChatRoom room = requireRoomForUpdate(normalizedRoomCode);
         existing = messageRepository.findByIdempotencyKey(normalizedIdempotencyKey);
         if (existing.isPresent()) {
             return requireSameRobotMessage(existing.get(), robotId, normalizedRobotName,
-                    normalizedRoomCode, normalizedIssueNumber, normalizedContent, normalizedPayloadJson);
+                    normalizedRoomCode, normalizedIssueNumber, normalizedContent, normalizedPayloadJson,
+                    visibility, agentId);
         }
 
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertRobotMessage(room.id(), sequence, robotId,
                 normalizedRobotName, normalizedIssueNumber, normalizedIdempotencyKey,
-                normalizedContent, normalizedPayloadJson, createdAt);
+                normalizedContent, normalizedPayloadJson, visibility, agentId, createdAt);
         outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), createdAt);
         eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
         return message;
@@ -692,7 +714,7 @@ public class ChatMessageService {
      */
     @Transactional
     public ChatMessage publishSystemMessage(String roomCode, String issueNumber, String idempotencyKey,
-                                           String content, Instant createdAt) {
+                                           String content, long agentId, Instant createdAt) {
         String normalizedRoomCode = requireRoomCode(roomCode);
         String normalizedIssueNumber = requireRobotText(issueNumber, "CHAT_SYSTEM_ISSUE_INVALID",
                 "系统消息期号无效", 64);
@@ -700,15 +722,26 @@ public class ChatMessageService {
                 "系统消息幂等键无效", 128);
         String normalizedContent = contentPolicy.normalize(content);
         Instant now = createdAt == null ? Instant.now() : createdAt;
+        requireVisibility(ChatMessageVisibility.MACHINE, agentId);
 
         Optional<ChatMessage> existing = messageRepository.findByIdempotencyKey(normalizedKey);
         if (existing.isPresent()) {
-            return existing.get();
+            ChatMessage prior = existing.get();
+            if (prior.senderType() != com.xupan.server.chat.domain.ChatSenderType.SYSTEM
+                    || prior.visibility() != ChatMessageVisibility.MACHINE
+                    || !Objects.equals(prior.agentId(), agentId)
+                    || !Objects.equals(prior.roomCode(), normalizedRoomCode)
+                    || !Objects.equals(prior.issueNumber(), normalizedIssueNumber)
+                    || !Objects.equals(prior.content(), normalizedContent)) {
+                throw BusinessException.conflict("CHAT_SYSTEM_IDEMPOTENCY_CONFLICT",
+                        "系统消息幂等键对应的消息参数不一致");
+            }
+            return prior;
         }
         ChatRoom room = requireRoomForUpdate(normalizedRoomCode);
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertSystemMessage(room.id(), sequence, normalizedIssueNumber,
-                normalizedKey, normalizedContent, "{}", now);
+                normalizedKey, normalizedContent, "{}", agentId, now);
         outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
         eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
         return message;
@@ -719,12 +752,15 @@ public class ChatMessageService {
             throw new IllegalArgumentException("结算反馈参数或服务未配置");
         }
         var wallet = walletService.getByAccountId(event.accountId());
+        long agentId = userRepository.findPlayerAgentIdByAccountId(event.accountId())
+                .orElseThrow(() -> new IllegalStateException("结算反馈玩家缺少机器归属"));
         ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
                 .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
         String content = settlementFeedback(wallet.displayName(), wallet.balance(), event);
         String key = "CHAT-SETTLEMENT-" + event.betId() + "-" + event.status().name();
         publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE, event.issueNumber(), key,
-                content, settlementFeedbackPayload(event), Instant.now());
+                content, settlementFeedbackPayload(event), ChatMessageVisibility.MACHINE,
+                agentId, Instant.now());
     }
 
     @Transactional
@@ -741,11 +777,35 @@ public class ChatMessageService {
         readCursorRepository.saveReadSequence(room.id(), userId, lastReadSequence, now);
     }
 
+    public Long machineAgentId(long userId) {
+        requirePositiveUser(userId);
+        requireActiveUser(userId);
+        return userRepository.findPlayerAgentId(userId).orElse(null);
+    }
+
+    public List<Long> activeMachineIds() {
+        return messageRepository.findActiveMachineIds();
+    }
+
+    private long requireMachineAgentId(long userId) {
+        return userRepository.findPlayerAgentId(userId).orElseThrow(() ->
+                BusinessException.forbidden("CHAT_MACHINE_SCOPE_REQUIRED", "当前账号没有有效机器归属"));
+    }
+
+    private static void requireVisibility(ChatMessageVisibility visibility, Long agentId) {
+        if (visibility == null
+                || (visibility == ChatMessageVisibility.PUBLIC && agentId != null)
+                || (visibility == ChatMessageVisibility.MACHINE && (agentId == null || agentId <= 0))) {
+            throw BusinessException.badRequest("CHAT_VISIBILITY_INVALID", "聊天消息可见范围无效");
+        }
+    }
+
     private String outboxPayload(ChatMessage message) {
         try {
             return objectMapper.writeValueAsString(new OutboxMessage(message.id(), message.roomCode(),
                     message.sequenceNo(), message.messageType().name(), message.senderType().name(),
-                    message.senderId(), message.senderName(), message.content(), message.createdAt().toString()));
+                    message.senderId(), message.senderName(), message.content(), message.createdAt().toString(),
+                    message.visibility().name(), message.agentId()));
         } catch (JacksonException exception) {
             throw new IllegalStateException("生成聊天 outbox 事件失败", exception);
         }
@@ -817,7 +877,8 @@ public class ChatMessageService {
 
     private ChatMessage requireSameRobotMessage(ChatMessage existing, long robotId, String robotName,
                                                 String roomCode, String issueNumber, String content,
-                                                String payloadJson) {
+                                                String payloadJson, ChatMessageVisibility visibility,
+                                                Long agentId) {
         if (existing.messageType() != com.xupan.server.chat.domain.ChatMessageType.ROBOT
                 || existing.senderType() != com.xupan.server.chat.domain.ChatSenderType.ROBOT
                 || !Objects.equals(existing.senderId(), robotId)
@@ -825,6 +886,7 @@ public class ChatMessageService {
                 || !Objects.equals(existing.roomCode(), roomCode)
                 || !Objects.equals(existing.issueNumber(), issueNumber)
                 || !Objects.equals(existing.content(), content)
+                || existing.visibility() != visibility || !Objects.equals(existing.agentId(), agentId)
                 || !sameJson(existing.payloadJson(), payloadJson)) {
             throw BusinessException.conflict("CHAT_ROBOT_IDEMPOTENCY_CONFLICT",
                     "机器人幂等键对应的消息参数不一致");
@@ -863,7 +925,8 @@ public class ChatMessageService {
 
     private record OutboxMessage(long messageId, String roomCode, long sequenceNo,
                                  String messageType, String senderType, Long senderId,
-                                 String senderName, String content, String createdAt) {
+                                 String senderName, String content, String createdAt,
+                                 String visibility, Long agentId) {
     }
 
     private record BetMessagePayload(String betId, String issueNumber, int ballNumber,

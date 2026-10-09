@@ -351,19 +351,19 @@ public class VirtualWalletRepository {
         }
         return jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) AS total_bet_count,
-                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN 1 ELSE 0 END), 0)
+                       COALESCE(SUM(CASE WHEN settlement_status NOT IN ('PENDING', 'CANCELED') THEN 1 ELSE 0 END), 0)
                            AS settled_bet_count,
                        COALESCE(SUM(CASE WHEN settlement_status = 'PENDING' THEN 1 ELSE 0 END), 0)
                            AS pending_bet_count,
                        COALESCE(SUM(stake), 0) AS total_stake,
-                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN stake ELSE 0 END), 0)
+                       COALESCE(SUM(CASE WHEN settlement_status NOT IN ('PENDING', 'CANCELED') THEN stake ELSE 0 END), 0)
                            AS settled_stake,
                        COALESCE(SUM(CASE WHEN settlement_status = 'PENDING' THEN stake ELSE 0 END), 0)
                            AS pending_stake,
-                       COALESCE(SUM(CASE WHEN settlement_status <> 'PENDING' THEN net_profit ELSE 0 END), 0)
+                       COALESCE(SUM(CASE WHEN settlement_status NOT IN ('PENDING', 'CANCELED') THEN net_profit ELSE 0 END), 0)
                            AS net_profit
                   FROM game_bet
-                 WHERE user_id = ?
+                 WHERE user_id = ? AND settlement_status <> 'CANCELED'
                 """, (rs, rowNum) -> new WalletStatistics(
                 rs.getLong("total_bet_count"), rs.getLong("settled_bet_count"),
                 rs.getLong("pending_bet_count"), rs.getBigDecimal("total_stake"),

@@ -5,6 +5,7 @@ import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessageStatus;
 import com.xupan.server.chat.domain.ChatMessageType;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.domain.ChatRoom;
 import com.xupan.server.chat.domain.ChatSenderType;
 import com.xupan.server.chat.repository.ChatMessageRepository;
@@ -82,14 +83,14 @@ class ChatRobotMessageServiceUnitTest {
         when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
         when(roomRepository.allocateNextSequence(1L, 8L)).thenReturn(9L);
         when(messageRepository.insertRobotMessage(1L, 9L, ROBOT_ID, "开奖助手", "3000000", KEY,
-                CONTENT, PAYLOAD, NOW)).thenReturn(message);
+                CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW)).thenReturn(message);
 
         ChatMessage result = service.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
-                KEY, CONTENT, PAYLOAD, NOW);
+                KEY, CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW);
 
         assertThat(result).isEqualTo(message);
         verify(messageRepository).insertRobotMessage(1L, 9L, ROBOT_ID, "开奖助手", "3000000", KEY,
-                CONTENT, PAYLOAD, NOW);
+                CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW);
         ArgumentCaptor<String> outboxPayload = ArgumentCaptor.forClass(String.class);
         verify(outboxRepository).insertMessageCreatedOutbox(eq(21L), outboxPayload.capture(), eq(NOW));
         assertThat(outboxPayload.getValue()).contains("\"messageType\":\"ROBOT\"",
@@ -105,10 +106,10 @@ class ChatRobotMessageServiceUnitTest {
         when(messageRepository.findByIdempotencyKey(KEY)).thenReturn(Optional.of(existing));
 
         assertThat(service.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
-                KEY, CONTENT, PAYLOAD, NOW)).isSameAs(existing);
+                KEY, CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW)).isSameAs(existing);
 
         verify(messageRepository, never()).insertRobotMessage(anyLong(), anyLong(), anyLong(),
-                anyString(), anyString(), anyString(), anyString(), anyString(), any());
+                anyString(), anyString(), anyString(), anyString(), anyString(), any(), any(), any());
         verify(roomRepository, never()).findByCodeForUpdate(anyString());
         verify(roomRepository, never()).allocateNextSequence(anyLong(), anyLong());
         verify(outboxRepository, never()).insertMessageCreatedOutbox(anyLong(), anyString(), any());
@@ -120,7 +121,7 @@ class ChatRobotMessageServiceUnitTest {
         when(messageRepository.findByIdempotencyKey(KEY)).thenReturn(Optional.of(robotMessage(21L, 9L)));
 
         assertThatThrownBy(() -> service.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
-                KEY, "不同正文", PAYLOAD, NOW))
+                KEY, "不同正文", PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CHAT_ROBOT_IDEMPOTENCY_CONFLICT");
         verify(roomRepository, never()).findByCodeForUpdate(anyString());
@@ -130,15 +131,15 @@ class ChatRobotMessageServiceUnitTest {
     @Test
     void validatesRobotMessageWithoutInvokingUserAuthorization() {
         assertThatThrownBy(() -> service.publishRobotMessage(0L, "开奖助手", "main", "3000000",
-                KEY, CONTENT, PAYLOAD, NOW))
+                KEY, CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CHAT_ROBOT_INVALID");
         assertThatThrownBy(() -> service.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
-                KEY, "<b>不允许</b>", PAYLOAD, NOW))
+                KEY, "<b>不允许</b>", PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CHAT_MESSAGE_HTML_FORBIDDEN");
         assertThatThrownBy(() -> service.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
-                KEY, CONTENT, "not-json", NOW))
+                KEY, CONTENT, "not-json", ChatMessageVisibility.PUBLIC, null, NOW))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CHAT_ROBOT_PAYLOAD_INVALID");
 

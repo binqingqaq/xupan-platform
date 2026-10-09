@@ -259,7 +259,9 @@ onMounted(() => { void load() })
       <div class="agent-console-operations-head"><h2>运营数据</h2><label>业务日<input v-model="operationsDay" type="date" @change="load" /></label></div>
       <div class="agent-console-operation-grid">
         <article><span>下注笔数</span><strong>{{ operations.betCount }}</strong></article>
-        <article><span>总流水</span><strong>{{ operations.turnover.toFixed(2) }}</strong></article>
+        <article><span>{{ operations.rebateMode === 'DOUBLE' ? '双边流水' : '单边流水' }}</span><strong>{{ operations.turnover.toFixed(2) }}</strong></article>
+        <article><span>单/双边流水</span><strong>{{ operations.singleFlow.toFixed(2) }} / {{ operations.doubleFlow.toFixed(2) }}</strong></article>
+        <article><span>总投注额</span><strong>{{ operations.grossTurnover.toFixed(2) }}</strong></article>
         <article><span>净盈亏</span><strong>{{ operations.netProfit.toFixed(2) }}</strong></article>
         <article><span>待结算</span><strong>{{ operations.pendingBetCount }}</strong></article>
         <article><span>活跃玩家</span><strong>{{ operations.activePlayerCount }}</strong></article>

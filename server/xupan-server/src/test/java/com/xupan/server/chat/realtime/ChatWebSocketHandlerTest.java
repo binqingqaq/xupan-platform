@@ -54,6 +54,7 @@ class ChatWebSocketHandlerTest {
         org.mockito.Mockito.doReturn(java.util.List.of(
                 new SimpleGrantedAuthority("PERM_CHAT_MESSAGE_SEND"))).when(user).getAuthorities();
         when(userDetailsService.loadUserById(7L)).thenReturn(user);
+        when(messageService.machineAgentId(7L)).thenReturn(101L);
         when(accessService.check(any(ChatConnection.class), any(Instant.class)))
                 .thenReturn(ChatConnectionAccessService.AccessCheck.allowed(user));
         attributes.put(ChatWebSocketHandshakeInterceptor.USER_ATTRIBUTE, user);
@@ -61,6 +62,15 @@ class ChatWebSocketHandlerTest {
         attributes.put(ChatWebSocketHandshakeInterceptor.ROOM_CODE_ATTRIBUTE, "main");
         when(session.getAttributes()).thenReturn(attributes);
         handler.afterConnectionEstablished(session);
+    }
+
+    @Test
+    void connectionMachineScopeComesFromAuthenticatedAccountResolution() {
+        ChatConnection connection = (ChatConnection) session.getAttributes()
+                .get(ChatWebSocketHandshakeInterceptor.CONNECTION_ATTRIBUTE);
+
+        assertThat(connection.agentId()).isEqualTo(101L);
+        verify(messageService).machineAgentId(7L);
     }
 
     @Test

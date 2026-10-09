@@ -177,7 +177,11 @@ class AgentControllerTest {
                         .header("Authorization", bearer(agentToken)).param("day", "2026-10-02"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.betCount").value(2))
-                .andExpect(jsonPath("$.turnover").value(30.00))
+                .andExpect(jsonPath("$.grossTurnover").value(30.00))
+                .andExpect(jsonPath("$.singleFlow").value(5.00))
+                .andExpect(jsonPath("$.doubleFlow").value(10.00))
+                .andExpect(jsonPath("$.turnover").value(5.00))
+                .andExpect(jsonPath("$.rebateMode").value("SINGLE"))
                 .andExpect(jsonPath("$.netProfit").value(5.00))
                 .andExpect(jsonPath("$.pendingBetCount").value(1))
                 .andExpect(jsonPath("$.normalTurnover").value(30.00));
@@ -194,6 +198,72 @@ class AgentControllerTest {
         mockMvc.perform(get("/api/admin/agents").header("Authorization", bearer(agentToken)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
+    }
+
+    @Test
+    void operationsUsesBy220FlowsForNormalAndBotAndConfiguredDisplayMode() throws Exception {
+        String agentToken = login(AGENT_USER, AGENT_PASSWORD);
+        jdbcTemplate.update("UPDATE agent SET bot_count = 1 WHERE id = ?", agentId);
+        MvcResult normal = mockMvc.perform(post("/api/agent/players/normal")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"displayName\":\"流水普通玩家\"}"))
+                .andExpect(status().isCreated()).andReturn();
+        long normalUserId = ((Number) JsonPath.read(normal.getResponse().getContentAsString(), "$.userId")).longValue();
+        MvcResult bot = mockMvc.perform(post("/api/agent/players/bot")
+                        .header("Authorization", bearer(agentToken)).contentType("application/json")
+                        .content("{\"userCode\":\"agent-controller-flow-bot\",\"displayName\":\"流水托\"}"))
+                .andExpect(status().isCreated()).andReturn();
+        long botUserId = ((Number) JsonPath.read(bot.getResponse().getContentAsString(), "$.userId")).longValue();
+        long normalAccountId = accountId(normalUserId);
+        long botAccountId = accountId(botUserId);
+
+        insertOperationsBet(normalAccountId, "OPS-PENDING", "FAN", "1", "11.00", "3.850", null, "PENDING");
+        insertOperationsBet(normalAccountId, "OPS-WIN", "FAN", "1", "10.00", "3.850", "28.50", "WIN");
+        insertOperationsBet(normalAccountId, "OPS-LOSE", "FAN", "2", "12.00", "3.850", "-12.00", "LOSE");
+        insertOperationsBet(normalAccountId, "OPS-DRAW", "POSITIVE", "1", "7.00", "1.950", "0.00", "DRAW");
+        insertOperationsBet(normalAccountId, "OPS-SPECIAL", "SPECIAL", "7", "2.00", "18.000", "34.00", "WIN");
+        insertOperationsBet(normalAccountId, "OPS-CANCELED", "FAN", "3", "100.00", "3.850", "0.00", "CANCELED");
+        insertOperationsBet(botAccountId, "OPS-BOT-WIN", "FAN", "1", "5.00", "3.850", "14.25", "WIN");
+
+        mockMvc.perform(get("/api/agent/operations").header("Authorization", bearer(agentToken))
+                        .param("day", "2026-10-02"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.betCount").value(6))
+                .andExpect(jsonPath("$.grossTurnover").value(47.00))
+                .andExpect(jsonPath("$.singleFlow").value(78.75))
+                .andExpect(jsonPath("$.doubleFlow").value(29.00))
+                .andExpect(jsonPath("$.turnover").value(78.75))
+                .andExpect(jsonPath("$.rebateMode").value("SINGLE"))
+                .andExpect(jsonPath("$.netProfit").value(64.75))
+                .andExpect(jsonPath("$.pendingBetCount").value(1))
+                .andExpect(jsonPath("$.normalTurnover").value(42.00))
+                .andExpect(jsonPath("$.botTurnover").value(5.00));
+
+        jdbcTemplate.update("UPDATE agent SET rebate_mode = 'DOUBLE' WHERE id = ?", agentId);
+        mockMvc.perform(get("/api/agent/operations").header("Authorization", bearer(agentToken))
+                        .param("day", "2026-10-02"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.singleFlow").value(78.75))
+                .andExpect(jsonPath("$.doubleFlow").value(29.00))
+                .andExpect(jsonPath("$.turnover").value(29.00))
+                .andExpect(jsonPath("$.rebateMode").value("DOUBLE"));
+    }
+
+    private long accountId(long userId) {
+        return jdbcTemplate.queryForObject("SELECT id FROM demo_user_account WHERE sys_user_id = ?",
+                Long.class, userId);
+    }
+
+    private void insertOperationsBet(long accountId, String code, String playType, String parameters,
+                                    String stake, String odds, String netProfit, String status) {
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                     stake, odds_snapshot, settlement_status, net_profit, created_at)
+                VALUES ('AU8', ?, ?, 'OPS-ISSUE', 1, ?, ?, ?, ?, ?, ?, '2026-10-02 12:00:00')
+                """, accountId, code, playType, parameters, new java.math.BigDecimal(stake),
+                new java.math.BigDecimal(odds), status,
+                netProfit == null ? null : new java.math.BigDecimal(netProfit));
     }
 
     @Test
@@ -240,7 +310,13 @@ class AgentControllerTest {
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE UPPER(agent_code) IN ('AGENT_CONTROLLER'))");
+        jdbcTemplate.update("DELETE FROM sys_user WHERE username LIKE 'agent-controller-%' AND id NOT IN "
+                + "(SELECT sys_user_id FROM demo_user_account)");
         jdbcTemplate.update("DELETE FROM player_access_link WHERE user_id IN "
+                + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
+        jdbcTemplate.update("DELETE FROM player_access_link WHERE created_by IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%')");
         jdbcTemplate.update("DELETE FROM agent_ledger WHERE agent_id IN (SELECT id FROM agent WHERE UPPER(agent_code) IN ('AGENT_CONTROLLER'))");
         jdbcTemplate.update("DELETE FROM agent_ledger WHERE group_id IN (SELECT id FROM agent_group WHERE group_code = 'CONTROLLER_GROUP')");

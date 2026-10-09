@@ -1,6 +1,7 @@
 package com.xupan.server.robot.service;
 
 import com.xupan.server.chat.domain.ChatMessage;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
@@ -195,7 +196,8 @@ public class RobotDispatchService {
                 String payload = payload(dispatch, robot, template, event);
                 message = chatMessageService.publishRobotMessage(robot.id(),
                         robot.displayName(), ROOM_CODE, event.issueNumber(),
-                        idempotency.idempotencyKey(event.id()), content, payload, now);
+                        idempotency.idempotencyKey(event.id()), content, payload,
+                        ChatMessageVisibility.PUBLIC, null, now);
             }
             if (dispatchRepository.markPublished(dispatch.id(), message.id(), now) != 1) {
                 throw new IllegalStateException("机器人投递状态更新失败");
@@ -217,14 +219,18 @@ public class RobotDispatchService {
                                                      RobotDispatchRepository.UnscheduledGameEvent event,
                                                      Instant now) {
         String stopContent = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
-        chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+        ChatMessage publicAnnouncement = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
                 event.issueNumber(), idempotency.idempotencyKey(event.id()), stopContent,
-                payload(dispatch, robot, template, event), now);
+                payload(dispatch, robot, template, event), ChatMessageVisibility.PUBLIC, null, now);
 
         String auditKey = idempotency.idempotencyKey(event.id()) + "-audit";
-        return chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
-                event.issueNumber(), auditKey, bettingAuditText(event.issueNumber()),
-                payload(dispatch, robot, template, event), now);
+        ChatMessage latest = publicAnnouncement;
+        for (Long agentId : chatMessageService.activeMachineIds()) {
+            latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                    event.issueNumber(), machineKey(auditKey, agentId), bettingAuditText(event.issueNumber(), agentId),
+                    payload(dispatch, robot, template, event), ChatMessageVisibility.MACHINE, agentId, now);
+        }
+        return latest;
     }
 
     /**
@@ -235,10 +241,10 @@ public class RobotDispatchService {
      * {@code 核对列表:(...)}。此前 xupan 用 {@code issueNumber.hashCode()} 生成一个四位占位数字，
      * 界面上显示的是编造值，已改为真实合计。</p>
      */
-    private String bettingAuditText(String issueNumber) {
+    private String bettingAuditText(String issueNumber, long agentId) {
         Map<String, List<String>> grouped = new LinkedHashMap<>();
         BigDecimal total = BigDecimal.ZERO;
-        for (GameDataRepository.BetAuditRecord bet : gameDataRepository.findBetAuditByIssue(issueNumber)) {
+        for (GameDataRepository.BetAuditRecord bet : gameDataRepository.findBetAuditByIssueAndAgent(issueNumber, agentId)) {
             grouped.computeIfAbsent(normalizeDisplayName(bet.displayName()), ignored -> new ArrayList<>())
                     .add(formatBetText(bet.playType(), bet.parameters(), bet.stake()));
             if (bet.stake() != null) {
@@ -345,23 +351,33 @@ public class RobotDispatchService {
         ChatMessage latest = null;
         for (RobotDrawComponentConfig config : drawComponentRepository.findEnabledOrdered(robot.id())) {
             String component = config.component().name();
-            String componentPayload = structuredPayload(component, event.issueNumber(), issue);
-            latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
-                    event.issueNumber(), idempotency.idempotencyKey(event.id(), config.component()),
-                    content, componentPayload, now);
+            String baseKey = idempotency.idempotencyKey(event.id(), config.component());
+            if (config.component() == RobotDrawComponent.WINNER_LIST) {
+                for (Long agentId : chatMessageService.activeMachineIds()) {
+                    String componentPayload = structuredPayload(component, event.issueNumber(), issue, agentId);
+                    latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                            event.issueNumber(), machineKey(baseKey, agentId), content, componentPayload,
+                            ChatMessageVisibility.MACHINE, agentId, now);
+                }
+            } else {
+                String componentPayload = structuredPayload(component, event.issueNumber(), issue, null);
+                latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                        event.issueNumber(), baseKey, content, componentPayload,
+                        ChatMessageVisibility.PUBLIC, null, now);
+            }
         }
         return Optional.ofNullable(latest);
     }
 
     private String structuredPayload(String component, String issueNumber,
-                                     GameDataRepository.IssueRecord currentIssue) {
+                                     GameDataRepository.IssueRecord currentIssue, Long agentId) {
         RobotDrawComponent checkedComponent = RobotDrawComponent.valueOf(component);
         Object data = switch (checkedComponent) {
             case DRAW_SUMMARY -> new DrawSummaryData(currentIssue.numbers(), currentIssue.settledAt());
             case DRAW_HISTORY -> new DrawHistoryData(
                     historyItems(gameDataRepository.findSettledIssues(15)),
                     historyItems(gameDataRepository.findLatestSettledBlock(60)));
-            case WINNER_LIST -> winnerData(issueNumber, currentIssue);
+            case WINNER_LIST -> winnerData(issueNumber, currentIssue, agentId);
         };
         try {
             return objectMapper.writeValueAsString(new StructuredPayload(
@@ -371,18 +387,23 @@ public class RobotDispatchService {
         }
     }
 
-    private WinnerListData winnerData(String issueNumber, GameDataRepository.IssueRecord issue) {
+    private WinnerListData winnerData(String issueNumber, GameDataRepository.IssueRecord issue, Long agentId) {
         List<WinnerItem> items = new ArrayList<>();
-        Map<Long, GameDataRepository.BetRecord> betsById = gameDataRepository.findBetsByIssue(issueNumber)
-                .stream().collect(Collectors.toMap(GameDataRepository.BetRecord::id, value -> value));
-        for (GameDataRepository.WinnerRecord winner : gameDataRepository.findWinningBets(issueNumber)) {
-            GameDataRepository.BetRecord bet = betsById.get(winner.betId());
-            String betText = bet == null ? winner.playType() : formatBetText(bet.playType(), bet.parameters(), bet.stake());
+        if (agentId == null) {
+            throw BusinessException.badRequest("ROBOT_DRAW_SCOPE_INVALID", "中奖名单缺少机器范围");
+        }
+        for (GameDataRepository.WinnerBetAuditRecord winner :
+                gameDataRepository.findWinningBetAuditByIssueAndAgent(issueNumber, agentId)) {
+            String betText = formatBetText(winner.playType(), winner.parameters(), winner.stake());
             items.add(new WinnerItem(normalizeDisplayName(winner.displayName()), winner.ballNumber(),
-                    winner.playType(), betText, winner.stake(), winner.netProfit()));
+                    winner.playType().name(), betText, winner.stake(), winner.netProfit()));
         }
         return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null,
                 issue.numbers(), issue.settledAt());
+    }
+
+    private static String machineKey(String baseKey, long agentId) {
+        return baseKey + "-machine-" + agentId;
     }
 
     private static List<DrawHistoryItem> historyItems(List<GameDataRepository.IssueRecord> issues) {

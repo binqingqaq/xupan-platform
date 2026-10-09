@@ -21,7 +21,7 @@ class RobotMigrationTest {
     @Test
     void appliesRobotMigrationsAndSeedsDefaultConfiguration() {
         // 最新迁移版本：V75（会话入口维度 entry）+ V76（后台入口权限收敛）落地后为 76。
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("77");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("78");
         assertThat(tableExists("CHAT_ROBOT")).isTrue();
         assertThat(tableExists("CHAT_ROBOT_TEMPLATE")).isTrue();
         assertThat(tableExists("CHAT_ROBOT_DISPATCH")).isTrue();

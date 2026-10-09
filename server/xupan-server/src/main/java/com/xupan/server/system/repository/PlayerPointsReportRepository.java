@@ -81,6 +81,7 @@ public class PlayerPointsReportRepository {
                            AND a.player_kind = ?
                            AND u.status <> 'DELETED'
                            AND a.status <> 'DELETED'
+                           AND b.settlement_status <> 'CANCELED'
                            AND b.created_at >= ? AND b.created_at < ?
                 """ + scope.agentIdCondition() + """
                   ) x

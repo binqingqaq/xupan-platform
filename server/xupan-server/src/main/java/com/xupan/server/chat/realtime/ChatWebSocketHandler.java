@@ -63,8 +63,9 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 AuthenticatedUser.class);
         String sessionId = attribute(session, ChatWebSocketHandshakeInterceptor.SESSION_ID_ATTRIBUTE, String.class);
         String roomCode = attribute(session, ChatWebSocketHandshakeInterceptor.ROOM_CODE_ATTRIBUTE, String.class);
+        Long agentId = chatMessageService.machineAgentId(user.getUserId());
         ChatConnection connection = new ChatConnection(UUID.randomUUID().toString(), user.getUserId(),
-                sessionId, roomCode, session, Instant.now());
+                sessionId, roomCode, agentId, session, Instant.now());
         try {
             connectionRegistry.register(connection);
             session.getAttributes().put(ChatWebSocketHandshakeInterceptor.CONNECTION_ATTRIBUTE, connection);

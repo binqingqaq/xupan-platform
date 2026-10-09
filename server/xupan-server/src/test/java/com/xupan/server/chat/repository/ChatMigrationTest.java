@@ -21,12 +21,13 @@ class ChatMigrationTest {
 
     @Test
     void chatMigrationsCreateRequiredTablesAndMainRoom() {
-        // 最新迁移版本：V75（会话入口维度 entry）+ V76（后台入口权限收敛）落地后为 76。
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("77");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("78");
         assertThat(tableCount("chat_room")).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_room WHERE room_code = 'main'", Integer.class)).isEqualTo(1);
         assertThat(columnCount("chat_message", "payload_json")).isEqualTo(1);
+        assertThat(columnCount("chat_message", "visibility")).isEqualTo(1);
+        assertThat(columnCount("chat_message", "agent_id")).isEqualTo(1);
         assertThat(constraintCount("chat_message", "uk_chat_message_room_sequence")).isEqualTo(1);
         assertThat(constraintCount("chat_message", "uk_chat_message_client_key")).isEqualTo(1);
         assertThat(constraintCount("chat_outbox", "uk_chat_outbox_message_event")).isEqualTo(1);

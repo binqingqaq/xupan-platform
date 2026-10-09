@@ -30,6 +30,7 @@ class ChatControllerTest {
     private static final String NO_PERMISSION = "chat-controller-no-permission";
     private static final String PASSWORD = "ChatPassword123";
     private static final String NO_CHAT_ROLE = "CHAT_TEST_NONE";
+    private static final String MACHINE_CODE = "CHAT_CONTROLLER_MACHINE";
 
     @Autowired
     private MockMvc mockMvc;
@@ -45,6 +46,7 @@ class ChatControllerTest {
         clean();
         insertUser(USER_A, "聊天室用户甲", "USER");
         insertUser(USER_B, "聊天室用户乙", "USER");
+        insertChatMachine();
         jdbcTemplate.update("INSERT INTO sys_role (role_code, display_name) VALUES (?, ?)",
                 NO_CHAT_ROLE, "聊天测试无权限角色");
         insertUser(NO_PERMISSION, "无聊天室权限用户", NO_CHAT_ROLE);
@@ -191,6 +193,24 @@ class ChatControllerTest {
         assertThat(userRepository.assignRole(userId, roleCode)).isEqualTo(1);
     }
 
+    private void insertChatMachine() {
+        jdbcTemplate.update("""
+                INSERT INTO agent (agent_code, display_name, system_owned, status)
+                VALUES (?, '聊天室测试机器', TRUE, 'ACTIVE')
+                """, MACHINE_CODE);
+        Long agentId = jdbcTemplate.queryForObject(
+                "SELECT id FROM agent WHERE agent_code = ?", Long.class, MACHINE_CODE);
+        jdbcTemplate.update("INSERT INTO agent_game (agent_id, game_code) VALUES (?, 'AU8')", agentId);
+        for (String username : new String[]{USER_A, USER_B}) {
+            Long userId = userId(username);
+            jdbcTemplate.update("""
+                    INSERT INTO demo_user_account
+                        (sys_user_id, user_code, member_code, display_name, balance, status, agent_id)
+                    VALUES (?, ?, ?, ?, 1000.00, 'ACTIVE', ?)
+                    """, userId, username, "member-" + username, username, agentId);
+        }
+    }
+
     private long userId(String username) {
         return jdbcTemplate.queryForObject("SELECT id FROM sys_user WHERE username = ?", Long.class, username);
     }
@@ -201,10 +221,18 @@ class ChatControllerTest {
         jdbcTemplate.update("DELETE FROM chat_user_mute WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", USER_A, USER_B, NO_PERMISSION);
         jdbcTemplate.update("DELETE FROM chat_outbox WHERE message_id IN "
-                + "(SELECT id FROM chat_message WHERE sender_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?)))", USER_A, USER_B, NO_PERMISSION);
-        jdbcTemplate.update("DELETE FROM chat_message WHERE sender_id IN "
+                + "(SELECT id FROM chat_message WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?) OR sender_id IN "
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?)))",
+                MACHINE_CODE, USER_A, USER_B, NO_PERMISSION);
+        jdbcTemplate.update("DELETE FROM chat_message WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?) OR sender_id IN "
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", MACHINE_CODE, USER_A, USER_B, NO_PERMISSION);
+        jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?))", USER_A, USER_B, NO_PERMISSION);
+        jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
         jdbcTemplate.update("DELETE FROM sys_login_log WHERE username_snapshot IN (?, ?, ?)",
                 USER_A, USER_B, NO_PERMISSION);
         jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE user_id IN "

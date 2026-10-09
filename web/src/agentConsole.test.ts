@@ -68,7 +68,8 @@ beforeEach(() => {
     accessUrl: 'http://127.0.0.1:18080/33/rotated-token',
   })
   vi.mocked(api.getAgentOperations).mockResolvedValue({
-    day: '2026-10-02', betCount: 12, turnover: 1250, netProfit: 88.5,
+    day: '2026-10-02', betCount: 12, grossTurnover: 1250, singleFlow: 900, doubleFlow: 850,
+    turnover: 900, rebateMode: 'SINGLE', netProfit: 88.5,
     pendingBetCount: 3, normalTurnover: 1000, botTurnover: 250, activePlayerCount: 5,
   })
   vi.mocked(api.listAgentPlayerBets).mockResolvedValue({

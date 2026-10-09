@@ -7,6 +7,7 @@ import com.xupan.server.game.domain.WalletLedgerEntry;
 import com.xupan.server.game.domain.WalletOperationResult;
 import com.xupan.server.game.domain.BetCommandFormatter;
 import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.service.BetFlowMetricsCalculator;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.playerauth.service.PlayerLinkAuthenticationService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
@@ -272,9 +273,13 @@ public class AgentConsoleService {
                 : parseBusinessDay(day);
         Instant from = businessDay.atTime(6, 0).atZone(BUSINESS_ZONE).toInstant();
         Instant to = businessDay.plusDays(1).atTime(6, 0).atZone(BUSINESS_ZONE).toInstant();
+        String rebateMode = jdbc.queryForObject(
+                "SELECT COALESCE(rebate_mode, 'SINGLE') FROM agent WHERE id = ? AND deleted_at IS NULL",
+                String.class, agent.id());
+        BetFlowMetricsCalculator.Metrics flow = operationsFlow(agent.id(), from, to);
         List<OperationsSummary> rows = jdbc.query("""
                 SELECT COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' THEN 1 ELSE 0 END), 0) bet_count,
-                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' THEN b.stake ELSE 0 END), 0) turnover,
+                       COALESCE(SUM(CASE WHEN b.settlement_status <> 'CANCELED' THEN b.stake ELSE 0 END), 0) gross_turnover,
                        COALESCE(SUM(CASE WHEN b.settlement_status NOT IN ('PENDING', 'CANCELED')
                                          THEN b.net_profit ELSE 0 END), 0) net_profit,
                        COALESCE(SUM(CASE WHEN b.settlement_status = 'PENDING' THEN 1 ELSE 0 END), 0) pending_bet_count,
@@ -287,15 +292,43 @@ public class AgentConsoleService {
                        COUNT(DISTINCT CASE WHEN b.settlement_status <> 'CANCELED' THEN b.user_id END) active_player_count
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND b.created_at >= ? AND b.created_at < ?
+                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND b.game_code = 'AU8'
+                   AND b.created_at >= ? AND b.created_at < ?
                 """, (rs, rowNum) -> new OperationsSummary(
-                businessDay.toString(), rs.getLong("bet_count"), rs.getBigDecimal("turnover"),
-                rs.getBigDecimal("net_profit"), rs.getLong("pending_bet_count"),
+                businessDay.toString(), rs.getLong("bet_count"), rs.getBigDecimal("gross_turnover"),
+                flow.singleFlow(), flow.doubleFlow(),
+                "DOUBLE".equalsIgnoreCase(rebateMode) ? flow.doubleFlow() : flow.singleFlow(),
+                normalizeFlowMode(rebateMode), rs.getBigDecimal("net_profit"), rs.getLong("pending_bet_count"),
                 rs.getBigDecimal("normal_turnover"), rs.getBigDecimal("bot_turnover"),
                 rs.getLong("active_player_count")), agent.id(), Timestamp.from(from), Timestamp.from(to));
         return rows.isEmpty() ? new OperationsSummary(businessDay.toString(), 0, BigDecimal.ZERO.setScale(2),
-                BigDecimal.ZERO.setScale(2), 0, BigDecimal.ZERO.setScale(2), BigDecimal.ZERO.setScale(2), 0)
+                BigDecimal.ZERO.setScale(2), BigDecimal.ZERO.setScale(2), BigDecimal.ZERO.setScale(2),
+                "SINGLE", BigDecimal.ZERO.setScale(2), 0, BigDecimal.ZERO.setScale(2),
+                BigDecimal.ZERO.setScale(2), 0)
                 : rows.get(0);
+    }
+
+    private BetFlowMetricsCalculator.Metrics operationsFlow(long agentId, Instant from, Instant to) {
+        BetFlowMetricsCalculator.Metrics[] total = {BetFlowMetricsCalculator.Metrics.ZERO};
+        jdbc.query("""
+                SELECT b.play_type, b.parameters_text, b.stake, b.odds_snapshot, b.net_profit,
+                       b.settlement_status, b.rebate_rate_snapshot, b.special_rebate_rate_snapshot
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND b.game_code = 'AU8'
+                   AND b.created_at >= ? AND b.created_at < ?
+                   AND b.settlement_status IN ('WIN', 'LOSE', 'DRAW')
+                """, (org.springframework.jdbc.core.RowCallbackHandler) rs -> total[0] = total[0].plus(BetFlowMetricsCalculator.calculate(
+                PlayType.valueOf(rs.getString("play_type")), rs.getString("parameters_text"),
+                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"),
+                rs.getBigDecimal("net_profit"), rs.getString("settlement_status"),
+                rs.getBigDecimal("rebate_rate_snapshot"), rs.getBigDecimal("special_rebate_rate_snapshot"))),
+                agentId, Timestamp.from(from), Timestamp.from(to));
+        return total[0];
+    }
+
+    private static String normalizeFlowMode(String value) {
+        return "DOUBLE".equalsIgnoreCase(value == null ? null : value.trim()) ? "DOUBLE" : "SINGLE";
     }
 
     @Transactional(readOnly = true)
@@ -537,7 +570,9 @@ public class AgentConsoleService {
                               BigDecimal playerBalance, Long ledgerId, boolean replay) {
     }
 
-    public record OperationsSummary(String day, long betCount, BigDecimal turnover, BigDecimal netProfit,
+    public record OperationsSummary(String day, long betCount, BigDecimal grossTurnover,
+                                    BigDecimal singleFlow, BigDecimal doubleFlow, BigDecimal turnover,
+                                    String rebateMode, BigDecimal netProfit,
                                     long pendingBetCount, BigDecimal normalTurnover, BigDecimal botTurnover,
                                     long activePlayerCount) {
     }

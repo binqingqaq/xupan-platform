@@ -122,7 +122,11 @@ export interface AgentPlayerLink {
 export interface AgentOperations {
   day: string
   betCount: number
+  grossTurnover: number
+  singleFlow: number
+  doubleFlow: number
   turnover: number
+  rebateMode: 'SINGLE' | 'DOUBLE' | string
   netProfit: number
   pendingBetCount: number
   normalTurnover: number

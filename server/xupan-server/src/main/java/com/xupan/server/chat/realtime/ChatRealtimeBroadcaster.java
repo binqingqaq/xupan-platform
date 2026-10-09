@@ -27,7 +27,7 @@ public class ChatRealtimeBroadcaster {
         ChatMessageResponse response = avatarResolver.toResponse(message);
         String payload = ChatProtocol.encode(objectMapper, ChatProtocol.messageCreated(response),
                 properties.getMaxOutboundMessageBytes());
-        return connectionRegistry.broadcast(message.roomCode(), payload);
+        return connectionRegistry.broadcast(message.roomCode(), message.visibility(), message.agentId(), payload);
     }
 
     public int broadcastRobotUpdated(String roomCode, long robotId, String displayName) {

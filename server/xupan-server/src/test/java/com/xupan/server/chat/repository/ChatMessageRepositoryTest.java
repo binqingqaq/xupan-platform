@@ -2,6 +2,7 @@ package com.xupan.server.chat.repository;
 
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.chat.domain.ChatMessage;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,14 +58,14 @@ class ChatMessageRepositoryTest {
         var room = roomRepository.findByCodeForUpdate("main").orElseThrow();
         long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
         ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
-                "仓储测试用户", "repo-client-1", "第一条", NOW);
+                "仓储测试用户", "repo-client-1", 101L, "第一条", NOW);
         outboxRepository.insertMessageCreatedOutbox(message.id(), "{}", NOW);
 
         assertThat(sequence).isEqualTo(room.nextSequenceNo() + 1);
         assertThat(messageRepository.findByClientMessageId(room.id(), userId, "repo-client-1"))
                 .get().extracting(ChatMessage::content, ChatMessage::sequenceNo)
                 .containsExactly("第一条", sequence);
-        assertThat(messageRepository.findBeforeSequence(room.id(), sequence + 1, 50))
+        assertThat(messageRepository.findBeforeSequence(room.id(), sequence + 1, 50, 101L))
                 .extracting(ChatMessage::content).containsExactly("第一条");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_outbox WHERE message_id = ? AND event_type = 'MESSAGE_CREATED'",
@@ -94,13 +95,14 @@ class ChatMessageRepositoryTest {
         var room = roomRepository.findByCodeForUpdate("main").orElseThrow();
         ChatMessage first = messageRepository.insertRobotMessage(room.id(),
                 room.nextSequenceNo() + 1, 99L, "旧机器人", "20260911001", null,
-                "第一条", "{}", NOW);
+                "第一条", "{}", com.xupan.server.chat.domain.ChatMessageVisibility.PUBLIC, null, NOW);
         ChatMessage second = messageRepository.insertRobotMessage(room.id(),
                 room.nextSequenceNo() + 2, 99L, "旧机器人", "20260911001", null,
-                "第二条", "{}", NOW.plusSeconds(1));
+                "第二条", "{}", com.xupan.server.chat.domain.ChatMessageVisibility.PUBLIC, null,
+                NOW.plusSeconds(1));
 
         assertThat(messageRepository.updateRobotSenderName(99L, "新机器人")).isEqualTo(2);
-        assertThat(messageRepository.findBeforeSequence(room.id(), room.nextSequenceNo() + 3, 10))
+        assertThat(messageRepository.findBeforeSequence(room.id(), room.nextSequenceNo() + 3, 10, null))
                 .extracting(ChatMessage::id, ChatMessage::senderName)
                 .containsExactly(tuple(second.id(), "新机器人"), tuple(first.id(), "新机器人"));
     }
@@ -112,13 +114,37 @@ class ChatMessageRepositoryTest {
         for (int i = 1; i <= 3; i++) {
             long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo() + i - 1);
             messageRepository.insertUserMessage(room.id(), sequence, userId, "仓储测试用户",
-                    "repo-client-" + i, "消息" + i, NOW.plusSeconds(i));
+                    "repo-client-" + i, 101L, "消息" + i, NOW.plusSeconds(i));
         }
 
-        List<ChatMessage> rows = messageRepository.findBeforeSequence(room.id(), room.nextSequenceNo() + 4L, 2);
+        List<ChatMessage> rows = messageRepository.findBeforeSequence(room.id(), room.nextSequenceNo() + 4L, 2, 101L);
         assertThat(rows).hasSize(3).extracting(ChatMessage::sequenceNo)
                 .containsExactly(room.nextSequenceNo() + 3L, room.nextSequenceNo() + 2L,
                         room.nextSequenceNo() + 1L);
+    }
+
+    @Test
+    @Transactional
+    void historyCombinesPublicMessagesWithOnlyTheCurrentMachineMessages() {
+        var room = roomRepository.findByCodeForUpdate("main").orElseThrow();
+        ChatMessage publicMessage = insertRobot(room, "scope-public", ChatMessageVisibility.PUBLIC, null);
+        ChatMessage machineOne = insertRobot(room, "scope-machine-101", ChatMessageVisibility.MACHINE, 101L);
+        ChatMessage machineTwo = insertRobot(room, "scope-machine-202", ChatMessageVisibility.MACHINE, 202L);
+
+        assertThat(messageRepository.findBeforeSequence(room.id(), machineTwo.sequenceNo() + 1, 10, 101L))
+                .extracting(ChatMessage::id).containsExactly(machineOne.id(), publicMessage.id());
+        assertThat(messageRepository.findBeforeSequence(room.id(), machineTwo.sequenceNo() + 1, 10, 202L))
+                .extracting(ChatMessage::id).containsExactly(machineTwo.id(), publicMessage.id());
+        assertThat(messageRepository.findBeforeSequence(room.id(), machineTwo.sequenceNo() + 1, 10, null))
+                .extracting(ChatMessage::id).containsExactly(publicMessage.id());
+    }
+
+    private ChatMessage insertRobot(com.xupan.server.chat.domain.ChatRoom room, String key,
+                                    ChatMessageVisibility visibility, Long agentId) {
+        var currentRoom = roomRepository.findByCodeForUpdate(room.roomCode()).orElseThrow();
+        long sequence = roomRepository.allocateNextSequence(currentRoom.id(), currentRoom.nextSequenceNo());
+        return messageRepository.insertRobotMessage(room.id(), sequence, 99L, "测试机器人", "3000000",
+                key, key, "{}", visibility, agentId, NOW);
     }
 
     private void clean() {

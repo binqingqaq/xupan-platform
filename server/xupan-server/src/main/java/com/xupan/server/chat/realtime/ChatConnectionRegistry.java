@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.stereotype.Component;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -92,6 +93,10 @@ public class ChatConnectionRegistry {
     }
 
     public int broadcast(String roomCode, String payload) {
+        return broadcast(roomCode, ChatMessageVisibility.PUBLIC, null, payload);
+    }
+
+    public int broadcast(String roomCode, ChatMessageVisibility visibility, Long agentId, String payload) {
         Set<String> ids = roomConnections.get(roomCode);
         if (ids == null || ids.isEmpty()) {
             return 0;
@@ -100,6 +105,10 @@ public class ChatConnectionRegistry {
         for (String connectionId : List.copyOf(ids)) {
             ChatConnection connection = connections.get(connectionId);
             if (connection == null || !connection.isReadyForBroadcast()) {
+                continue;
+            }
+            if (visibility == ChatMessageVisibility.MACHINE
+                    && (agentId == null || !agentId.equals(connection.agentId()))) {
                 continue;
             }
             ChatConnectionAccessService.AccessCheck access = accessService.check(connection, Instant.now());

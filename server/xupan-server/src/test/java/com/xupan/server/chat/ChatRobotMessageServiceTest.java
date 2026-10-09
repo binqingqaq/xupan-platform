@@ -1,6 +1,7 @@
 package com.xupan.server.chat;
 
 import com.xupan.server.chat.domain.ChatMessage;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.realtime.ChatConnectionRegistry;
 import com.xupan.server.chat.service.ChatMessageService;
 import org.junit.jupiter.api.AfterEach;
@@ -53,7 +54,7 @@ class ChatRobotMessageServiceTest {
         int ledgerBefore = countRows("demo_balance_ledger");
 
         ChatMessage message = messageService.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
-                OFFLINE_KEY, "3000000期开始", PAYLOAD, NOW);
+                OFFLINE_KEY, "3000000期开始", PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW);
 
         assertThat(connectionRegistry.size()).isZero();
         assertThat(connectionRegistry.roomConnectionCount("main")).isZero();
@@ -79,9 +80,9 @@ class ChatRobotMessageServiceTest {
         long sequenceBefore = currentRoomSequence();
 
         ChatMessage first = messageService.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000001",
-                IDEMPOTENT_KEY, "3000001期开始", PAYLOAD, NOW);
+                IDEMPOTENT_KEY, "3000001期开始", PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW);
         ChatMessage second = messageService.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000001",
-                IDEMPOTENT_KEY, "3000001期开始", PAYLOAD, NOW.plusSeconds(1));
+                IDEMPOTENT_KEY, "3000001期开始", PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW.plusSeconds(1));
 
         assertThat(second).isEqualTo(first);
         assertThat(currentRoomSequence()).isEqualTo(sequenceBefore + 1);

@@ -1,6 +1,7 @@
 package com.xupan.server.game.web;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
+import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.PlayerBetLock;
@@ -29,18 +30,22 @@ public class DemoGameController {
     private final DemoGameService gameService;
     private final PlayerBetLock playerBetLock;
     private final GameSettingsService gameSettingsService;
+    private final PermissionService permissionService;
 
     public DemoGameController(DemoGameService gameService, PlayerBetLock playerBetLock,
-                              GameSettingsService gameSettingsService) {
+                              GameSettingsService gameSettingsService, PermissionService permissionService) {
         this.gameService = gameService;
         this.playerBetLock = playerBetLock;
         this.gameSettingsService = gameSettingsService;
+        this.permissionService = permissionService;
     }
 
     @GetMapping("/current")
     public DemoGameService.GameView current(Authentication authentication,
                                             @RequestParam(defaultValue = "AU8") String gameCode) {
-        return gameService.current(authenticatedUser(authentication).getUserId(), gameCode);
+        AuthenticatedUser user = authenticatedUser(authentication);
+        boolean includeAllIssueBets = permissionService.findRoleCodes(user.getUserId()).contains("ADMIN");
+        return gameService.current(user.getUserId(), gameCode, includeAllIssueBets);
     }
 
     @GetMapping("/catalog")

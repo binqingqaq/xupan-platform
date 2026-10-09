@@ -276,6 +276,24 @@ class DemoGameControllerTest {
 
         Long firstAccountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, testUserId);
+        String currentIssue = jdbcTemplate.queryForObject(
+                "SELECT issue_number FROM game_issue WHERE game_code='AU8' ORDER BY id DESC LIMIT 1",
+                String.class);
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status)
+                VALUES ('AU8', ?, 'GAME-TEST-CANCELED-CURRENT', 'GAME-TEST-CANCELED-CURRENT', ?,
+                        1, 'FAN', '1', 999.00, 3.850, 'CANCELED')
+                """, firstAccountId, currentIssue);
+
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(secondAccessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bets.length()").value(1));
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bets.length()").value(2));
+
         Long secondAccountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, secondUserId);
 
@@ -293,7 +311,10 @@ class DemoGameControllerTest {
                 secondAccountId)).isEqualByComparingTo("1028.50");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM game_bet WHERE user_id IN (?, ?)", Integer.class,
-                firstAccountId, secondAccountId)).isEqualTo(2);
+                firstAccountId, secondAccountId)).isEqualTo(3);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE bet_code = 'GAME-TEST-CANCELED-CURRENT' "
+                        + "AND settlement_status = 'CANCELED'", Integer.class)).isEqualTo(1);
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM demo_balance_ledger
                  WHERE operation_type = 'SETTLEMENT_CREDIT'
@@ -362,6 +383,14 @@ class DemoGameControllerTest {
                         ?)
                 """, accountId, java.sql.Timestamp.from(
                 java.time.Instant.now().minus(2, java.time.temporal.ChronoUnit.DAYS)));
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status,
+                     net_profit, explanation, created_at)
+                VALUES (?, 'BET-TODAY-CANCELED', 'BET-TODAY-CANCELED', 'CANCELED-ISSUE', 1,
+                        'FAN', '1', 999.00, 3.850, 'CANCELED', 500.00, '撤单记录', ?)
+                """, accountId, java.sql.Timestamp.from(java.time.Instant.now()));
 
         mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
                 .andExpect(status().isOk());
@@ -377,6 +406,11 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.todayNetProfit").value(0.00))
                 .andExpect(jsonPath("$.pending.length()").value(1))
                 .andExpect(jsonPath("$.settled").isEmpty());
+        mockMvc.perform(get("/api/me/wallet").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.statistics.totalBetCount").value(2))
+                .andExpect(jsonPath("$.statistics.pendingBetCount").value(1))
+                .andExpect(jsonPath("$.statistics.totalStake").value(30.00));
 
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")

@@ -7,6 +7,7 @@ import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessageStatus;
 import com.xupan.server.chat.domain.ChatMessageType;
 import com.xupan.server.chat.domain.ChatSenderType;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -28,7 +29,7 @@ public class ChatMessageRepository {
             SELECT m.id, m.room_id, r.room_code, m.sequence_no, m.client_message_id,
                    m.idempotency_key, m.issue_number, m.message_type, m.sender_type,
                    m.sender_id, m.sender_name, m.content, m.payload_json, m.status,
-                   m.created_at, m.updated_at
+                   m.created_at, m.updated_at, m.visibility, m.agent_id
               FROM chat_message m
               JOIN chat_room r ON r.id = m.room_id
             """;
@@ -52,25 +53,41 @@ public class ChatMessageRepository {
                         idempotencyKey).stream().findFirst();
     }
 
+    public Optional<Long> findMachineAgentId(long messageId) {
+        return jdbcTemplate.query("""
+                SELECT agent_id FROM chat_message
+                 WHERE id = ? AND visibility = 'MACHINE'
+                """, (rs, rowNum) -> rs.getLong("agent_id"), messageId).stream().findFirst();
+    }
+
+    public List<Long> findActiveMachineIds() {
+        return jdbcTemplate.queryForList("""
+                SELECT a.id FROM agent a
+                 WHERE a.status = 'ACTIVE' AND a.deleted_at IS NULL
+                   AND EXISTS (SELECT 1 FROM agent_game g WHERE g.agent_id = a.id AND g.game_code = 'AU8')
+                 ORDER BY a.id
+                """, Long.class);
+    }
+
     public ChatMessage insertUserMessage(long roomId, long sequenceNo, long userId,
                                          String senderName, String clientMessageId,
-                                         String content, Instant createdAt) {
+                                         long agentId, String content, Instant createdAt) {
         return insertUserMessage(roomId, sequenceNo, userId, senderName, clientMessageId,
-                null, ChatMessageType.USER_CHAT, content, null, createdAt);
+                null, ChatMessageType.USER_CHAT, agentId, content, null, createdAt);
     }
 
     public ChatMessage insertUserBetMessage(long roomId, long sequenceNo, long userId,
                                             String senderName, String clientMessageId,
                                             String issueNumber, String content,
-                                            String payloadJson, Instant createdAt) {
+                                            String payloadJson, long agentId, Instant createdAt) {
         return insertUserMessage(roomId, sequenceNo, userId, senderName, clientMessageId,
-                issueNumber, ChatMessageType.USER_BET, content, payloadJson, createdAt);
+                issueNumber, ChatMessageType.USER_BET, agentId, content, payloadJson, createdAt);
     }
 
     private ChatMessage insertUserMessage(long roomId, long sequenceNo, long userId,
                                           String senderName, String clientMessageId,
                                           String issueNumber, ChatMessageType messageType,
-                                          String content, String payloadJson, Instant createdAt) {
+                                          long agentId, String content, String payloadJson, Instant createdAt) {
         requireTransaction("insertUserMessage");
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
@@ -78,10 +95,10 @@ public class ChatMessageRepository {
                     INSERT INTO chat_message
                         (room_id, sequence_no, client_message_id, idempotency_key,
                          issue_number, message_type, sender_type, sender_id, sender_name,
-                         content, payload_json, status, created_at, updated_at)
+                         content, payload_json, status, created_at, updated_at, visibility, agent_id)
                     VALUES (?, ?, ?, NULL, ?, ?, 'USER', ?, ?, ?,
                             CASE WHEN ? IS NULL THEN NULL ELSE CAST(? AS JSON) END,
-                            'ACTIVE', ?, ?)
+                            'ACTIVE', ?, ?, 'MACHINE', ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setLong(1, roomId);
             statement.setLong(2, sequenceNo);
@@ -95,6 +112,7 @@ public class ChatMessageRepository {
             statement.setString(10, payloadJson);
             statement.setTimestamp(11, Timestamp.from(createdAt));
             statement.setTimestamp(12, Timestamp.from(createdAt));
+            statement.setLong(13, agentId);
             return statement;
         }, keyHolder);
         Number key = generatedMessageId(keyHolder);
@@ -108,7 +126,8 @@ public class ChatMessageRepository {
     public ChatMessage insertRobotMessage(long roomId, long sequenceNo, long robotId,
                                           String robotName, String issueNumber,
                                           String idempotencyKey, String content,
-                                          String payloadJson, Instant createdAt) {
+                                          String payloadJson, ChatMessageVisibility visibility,
+                                          Long agentId, Instant createdAt) {
         requireTransaction("insertRobotMessage");
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
@@ -116,9 +135,9 @@ public class ChatMessageRepository {
                     INSERT INTO chat_message
                         (room_id, sequence_no, client_message_id, idempotency_key,
                          issue_number, message_type, sender_type, sender_id, sender_name,
-                         content, payload_json, status, created_at, updated_at)
+                         content, payload_json, status, created_at, updated_at, visibility, agent_id)
                     VALUES (?, ?, NULL, ?, ?, 'ROBOT', 'ROBOT', ?, ?, ?, CAST(? AS JSON),
-                            'ACTIVE', ?, ?)
+                            'ACTIVE', ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setLong(1, roomId);
             statement.setLong(2, sequenceNo);
@@ -130,6 +149,9 @@ public class ChatMessageRepository {
             statement.setString(8, payloadJson);
             statement.setTimestamp(9, Timestamp.from(createdAt));
             statement.setTimestamp(10, Timestamp.from(createdAt));
+            statement.setString(11, visibility.name());
+            if (agentId == null) statement.setNull(12, java.sql.Types.BIGINT);
+            else statement.setLong(12, agentId);
             return statement;
         }, keyHolder);
         Number key = generatedMessageId(keyHolder);
@@ -148,7 +170,7 @@ public class ChatMessageRepository {
      */
     public ChatMessage insertSystemMessage(long roomId, long sequenceNo, String issueNumber,
                                            String idempotencyKey, String content,
-                                           String payloadJson, Instant createdAt) {
+                                           String payloadJson, long agentId, Instant createdAt) {
         requireTransaction("insertSystemMessage");
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
@@ -156,9 +178,9 @@ public class ChatMessageRepository {
                     INSERT INTO chat_message
                         (room_id, sequence_no, client_message_id, idempotency_key,
                          issue_number, message_type, sender_type, sender_id, sender_name,
-                         content, payload_json, status, created_at, updated_at)
+                         content, payload_json, status, created_at, updated_at, visibility, agent_id)
                     VALUES (?, ?, NULL, ?, ?, 'SYSTEM', 'SYSTEM', NULL, '系统', ?, CAST(? AS JSON),
-                            'ACTIVE', ?, ?)
+                            'ACTIVE', ?, ?, 'MACHINE', ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             statement.setLong(1, roomId);
             statement.setLong(2, sequenceNo);
@@ -168,6 +190,7 @@ public class ChatMessageRepository {
             statement.setString(6, payloadJson);
             statement.setTimestamp(7, Timestamp.from(createdAt));
             statement.setTimestamp(8, Timestamp.from(createdAt));
+            statement.setLong(9, agentId);
             return statement;
         }, keyHolder);
         Number key = generatedMessageId(keyHolder);
@@ -199,22 +222,24 @@ public class ChatMessageRepository {
         return keyHolder.getKey();
     }
 
-    public List<ChatMessage> findBeforeSequence(long roomId, long beforeSequence, int limit) {
+    public List<ChatMessage> findBeforeSequence(long roomId, long beforeSequence, int limit, Long agentId) {
         validateLimit(limit);
         return jdbcTemplate.query(COLUMNS + """
                  WHERE m.room_id = ? AND m.sequence_no < ?
+                   AND (m.visibility = 'PUBLIC' OR (m.visibility = 'MACHINE' AND m.agent_id = ?))
                  ORDER BY m.sequence_no DESC
                  LIMIT ?
-                """, this::mapMessage, roomId, beforeSequence, limit + 1);
+                """, this::mapMessage, roomId, beforeSequence, agentId, limit + 1);
     }
 
-    public List<ChatMessage> findAfterSequence(long roomId, long afterSequence, int limit) {
+    public List<ChatMessage> findAfterSequence(long roomId, long afterSequence, int limit, Long agentId) {
         validateLimit(limit);
         return jdbcTemplate.query(COLUMNS + """
                  WHERE m.room_id = ? AND m.sequence_no > ?
+                   AND (m.visibility = 'PUBLIC' OR (m.visibility = 'MACHINE' AND m.agent_id = ?))
                  ORDER BY m.sequence_no ASC
                  LIMIT ?
-                """, this::mapMessage, roomId, afterSequence, limit + 1);
+                """, this::mapMessage, roomId, afterSequence, agentId, limit + 1);
     }
 
     private Optional<ChatMessage> findById(long id) {
@@ -230,7 +255,8 @@ public class ChatMessageRepository {
                 ChatSenderType.valueOf(rs.getString("sender_type")), nullableLong(rs, "sender_id"),
                 rs.getString("sender_name"), rs.getString("content"), jsonText(rs, "payload_json"),
                 ChatMessageStatus.valueOf(rs.getString("status")),
-                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("updated_at")));
+                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("updated_at")),
+                ChatMessageVisibility.valueOf(rs.getString("visibility")), nullableLong(rs, "agent_id"));
     }
 
     private String jsonText(java.sql.ResultSet rs, String column) throws java.sql.SQLException {

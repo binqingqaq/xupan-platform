@@ -7,6 +7,7 @@ import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
+import com.xupan.server.game.repository.PlayerBetSummaryRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
@@ -32,6 +33,7 @@ public class DemoGameService {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private final SettlementService settlementService;
     private final GameDataRepository repository;
+    private final PlayerBetSummaryRepository playerBetSummaryRepository;
     private final VirtualWalletService walletService;
     private final GameIssueEventRepository eventRepository;
     private final 自动轮期服务 automationService;
@@ -40,6 +42,7 @@ public class DemoGameService {
     private final AgentBettingPolicy agentBettingPolicy;
 
     public DemoGameService(SettlementService settlementService, GameDataRepository repository,
+                           PlayerBetSummaryRepository playerBetSummaryRepository,
                            VirtualWalletService walletService,
                            GameIssueEventRepository eventRepository,
                            自动轮期服务 automationService,
@@ -48,6 +51,7 @@ public class DemoGameService {
                            AgentBettingPolicy agentBettingPolicy) {
         this.settlementService = settlementService;
         this.repository = repository;
+        this.playerBetSummaryRepository = playerBetSummaryRepository;
         this.walletService = walletService;
         this.eventRepository = eventRepository;
         this.automationService = automationService;
@@ -61,22 +65,27 @@ public class DemoGameService {
     }
 
     public synchronized GameView current(long authenticatedUserId, String gameCode) {
+        return current(authenticatedUserId, gameCode, true);
+    }
+
+    public synchronized GameView current(long authenticatedUserId, String gameCode, boolean includeAllIssueBets) {
         String normalizedGameCode = normalizedGameCode(gameCode);
         Instant now = Instant.now();
         automationService.advanceIfEnabled(normalizedGameCode, now);
         GameDataRepository.IssueRecord issue = ensureInitialized(normalizedGameCode);
-        return toGameView(normalizedGameCode, issue, now, authenticatedUserId);
+        return toGameView(normalizedGameCode, issue, now, authenticatedUserId, includeAllIssueBets);
     }
 
     public BetSummaryView betSummary(long authenticatedUserId) {
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
-        LocalDate today = LocalDate.now(BUSINESS_ZONE);
-        Instant from = today.atStartOfDay(BUSINESS_ZONE).toInstant();
-        Instant to = today.plusDays(1).atStartOfDay(BUSINESS_ZONE).toInstant();
-        GameDataRepository.BetDayStatistics dayStatistics = repository.findBetDayStatistics(wallet.accountId(), from, to);
+        LocalDate businessDay = businessDay(Instant.now());
+        Instant from = businessDay.atTime(6, 0).atZone(BUSINESS_ZONE).toInstant();
+        Instant to = businessDay.plusDays(1).atTime(6, 0).atZone(BUSINESS_ZONE).toInstant();
+        GameDataRepository.BetDayStatistics dayStatistics = playerBetSummaryRepository
+                .findBetDayStatistics(wallet.accountId(), from, to);
         List<BetView> pending = repository.findBetsByAccountId(wallet.accountId(), SettlementStatus.PENDING, 100)
                 .stream().map(DemoGameService::toBetView).toList();
-        List<BetView> settled = repository.findSettledBetsByAccountIdAndCreatedBetween(
+        List<BetView> settled = playerBetSummaryRepository.findSettledBets(
                         wallet.accountId(), from, to, 100)
                 .stream()
                 .map(DemoGameService::toBetView)
@@ -85,7 +94,7 @@ public class DemoGameService {
     }
 
     private GameView toGameView(String gameCode, GameDataRepository.IssueRecord issue, Instant now,
-                               long authenticatedUserId) {
+                               long authenticatedUserId, boolean includeAllIssueBets) {
         List<BallView> ballViews = toBallViews(automationService.previewNumbers(issue, now));
         List<BallView> previousBallViews = repository.findLatestSettledIssue(gameCode)
                 .map(GameDataRepository.IssueRecord::numbers)
@@ -98,7 +107,10 @@ public class DemoGameService {
         for (PlayType playType : PlayType.values()) {
             repository.findOdds(playType).ifPresent(value -> oddsViews.add(new OddsView(playType, value)));
         }
+        long currentAccountId = walletService.getForCurrentUser(authenticatedUserId).accountId();
         List<BetView> betViews = repository.findBetsByIssue(issue.issueNumber()).stream()
+                .filter(bet -> bet.settlementStatus() != SettlementStatus.CANCELED)
+                .filter(bet -> includeAllIssueBets || bet.accountId() == currentAccountId)
                 .map(DemoGameService::toBetView)
                 .toList();
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
@@ -109,6 +121,12 @@ public class DemoGameService {
                 eventRepository.findByIssue(issue.issueNumber()).stream()
                         .map(event -> new EventView(event.id(), event.eventType(), event.message(), event.createdAt()))
                         .toList());
+    }
+
+    static LocalDate businessDay(Instant now) {
+        var localNow = now.atZone(BUSINESS_ZONE);
+        LocalDate date = localNow.toLocalDate();
+        return localNow.toLocalTime().isBefore(java.time.LocalTime.of(6, 0)) ? date.minusDays(1) : date;
     }
 
     @Transactional(noRollbackFor = BetLimitExceededException.class)
@@ -258,7 +276,7 @@ public class DemoGameService {
         }
         return toGameView(GameDataRepository.DEFAULT_GAME_CODE,
                 repository.findLatestIssue(GameDataRepository.DEFAULT_GAME_CODE).orElseThrow(),
-                Instant.now(), authenticatedUserId);
+                Instant.now(), authenticatedUserId, true);
     }
 
     public synchronized OddsView updateOdds(PlayType playType, BigDecimal newOdds) {

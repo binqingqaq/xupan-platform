@@ -7,6 +7,7 @@ import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessagePage;
 import com.xupan.server.chat.domain.ChatMessageStatus;
 import com.xupan.server.chat.domain.ChatMessageType;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.domain.ChatRoom;
 import com.xupan.server.chat.domain.ChatSenderType;
 import com.xupan.server.chat.repository.ChatMessageRepository;
@@ -93,6 +94,9 @@ class ChatMessageServiceTest {
                 gameDataRepository, new ObjectMapper(), eventPublisher, gameService,
                 new ChatMessageProperties(), robotRepository, walletService, null);
         lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
+        lenient().when(userRepository.findPlayerAgentId(USER_ID)).thenReturn(Optional.of(44L));
+        lenient().when(userRepository.findPlayerAgentIdByAccountId(1L)).thenReturn(Optional.of(44L));
+        lenient().when(messageRepository.findMachineAgentId(anyLong())).thenReturn(Optional.of(44L));
         lenient().when(robotRepository.findByCode("issue-helper")).thenReturn(Optional.of(new ChatRobot(
                 900001L, "issue-helper", "机器人", "robot-default", RobotStatus.ENABLED,
                 100, 0, NOW, NOW)));
@@ -102,7 +106,7 @@ class ChatMessageServiceTest {
         lenient().when(roomRepository.allocateNextSequence(eq(1L), anyLong()))
                 .thenAnswer(invocation -> ((Long) invocation.getArgument(1)) + 1L);
         lenient().when(messageRepository.insertRobotMessage(anyLong(), anyLong(), anyLong(), anyString(),
-                anyString(), anyString(), anyString(), anyString(), any()))
+                anyString(), anyString(), anyString(), anyString(), any(), any(), any()))
                 .thenReturn(robotMessage());
         lenient().when(walletService.getForCurrentUser(USER_ID))
                 .thenReturn(new com.xupan.server.game.domain.VirtualWallet(1L, USER_ID,
@@ -118,7 +122,7 @@ class ChatMessageServiceTest {
                 .thenReturn(Optional.empty());
         when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
         ChatMessage message = message(1L, 1L, "hello");
-        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "client-1", "hello", NOW))
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "client-1", 44L, "hello", NOW))
                 .thenReturn(message);
 
         assertThat(service.sendUserMessage(USER_ID, "main", "client-1", "  hello  ", NOW))
@@ -147,7 +151,7 @@ class ChatMessageServiceTest {
                 "3000000", ChatMessageType.USER_BET, ChatSenderType.USER, USER_ID,
                 "用户甲", "1番10,23角10", "{}", ChatMessageStatus.ACTIVE, NOW, NOW);
         when(messageRepository.insertUserBetMessage(eq(1L), eq(1L), eq(USER_ID), eq("用户甲"),
-                eq("bet-limit-1"), eq("3000000"), eq("1番10,23角10"), anyString(), eq(NOW)))
+                eq("bet-limit-1"), eq("3000000"), eq("1番10,23角10"), anyString(), eq(44L), eq(NOW)))
                 .thenReturn(message);
 
         ChatMessage result = service.sendUserMessage(USER_ID, "main", "bet-limit-1", "1番10,23角10", NOW);
@@ -156,7 +160,8 @@ class ChatMessageServiceTest {
         verify(gameService, times(2)).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
         ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(NOW));
+                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(feedback.getValue()).isEqualTo("@用户甲  攻击成功，使用粮草10, 剩余粮草：990"
                 + "\n@用户甲  下注 23/10 已拒绝：超过角限额1000，剩余可下0");
     }
@@ -172,7 +177,7 @@ class ChatMessageServiceTest {
         when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
         ChatMessage message = message(32L, 1L, "1番100");
         when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "bet-limit-2",
-                "1番100", NOW)).thenReturn(message);
+                44L, "1番100", NOW)).thenReturn(message);
 
         assertThat(service.sendUserMessage(USER_ID, "main", "bet-limit-2", "1番100", NOW))
                 .isEqualTo(message);
@@ -180,7 +185,8 @@ class ChatMessageServiceTest {
         verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
         ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(NOW));
+                eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(feedback.getValue()).isEqualTo("@用户甲  下注未成功"
                 + "\n@用户甲  下注 1番100 已拒绝：超过番限额20，剩余可下20");
     }
@@ -200,7 +206,7 @@ class ChatMessageServiceTest {
                 "3000000", ChatMessageType.USER_BET, ChatSenderType.USER, USER_ID,
                 "用户甲", "1番10", "{}", ChatMessageStatus.ACTIVE, NOW, NOW);
         when(messageRepository.insertUserBetMessage(eq(1L), eq(1L), eq(USER_ID), eq("用户甲"),
-                eq("bet-1"), eq("3000000"), eq("1番10"), anyString(), eq(NOW)))
+                eq("bet-1"), eq("3000000"), eq("1番10"), anyString(), eq(44L), eq(NOW)))
                 .thenReturn(message);
 
         ChatMessage result = service.sendUserMessage(USER_ID, "main", "bet-1", "1番10", NOW);
@@ -210,7 +216,8 @@ class ChatMessageServiceTest {
         verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
         ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(NOW));
+                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(feedback.getValue()).isEqualTo("@用户甲  攻击成功，使用粮草10, 剩余粮草：990");
     }
 
@@ -222,14 +229,15 @@ class ChatMessageServiceTest {
                 .thenReturn(Optional.empty());
         ChatMessage message = message(12L, 1L, "大家早上好");
         when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "invalid-1",
-                "大家早上好", NOW)).thenReturn(message);
+                44L, "大家早上好", NOW)).thenReturn(message);
 
         assertThat(service.sendUserMessage(USER_ID, "main", "invalid-1", "大家早上好", NOW))
                 .isEqualTo(message);
 
         ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(NOW));
+                eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(content.getValue()).isEqualTo("@用户甲, 指令格式不正确!");
     }
 
@@ -240,25 +248,26 @@ class ChatMessageServiceTest {
         when(roomRepository.allocateNextSequence(eq(1L), anyLong())).thenReturn(1L, 2L);
         when(messageRepository.findByClientMessageId(1L, USER_ID, "balance-1"))
                 .thenReturn(Optional.empty());
-        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "balance-1", "查", NOW))
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "balance-1", 44L, "查", NOW))
                 .thenReturn(message(21L, 1L, "查"));
 
         service.sendUserMessage(USER_ID, "main", "balance-1", "查", NOW);
 
         ArgumentCaptor<String> balance = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("UNKNOWN"), anyString(), balance.capture(), anyString(), eq(NOW));
+                eq("UNKNOWN"), anyString(), balance.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(balance.getValue()).isEqualTo("@用户甲   剩余粮草：990");
 
         when(messageRepository.findByClientMessageId(1L, USER_ID, "rules-1"))
                 .thenReturn(Optional.empty());
-        when(messageRepository.insertUserMessage(1L, 2L, USER_ID, "用户甲", "rules-1", "玩法", NOW))
+        when(messageRepository.insertUserMessage(1L, 2L, USER_ID, "用户甲", "rules-1", 44L, "玩法", NOW))
                 .thenReturn(message(22L, 2L, "玩法"));
 
         service.sendUserMessage(USER_ID, "main", "rules-1", "玩法", NOW);
 
         verify(messageRepository, times(1)).insertRobotMessage(anyLong(), anyLong(), anyLong(),
-                anyString(), anyString(), anyString(), anyString(), anyString(), any());
+                anyString(), anyString(), anyString(), anyString(), anyString(), any(), any(), any());
     }
 
     @Test
@@ -271,14 +280,15 @@ class ChatMessageServiceTest {
                 BusinessException.conflict("WALLET_INSUFFICIENT_BALANCE", "本次钱包操作无法完成"));
         ChatMessage message = message(13L, 1L, "1番100");
         when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "insufficient-1",
-                "1番100", NOW)).thenReturn(message);
+                44L, "1番100", NOW)).thenReturn(message);
 
         assertThat(service.sendUserMessage(USER_ID, "main", "insufficient-1", "1番100", NOW))
                 .isEqualTo(message);
 
         ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(NOW));
+                eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(content.getValue()).isEqualTo("@用户甲, 余额不足!");
     }
 
@@ -292,13 +302,14 @@ class ChatMessageServiceTest {
                 .thenReturn(Optional.empty());
         ChatMessage drawingMessage = message(14L, 1L, "1番10");
         when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "drawing-1",
-                "1番10", NOW)).thenReturn(drawingMessage);
+                44L, "1番10", NOW)).thenReturn(drawingMessage);
 
         service.sendUserMessage(USER_ID, "main", "drawing-1", "1番10", NOW);
 
         ArgumentCaptor<String> drawingFeedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("UNKNOWN"), anyString(), drawingFeedback.capture(), anyString(), eq(NOW));
+                eq("UNKNOWN"), anyString(), drawingFeedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
         assertThat(drawingFeedback.getValue()).isEqualTo("@用户甲, 当前正在开奖，下注无效!");
     }
 
@@ -315,7 +326,8 @@ class ChatMessageServiceTest {
 
         ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("3000000"), eq("CHAT-SETTLEMENT-41-WIN"), content.capture(), anyString(), any());
+                eq("3000000"), eq("CHAT-SETTLEMENT-41-WIN"), content.capture(), anyString(),
+                eq(ChatMessageVisibility.MACHINE), eq(44L), any());
         assertThat(content.getValue()).isEqualTo("@用户甲, 第3000000期中奖，返还粮草38.5, 当前粮草：128.5");
     }
 
@@ -348,7 +360,7 @@ class ChatMessageServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CHAT_USER_MUTED");
         verify(messageRepository, never()).insertUserMessage(anyLong(), anyLong(), anyLong(),
-                anyString(), anyString(), anyString(), any());
+                anyString(), anyString(), anyLong(), anyString(), any());
     }
 
     @Test
@@ -357,7 +369,7 @@ class ChatMessageServiceTest {
         ChatMessage second = message(2L, 3L, "b");
         when(roomRepository.findByCode("main")).thenReturn(Optional.of(
                 new ChatRoom(1L, "main", "公开大厅", "OPEN", 30, 3)));
-        when(messageRepository.findAfterSequence(1L, 1L, 50)).thenReturn(List.of(first, second));
+        when(messageRepository.findAfterSequence(1L, 1L, 50, 44L)).thenReturn(List.of(first, second));
 
         ChatMessagePage page = service.history(USER_ID, "main", null, 1L, 50, NOW);
 

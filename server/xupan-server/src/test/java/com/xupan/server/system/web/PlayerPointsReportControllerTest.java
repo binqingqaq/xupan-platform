@@ -93,6 +93,13 @@ class PlayerPointsReportControllerTest {
                 VALUES (?, 'REPORT-BET-1', '20260921', 1, 'FAN', '1', 30.00, 1.950,
                         'WIN', 12.00, '测试结算', ?, ?)
                 """, normalAccountId, timestamp(IN_DAY), timestamp(IN_DAY));
+        jdbc.update("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                     stake, odds_snapshot, settlement_status, net_profit, explanation, created_at)
+                VALUES (?, 'REPORT-BET-CANCELED', '20260921', 1, 'FAN', '2', 500.00, 1.950,
+                        'CANCELED', 400.00, '撤单记录', ?)
+                """, normalAccountId, timestamp(IN_DAY));
 
         jdbc.update("""
                 INSERT INTO test_player_behavior(account_id, run_mode, enabled, bets_per_issue, stake_min, stake_max)
@@ -125,6 +132,8 @@ class PlayerPointsReportControllerTest {
                 .andExpect(jsonPath("$.businessDate").value("2026-09-21"))
                 .andExpect(jsonPath("$.fromInclusive").value("2026-09-20T22:00:00Z"))
                 .andExpect(jsonPath("$.summary.playerCount").value(1))
+                .andExpect(jsonPath("$.summary.betCount").value(1))
+                .andExpect(jsonPath("$.summary.settledBetCount").value(1))
                 .andExpect(jsonPath("$.summary.turnover").value(30.00))
                 .andExpect(jsonPath("$.summary.netProfit").value(12.00))
                 .andExpect(jsonPath("$.summary.topUp").value(100.00))

@@ -43,6 +43,22 @@ public class UserRepository {
         return queryOne("SELECT " + USER_COLUMNS + " FROM sys_user WHERE id = ?", userId);
     }
 
+    public Optional<Long> findPlayerAgentId(long userId) {
+        return jdbcTemplate.query("""
+                SELECT agent_id FROM demo_user_account
+                 WHERE sys_user_id = ? AND status = 'ACTIVE'
+                """, (rs, rowNum) -> rs.getObject("agent_id", Long.class), userId)
+                .stream().filter(java.util.Objects::nonNull).findFirst();
+    }
+
+    public Optional<Long> findPlayerAgentIdByAccountId(long accountId) {
+        return jdbcTemplate.query("""
+                SELECT agent_id FROM demo_user_account
+                 WHERE id = ? AND status = 'ACTIVE'
+                """, (rs, rowNum) -> rs.getObject("agent_id", Long.class), accountId)
+                .stream().filter(java.util.Objects::nonNull).findFirst();
+    }
+
     public List<UserAccount> findByStatus(String status) {
         if (status == null || status.isBlank()) {
             return jdbcTemplate.query("SELECT " + USER_COLUMNS + " FROM sys_user ORDER BY id",

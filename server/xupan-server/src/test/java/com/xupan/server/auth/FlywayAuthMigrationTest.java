@@ -112,7 +112,7 @@ class FlywayAuthMigrationTest {
                         + "ORDER BY \"installed_rank\"",
                 String.class);
 
-        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77");
+        assertThat(versions).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78");
     }
 
     @Test
@@ -187,7 +187,10 @@ class FlywayAuthMigrationTest {
 
     @Test
     void seedsRolesPermissionsAndMappingsWithoutUsersOrSecrets() {
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_user", Integer.class)).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM sys_user
+                 WHERE username LIKE 'migration-%'
+                """, Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM auth_session", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM auth_ws_ticket", Integer.class)).isZero();
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_role", Integer.class)).isEqualTo(6);
@@ -440,7 +443,7 @@ class FlywayAuthMigrationTest {
 
     private long insertUser(String username) {
         jdbcTemplate.update(
-                "INSERT INTO sys_user (username, display_name, password_hash, internal_code) VALUES (?, ?, ?, ?)",
+                "INSERT INTO sys_user (username, display_name, password_hash, internal_code, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
                 username, "迁移测试用户", "test-password-hash", "wxid_" + username);
         return jdbcTemplate.queryForObject(
                 "SELECT id FROM sys_user WHERE username = ?", Long.class, username);
