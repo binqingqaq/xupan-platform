@@ -79,18 +79,21 @@ class PlatformAdminResourceControllerTest {
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("""
                                 {"username":"platform_test_sub","rawPassword":"SubPassword123",
-                                 "displayName":"测试子账号","score":1000,"subAccountManage":true,
+                                 "score":1000,"subAccountManage":true,
                                  "machineManage":true,"unifiedReportEnabled":false}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.username").value("platform_test_sub"))
+                .andExpect(jsonPath("$.displayName").doesNotExist())
                 .andReturn();
         long subId = ((Number) JsonPath.read(subResult.getResponse().getContentAsString(), "$.id")).longValue();
+        assertThat(jdbcTemplate.queryForObject("SELECT display_name FROM agent_group WHERE id=?", String.class, subId))
+                .isEqualTo("platform_test_sub");
 
         mockMvc.perform(post("/api/admin/machines")
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("{\"username\":\"platform_test_machine\",\"rawPassword\":\"MachinePassword123\","
-                                + "\"displayName\":\"测试机器\",\"groupId\":" + subId
+                                + "\"groupId\":" + subId
                                 + ",\"score\":500,\"boardOpen\":true,\"robotManage\":true,\"chaseEnabled\":false,"
                                 + "\"botCount\":2,\"closeSeconds\":10,\"cancelSeconds\":5,\"rebateRate\":0.1,"
                                 + "\"oddsRate\":1.95,\"specialRebateRate\":0.2,\"specialOddsRate\":18,"
@@ -101,8 +104,11 @@ class PlatformAdminResourceControllerTest {
                                 + "\"playerMinStake\":10,\"games\":[\"AU8\"]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.accountUsername").value("platform_test_machine"))
+                .andExpect(jsonPath("$.displayName").doesNotExist())
                 .andExpect(jsonPath("$.groupUsername").value("platform_test_sub"))
                 .andExpect(jsonPath("$.requestedBotCount").value(2));
+        assertThat(jdbcTemplate.queryForObject("SELECT display_name FROM agent WHERE agent_code='PLATFORM_TEST_MACHINE'", String.class))
+                .isEqualTo("platform_test_machine");
 
         mockMvc.perform(get("/api/admin/sub-accounts").header("Authorization", bearer(token)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].machineCount").value(1));
@@ -243,7 +249,7 @@ class PlatformAdminResourceControllerTest {
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("""
                                 {"username":"platform_test_report_sub","rawPassword":"SubReportPassword1",
-                                 "displayName":"飞单账号子账号","score":1000,"subAccountManage":false,
+                                 "score":1000,"subAccountManage":false,
                                  "machineManage":false,"unifiedReportEnabled":true,
                                  "reportUsername":"feidan-user","reportNetworkCode":"K28","reportRouteCode":"A"}
                                 """))
@@ -261,14 +267,19 @@ class PlatformAdminResourceControllerTest {
         mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("""
-                                {"username":"platform_test_report_sub","rawPassword":"",
-                                 "displayName":"改名后的飞单子账号","score":1000,"subAccountManage":false,
+                                {"username":"platform_test_report_sub_renamed","rawPassword":"",
+                                 "score":1000,"subAccountManage":false,
                                  "machineManage":false,"unifiedReportEnabled":true,
                                  "reportUsername":"feidan-user","reportNetworkCode":"K28","reportRouteCode":"A"}
                                 """))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("platform_test_report_sub_renamed"))
                 .andExpect(jsonPath("$.reportUsername").value("feidan-user"))
-                .andExpect(jsonPath("$.displayName").value("改名后的飞单子账号"));
+                .andExpect(jsonPath("$.displayName").doesNotExist());
+        assertThat(jdbcTemplate.queryForObject("SELECT display_name FROM agent_group WHERE id=?", String.class, subId))
+                .isEqualTo("platform_test_report_sub_renamed");
+        assertThat(jdbcTemplate.queryForObject("SELECT u.display_name FROM sys_user u JOIN agent_group g ON g.sys_user_id=u.id WHERE g.id=?", String.class, subId))
+                .isEqualTo("platform_test_report_sub_renamed");
     }
 
     /**

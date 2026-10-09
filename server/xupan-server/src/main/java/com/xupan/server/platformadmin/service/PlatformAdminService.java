@@ -87,7 +87,7 @@ public class PlatformAdminService {
         // BY220 Users.php:148 的读取时副作用：配置不完整 → 子账号网盘状态强制 0。
         normalizeReportOnline(ownGroupId);
         List<SubAccountRow> rows = jdbc.query("""
-                SELECT g.id, g.group_code, g.username, g.display_name, g.score, g.expires_at, g.status,
+                SELECT g.id, g.group_code, g.username, g.score, g.expires_at, g.status,
                        u.status account_status,
                        g.sub_account_manage, g.machine_manage, g.unified_report_enabled,
                        g.report_username, g.report_network_code, g.report_route_code, g.report_type, g.created_at,
@@ -101,7 +101,7 @@ public class PlatformAdminService {
                  WHERE g.deleted_at IS NULL
                  ORDER BY g.id
                 """, (rs, n) -> new SubAccountRow(rs.getLong("id"), rs.getString("group_code"),
-                rs.getString("username"), rs.getString("display_name"), rs.getBigDecimal("score"),
+                rs.getString("username"), rs.getBigDecimal("score"),
                 instant(rs.getTimestamp("expires_at")), rs.getString("status"), rs.getString("account_status"),
                 rs.getBoolean("sub_account_manage"), rs.getBoolean("machine_manage"),
                 rs.getBoolean("unified_report_enabled"), rs.getString("report_username"),
@@ -176,7 +176,6 @@ public class PlatformAdminService {
         validateExpiry(input.expiresAt());
         // BY220 x_admin 是积分源头：新建时 score 直接落库，不从别处扣（没有子账号池的概念）。
         List<String> usernames = splitUsernames(input.username());
-        String displayName = required(input.displayName(), "子账号名称不能为空");
         for (String username : usernames) {
             if (exists("SELECT COUNT(*) FROM agent_group WHERE username = ?", username)
                     || exists("SELECT COUNT(*) FROM sys_user WHERE username = ?", username)) {
@@ -194,7 +193,7 @@ public class PlatformAdminService {
             Long firstId = null;
             for (String username : usernames) {
                 String code = uniqueGroupCode(username);
-                long accountUserId = userRepository.insert(username, displayName, passwordHash, "ACTIVE");
+                long accountUserId = userRepository.insert(username, username, passwordHash, "ACTIVE");
                 userRepository.assignRole(accountUserId, "SUB_ACCOUNT");
                 jdbc.update("""
                         INSERT INTO agent_group
@@ -203,7 +202,7 @@ public class PlatformAdminService {
                              report_username, report_password_ciphertext, report_network_code,
                              report_route_code, report_type, report_url, sys_user_id)
                         VALUES (?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, code, displayName, operator, username, passwordHash,
+                        """, code, username, operator, username, passwordHash,
                         timestamp(input.expiresAt()), input.subAccountManage(),
                         input.machineManage(), input.unifiedReportEnabled(), trimToNull(input.reportUsername()),
                         reportPassword, trimToNull(input.reportNetworkCode()),
@@ -228,10 +227,10 @@ public class PlatformAdminService {
         require(operator, "SUB_ACCOUNT_MANAGE");
         requireSubAccountOwnership(operator, id);
         validateExpiry(input.expiresAt());
-        findSubAccount(id);
+        SubAccountRow current = findSubAccount(id);
         Long accountUserId = findSubAccountSysUserId(id);
         String username = required(input.username(), "子账号用户名不能为空");
-        String displayName = required(input.displayName(), "子账号名称不能为空");
+        boolean updateAccountLabel = accountUserId == null || !java.util.Objects.equals(current.username(), username);
         if (exists("SELECT COUNT(*) FROM agent_group WHERE username = ? AND id <> ?", username, id)
                 || exists("SELECT COUNT(*) FROM sys_user WHERE username = ? AND id <> ?",
                         username, accountUserId == null ? -1L : accountUserId)) {
@@ -259,13 +258,12 @@ public class PlatformAdminService {
         // x_admin.feidanonline / feidanmoney / feidanbetting），BY220 的子账号表单没有这三个字段，
         // 因此这里刻意不接受表单设定，只由报网登录/退出与列表读取归一化维护。
         StringBuilder assignment = new StringBuilder("""
-                username=?, display_name=?, expires_at=?,
+                username=?, expires_at=?,
                    sub_account_manage=?, machine_manage=?, unified_report_enabled=?,
                    report_username=?, report_network_code=?, report_route_code=?, report_type=?, report_url=?
                 """);
         List<Object> args = new ArrayList<>();
         args.add(username);
-        args.add(displayName);
         args.add(timestamp(input.expiresAt()));
         args.add(input.subAccountManage());
         args.add(input.machineManage());
@@ -275,6 +273,10 @@ public class PlatformAdminService {
         args.add(trimToNull(input.reportRouteCode()));
         args.add(reportType);
         args.add(reportUrl);
+        if (updateAccountLabel) {
+            assignment.append(", display_name=?");
+            args.add(username);
+        }
         if (passwordHash != null) {
             assignment.append(", password_hash=?");
             args.add(passwordHash);
@@ -320,14 +322,18 @@ public class PlatformAdminService {
         if (accountUserId == null) {
             String currentHash = jdbc.queryForObject(
                     "SELECT password_hash FROM agent_group WHERE id = ?", String.class, id);
-            accountUserId = userRepository.insert(username, displayName,
+            accountUserId = userRepository.insert(username, username,
                     currentHash == null ? passwordPolicy.encodeUnusableCredential() : currentHash, "ACTIVE");
             userRepository.assignRole(accountUserId, "SUB_ACCOUNT");
             jdbc.update("UPDATE agent_group SET sys_user_id = ? WHERE id = ?", accountUserId, id);
         } else {
-            jdbc.update("""
-                    UPDATE sys_user SET username=?, display_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
-                    """, username, displayName, accountUserId);
+            if (updateAccountLabel) {
+                jdbc.update("UPDATE sys_user SET username=?, display_name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        username, username, accountUserId);
+            } else {
+                jdbc.update("UPDATE sys_user SET username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        username, accountUserId);
+            }
             if (passwordHash != null) {
                 userRepository.updatePasswordHash(accountUserId, passwordHash);
                 sessionRepository.revokeAllActiveByUserId(accountUserId, Instant.now());
@@ -374,7 +380,7 @@ public class PlatformAdminService {
     public List<MachineRow> listMachines(long operator) {
         require(operator, "MACHINE_MANAGE");
         List<MachineRow> rows = jdbc.query("""
-                SELECT a.id, a.agent_code, a.display_name, u.username account_username, a.account_user_id, a.group_id,
+                SELECT a.id, a.agent_code, u.username account_username, a.account_user_id, a.group_id,
                        g.username group_username, a.score, a.expires_at, a.status, u.status account_status, a.board_open,
                        a.robot_manage, a.chase_enabled, a.bot_count, a.close_seconds, a.cancel_seconds,
                        a.rebate_rate, a.odds_rate, a.special_rebate_rate, a.special_odds_rate,
@@ -391,7 +397,7 @@ public class PlatformAdminService {
                  WHERE a.system_owned=FALSE AND a.deleted_at IS NULL
                  ORDER BY a.id
                 """, (rs, n) -> new MachineRow(rs.getLong("id"), rs.getString("agent_code"),
-                rs.getString("display_name"), rs.getString("account_username"), rs.getLong("account_user_id"), nullableLong(rs, "group_id"),
+                rs.getString("account_username"), rs.getLong("account_user_id"), nullableLong(rs, "group_id"),
                 rs.getString("group_username"), rs.getBigDecimal("score"), instant(rs.getTimestamp("expires_at")),
                 rs.getString("status"), rs.getString("account_status"), rs.getBoolean("board_open"), rs.getBoolean("robot_manage"),
                 rs.getBoolean("chase_enabled"), rs.getInt("bot_count"), rs.getInt("close_seconds"),
@@ -411,10 +417,9 @@ public class PlatformAdminService {
     public MachineRow createMachine(MachineInput input, long operator) {
         require(operator, "MACHINE_MANAGE");
         String username = required(input.username(), "机器账号不能为空");
-        String displayName = input.displayName() == null || input.displayName().isBlank() ? username : input.displayName().trim();
         Long effectiveGroupId = accessService.subAccountGroupId(operator).orElse(input.groupId());
         var created = agentAdminService.createAgent(username.toUpperCase(Locale.ROOT), username,
-                displayName, required(input.rawPassword(), "机器密码不能为空"), effectiveGroupId, operator);
+                username, required(input.rawPassword(), "机器密码不能为空"), effectiveGroupId, operator);
         applyMachine(input, created.id(), null, effectiveGroupId, operator, true);
         return findMachine(created.id());
     }
@@ -688,7 +693,7 @@ public class PlatformAdminService {
 
     private List<SubAccountRow> listSubAccountsInternal(long id) {
         return jdbc.query("""
-                SELECT g.id, g.group_code, g.username, g.display_name, g.score, g.expires_at, g.status,
+                SELECT g.id, g.group_code, g.username, g.score, g.expires_at, g.status,
                        u.status account_status,
                        g.sub_account_manage, g.machine_manage, g.unified_report_enabled,
                        g.report_username, g.report_network_code, g.report_route_code, g.report_type, g.created_at,
@@ -701,7 +706,7 @@ public class PlatformAdminService {
                   LEFT JOIN sys_user u ON u.id=g.sys_user_id
                  WHERE g.id=? AND g.deleted_at IS NULL
                 """, (rs, n) -> new SubAccountRow(rs.getLong("id"), rs.getString("group_code"),
-                rs.getString("username"), rs.getString("display_name"), rs.getBigDecimal("score"),
+                rs.getString("username"), rs.getBigDecimal("score"),
                 instant(rs.getTimestamp("expires_at")), rs.getString("status"), rs.getString("account_status"),
                 rs.getBoolean("sub_account_manage"),
                 rs.getBoolean("machine_manage"), rs.getBoolean("unified_report_enabled"),
@@ -740,7 +745,7 @@ public class PlatformAdminService {
     }
 
     private List<MachineRow> listMachinesInternal(long id) {        return jdbc.query("""
-                SELECT a.id, a.agent_code, a.display_name, u.username account_username, a.account_user_id, a.group_id,
+                SELECT a.id, a.agent_code, u.username account_username, a.account_user_id, a.group_id,
                        g.username group_username, a.score, a.expires_at, a.status, u.status account_status, a.board_open, a.robot_manage,
                        a.chase_enabled, a.bot_count, a.close_seconds, a.cancel_seconds, a.rebate_rate, a.odds_rate,
                        a.special_rebate_rate, a.special_odds_rate, a.total_limit, a.positive_limit, a.angle_limit,
@@ -755,7 +760,7 @@ public class PlatformAdminService {
                   LEFT JOIN agent_group g ON g.id=a.group_id
                  WHERE a.id=? AND a.system_owned=FALSE AND a.deleted_at IS NULL
                 """, (rs, n) -> new MachineRow(rs.getLong("id"), rs.getString("agent_code"),
-                rs.getString("display_name"), rs.getString("account_username"), rs.getLong("account_user_id"),
+                rs.getString("account_username"), rs.getLong("account_user_id"),
                 nullableLong(rs, "group_id"), rs.getString("group_username"), rs.getBigDecimal("score"),
                 instant(rs.getTimestamp("expires_at")), rs.getString("status"), rs.getString("account_status"),
                 rs.getBoolean("board_open"),
@@ -861,7 +866,7 @@ public class PlatformAdminService {
      * BY220 的子账号表单没有这三个字段，因此本入参**不接受表单设定**（调用方固定传 {@code null}），
      * 它们只由报网登录/退出与列表读取归一化维护，保留在这里只是为了让"上游量不是表单字段"这件事显式可见。</p>
      */
-    public record SubAccountInput(String username, String rawPassword, String displayName, BigDecimal score,
+    public record SubAccountInput(String username, String rawPassword, BigDecimal score,
                                   Instant expiresAt, boolean subAccountManage, boolean machineManage,
                                   boolean unifiedReportEnabled, String reportUsername,
                                   String reportNetworkCode, String reportRouteCode, String reportType,
@@ -888,7 +893,7 @@ public class PlatformAdminService {
      * 它们是**本地模拟的上游读数**（登录/退出/列表归一化维护），不是超管可编辑的表单字段；
      * {@code reportUrl} 只保存不请求。</p>
      */
-    public record SubAccountRow(long id, String groupCode, String username, String displayName, BigDecimal score,
+    public record SubAccountRow(long id, String groupCode, String username, BigDecimal score,
                                 Instant expiresAt, String status, String accountStatus, boolean subAccountManage,
                                 boolean machineManage,
                                 boolean unifiedReportEnabled, String reportUsername, String reportNetworkCode,
@@ -896,7 +901,7 @@ public class PlatformAdminService {
                                 BigDecimal reportBalance, BigDecimal reportStake,
                                 long machineCount, Instant createdAt,
                                 boolean online, Instant logtime, boolean hasReportPassword) {}
-    public record MachineInput(String username, String rawPassword, String displayName, Long groupId,
+    public record MachineInput(String username, String rawPassword, Long groupId,
                                BigDecimal score, Instant expiresAt, boolean boardOpen, boolean robotManage,
                                boolean chaseEnabled, int botCount, int closeSeconds, int cancelSeconds,
                                BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
@@ -914,7 +919,7 @@ public class PlatformAdminService {
      * 为空时永远不会自动解锁（{@code UserAccount#canLogin}），表现为"密码明明对却提示用户名或密码错误"，
      * 所以必须把登录态独立暴露出来，超管才能一键解锁。</p>
      */
-    public record MachineRow(long id, String code, String displayName, String accountUsername, long accountUserId,
+    public record MachineRow(long id, String code, String accountUsername, long accountUserId,
                              Long groupId, String groupUsername, BigDecimal score, Instant expiresAt, String status,
                              String accountStatus,
                              boolean boardOpen, boolean robotManage, boolean chaseEnabled, int requestedBotCount,

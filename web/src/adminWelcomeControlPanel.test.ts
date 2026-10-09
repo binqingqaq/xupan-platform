@@ -19,7 +19,6 @@ function machine(overrides: Record<string, unknown> = {}) {
   return {
     id: 1,
     code: 'BOT001',
-    displayName: '澳8机器',
     accountUsername: 'bot001',
     score: 1000,
     status: 'ACTIVE',
@@ -85,13 +84,13 @@ describe('admin welcome control panel 机器选择器', () => {
   it('renders the selector with all machines for the global admin scope', async () => {
     await mountWelcome({
       scope: scope('GLOBAL'),
-      machines: [machine({ id: 1, code: 'BOT001', displayName: '澳8机器' }), machine({ id: 2, code: 'BOT002', displayName: '澳9机器' })] as never,
+      machines: [machine({ id: 1, code: 'BOT001', accountUsername: 'bot001' }), machine({ id: 2, code: 'BOT002', accountUsername: 'bot002' })] as never,
       machineId: null,
       operatorName: '超级管理员',
     })
 
     expect(machineSelect()).toBeTruthy()
-    expect(machineOptionLabels()).toEqual(['全部机器', 'BOT001 澳8机器', 'BOT002 澳9机器'])
+    expect(machineOptionLabels()).toEqual(['全部机器', 'BOT001 bot001', 'BOT002 bot002'])
     expect(hintText()).toBe('未选择机器：创建按平台默认归属')
   })
 
@@ -104,14 +103,14 @@ describe('admin welcome control panel 机器选择器', () => {
   it('renders the selector with only the group machines for a sub account scope', async () => {
     await mountWelcome({
       scope: scope('GROUP'),
-      machines: [machine({ id: 10, code: 'BOT010', displayName: '本组机器' })] as never,
+      machines: [machine({ id: 10, code: 'BOT010', accountUsername: 'bot010' })] as never,
       machineId: null,
       operatorName: '子账号甲',
     })
 
     expect(machineSelect()).toBeTruthy()
     // 子账号没有「全部机器」这个合法选项（选中即 machineId=null → 后端 400），首项必须是「请选择本组机器」
-    expect(machineOptionLabels()).toEqual(['请选择本组机器', 'BOT010 本组机器'])
+    expect(machineOptionLabels()).toEqual(['请选择本组机器', 'BOT010 bot010'])
     // GROUP 未选机器时必须明确要求选机器，不能沿用"按平台默认归属"（后端不允许）
     expect(hintText()).toBe('子账号必须选择机器：未选择时不能创建玩家或托')
   })
@@ -121,7 +120,7 @@ describe('admin welcome control panel 机器选择器', () => {
     const changed: Array<number | null> = []
     await mountWelcome({
       scope: scope('GROUP'),
-      machines: [machine({ id: 10, code: 'BOT010', displayName: '本组机器' })] as never,
+      machines: [machine({ id: 10, code: 'BOT010', accountUsername: 'bot010' })] as never,
       machineId: null,
       operatorName: '子账号甲',
       onMachineChanged: (machineId: number | null) => { changed.push(machineId) },

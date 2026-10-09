@@ -141,7 +141,7 @@ public class PlatformAdminResourceController {
      * 所以本请求模型刻意不暴露它们（服务层的入参占位固定传 {@code null}，见
      * {@link PlatformAdminService.SubAccountInput}）。</p>
      */
-    public record SubAccountRequest(@NotBlank String username, String rawPassword, @NotBlank String displayName,
+    public record SubAccountRequest(@NotBlank String username, String rawPassword,
                                     BigDecimal score, Instant expiresAt, boolean subAccountManage,
                                     boolean machineManage, boolean unifiedReportEnabled, String reportUsername,
                                     String reportNetworkCode, String reportRouteCode, String reportType,
@@ -150,13 +150,13 @@ public class PlatformAdminResourceController {
         PlatformAdminService.SubAccountInput toInput() {
             // reportOnline / reportBalance / reportStake 固定不传：它们是上游状态，只能由
             // 报网登录/退出与列表读取归一化维护（BY220 子账号表单也没有这三个字段）。
-            return new PlatformAdminService.SubAccountInput(username, rawPassword, displayName, score, expiresAt,
+            return new PlatformAdminService.SubAccountInput(username, rawPassword, score, expiresAt,
                     subAccountManage, machineManage, unifiedReportEnabled, reportUsername, reportNetworkCode,
                     reportRouteCode, reportType, reportUrl, null, null, null, up, down, online, reportPassword);
         }
     }
 
-    public record MachineRequest(@NotBlank String username, String rawPassword, String displayName, Long groupId,
+    public record MachineRequest(@NotBlank String username, String rawPassword, Long groupId,
                                  BigDecimal score, Instant expiresAt, boolean boardOpen, boolean robotManage,
                                  boolean chaseEnabled, int botCount, int closeSeconds, int cancelSeconds,
                                  BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
@@ -167,7 +167,7 @@ public class PlatformAdminResourceController {
                                  BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games,
                                  String rebateMode) {
         PlatformAdminService.MachineInput toInput() {
-            return new PlatformAdminService.MachineInput(username, rawPassword, displayName, groupId, score,
+            return new PlatformAdminService.MachineInput(username, rawPassword, groupId, score,
                     expiresAt, boardOpen, robotManage, chaseEnabled, botCount, closeSeconds, cancelSeconds,
                     rebateRate, oddsRate, specialRebateRate, specialOddsRate, totalLimit, positiveLimit,
                     angleLimit, strictLimit, tongLimit, carLimit, specialLimit, oddEvenLimit, bigSmallLimit,
@@ -198,7 +198,7 @@ public class PlatformAdminResourceController {
      * 三者都只是只读读数，**不接受表单设定**；列表读取还会按 BY220 {@code Users.php:147-149}
      * 对"统一飞单配置不完整"的子账号强制归一化为离线。</p>
      */
-    public record SubAccountResponse(long id, String code, String username, String displayName, BigDecimal score,
+    public record SubAccountResponse(long id, String code, String username, BigDecimal score,
                                      Instant expiresAt, String status, String accountStatus, boolean subAccountManage,
                                      boolean machineManage, boolean unifiedReportEnabled,
                                      String reportUsername, String reportNetworkCode, String reportRouteCode,
@@ -208,7 +208,7 @@ public class PlatformAdminResourceController {
                                      long machineCount, Instant createdAt,
                                      boolean online, Instant logtime, boolean hasReportPassword) {
         static SubAccountResponse from(PlatformAdminService.SubAccountRow row) {
-            return new SubAccountResponse(row.id(), row.groupCode(), row.username(), row.displayName(), row.score(),
+            return new SubAccountResponse(row.id(), row.groupCode(), row.username(), row.score(),
                     row.expiresAt(), row.status(), row.accountStatus(), row.subAccountManage(), row.machineManage(),
                     row.unifiedReportEnabled(), row.reportUsername(), row.reportNetworkCode(), row.reportRouteCode(),
                     row.reportType(), row.reportUrl(), row.reportOnline(), row.reportBalance(), row.reportStake(),
@@ -223,7 +223,7 @@ public class PlatformAdminResourceController {
      * <p>{@code accountStatus} 独立于 {@code status}：账号可能被锁（{@code LOCKED}）而机器仍是"正常"，
      * 此时登录会一直提示用户名或密码错误，必须让超管看到并能解锁。</p>
      */
-    public record MachineResponse(long id, String code, String displayName, String accountUsername, long accountUserId,
+    public record MachineResponse(long id, String code, String accountUsername, long accountUserId,
                                   Long groupId, String groupUsername, BigDecimal score, Instant expiresAt,
                                   String status, String accountStatus, boolean boardOpen, boolean robotManage,
                                   boolean chaseEnabled,
@@ -236,7 +236,7 @@ public class PlatformAdminResourceController {
                                   BigDecimal playerMaxStake, BigDecimal playerMinStake, long normalCount,
                                   long botCount, String rebateMode, List<String> games) {
         static MachineResponse from(PlatformAdminService.MachineRow row) {
-            return new MachineResponse(row.id(), row.code(), row.displayName(), row.accountUsername(),
+            return new MachineResponse(row.id(), row.code(), row.accountUsername(),
                     row.accountUserId(), row.groupId(), row.groupUsername(), row.score(), row.expiresAt(),
                     row.status(), row.accountStatus(), row.boardOpen(), row.robotManage(), row.chaseEnabled(),
                     row.requestedBotCount(),

@@ -21,7 +21,7 @@ interface SubAccountForm extends Omit<SubAccountInput, 'up' | 'down' | 'online'>
 }
 function emptyForm(): SubAccountForm {
   return {
-    username: '', rawPassword: '', displayName: '', score: 0,
+    username: '', rawPassword: '', score: 0,
     up: null, down: null, online: false,
     expiresAt: null, subAccountManage: false, machineManage: false, unifiedReportEnabled: false,
     reportUsername: '', reportNetworkCode: '', reportRouteCode: '', reportType: '', reportUrl: '',
@@ -53,7 +53,7 @@ function openCreate() { editingId.value = null; Object.assign(form, emptyForm())
 function openEdit(row: SubAccount) {
   editingId.value = row.id
   Object.assign(form, {
-    username: row.username || '', rawPassword: '', displayName: row.displayName, score: row.score,
+    username: row.username || '', rawPassword: '', score: row.score,
     // BY220：编辑态「上分」「下分」每次都是空输入框（不是回显历史值），「在线/下线」按 `x_admin.online` 回显。
     up: null, down: null, online: row.online === true,
     expiresAt: instantToLocalDateTime(row.expiresAt), subAccountManage: row.subAccountManage, machineManage: row.machineManage,
@@ -67,13 +67,12 @@ function openEdit(row: SubAccount) {
   formOpen.value = true
 }
 async function submit() {
-  if (!form.username.trim() || !form.displayName.trim()) return
+  if (!form.username.trim()) return
   error.value = ''
   feedback.value = ''
   const base: SubAccountInput = {
     username: form.username.trim(),
     rawPassword: form.rawPassword || undefined,
-    displayName: form.displayName.trim(),
     expiresAt: localDateTimeToInstant(form.expiresAt),
     subAccountManage: form.subAccountManage,
     machineManage: form.machineManage,
@@ -115,7 +114,7 @@ async function submit() {
   }
 }
 async function remove(row: SubAccount) {
-  if (!window.confirm(`确定将[${row.username || row.displayName}]删除么?`)) return
+  if (!window.confirm(`确定将[${row.username}]删除么?`)) return
   busy.value = true
   error.value = ''
   try {
@@ -138,7 +137,7 @@ async function unlock(row: SubAccount) {
   try {
     // 置回 ACTIVE 会顺带清空 locked_until 与失败次数（UserRepository.updateManagedStatus），即解锁。
     await api.changeSubAccountStatus(row.id, 'ACTIVE')
-    feedback.value = `[${row.username || row.displayName}] 已解锁`
+    feedback.value = `[${row.username}] 已解锁`
     await load()
   } catch (cause) {
     error.value = apiErrorMessage(cause, '子账号解锁失败')
@@ -202,7 +201,6 @@ onMounted(() => { void load() })
           <!-- BY220 sub/form.html「用户名」：必填；本项目按 BY220 Users::add() 支持英文逗号分隔批量建号 -->
           <label>用户名<input v-model="form.username" required placeholder="请输入用户名，多个用户名用英文逗号分隔可批量创建" /></label>
           <label>密码<input v-model="form.rawPassword" type="password" :required="!editingId" placeholder="需要请输入密码" /></label>
-          <label>子账号名称<input v-model="form.displayName" required /></label>
           <!-- BY220 sub/form.html「积分」：新增态填初始积分；编辑态 readonly 只读回显，改分只能走上分/下分 -->
           <label>积分<input v-model.number="form.score" type="number" min="0" step="0.01" :readonly="editingId !== null" :placeholder="editingId ? '编辑态积分只读，请用上分/下分调整' : '请输入初始积分'" /></label>
           <!-- BY220 sub/form.html：上分/下分只在编辑态出现（{if $info}），且后端拒绝同时提交。

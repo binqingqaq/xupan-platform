@@ -27,7 +27,6 @@ function subAccount(overrides: Record<string, unknown> = {}) {
     id: 1,
     code: 'SUB001',
     username: 'sub001',
-    displayName: '测试子账号',
     score: 1000,
     expiresAt: null,
     status: 'ACTIVE',
@@ -318,9 +317,9 @@ describe('platform admin sub accounts', () => {
     await nextTick()
 
     expect(fieldInput('积分')?.readOnly).toBe(false)
+    expect(container?.textContent).not.toContain('子账号名称')
     setField('用户名', 'a,b,c')
     setField('密码', '123456')
-    setField('子账号名称', '批量子账号')
     await nextTick()
 
     container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
@@ -328,6 +327,7 @@ describe('platform admin sub accounts', () => {
 
     expect(api.createSubAccount).toHaveBeenCalledTimes(1)
     expect(api.createSubAccount).toHaveBeenCalledWith(expect.objectContaining({ username: 'a,b,c', score: 0 }))
+    expect(vi.mocked(api.createSubAccount).mock.calls[0][0]).not.toHaveProperty('displayName')
     expect(vi.mocked(api.createSubAccount).mock.calls[0][0]).not.toHaveProperty('up')
     expect(container?.textContent).toContain('已创建 3 个子账号')
   })

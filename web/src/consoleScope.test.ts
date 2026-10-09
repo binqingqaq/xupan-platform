@@ -79,7 +79,7 @@ function groupScope(): PlayerDeskScope {
 
 function machine(overrides: Record<string, unknown> = {}) {
   return {
-    id: 1, code: 'BOT001', displayName: '澳8机器', accountUsername: 'bot001', accountUserId: 11,
+    id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
     boardOpen: true, robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
     cancelSeconds: 0, rebateRate: 1.5, oddsRate: 1, specialRebateRate: 0.5, specialOddsRate: 1,
@@ -305,7 +305,7 @@ describe('console header identity area', () => {
     const select = container?.querySelector<HTMLSelectElement>('.welcome-machine-select')
     if (!select) throw new Error('sub-account must get a machine selector')
     expect(Array.from(select.options).map(option => option.textContent))
-      .toEqual(['请选择本组机器', 'BOT001 澳8机器'])
+      .toEqual(['请选择本组机器', 'BOT001 bot001'])
     expect(select.value).toBe('')
     // 未选机器时必须明确要求（后端会 400），不能提示"按平台默认归属"。
     expect(shellText()).toContain('子账号必须选择机器：未选择时不能创建玩家或托')
@@ -315,7 +315,7 @@ describe('console header identity area', () => {
     await nextTick()
 
     expect(changed).toBe(1)
-    expect(shellText()).toContain('当前按机器创建（BOT001 澳8机器）')
+    expect(shellText()).toContain('当前按机器创建（BOT001 bot001）')
   })
 
   it('renders the machine selector for the platform administrator in GLOBAL mode', async () => {
@@ -340,7 +340,7 @@ describe('console header identity area', () => {
 
     const select = container?.querySelector<HTMLSelectElement>('.welcome-machine-select')
     if (!select) throw new Error('missing machine selector')
-    expect(Array.from(select.options).map(option => option.textContent)).toEqual(['全部机器', 'BOT001 澳8机器'])
+    expect(Array.from(select.options).map(option => option.textContent)).toEqual(['全部机器', 'BOT001 bot001'])
     expect(select.value).toBe('')
 
     select.value = '1'
@@ -348,7 +348,7 @@ describe('console header identity area', () => {
     await nextTick()
 
     expect(changed).toBe(1)
-    expect(shellText()).toContain('当前按机器创建（BOT001 澳8机器）')
+    expect(shellText()).toContain('当前按机器创建（BOT001 bot001）')
   })
 
   it('shows an inline error instead of a blank header when the scope API fails', async () => {

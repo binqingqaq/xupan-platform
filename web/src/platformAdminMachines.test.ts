@@ -27,7 +27,7 @@ let app: ReturnType<typeof createApp> | null = null
 
 function machine(overrides: Record<string, unknown> = {}) {
   return {
-    id: 1, code: 'BOT001', displayName: '澳8机器', accountUsername: 'bot001', accountUserId: 11,
+    id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
     boardOpen: true, robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
     cancelSeconds: 0, rebateRate: 1.5, oddsRate: 1, specialRebateRate: 0.5, specialOddsRate: 1,
@@ -88,6 +88,7 @@ describe('platform admin machines', () => {
     await mountMachines()
     expect(container?.textContent).toContain('机器管理')
     expect(container?.textContent).toContain('返水口径')
+    expect(container?.textContent).not.toContain('展示名')
 
     container?.querySelectorAll<HTMLButtonElement>('.content > header button')[0]?.click()
     await nextTick()
@@ -115,6 +116,7 @@ describe('platform admin machines', () => {
       username: 'bot002',
       rebateMode: 'DOUBLE',
     }))
+    expect(vi.mocked(api.createMachine).mock.calls[0][0]).not.toHaveProperty('displayName')
   })
 
   it('shows the stored rebate mode in the list and backfills it when editing', async () => {

@@ -4,7 +4,6 @@ export interface SubAccount {
   id: number
   code: string
   username: string | null
-  displayName: string
   score: number
   expiresAt: string | null
   status: 'ACTIVE' | 'DISABLED'
@@ -72,7 +71,6 @@ export interface SubAccount {
 export interface Machine {
   id: number
   code: string
-  displayName: string
   accountUsername: string
   accountUserId: number
   groupId: number | null
@@ -115,7 +113,6 @@ export interface Machine {
 export interface SubAccountInput {
   username: string
   rawPassword?: string
-  displayName: string
   /**
    * 直接设定的积分。
    *
@@ -155,7 +152,6 @@ export interface SubAccountInput {
 export interface MachineInput {
   username: string
   rawPassword?: string
-  displayName: string
   groupId: number | null
   score: number
   expiresAt: string | null

@@ -235,8 +235,8 @@ export function scopeIdentityText(scope: PlayerDeskScope | null | undefined, fal
 }
 
 /** 机器下拉选项文案，与超级后台"机器管理"的展示口径保持一致（编码 + 名称）。 */
-export function machineOptionLabel(machine: { code: string; displayName: string }): string {
-  return `${machine.code} ${machine.displayName}`.trim()
+export function machineOptionLabel(machine: { code: string; accountUsername: string }): string {
+  return `${machine.code} ${machine.accountUsername}`.trim()
 }
 
 /** 头部"托 0/上限 1"口径。 */
