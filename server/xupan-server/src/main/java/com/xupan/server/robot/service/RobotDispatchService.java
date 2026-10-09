@@ -19,12 +19,14 @@ import com.xupan.server.robot.repository.RobotTemplateRepository;
 import com.xupan.server.web.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -52,6 +54,7 @@ public class RobotDispatchService {
     private final TransactionTemplate transactionTemplate;
     private final RobotDrawComponentRepository drawComponentRepository;
     private final GameDataRepository gameDataRepository;
+    private final int unscheduledEventRetentionDays;
 
     public RobotDispatchService(RobotDispatchRepository dispatchRepository,
                                 RobotRepository robotRepository,
@@ -65,7 +68,8 @@ public class RobotDispatchService {
                                 ObjectMapper objectMapper,
                                 TransactionTemplate transactionTemplate,
                                 RobotDrawComponentRepository drawComponentRepository,
-                                GameDataRepository gameDataRepository) {
+                                GameDataRepository gameDataRepository,
+                                @Value("${xupan.retention.chat-days:5}") int unscheduledEventRetentionDays) {
         this.dispatchRepository = dispatchRepository;
         this.robotRepository = robotRepository;
         this.templateRepository = templateRepository;
@@ -78,7 +82,11 @@ public class RobotDispatchService {
         this.objectMapper = objectMapper;
         this.transactionTemplate = transactionTemplate;
         this.drawComponentRepository = drawComponentRepository;
+        if (unscheduledEventRetentionDays < 1) {
+            throw new IllegalArgumentException("机器人旧事件保留天数必须为正数");
+        }
         this.gameDataRepository = gameDataRepository;
+        this.unscheduledEventRetentionDays = unscheduledEventRetentionDays;
     }
 
     public int scanPendingEvents(Instant now, int batchSize) {
@@ -86,7 +94,8 @@ public class RobotDispatchService {
             throw new IllegalArgumentException("机器人扫描参数无效");
         }
         List<RobotDispatchRepository.UnscheduledGameEvent> events =
-                dispatchRepository.findUnscheduledEvents(batchSize);
+                dispatchRepository.findUnscheduledEvents(
+                        batchSize, now.minus(unscheduledEventRetentionDays, ChronoUnit.DAYS));
         int discovered = 0;
         for (RobotDispatchRepository.UnscheduledGameEvent event : events) {
             Boolean created = transactionTemplate.execute(status -> discover(event, now));

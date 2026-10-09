@@ -21,6 +21,15 @@ spring:
   flyway:
     enabled: true
 xupan:
+  retention:
+    enabled: ${XUPAN_DATA_RETENTION_ENABLED:true}
+    cron: ${XUPAN_DATA_RETENTION_CRON:0 30 3 * * *}
+    batch-size: ${XUPAN_DATA_RETENTION_BATCH_SIZE:500}
+    max-batches-per-table-per-run: ${XUPAN_DATA_RETENTION_MAX_BATCHES_PER_TABLE:20}
+    chat-days: ${XUPAN_DATA_RETENTION_CHAT_DAYS:5}
+    login-days: ${XUPAN_DATA_RETENTION_LOGIN_DAYS:180}
+    operation-days: ${XUPAN_DATA_RETENTION_OPERATION_DAYS:365}
+    ledger-days: ${XUPAN_DATA_RETENTION_LEDGER_DAYS:1095}
   display:
     mobile:
       external:

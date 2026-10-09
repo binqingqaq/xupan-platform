@@ -54,6 +54,24 @@ public class RobotDispatchRepository {
                 instant(rs.getTimestamp("created_at"))), limit);
     }
 
+    /** 不补发已经超过聊天保留期的旧机器人事件；已有待处理派发仍由 findDue 重试。 */
+    public List<UnscheduledGameEvent> findUnscheduledEvents(int limit, Instant createdAfter) {
+        validateLimit(limit);
+        Timestamp cutoff = Timestamp.from(requiredInstant(createdAfter, "createdAfter"));
+        return jdbcTemplate.query("""
+                SELECT e.id, e.issue_number, e.event_type, e.message, e.created_at
+                  FROM game_issue_event e
+                  LEFT JOIN chat_robot_dispatch d ON d.game_event_id = e.id
+                 WHERE d.id IS NULL
+                   AND e.event_type IN """ + SUPPORTED_EVENT_TYPES + """
+                   AND e.created_at >= ?
+                 ORDER BY e.id
+                 LIMIT ?
+                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"),
+                rs.getString("issue_number"), rs.getString("event_type"), rs.getString("message"),
+                instant(rs.getTimestamp("created_at"))), cutoff, limit);
+    }
+
     public Optional<ChatRobotDispatch> findById(long dispatchId) {
         return jdbcTemplate.query(COLUMNS + " WHERE id = ?", this::mapDispatch, dispatchId)
                 .stream().findFirst();
