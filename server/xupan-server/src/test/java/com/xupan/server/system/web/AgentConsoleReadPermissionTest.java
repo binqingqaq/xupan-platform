@@ -138,6 +138,27 @@ class AgentConsoleReadPermissionTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test
+    void machineAccountCanChangeOnlyItsOwnPasswordFromConsole() throws Exception {
+        String token = login(MACHINE_USER, PASSWORD);
+        String nextPassword = "ConsolePermNextPass456";
+
+        mockMvc.perform(post("/api/agent/password").header("Authorization", bearer(token))
+                        .contentType("application/json")
+                        .content("{\"oldPassword\":\"" + PASSWORD + "\",\"newPassword\":\"" + nextPassword
+                                + "\",\"confirmPassword\":\"" + nextPassword + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("1"));
+
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM sys_operation_log
+                 WHERE operator_user_id = (SELECT account_user_id FROM agent WHERE id = ?)
+                   AND http_method = 'POST' AND request_path = '/api/agent/password' AND result = 'SUCCESS'
+                """, Integer.class, machineId)).isEqualTo(1);
+        assertThat(loginStatus(MACHINE_USER, PASSWORD)).isEqualTo(401);
+        assertThat(loginStatus(MACHINE_USER, nextPassword)).isEqualTo(200);
+    }
+
     /**
      * 机器账号持有 {@code /console} 所需的最小权限；平台侧角色（ADMIN / SUB_ACCOUNT）不持有它。
      *
@@ -184,6 +205,12 @@ class AgentConsoleReadPermissionTest {
                 .andExpect(status().isOk())
                 .andReturn();
         return JsonPath.read(result.getResponse().getContentAsString(), "$.accessToken");
+    }
+
+    private int loginStatus(String username, String password) throws Exception {
+        return mockMvc.perform(post("/api/auth/login").contentType("application/json")
+                        .content("{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}"))
+                .andReturn().getResponse().getStatus();
     }
 
     private static String bearer(String token) {

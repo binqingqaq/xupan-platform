@@ -5,6 +5,7 @@ import com.xupan.server.agent.service.AgentConsoleService;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.playerauth.service.PlayerLinkAuthenticationService;
+import com.xupan.server.platformadmin.service.PlatformPasswordService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
@@ -32,9 +33,20 @@ import java.util.List;
 public class AgentConsoleController {
 
     private final AgentConsoleService service;
+    private final PlatformPasswordService passwordService;
 
-    public AgentConsoleController(AgentConsoleService service) {
+    public AgentConsoleController(AgentConsoleService service, PlatformPasswordService passwordService) {
         this.service = service;
+        this.passwordService = passwordService;
+    }
+
+    @PostMapping("/password")
+    public PasswordChangeResponse changePassword(Authentication authentication,
+                                                 @RequestBody PasswordChangeRequest request) {
+        PlatformPasswordService.ChangeResult result = passwordService.changeMachinePassword(
+                new PlatformPasswordService.ChangeInput(null, request.oldPassword(), request.newPassword(),
+                        request.confirmPassword()), principal(authentication).getUserId());
+        return new PasswordChangeResponse(result.message());
     }
 
     @GetMapping("/me")
@@ -139,6 +151,12 @@ public class AgentConsoleController {
                     row.groupDisplayName(), row.status(), row.normalCount(), row.botCount(),
                     row.totalBalance(), row.createdAt());
         }
+    }
+
+    public record PasswordChangeRequest(String oldPassword, String newPassword, String confirmPassword) {
+    }
+
+    public record PasswordChangeResponse(String message) {
     }
 
     public record AgentPlayerPageResponse(List<AgentPlayerResponse> items, int page, int pageSize, long total) {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { api, apiErrorMessage } from '../../api'
-import { botQuotaText, machineOptionLabel, machineStatusLabel, scopeAllowsMachineSwitch } from '../../consoleScope'
+import { machineOptionLabel, scopeAllowsMachineSwitch } from '../../consoleScope'
 import {
   LIMIT_FIELDS,
   createDisplayDraft,
@@ -43,7 +43,12 @@ const props = defineProps<{
   /** 机器级配置句柄：`/console` 顶部与底部共用同一个，避免两处缓存互相覆盖。 */
   machineConsole?: MachineConfigConsoleHandle
 }>()
-const emit = defineEmits<{ scopeChanged: [scope: PlayerDeskScope]; machineChanged: [machineId: number | null] }>()
+const emit = defineEmits<{ scopeChanged: [scope: PlayerDeskScope]; machineChanged: [machineId: number | null]; logout: [] }>()
+const passwordOpen = ref(false)
+const passwordSaving = ref(false)
+const passwordError = ref('')
+const passwordFeedback = ref('')
+const passwordDraft = ref({ oldPassword: '', newPassword: '', confirmPassword: '' })
 
 const part = computed<'all' | 'welcome' | 'game'>(() => props.part ?? 'all')
 
@@ -71,12 +76,9 @@ const machineProfile = computed(() => {
   const current = scope.value
   if (!current || current.mode !== 'MACHINE') return null
   return {
-    name: current.machineName || current.machineCode || '机器账号',
-    code: current.machineCode || '未设置',
+    name: props.operatorName?.trim() || current.machineName || current.machineCode || '机器账号',
     group: current.groupName || '平台直属',
-    status: machineStatusLabel(current.machineStatus),
-    botQuota: botQuotaText(current),
-    playerCount: current.playerCount ?? 0,
+    expiresAt: current.expiresAt,
   }
 })
 const machineSwitchHint = computed(() => {
@@ -92,6 +94,37 @@ const pointsText = computed(() => {
   const value = scope.value?.score
   return value === null || value === undefined ? '--' : formatPoints(value)
 })
+const expiresText = computed(() => {
+  const value = machineProfile.value?.expiresAt
+  if (!value) return '未设置'
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    }).format(new Date(value)).replace(/-/g, '/')
+})
+
+function openPassword() {
+  passwordDraft.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
+  passwordError.value = ''
+  passwordFeedback.value = ''
+  passwordOpen.value = true
+}
+
+async function changePassword() {
+  if (passwordSaving.value) return
+  passwordSaving.value = true
+  passwordError.value = ''
+  passwordFeedback.value = ''
+  try {
+    await api.changeAgentPassword(passwordDraft.value)
+    passwordFeedback.value = '密码已修改，请重新登录'
+    window.setTimeout(() => emit('logout'), 1200)
+  } catch (cause) {
+    passwordError.value = apiErrorMessage(cause, '修改密码失败')
+  } finally {
+    passwordSaving.value = false
+  }
+}
 
 function changeMachine(event: Event) {
   const raw = (event.target as HTMLSelectElement).value
@@ -185,14 +218,6 @@ watch(configLevel, level => {
   if (part.value === 'welcome') return
   if (level === 'GLOBAL') void loadGlobalConfig()
 }, { immediate: true })
-
-const displayTargetText = computed(() => {
-  if (configLevel.value === 'MACHINE') {
-    return machineConfig.value ? machineConfigTitle(machineConfig.value) : '机器配置加载中...'
-  }
-  if (configLevel.value === 'GLOBAL') return '全部机器（全局配置）'
-  return '身份范围未就绪'
-})
 
 const boardStatusText = computed(() => {
   if (configLevel.value === 'MACHINE') {
@@ -419,16 +444,12 @@ onMounted(() => {
 
 <template>
   <section v-if="part !== 'game'" class="admin-welcome-bar" aria-label="欢迎与账户状态区域">
-    <span class="welcome-label">欢迎您:</span>
+    <span class="welcome-label">欢迎您：</span>
     <span v-if="scopeLoading && !scope" class="welcome-meta">身份范围加载中...</span>
     <template v-if="machineProfile">
       <span class="welcome-user">{{ machineProfile.name }}，</span>
-      <span class="welcome-meta">机器编码：{{ machineProfile.code }}，</span>
-      <span class="welcome-meta">代理积分：{{ formatPoints(scope?.score) }}，</span>
-      <span class="welcome-meta">普：{{ machineProfile.playerCount }}，</span>
-      <span class="welcome-meta">托：{{ machineProfile.botQuota }}，</span>
-      <span class="welcome-meta">所属子账号：{{ machineProfile.group }}，</span>
-      <span class="welcome-meta">状态：{{ machineProfile.status }}</span>
+      <span class="welcome-meta">托：<b>{{ scope?.botLimit ?? 0 }}</b>，</span>
+      <span class="welcome-meta">过期时间：<b>{{ expiresText }}</b></span>
     </template>
     <template v-else-if="scope">
       <span class="welcome-user">{{ scope.mode === 'GROUP' ? (scope.groupName || operatorLabel) : operatorLabel }}，</span>
@@ -453,18 +474,29 @@ onMounted(() => {
     <span v-if="canSwitchMachine" class="welcome-hint">{{ machineSwitchHint }}</span>
     <span v-if="scopeErrorText" class="welcome-error" role="alert">{{ scopeErrorText }}</span>
     <span v-else-if="machineErrorText" class="welcome-error" role="alert">{{ machineErrorText }}</span>
-    <span class="welcome-action">退出登录</span>
+    <button class="welcome-action" type="button" @click="$emit('logout')">退出登录</button>
     <span class="welcome-spacer"></span>
-    <span class="welcome-points">剩余积分:<b>{{ pointsText }}</b></span>
-    <span class="welcome-password">修改密码</span>
+    <span class="welcome-points">剩余积分：<b>{{ pointsText }}</b></span>
+    <button v-if="machineProfile" class="welcome-password" type="button" @click="openPassword">修改密码</button>
+    <span v-else class="welcome-password">修改密码</span>
   </section>
 
+  <div v-if="passwordOpen" class="password-mask" @click.self="passwordOpen = false">
+    <form class="password-dialog" @submit.prevent="changePassword">
+      <header><h2>修改机器账号密码</h2><button type="button" aria-label="关闭" @click="passwordOpen = false">×</button></header>
+      <label>旧密码<input v-model="passwordDraft.oldPassword" type="password" autocomplete="current-password" required /></label>
+      <label>新密码<input v-model="passwordDraft.newPassword" type="password" autocomplete="new-password" required /></label>
+      <label>确认新密码<input v-model="passwordDraft.confirmPassword" type="password" autocomplete="new-password" required /></label>
+      <p v-if="passwordError" class="password-error" role="alert">{{ passwordError }}</p>
+      <p v-if="passwordFeedback" class="password-feedback" role="status">{{ passwordFeedback }}</p>
+      <footer><button type="button" @click="passwordOpen = false">取消</button><button type="submit" :disabled="passwordSaving">{{ passwordSaving ? '提交中...' : '确认修改' }}</button></footer>
+    </form>
+  </div>
+
   <section v-if="part !== 'welcome'" class="admin-game-control-bar" aria-label="状态与赔率配置区域">
-    <span class="game-control-label">当前状态:</span>
+    <span class="game-control-label">当前状态：</span>
     <span class="game-control-value game-control-status">{{ boardStatusText }}</span>
-    <span class="game-control-label">机器:</span>
-    <span class="game-control-value game-control-target">{{ displayTargetText }}</span>
-    <label class="game-control-label" for="admin-display-odds">赔率:</label>
+    <label class="game-control-label game-control-label-bold" for="admin-display-odds">赔率：</label>
     <input
       id="admin-display-odds"
       v-model="oddsText"
@@ -477,7 +509,7 @@ onMounted(() => {
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
     />
-    <span class="game-control-label">限额:</span>
+    <span class="game-control-label">限额：</span>
     <button
       class="game-control-limit-button"
       type="button"
@@ -487,7 +519,7 @@ onMounted(() => {
     >
       设置
     </button>
-    <label class="game-control-label" for="admin-special-odds">特码赔率:</label>
+    <label class="game-control-label game-control-label-bold" for="admin-special-odds">特码赔率：</label>
     <input
       id="admin-special-odds"
       v-model="specialOddsText"
@@ -500,7 +532,7 @@ onMounted(() => {
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
     />
-    <label class="game-control-label" for="admin-special-rebate">特码返水:</label>
+    <label class="game-control-label game-control-label-bold" for="admin-special-rebate">特码返水：</label>
     <input
       id="admin-special-rebate"
       v-model="specialRebateText"
@@ -513,7 +545,7 @@ onMounted(() => {
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
     />
-    <label class="game-control-label" for="admin-rebate-mode">流水显示:</label>
+    <label class="game-control-label game-control-label-bold" for="admin-rebate-mode">流水显示：</label>
     <select
       id="admin-rebate-mode"
       class="game-control-select"
@@ -573,6 +605,8 @@ onMounted(() => {
   gap: 0;
   min-height: 32px;
   padding: 3px 8px;
+  font-size: 14px;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Arial, Roboto, "PingFang SC", miui, "Hiragino Sans GB", "Microsoft Yahei", sans-serif;
   background: linear-gradient(#f6fbff, var(--ops-header, #dceeff));
 }
 
@@ -585,18 +619,27 @@ onMounted(() => {
   margin-top: 5px;
   margin-bottom: 8px;
   padding: 4px 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Arial, Roboto, "PingFang SC", miui, "Hiragino Sans GB", "Microsoft Yahei", sans-serif;
+  font-size: 14px;
 }
 
-.welcome-label,
-.game-control-label {
+.welcome-label {
   color: var(--ops-blue-deep, #15599d);
-  font-weight: 800;
+  font-weight: 400;
   white-space: nowrap;
 }
 
+.game-control-label {
+  color: var(--ops-blue-deep, #15599d);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.game-control-label-bold { font-weight: 700; }
+
 .welcome-user {
   color: var(--ops-red, #d94747);
-  font-weight: 800;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -607,15 +650,24 @@ onMounted(() => {
 
 .welcome-user,
 .welcome-meta {
-  margin-right: 10px;
+  margin-right: 0;
 }
+.welcome-user + .welcome-meta { margin-left: 12px; }
+.welcome-meta + .welcome-meta { margin-left: 20px; }
 
 .welcome-action {
-  color: var(--ops-blue, #2d7bcd);
-  text-decoration: underline;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin-left: 24px;
+  font: inherit;
+  color: rgb(41, 137, 236);
+  text-decoration: none;
   text-underline-offset: 2px;
   white-space: nowrap;
 }
+
+:global(body:not(.ops-console-body)) .welcome-action:hover { text-decoration: underline; }
 
 .welcome-spacer {
   flex: 1 1 auto;
@@ -623,20 +675,35 @@ onMounted(() => {
 
 .welcome-points {
   color: var(--ops-text, #243b53);
-  font-weight: 800;
+  font-weight: 400;
   white-space: nowrap;
 }
 
 .welcome-points b {
   color: var(--ops-blue-deep, #15599d);
+  font-weight: 700;
 }
 
 .welcome-password {
-  margin-left: 24px;
-  color: var(--ops-red, #d94747);
-  font-weight: 800;
+  margin-left: 28px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: rgb(255, 0, 0);
+  font-weight: 700;
   white-space: nowrap;
 }
+.password-mask { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 16px; background: rgb(15 28 40 / 42%); }
+.password-dialog { width: min(420px, 100%); padding: 16px; border: 1px solid var(--ops-line-strong, #4b8ed3); border-radius: 3px; background: #fff; box-shadow: 0 14px 40px rgb(15 28 40 / 24%); }
+.password-dialog header, .password-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.password-dialog h2 { margin: 0 0 12px; font-size: 16px; }
+.password-dialog header button, .password-dialog footer button { min-height: 30px; border: 1px solid var(--ops-line, #8eb7e6); background: #f6fbff; padding: 0 10px; cursor: pointer; }
+.password-dialog label { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 8px; margin: 8px 0; }
+.password-dialog input { min-width: 0; height: 30px; border: 1px solid var(--ops-line, #8eb7e6); padding: 0 8px; font: inherit; }
+.password-error, .password-feedback { margin: 8px 0; }
+.password-error { color: #b42318; }
+.password-feedback { color: #16834a; }
 
 .welcome-machine {
   display: inline-flex;
@@ -644,6 +711,12 @@ onMounted(() => {
   gap: 3px;
   margin-left: 12px;
   white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .admin-welcome-bar { row-gap: 5px; }
+  .welcome-spacer { flex-basis: 10px; }
+  .welcome-password { margin-left: 12px; }
 }
 
 .welcome-machine-select {
@@ -746,11 +819,11 @@ onMounted(() => {
   color: var(--ops-blue-deep, #15599d);
   padding: 0 7px;
   font: inherit;
-  font-weight: 700;
+  font-weight: 400;
   cursor: pointer;
 }
 
-.game-control-limit-button:hover:not(:disabled) {
+:global(body:not(.ops-console-body)) .game-control-limit-button:hover:not(:disabled) {
   border-color: var(--ops-blue, #2d7bcd);
   background: linear-gradient(#f7fbff, #d8ecff);
 }

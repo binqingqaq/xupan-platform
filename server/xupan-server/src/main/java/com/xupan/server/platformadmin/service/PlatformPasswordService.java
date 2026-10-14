@@ -93,6 +93,45 @@ public class PlatformPasswordService {
         return new ChangeResult("1", usernameChanged, passwordChanged, username);
     }
 
+    /** Machine accounts may change only their own password from the console entry. */
+    @Transactional
+    public ChangeResult changeMachinePassword(ChangeInput input, long operator) {
+        if (operator <= 0 || !Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM agent WHERE account_user_id = ? AND status = 'ACTIVE' AND deleted_at IS NULL)
+                """, Boolean.class, operator))) {
+            throw BusinessException.forbidden("AGENT_PASSWORD_FORBIDDEN", "当前机器账号不可修改");
+        }
+        UserCredential current = lockUser(operator);
+        String oldPassword = emptyToNull(input.oldPassword());
+        String newPassword = emptyToNull(input.newPassword());
+        String confirmation = emptyToNull(input.confirmPassword());
+        if (oldPassword == null || newPassword == null || confirmation == null || !newPassword.equals(confirmation)) {
+            throw BusinessException.badRequest("PLATFORM_PASSWORD_CONFIRM_MISMATCH", "请填写旧密码、新密码和确认密码，且两次新密码一致");
+        }
+        if (!passwordPolicy.matches(oldPassword, current.passwordHash())) {
+            throw BusinessException.badRequest("PLATFORM_PASSWORD_OLD_MISMATCH", "旧密码错误");
+        }
+        final String encoded;
+        try {
+            encoded = passwordPolicy.encode(newPassword);
+        } catch (IllegalArgumentException exception) {
+            throw BusinessException.badRequest("USER_PASSWORD_INVALID", exception.getMessage());
+        }
+        jdbc.update("""
+                UPDATE sys_user
+                   SET password_hash = ?, security_version = security_version + 1, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, encoded, operator);
+        jdbc.update("""
+                INSERT INTO sys_operation_log
+                    (operator_user_id, permission_code, http_method, request_path, resource_id,
+                     result, error_code, request_summary, ip_digest, created_at)
+                VALUES (?, 'AGENT_CONSOLE_READ', 'POST', '/api/agent/password', ?, 'SUCCESS', NULL,
+                        'passwordChanged=true', NULL, CURRENT_TIMESTAMP)
+                """, operator, Long.toString(operator));
+        return new ChangeResult("1", false, true, current.username());
+    }
+
     private void validateUsername(String username) {
         if (username.length() > 64 || username.chars().anyMatch(Character::isWhitespace)
                 || username.chars().anyMatch(Character::isISOControl)) {

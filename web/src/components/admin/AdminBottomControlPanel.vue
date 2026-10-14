@@ -82,7 +82,7 @@ async function commit() {
   const saved = await handle.save(parsed.patch)
   saving.value = false
   if (saved) {
-    setNotice('预留封盘、取消与返水已保存')
+    setNotice('已自动保存')
     return
   }
   // 保存失败时不显示成功，并回退到服务端当前值。
@@ -135,9 +135,6 @@ async function commit() {
         @keyup.enter="commit"
         @blur="commit"
       />
-      <button class="bottom-control-save" type="button" :disabled="disabled" @click="commit">
-        {{ saving ? '保存中...' : '保存' }}
-      </button>
       <span v-if="notice" class="bottom-control-notice" role="status">{{ notice }}</span>
       <span v-if="error" class="bottom-control-error" role="alert">{{ error }}</span>
       <span v-else-if="hintText" class="bottom-control-hint">{{ hintText }}</span>
@@ -165,7 +162,6 @@ async function commit() {
           <input v-model="showCountdown" type="radio" name="admin-show-countdown" :value="false" />
           <span>关</span>
         </label>
-        <span class="bottom-control-stage">阶段 4 接入</span>
         <button class="bottom-control-raise" type="button" title="上移至线路域名上方" @click="emit('raise')">
           <i aria-hidden="true">↑</i>移上
         </button>
@@ -176,20 +172,32 @@ async function commit() {
 
 <style scoped>
 .admin-bottom-control {
+  position: relative;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 5px 14px;
   min-height: 36px;
   margin-top: 8px;
-  overflow: hidden;
-  border: 1px solid var(--ops-line-strong, #4b8ed3);
-  border-radius: 2px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
   background: linear-gradient(#fff, var(--ops-panel-soft, #f3f8ff));
   color: var(--ops-text, #243b53);
   padding: 4px 8px;
   font-size: 12px;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
+  box-shadow: none;
+}
+
+.admin-bottom-control::before {
+  position: absolute;
+  top: 0;
+  right: -6px;
+  left: -6px;
+  height: 1px;
+  background: var(--ops-line-strong, #4b8ed3);
+  content: '';
+  pointer-events: none;
 }
 
 .bottom-control-group {
@@ -232,26 +240,8 @@ async function commit() {
 
 .bottom-control-unit {
   color: var(--ops-blue-deep, #15599d);
-  font-weight: 800;
+  font-weight: 400;
   white-space: nowrap;
-}
-
-.bottom-control-save {
-  height: 23px;
-  margin-left: 4px;
-  border: 1px solid var(--ops-green, #23845f);
-  border-radius: 2px;
-  background: linear-gradient(#47a77d, var(--ops-green, #23845f));
-  color: #fff;
-  padding: 0 9px;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.bottom-control-save:disabled {
-  cursor: not-allowed;
-  opacity: .55;
 }
 
 .bottom-control-notice {
@@ -291,21 +281,10 @@ async function commit() {
 }
 
 .bottom-switch-option input {
-  width: 13px;
-  height: 13px;
+  width: 20px;
+  height: auto;
   margin: 0;
-  accent-color: var(--ops-blue, #2d7bcd);
-}
-
-/* 显示类开关当前只是本地状态，字段在阶段 4 才建，这里明确标注，避免被当成已生效配置。 */
-.bottom-control-stage {
-  border: 1px solid var(--ops-line, #8eb7e6);
-  border-radius: 2px;
-  background: #f2f7fc;
-  color: var(--ops-muted, #6d8093);
-  padding: 0 4px;
-  font-size: 10px;
-  white-space: nowrap;
+  accent-color: #409eff;
 }
 
 .bottom-control-raise {

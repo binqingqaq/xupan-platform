@@ -94,6 +94,7 @@ function machineScope() {
     machineCode: 'BOT018',
     machineName: '机器十八',
     machineStatus: 'ACTIVE',
+    expiresAt: null,
     score: 1000,
     botLimit: 5,
     playerCount: 3,
@@ -185,13 +186,13 @@ describe('console 机器运营台（BY220 robot.php）', () => {
     expect(welcome).toBeTruthy()
     const text = welcome?.textContent ?? ''
     expect(text).toContain('欢迎您:')
-    expect(text).toContain('机器十八')
-    expect(text).toContain('机器编码：BOT018')
-    expect(text).toContain('代理积分')
-    expect(text).toContain('普：3')
-    expect(text).toContain('托：1/5')
-    expect(text).toContain('所属子账号：平台直属')
-    expect(text).toContain('状态：启用中')
+    expect(text).toContain('bot018')
+    expect(text).not.toContain('机器编码：')
+    expect(text).not.toContain('代理积分')
+    expect(text).not.toContain('普：3')
+    expect(text).toContain('托：5')
+    expect(text).not.toContain('所属子账号：')
+    expect(text).not.toContain('状态：启用中')
     expect(text).toContain('剩余积分')
     // 机器账号不得出现机器选择器（`scopeAllowsMachineSwitch(MACHINE) === false`）
     expect(container?.querySelector('.welcome-machine-select')).toBeNull()

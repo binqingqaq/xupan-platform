@@ -104,8 +104,8 @@ onBeforeUnmount(() => {
   <section class="bet-board-panel" aria-label="下注榜">
     <header class="bet-board-heading">
       <div class="bet-board-summary">
-        <strong>下注榜:</strong>
-        <span>(普:{{ formatBetBoardPoints(board?.normalStake ?? 0) }},托:{{ formatBetBoardPoints(board?.botStake ?? 0) }})</span>
+        <strong>下注榜：</strong>
+        <span class="bet-board-summary-counts">(普：<b>{{ formatBetBoardPoints(board?.normalStake ?? 0) }}</b>,托：{{ formatBetBoardPoints(board?.botStake ?? 0) }})</span>
       </div>
       <div class="bet-board-tabs" role="tablist" aria-label="下注榜视图">
         <button type="button" role="tab" :aria-selected="activeTab === 'NORMAL'" :class="{ active: activeTab === 'NORMAL' }" @click="selectTab('NORMAL')">普({{ board?.normalCount ?? 0 }})</button>
@@ -120,9 +120,8 @@ onBeforeUnmount(() => {
       <p v-if="resubmitNotice" class="bet-board-resubmit-notice" role="status">{{ resubmitNotice }}</p>
 
       <div v-if="activeTab === 'NORMAL' || activeTab === 'BOT'" class="bet-board-current" role="tabpanel">
-        <div class="bet-board-issue">澳8番摊/8球（{{ board?.issueNumber || '--' }}期）</div>
         <div v-if="loading && !board" class="bet-board-state">正在加载...</div>
-        <div v-else-if="!board?.items.length" class="bet-board-state">当前期暂无{{ activeTab === 'BOT' ? '托' : '普通玩家' }}下注</div>
+        <div v-else-if="!board?.items.length" class="bet-board-empty" aria-hidden="true"></div>
         <div v-else class="bet-board-list">
           <div v-for="item in board.items" :key="item.id" class="bet-board-row">
             <!-- BY220 把上报状态与重报入口都放在注单这一行上（admin_list.html:1961-1992）：
@@ -148,7 +147,7 @@ onBeforeUnmount(() => {
       <div v-else class="bet-board-draw" role="tabpanel">
         <div class="bet-board-draw-title">
           <strong>澳8番摊/8球</strong>
-          <span>倒计时: {{ countdown }}</span>
+          <span>倒计时：{{ countdown }}</span>
         </div>
         <div class="bet-board-table" role="table" aria-label="最近18期开奖">
           <div class="bet-board-table-header" role="row">
@@ -194,32 +193,39 @@ onBeforeUnmount(() => {
 }
 
 .bet-board-summary strong {
-  color: var(--ops-blue-deep, #15599d);
-  font-size: 12px;
+  color: #000;
+  font-size: 14px;
+  font-weight: 700;
 }
 
-.bet-board-summary span {
-  color: var(--ops-green, #23845f);
-  font-size: 11px;
+.bet-board-summary-counts {
+  color: #000;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.bet-board-summary-counts b {
+  color: green;
   font-weight: 700;
 }
 
 .bet-board-tabs {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 3px;
+  display: flex;
+  justify-content: space-between;
 }
 
 .bet-board-tabs button {
-  min-width: 0;
-  min-height: 24px;
+  box-sizing: border-box;
+  width: 60px;
+  height: 32px;
+  min-height: 32px;
   border: 1px solid var(--ops-line, #8eb7e6);
-  border-radius: 2px;
+  border-radius: 4px;
   background: linear-gradient(#fff, #eaf4ff);
   color: var(--ops-text, #243b53);
   padding: 0 3px;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 400;
   cursor: pointer;
 }
 
@@ -294,7 +300,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.bet-board-copy.is-resubmittable:hover .bet-board-report-status {
+:global(body:not(.ops-console-body)) .bet-board-copy.is-resubmittable:hover .bet-board-report-status {
   text-decoration: underline;
 }
 

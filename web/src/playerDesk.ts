@@ -96,7 +96,7 @@ export function validateBotPlayerDraft(draft: { displayName: string; userCode?: 
 
 export function validatePointOperation(amount: number, reason: string, idempotencyKey: string, direction: 'grant' | 'adjust'): string[] {
   const errors: string[] = []
-  if (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) errors.push('积分必须是大于 0 的金额，最多保留两位小数')
+  if (!Number.isSafeInteger(amount) || amount <= 0) errors.push('积分必须是大于 0 的整数')
   if (!reason.trim() || reason.trim().length > 255) errors.push('操作原因不能为空且不能超过 255 个字符')
   if (!idempotencyKey.trim() || idempotencyKey.trim().length > 128) errors.push('幂等键不能为空且不能超过 128 个字符')
   if (direction !== 'grant' && direction !== 'adjust') errors.push('积分操作类型无效')

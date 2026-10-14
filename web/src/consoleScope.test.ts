@@ -47,6 +47,7 @@ function machineScope(overrides: Partial<PlayerDeskScope> = {}): PlayerDeskScope
     machineCode: 'LOCALADMIN',
     machineName: '本地参考后台',
     machineStatus: 'ACTIVE',
+    expiresAt: null,
     score: 1000000,
     botLimit: 1,
     playerCount: 0,
@@ -64,6 +65,7 @@ function globalScope(): PlayerDeskScope {
     machineCode: null,
     machineName: null,
     machineStatus: null,
+    expiresAt: null,
     score: null,
     botLimit: null,
     playerCount: null,
@@ -260,18 +262,19 @@ describe('console scope helpers', () => {
 
 describe('console header identity area', () => {
   it('renders the real machine profile and drops the hardcoded placeholder data', async () => {
-    vi.mocked(api.getPlayerDeskScope).mockResolvedValue(machineScope({ groupName: '本地一组', playerCount: 4, botCount: 2, botLimit: 5 }) as never)
+    vi.mocked(api.getPlayerDeskScope).mockResolvedValue(machineScope({ groupName: '本地一组', playerCount: 4, botCount: 2, botLimit: 5, expiresAt: '2026-11-01T00:00:00Z' }) as never)
 
     await mount(AdminWelcomeControlPanel, { part: 'welcome' })
 
     expect(api.getPlayerDeskScope).toHaveBeenCalledTimes(1)
     expect(shellText()).toContain('本地参考后台')
-    expect(shellText()).toContain('LOCALADMIN')
     expect(shellText()).toContain('1000000.00')
-    expect(shellText()).toContain('普：4')
-    expect(shellText()).toContain('托：2/5')
-    expect(shellText()).toContain('所属子账号：本地一组')
-    expect(shellText()).toContain('启用中')
+    expect(shellText()).toContain('托：5')
+    expect(shellText()).toContain('过期时间：2026/11/01 08:00:00')
+    expect(shellText()).not.toContain('LOCALADMIN')
+    expect(shellText()).not.toContain('普：4')
+    expect(shellText()).not.toContain('所属子账号：')
+    expect(shellText()).not.toContain('启用中')
     expect(shellText()).not.toContain('vip168')
     expect(shellText()).not.toContain('4987892')
     expect(shellText()).not.toContain('2026/12/31')
@@ -370,9 +373,32 @@ describe('console header identity area', () => {
 })
 
 describe('console player workbench machine scope', () => {
+  const playerItem = {
+    userId: 6, accountId: 8, internalCode: 'P-6', memberCode: 'v1006', userCode: 'player6',
+    username: 'player6', displayName: '测试对象', avatarKey: null, authMode: 'PASSWORD',
+    status: 'ACTIVE', playerKind: 'NORMAL', userType: 'REAL', balance: 20,
+    behaviorEnabled: false, lastActionAt: null,
+  }
+  const playerDetail = {
+    ...playerItem, createdAt: '2026-10-10T00:00:00Z', lastLoginAt: null,
+    walletStatistics: { totalBetCount: 0, settledBetCount: 0, pendingBetCount: 0, totalStake: 0, settledStake: 0, pendingStake: 0, netProfit: 0 },
+    ledger: [], bets: [], behavior: null, linkStatus: null, recentActions: [],
+  }
+
+  it('keeps player and bot creation available before the first player is selected', async () => {
+    await mount(PlayerWorkbenchModule, { embedded: true, machineId: null })
+    const createButton = pageButton('创建普通玩家')
+    createButton.click()
+    await nextTick()
+    expect(document.body.querySelector('.create-form')).toBeTruthy()
+    expect(document.body.textContent).toContain('创建普通玩家')
+  })
+
   it('sends the selected machineId when creating a normal player and a bot', async () => {
     vi.mocked(api.createNormalPlayer).mockResolvedValue({ userId: 77 } as never)
     vi.mocked(api.createBotPlayer).mockResolvedValue({ userId: 88 } as never)
+    vi.mocked(api.getPlayerDeskPlayers).mockResolvedValue({ items: [playerItem], page: 1, pageSize: 20, total: 1 } as never)
+    vi.mocked(api.getPlayerDeskPlayer).mockResolvedValue(playerDetail as never)
 
     await mount(PlayerWorkbenchModule, { embedded: true, machineId: 18 })
 
@@ -390,6 +416,8 @@ describe('console player workbench machine scope', () => {
 
   it('omits machineId when no machine is selected', async () => {
     vi.mocked(api.createNormalPlayer).mockResolvedValue({ userId: 77 } as never)
+    vi.mocked(api.getPlayerDeskPlayers).mockResolvedValue({ items: [playerItem], page: 1, pageSize: 20, total: 1 } as never)
+    vi.mocked(api.getPlayerDeskPlayer).mockResolvedValue(playerDetail as never)
 
     await mount(PlayerWorkbenchModule, { embedded: true, machineId: null })
 

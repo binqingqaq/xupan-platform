@@ -284,19 +284,19 @@ import java.util.List;
     /** 当前身份的范围与档案；GLOBAL 与 GROUP 模式下机器字段为 null。 */
     public record ScopeResponse(String mode, Long machineId, String machineCode, String machineName,
                                 String machineStatus, BigDecimal score, Long botLimit, Long playerCount,
-                                Long botCount, Long groupId, String groupName) {
+                                Long botCount, java.time.Instant expiresAt, Long groupId, String groupName) {
         static ScopeResponse from(PlayerDeskScopeService.Scope scope) {
             if (scope instanceof PlayerDeskScopeService.Scope.Machine machine) {
                 return new ScopeResponse(machine.mode(), machine.agentId(), machine.agentCode(),
                         machine.agentName(), machine.status(), machine.score(), machine.botLimit(),
-                        machine.playerCount(), machine.botCount(), machine.groupId(), machine.groupName());
+                        machine.playerCount(), machine.botCount(), machine.expiresAt(), machine.groupId(), machine.groupName());
             }
             if (scope instanceof PlayerDeskScopeService.Scope.Group group) {
-                return new ScopeResponse(group.mode(), null, null, null, null, null, null, null, null,
+                return new ScopeResponse(group.mode(), null, null, null, null, null, null, null, null, null,
                         group.groupId(), group.groupName());
             }
             return new ScopeResponse(PlayerDeskScopeService.Scope.Global.INSTANCE.mode(),
-                    null, null, null, null, null, null, null, null, null, null);
+                    null, null, null, null, null, null, null, null, null, null, null);
         }
     }
     public record Page(List<Item> items, int page, int pageSize, long total) {
@@ -305,19 +305,19 @@ import java.util.List;
     public record Item(long userId, long accountId, String internalCode, String memberCode, String userCode,
                        String username, String displayName, String avatarKey, String authMode, String status,
                        String playerKind, String userType, BigDecimal balance, Instant createdAt,
-                       Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt) {
-        static Item from(PlayerDeskRepository.PlayerRow x) { return new Item(x.userId(), x.accountId(), x.internalCode(), x.memberCode(), x.userCode(), x.username(), x.displayName(), x.avatarKey(), x.authMode(), x.userStatus(), x.playerKind(), x.userType(), x.balance(), x.createdAt(), x.lastLoginAt(), x.behaviorEnabled(), x.lastActionAt()); }
+                       Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, boolean blacklisted) {
+        static Item from(PlayerDeskRepository.PlayerRow x) { return new Item(x.userId(), x.accountId(), x.internalCode(), x.memberCode(), x.userCode(), x.username(), x.displayName(), x.avatarKey(), x.authMode(), x.userStatus(), x.playerKind(), x.userType(), x.balance(), x.createdAt(), x.lastLoginAt(), x.behaviorEnabled(), x.lastActionAt(), x.blacklisted()); }
     }
     public record Detail(long userId, long accountId, String internalCode, String memberCode, String userCode,
                          String username, String displayName, String avatarKey, String authMode, String status,
                          String playerKind, String userType, BigDecimal balance, Instant createdAt,
-                         Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, LinkStatus linkStatus, WalletStats walletStatistics,
+                         Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, boolean blacklisted, LinkStatus linkStatus, WalletStats walletStatistics,
                          List<Ledger> ledger, List<Action> recentActions, Behavior behavior, List<Bet> bets) {
         static Detail from(PlayerDeskAdminService.Detail x) {
             Item p = Item.from(x.player());
             LinkStatus link = x.linkStatus() == null ? null : LinkStatus.from(x.linkStatus());
             return new Detail(p.userId(), p.accountId(), p.internalCode(), p.memberCode(), p.userCode(), p.username(), p.displayName(), p.avatarKey(), p.authMode(), p.status(),
-                    p.playerKind(), p.userType(), p.balance(), p.createdAt(), p.lastLoginAt(), p.behaviorEnabled(), p.lastActionAt(),
+                    p.playerKind(), p.userType(), p.balance(), p.createdAt(), p.lastLoginAt(), p.behaviorEnabled(), p.lastActionAt(), p.blacklisted(),
                     link, WalletStats.from(x.walletStatistics()), x.ledger().stream().map(Ledger::from).toList(),
                     x.actions().stream().map(Action::from).toList(), Behavior.from(x.behavior()), x.bets().stream().map(Bet::from).toList());
         }

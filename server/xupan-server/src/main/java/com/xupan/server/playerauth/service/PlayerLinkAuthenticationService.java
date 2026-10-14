@@ -264,10 +264,18 @@ public class PlayerLinkAuthenticationService {
         ensureIssuable(target);
         PlayerAccessLink link = linkRepository.findLatestByUserId(userId).orElse(null);
         linkRepository.saveConfiguredDays(userId, days);
+        Instant expiresAt = link == null ? null : link.expiresAt();
+        if (link != null && SCOPE_PLAYER_FULL.equals(link.scope()) && link.revokedAt() == null) {
+            expiresAt = clock.instant().plus(Duration.ofDays(days));
+            if (linkRepository.updateExpiresAt(link.id(), userId, expiresAt) != 1) {
+                throw BusinessException.conflict("PLAYER_LINK_STATE_CONFLICT", "链接状态已变化，请刷新后重试");
+            }
+        }
+        String auditDetail = "configuredDays=" + days + (expiresAt == null ? "" : ",currentLinkExpiresAt=" + expiresAt);
         audit(operatorUserId, auditPermission(scope, "USER_MANAGE"), "PATCH",
                 "/api/admin/player-desk/players/" + userId + "/access-links/expiration",
-                Long.toString(userId), "nextRefreshDays=" + days);
-        return new Expiration(link == null ? 0 : link.id(), link == null ? null : link.expiresAt(), days);
+                Long.toString(userId), auditDetail);
+        return new Expiration(link == null ? 0 : link.id(), expiresAt, days);
     }
 
     @Transactional

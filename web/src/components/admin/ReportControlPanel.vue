@@ -285,12 +285,8 @@ defineExpose({ load })
       <button type="button" class="report-control-button report-control-login" :disabled="loginButtonDisabled" @click="login">
         {{ loggingIn ? '登录中' : '登录' }}
       </button>
-      <!-- BY220 本地环境登录时同样把 money/betting 写 0（rbt/Index.php:801-803），真值只由真实上游返回；
-           本项目不接真实上游，因此这两项固定为本地模拟值 0，界面如实标注，不伪装成上游实时数据。 -->
+      <!-- BY220 本地环境登录时同样把 betting 写 0（rbt/Index.php:801-803）；本项目不接真实上游，界面如实标注为本地模拟值。 -->
       <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">押注: <b>{{ config?.reportStake ?? 0 }}</b></span>
-      <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">网盘余额: <b>{{ config?.reportBalance ?? 0 }}</b>（本地模拟）</span>
-      <span class="report-control-metric">账号: <b>{{ reportFieldText(config?.reportUsername) }}</b>{{ inheritedSuffix }}</span>
-      <span class="report-control-metric">密码: <b>{{ reportPasswordText }}</b>{{ inheritedSuffix }}</span>
     </div>
 
     <div class="report-control-row report-control-status-row">
@@ -309,8 +305,6 @@ defineExpose({ load })
       <span class="report-control-metric">超时订单: <b>{{ config?.timeoutOrderCount ?? 0 }}</b></span>
       <span class="report-control-metric">未报: <b>{{ config?.unreportedCount ?? 0 }}</b></span>
       <span class="report-control-metric">失败: <b>{{ config?.failedOrderCount ?? 0 }}</b></span>
-      <span class="report-control-metric">盘口: <b>{{ reportFieldText(config?.reportRouteCode) }}</b>{{ inheritedSuffix }}</span>
-      <span class="report-control-metric">网盘: <b>{{ reportFieldText(config?.reportNetworkCode) }}</b>{{ inheritedSuffix }}</span>
       <button type="button" class="report-control-button report-control-refresh" :disabled="!machineReady || loading" @click="load">
         {{ loading ? '刷新中' : '刷新' }}
       </button>
@@ -387,8 +381,10 @@ defineExpose({ load })
   border: 1px solid var(--ops-line-strong, #4b8ed3);
   border-radius: 2px;
   background: linear-gradient(#fff, var(--ops-panel-soft, #f3f8ff));
-  color: var(--ops-text, #243b53);
-  font-size: 12px;
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.4;
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 78%);
 }
 
@@ -396,30 +392,31 @@ defineExpose({ load })
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px;
-  min-height: 30px;
-  padding: 3px 8px;
+  gap: 6px;
+  min-height: 34px;
+  padding: 3px 10px;
 }
 
 .report-control-row + .report-control-row {
-  border-top: 1px solid var(--ops-line, #8eb7e6);
+  margin-top: 6px;
+  border-top: 0;
 }
 
 .report-control-label {
-  color: var(--ops-blue-deep, #15599d);
-  font-size: 12px;
-  font-weight: 800;
+  color: #000;
+  font-size: inherit;
+  font-weight: 400;
   white-space: nowrap;
 }
 
 .report-type-select {
-  height: 23px;
+  height: 24px;
   min-width: 74px;
-  border: 1px solid var(--ops-line, #8eb7e6);
+  border: 1px solid #dcdfe6;
   background: #fff;
-  color: var(--ops-blue-deep, #15599d);
-  font-weight: 700;
-  font-size: 12px;
+  color: #606266;
+  font-weight: 400;
+  font-size: 14px;
 }
 
 .report-type-select:disabled {
@@ -429,15 +426,17 @@ defineExpose({ load })
 
 .report-control-button {
   display: inline-flex;
-  height: 23px;
+  height: 24px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--ops-line, #8eb7e6);
-  background: linear-gradient(#fff, #e8f3ff);
-  color: var(--ops-text, #243b53);
-  padding: 0 8px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  color: #606266;
+  padding: 0 10px;
   white-space: nowrap;
-  font-size: 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -454,34 +453,34 @@ defineExpose({ load })
 
 .report-control-logout {
   min-width: 40px;
-  border-color: #d89aa0;
-  background: linear-gradient(#ffd9dd, #f3a9b1);
-  color: #8e2932;
+  border-color: #f56c6c;
+  background: #f56c6c;
+  color: #fff;
 }
 
 .report-control-login {
   min-width: 40px;
-  border-color: #5c9f55;
-  background: linear-gradient(#8bd476, #5fb44e);
+  border-color: #67c23a;
+  background: #67c23a;
   color: #fff;
 }
 
 .report-control-refresh {
   min-width: 46px;
-  border-color: var(--ops-blue, #2d7bcd);
-  background: linear-gradient(#5aa8e7, var(--ops-blue, #2d7bcd));
+  border-color: #409eff;
+  background: #409eff;
   color: #fff;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .report-control-metric {
-  color: var(--ops-text, #243b53);
+  color: #000;
   white-space: nowrap;
 }
 
 .report-control-metric b {
-  color: var(--ops-blue-deep, #15599d);
-  font-weight: 800;
+  color: #000;
+  font-weight: 400;
 }
 
 .report-control-state {
@@ -508,7 +507,7 @@ defineExpose({ load })
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--ops-blue-deep, #15599d);
+  color: #000;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -519,8 +518,8 @@ defineExpose({ load })
 }
 
 .report-control-check input {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   margin: 0;
 }
 

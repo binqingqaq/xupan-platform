@@ -101,6 +101,12 @@ public class PlayerAccessLinkRepository {
         }
     }
 
+    @Transactional
+    public int updateExpiresAt(long linkId, long userId, Instant expiresAt) {
+        return jdbcTemplate.update("UPDATE player_access_link SET expires_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL",
+                timestamp(expiresAt), linkId, userId);
+    }
+
     public int findConfiguredDays(long userId, int fallbackDays) {
         Integer days = jdbcTemplate.query("SELECT days FROM player_link_expiration_config WHERE user_id=?",
                 (rs, n) -> rs.getInt("days"), userId).stream().findFirst().orElse(null);

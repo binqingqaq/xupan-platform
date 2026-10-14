@@ -20,9 +20,14 @@ const selected = ref<PlayerDeskDetail | null>(null)
 const loading = ref(false); const detailLoading = ref(false); const saving = ref(false)
 const error = ref(''); const actionMessage = ref(''); const createError = ref(''); const behaviorError = ref('')
 const accessLink = ref<PlayerAccessLinkView | null>(null); const accessLinkBusy = ref(false)
-const linkDays = ref(7); const nicknameDraft = ref(''); const renameHistoryOpen = ref(false); const renameHistory = ref<PlayerNameHistory | null>(null); const renameLoading = ref(false)
+const linkDays = ref(7); const linkClockNow = ref(Date.now()); const nicknameDraft = ref(''); const renameHistoryOpen = ref(false); const renameHistory = ref<PlayerNameHistory | null>(null); const renameLoading = ref(false)
 const createMode = ref<'normal' | 'bot' | null>(null)
 const deleteConfirmOpen = ref(false)
+const blacklistConfirmOpen = ref(false)
+const accessLinkConfirmAction = ref<'blacklist' | 'whitelist'>('blacklist')
+const blacklistDialogOffset = reactive({ x: 0, y: 0 })
+const blacklistDialogPointer = ref<{ pointerId: number; startX: number; startY: number; offsetX: number; offsetY: number } | null>(null)
+const blacklistDialogStyle = computed(() => ({ transform: `translate(calc(-50% + ${blacklistDialogOffset.x}px), calc(-50% + ${blacklistDialogOffset.y}px))` }))
 const avatarPickerOpen = ref(false)
 const avatarOptions = ref<AvatarPresetOption[]>([])
 const avatarDraft = ref('')
@@ -38,7 +43,7 @@ const pointRecordsError = ref('')
 const filter = reactive({ kind: 'NORMAL', status: '', keyword: '' })
 const normalDraft = reactive({ displayName: '' })
 const botDraft = reactive({ displayName: '' })
-const pointDraft = reactive({ amount: 100, reason: '', direction: 'grant' as 'grant' | 'adjust' })
+const pointDraft = reactive({ amount: 0, reason: '', direction: 'grant' as 'grant' | 'adjust' })
 const behaviorDraft = reactive({
   mode: 'AUTOMATIC' as 'AUTOMATIC' | 'MANUAL',
   stakeRangeCode: '30-300',
@@ -48,8 +53,16 @@ const behaviorDraft = reactive({
 })
 
 const selectedIsBot = computed(() => selected.value?.playerKind === 'BOT')
-const canSubmitPoints = computed(() => validatePointOperation(pointDraft.amount, pointDraft.direction === 'grant' ? '管理员上分' : '管理员下分', 'local', pointDraft.direction).length === 0)
+const linkValidityText = computed(() => {
+  const status = selected.value?.linkStatus
+  if (!status) return '未生成链接'
+  if (status.revokedAt) return '已拉黑'
+  const remainingMs = new Date(status.expiresAt).getTime() - linkClockNow.value
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return '已过期'
+  return '剩' + Math.ceil(remainingMs / 86400000) + '天'
+})
 let toastTimer: ReturnType<typeof setTimeout> | undefined
+let linkClockTimer: ReturnType<typeof setInterval> | undefined
 watch([actionMessage, error], () => {
   if (!actionMessage.value && !error.value) return
   if (toastTimer) clearTimeout(toastTimer)
@@ -159,6 +172,7 @@ async function selectPlayer(userId: number) {
     const previousUserId = selected.value?.userId
     const detail = await api.getPlayerDeskPlayer(userId, filter.status === 'DELETED' || selected.value?.status === 'DELETED')
     selected.value = detail
+    linkClockNow.value = Date.now()
     accessLink.value = previousUserId === userId && accessLink.value?.linkId === detail.linkStatus?.linkId
       ? accessLink.value
       : null
@@ -266,6 +280,10 @@ function openDeleteConfirm() {
   if (!selected.value) return
   deleteConfirmOpen.value = true
 }
+async function openListDeleteConfirm(userId: number) {
+  await selectPlayer(userId)
+  if (selected.value?.userId === userId) openDeleteConfirm()
+}
 function closeDeleteConfirm() {
   if (saving.value) return
   deleteConfirmOpen.value = false
@@ -295,6 +313,9 @@ async function toggleBotFeidan() { behaviorDraft.feidanEnabled = !behaviorDraft.
 
 function avatar(player: PlayerDeskItem) { return player.avatarKey ? api.avatarUrl(player.avatarKey) : '' }
 function money(value: number) { return formatPoints(value) }
+function isPlayerBlacklisted(player: PlayerDeskItem) {
+  return player.blacklisted || (selected.value?.userId === player.userId && Boolean(selected.value.linkStatus?.revokedAt))
+}
 function dateTime(value?: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '暂无' }
 async function issueAccessLink(rotate = false) {
   if (!selected.value || (selected.value.playerKind !== 'NORMAL' && selected.value.playerKind !== 'BOT')) return
@@ -314,26 +335,77 @@ async function issueAccessLink(rotate = false) {
   } catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家链接操作失败' }
   finally { accessLinkBusy.value = false }
 }
-async function revokeAccessLink() {
-  if (!selected.value || !selected.value.linkStatus?.linkId) return
-  accessLinkBusy.value = true
-  try { await api.revokePlayerAccessLink(selected.value.userId, selected.value.linkStatus.linkId); await refresh(selected.value.userId); actionMessage.value = '玩家已拉黑，链接保留但暂时无法进入' }
-  catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家链接撤销失败' }
-  finally { accessLinkBusy.value = false }
+function openAccessLinkConfirm(action: 'blacklist' | 'whitelist') {
+  if (!selected.value?.linkStatus?.linkId || accessLinkBusy.value) return
+  accessLinkConfirmAction.value = action
+  blacklistDialogOffset.x = 0
+  blacklistDialogOffset.y = 0
+  blacklistConfirmOpen.value = true
 }
-async function whitelistPlayer() {
-  if (!selected.value) return
-  if (!selected.value.linkStatus?.linkId) return
+function closeBlacklistConfirm() {
+  if (accessLinkBusy.value) return
+  blacklistConfirmOpen.value = false
+  blacklistDialogPointer.value = null
+}
+function beginBlacklistDialogDrag(event: PointerEvent) {
+  if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return
+  blacklistDialogPointer.value = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: blacklistDialogOffset.x,
+    offsetY: blacklistDialogOffset.y,
+  }
+  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+}
+function moveBlacklistDialog(event: PointerEvent) {
+  const drag = blacklistDialogPointer.value
+  if (!drag || drag.pointerId !== event.pointerId) return
+  blacklistDialogOffset.x = drag.offsetX + event.clientX - drag.startX
+  blacklistDialogOffset.y = drag.offsetY + event.clientY - drag.startY
+}
+function endBlacklistDialogDrag(event: PointerEvent) {
+  if (blacklistDialogPointer.value?.pointerId === event.pointerId) blacklistDialogPointer.value = null
+}
+async function revokeAccessLink() {
+  if (!selected.value || !selected.value.linkStatus?.linkId) return false
   accessLinkBusy.value = true
-  try { await api.restorePlayerAccessLink(selected.value.userId, selected.value.linkStatus.linkId); await refresh(selected.value.userId); actionMessage.value = '玩家已拉白，原链接已恢复' }
-  catch (cause) { actionMessage.value = cause instanceof Error ? cause.message : '玩家拉白失败' }
-  finally { accessLinkBusy.value = false }
+  try {
+    await api.revokePlayerAccessLink(selected.value.userId, selected.value.linkStatus.linkId)
+    await refresh(selected.value.userId)
+    actionMessage.value = '玩家已拉黑，链接保留但暂时无法进入'
+    return true
+  } catch (cause) {
+    actionMessage.value = cause instanceof Error ? cause.message : '玩家链接撤销失败'
+    return false
+  } finally { accessLinkBusy.value = false }
+}
+async function confirmAccessLinkChange() {
+  if (accessLinkBusy.value) return
+  const succeeded = accessLinkConfirmAction.value === 'blacklist'
+    ? await revokeAccessLink()
+    : await whitelistPlayer()
+  if (succeeded) closeBlacklistConfirm()
+}
+async function whitelistPlayer(): Promise<boolean> {
+  if (!selected.value?.linkStatus?.linkId) return false
+  accessLinkBusy.value = true
+  try {
+    await api.restorePlayerAccessLink(selected.value.userId, selected.value.linkStatus.linkId)
+    await refresh(selected.value.userId)
+    actionMessage.value = '玩家已拉白，原链接已恢复'
+    return true
+  } catch (cause) {
+    actionMessage.value = cause instanceof Error ? cause.message : '玩家拉白失败'
+    return false
+  } finally { accessLinkBusy.value = false }
 }
 async function saveLinkDays() {
   if (!selected.value || !Number.isInteger(linkDays.value) || linkDays.value < 1 || linkDays.value > 3650) { actionMessage.value = '链接天数请输入 1 到 3650 的整数'; return }
   accessLinkBusy.value = true
   try {
     const saved = await api.updatePlayerLinkExpiration(selected.value.userId, linkDays.value)
+    linkClockNow.value = Date.now()
     linkDays.value = saved.days
     if (selected.value.linkStatus) {
       selected.value = { ...selected.value, linkStatus: { ...selected.value.linkStatus, configuredDays: saved.days } }
@@ -365,11 +437,13 @@ async function copyAccessLink() {
 }
 onMounted(() => {
   void refresh()
+  linkClockTimer = setInterval(() => { linkClockNow.value = Date.now() }, 60000)
   window.addEventListener('keydown', handleGlobalKeydown)
 })
 onBeforeUnmount(() => {
   if (searchTimer) clearTimeout(searchTimer)
   if (toastTimer) clearTimeout(toastTimer)
+  if (linkClockTimer) clearInterval(linkClockTimer)
   window.removeEventListener('keydown', handleGlobalKeydown)
 })
 </script>
@@ -387,6 +461,20 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
     <Teleport to="body">
+      <div v-if="blacklistConfirmOpen && selected" class="blacklist-confirm-layer">
+        <section class="blacklist-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="blacklist-confirm-title" :style="blacklistDialogStyle">
+          <header class="blacklist-confirm-header" @pointerdown="beginBlacklistDialogDrag" @pointermove="moveBlacklistDialog" @pointerup="endBlacklistDialogDrag" @pointercancel="endBlacklistDialogDrag">
+            <span id="blacklist-confirm-title">信息</span>
+            <button class="blacklist-confirm-close" type="button" aria-label="关闭" :disabled="accessLinkBusy" @click="closeBlacklistConfirm">×</button>
+          </header>
+          <div class="blacklist-confirm-message">将[{{ selected.memberCode }}]{{ accessLinkConfirmAction === 'blacklist' ? '拉黑' : '拉白' }}么？</div>
+          <footer class="blacklist-confirm-actions">
+            <button class="blacklist-confirm-accept" type="button" :disabled="accessLinkBusy" @click="confirmAccessLinkChange">确定</button>
+            <button class="blacklist-confirm-cancel" type="button" :disabled="accessLinkBusy" @click="closeBlacklistConfirm">取消</button>
+          </footer>
+        </section>
+      </div>
+    </Teleport>    <Teleport to="body">
       <div v-if="avatarPickerOpen && selected" class="create-modal-layer" role="presentation" @click.self="closeAvatarPicker">
         <section class="create-modal avatar-picker-modal" role="dialog" aria-modal="true" aria-labelledby="avatar-picker-title">
           <header class="create-modal-header"><div><span class="eyebrow">AVATAR POOL</span><h2 id="avatar-picker-title">选择头像</h2></div><button class="modal-close" type="button" aria-label="关闭" :disabled="avatarSaving" @click="closeAvatarPicker">×</button></header>
@@ -411,27 +499,21 @@ onBeforeUnmount(() => {
     </Teleport>
     <section class="player-desk-body">
       <aside class="player-list-pane" aria-label="玩家管理">
-        <div class="pane-heading"><div class="player-stats" aria-label="玩家统计"><div class="player-stat-total"><span>总积分</span><strong>{{ money(summary.totalPoints) }}</strong></div><button class="player-stat" :class="{ active: filter.kind === 'NORMAL' }" type="button" @click="selectKind('NORMAL')"><span>普</span><strong>（{{ kindSummary.normalCount }}）</strong></button><button class="player-stat" :class="{ active: filter.kind === 'BOT' }" type="button" @click="selectKind('BOT')"><span>托</span><strong>（{{ kindSummary.botCount }}）</strong></button></div><div class="create-action-stack"><div class="create-actions"><button class="primary-button" type="button" @click="openCreate('normal')">创建普通玩家</button><button class="secondary-button" type="button" @click="openCreate('bot')">创建托</button></div><div class="record-actions"><button class="outline-button" type="button" @click="openPointRecords('NORMAL')">积分记录</button><button class="outline-button" type="button" @click="openPointRecords('BOT')">托积分记录</button></div></div></div>
-        <form class="filter-row" @submit.prevent="submitSearch"><label class="sr-only" for="player-keyword">搜索玩家</label><input id="player-keyword" v-model="filter.keyword" enterkeyhint="done" placeholder="输入会员 ID 或昵称" @input="scheduleSearch" @change="submitSearch" @keydown.enter.prevent="submitSearch" /><button class="outline-button refresh-rank-button" type="button" :disabled="loading" @click="refresh()">刷新排行</button><select v-model="filter.status" aria-label="玩家状态" @change="refresh()"><option value="">全部</option><option value="DELETED">已删除</option></select></form>
-        <div v-if="loading" class="empty-state">正在加载玩家...</div><div v-else-if="!page.items.length" class="empty-state">暂无符合条件的玩家</div>
-        <button v-for="player in page.items" :key="player.userId" class="player-row" :class="{ selected: selected?.userId === player.userId }" type="button" @click="selectPlayer(player.userId)"><span class="player-row-main"><strong>{{ playerDisplayName(player) }}</strong></span><span class="player-row-side"><strong>{{ money(player.balance) }}</strong></span></button>
+        <div class="pane-heading"><div class="player-stats" aria-label="玩家统计"><div class="player-stat-total"><span>总积分</span><strong>{{ money(summary.totalPoints) }}</strong></div><button class="player-stat" :class="{ active: filter.kind === 'NORMAL' }" type="button" @click="selectKind('NORMAL')"><span>普</span><strong>({{ kindSummary.normalCount }})</strong></button><button class="player-stat" :class="{ active: filter.kind === 'BOT' }" type="button" @click="selectKind('BOT')"><span>托</span><strong>({{ kindSummary.botCount }})</strong></button></div><button class="outline-button refresh-rank-button" type="button" :disabled="loading" @click="refresh()">刷新排序</button><div class="record-actions"><button class="outline-button" type="button" @click="openPointRecords('NORMAL')">积分记录</button><button class="outline-button" type="button" @click="openPointRecords('BOT')">托积分记录</button></div></div>
+        <form class="filter-row" @submit.prevent="submitSearch"><label class="sr-only" for="player-keyword">搜索玩家</label><input id="player-keyword" v-model="filter.keyword" enterkeyhint="done" placeholder="输入会员 ID 或昵称" @input="scheduleSearch" @change="submitSearch" @keydown.enter.prevent="submitSearch" /></form>
+        <div class="player-list-items"><div v-if="loading" class="empty-state">正在加载玩家...</div><div v-else-if="!page.items.length" class="empty-state">暂无符合条件的玩家</div>
+          <div v-for="player in page.items" :key="player.userId" class="player-row" :class="{ selected: selected?.userId === player.userId }"><button class="player-row-select" type="button" @click="selectPlayer(player.userId)"><span class="player-row-main"><strong>{{ playerDisplayName(player) }}：</strong><em v-if="isPlayerBlacklisted(player)" class="player-black-badge" aria-label="已拉黑">黑</em></span><span class="player-row-side"><strong>{{ money(player.balance) }}</strong></span></button><button v-if="player.playerKind !== 'BOT' && player.status !== 'DELETED'" class="player-row-delete" type="button" :disabled="saving" @click="openListDeleteConfirm(player.userId)">删除</button></div>
+        </div>
       </aside>
       <section class="player-detail-pane" aria-label="玩家详情">
-        <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><span>◎</span><h2>请选择一名玩家</h2><p>左侧创建或选择玩家，右侧将显示详细设置。</p></div>
-        <template v-else><div class="detail-heading"><div class="detail-identity"><button class="desk-avatar large avatar-trigger" type="button" :disabled="selected.status === 'DELETED'" title="点击更换头像" @click="openAvatarPicker"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></button><div><div class="badges"><em :class="playerKindClass(selected.playerKind)">{{ playerKindLabel(selected.playerKind) }}</em><em v-if="selected.userType === 'TEST'" class="test-badge">测试身份</em></div><h2>{{ playerDisplayName(selected) }}</h2></div></div><div class="detail-actions"><!-- BY220 `rbt/view/index/admin_list.html:2656`：删除入口只在「普」列表渲染（`memberType == 0`），托列表没有删除按钮；后端 DelMember 不校验类型，约束在 UI 层。 --><button v-if="selected.status !== 'DELETED' && selected.playerKind !== 'BOT'" class="outline-button danger-button" type="button" :disabled="saving" @click="openDeleteConfirm">删除玩家</button></div></div>
-          <div class="player-edit-rows"><div class="player-edit-row"><span>会员ID：<strong>{{ selected.memberCode }}</strong></span><div class="days-editor"><input v-model.number="linkDays" type="number" min="1" max="3650" aria-label="链接有效期天数" /><span>天</span><button class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="saveLinkDays">保存</button><small>剩余 {{ linkDays }} 天</small></div></div><div class="player-edit-row"><label>昵称<input v-model="nicknameDraft" maxlength="128" /></label><button class="outline-button" type="button" :disabled="saving || selected.status === 'DELETED'" @click="updateNickname">更新</button></div><div class="player-edit-actions"><template v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'"><button v-if="selected.linkStatus?.active" class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="revokeAccessLink">拉黑</button><button v-else class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="whitelistPlayer">拉白</button></template><button class="outline-button" type="button" @click="openRenameHistory">换名记录</button></div></div>
-          <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a><small>有效期至 {{ dateTime(accessLink.expiresAt) }}</small></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
-
-          <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="point-form"><label>积分<input v-model.number="pointDraft.amount" type="number" min="0.01" step="0.01" /></label><button class="primary-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('grant')">上分</button><button class="outline-button" :disabled="saving || !canSubmitPoints" type="button" @click="operatePoints('adjust')">下分</button></div></section>
-          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="detail-section bot-section"><div class="section-title"><h3>托状态与行为</h3></div><div class="behavior-form">
-            <div class="behavior-toggle wide"><span class="mode-badge" :class="behaviorDraft.mode === 'AUTOMATIC' ? 'mode-auto' : 'mode-manual'">{{ behaviorDraft.mode === 'AUTOMATIC' ? '自动' : '手动' }}</span><button class="outline-button" type="button" :disabled="saving" @click="toggleBotMode">{{ behaviorDraft.mode === 'AUTOMATIC' ? '改手动' : '改自动' }}</button></div>
-            <label>下注范围<select v-model="behaviorDraft.stakeRangeCode" :disabled="saving" @change="saveBehavior"><option v-for="code in STAKE_RANGE_CODES" :key="code" :value="code">{{ STAKE_RANGE_LABELS[code] }}</option></select></label>
-            <div class="behavior-toggle"><button class="outline-button" type="button" :disabled="saving || !behaviorDraft.machineChaseEnabled" @click="toggleBotChase">{{ behaviorDraft.chaseEnabled ? '关闭追' : '开通追' }}</button><small>{{ behaviorDraft.machineChaseEnabled ? '机器追单权限已开放' : '机器账号尚未开通追单权限' }}</small></div>
-            <button class="outline-button behavior-toggle" type="button" :disabled="saving" @click="toggleBotFeidan">{{ behaviorDraft.feidanEnabled ? '停止' : '飞单' }}</button>
-            <p v-if="behaviorError" class="field-error wide">{{ behaviorError }}</p>
-            <p v-if="actionMessage" class="feedback wide">{{ actionMessage }}</p>
-          </div></section>
-        </template>
+        <div v-if="detailLoading" class="empty-state">正在加载详情...</div><div v-else-if="!selected" class="detail-empty"><h2>玩家管理</h2><div class="detail-empty-actions"><button class="primary-button" type="button" @click="openCreate('normal')">创建玩家</button><button class="secondary-button" type="button" @click="openCreate('bot')">创建托</button></div><p>从左侧选择玩家或托查看详情。</p></div>
+        <template v-else><div class="player-detail-content"><div class="detail-topline"><strong>修改积分</strong><button class="primary-button" type="button" @click="openCreate('normal')">创建玩家</button><button class="secondary-button" type="button" @click="openCreate('bot')">创建托</button></div>
+          <div class="player-edit-rows"><div class="player-edit-row"><span>会员ID：<strong>{{ selected.memberCode }}</strong></span><div class="days-editor"><input v-model.number="linkDays" type="number" min="1" max="3650" aria-label="链接有效期天数" /><span>天</span><button class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="saveLinkDays">保存</button><small>{{ linkValidityText }}</small></div></div><div class="player-edit-row"><label><span>昵&nbsp;&nbsp;&nbsp;称：</span><input v-model="nicknameDraft" maxlength="128" /></label><button class="outline-button" type="button" :disabled="saving || selected.status === 'DELETED'" @click="updateNickname">更新</button></div><div class="player-edit-actions"><template v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'"><button v-if="selected.linkStatus?.active" class="outline-button danger-button" type="button" :disabled="accessLinkBusy" @click="openAccessLinkConfirm('blacklist')">拉黑</button><button v-else class="outline-button" type="button" :disabled="accessLinkBusy || selected.status === 'DELETED'" @click="openAccessLinkConfirm('whitelist')">拉白</button></template><button v-if="selectedIsBot" class="outline-button" type="button" :disabled="saving" @click="toggleBotMode">{{ behaviorDraft.mode === 'AUTOMATIC' ? '改手动' : '改自动' }}</button><button class="outline-button" type="button" @click="openRenameHistory">换名记录</button></div></div>
+          <section v-if="selected.status !== 'DELETED'" class="detail-section"><div class="point-entry"><div class="player-edit-balance"><span>积分：{{ money(selected.balance) }}</span></div><div class="point-input-row"><input v-model.number="pointDraft.amount" type="text" inputmode="numeric" aria-label="积分" /></div><div class="point-actions-row"><button class="primary-button" :disabled="saving" type="button" @click="operatePoints('grant')">上分</button><button class="outline-button" :disabled="saving" type="button" @click="operatePoints('adjust')">下分</button><button v-if="selectedIsBot" class="outline-button" type="button" :disabled="saving || !behaviorDraft.machineChaseEnabled" @click="toggleBotChase">{{ behaviorDraft.chaseEnabled ? '关闭追' : '开通追' }}</button><button v-else class="outline-button" type="button" disabled title="暂未启用">开通追</button></div><button class="desk-avatar avatar-trigger point-avatar" type="button" title="点击更换头像" @click="openAvatarPicker"><img v-if="avatar(selected)" :src="avatar(selected)" alt="" /><b v-else>{{ playerInitial(selected) }}</b></button></div></section>
+          <section v-if="selectedIsBot && selected.status !== 'DELETED'" class="bot-range-row"><label>下注范围：<select v-model="behaviorDraft.stakeRangeCode" :disabled="saving" @change="saveBehavior"><option v-for="code in STAKE_RANGE_CODES" :key="code" :value="code">{{ STAKE_RANGE_LABELS[code] }}</option></select></label></section>
+          <section v-if="selected.playerKind === 'NORMAL' || selected.playerKind === 'BOT'" class="detail-section access-link-section"><div v-if="selected.status !== 'DELETED'" class="link-actions"><button class="secondary-button" type="button" :disabled="!accessLink" @click="copyAccessLink">复制链接</button><button class="outline-button" type="button" :disabled="accessLinkBusy" @click="issueAccessLink(true)">刷新链接</button></div><div v-if="accessLink" class="issued-link"><a class="issued-link-url" :href="accessLink.accessUrl" target="_blank" rel="noopener noreferrer">{{ accessLink.accessUrl }}</a></div><small v-else-if="selected.linkStatus" class="muted">当前链接暂不可展示，请点击刷新链接生成新地址。</small></section>
+          <p v-if="behaviorError || actionMessage" class="feedback wide">{{ behaviorError || actionMessage }}</p>
+        </div></template>
       </section>
     </section>
     <Teleport to="body">
@@ -495,7 +577,7 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: 10px 12px 18px;
   color: #243b53;
-  font-family: Tahoma, "Microsoft YaHei", Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Arial, Roboto, "PingFang SC", miui, "Hiragino Sans GB", "Microsoft Yahei", sans-serif;
   font-size: 12px;
   line-height: 1.35;
   box-sizing: border-box;
@@ -524,10 +606,10 @@ button:disabled { opacity: .52; cursor: not-allowed; }
   white-space: nowrap;
 }
 .primary-button { color: #fff; background: linear-gradient(#5aa9df, #2479b5); border-color: #1d6da6; text-shadow: 0 1px 0 rgb(0 0 0 / 18%); }
-.primary-button:hover:not(:disabled) { background: linear-gradient(#69b4e6, #2b82bd); }
+:global(body:not(.ops-console-body)) .primary-button:hover:not(:disabled) { background: linear-gradient(#69b4e6, #2b82bd); }
 .secondary-button { color: #145b8e; background: linear-gradient(#f8fcff, #dceefa); }
 .outline-button { color: #145b8e; background: linear-gradient(#fff, #eef6fc); }
-.outline-button:hover:not(:disabled), .secondary-button:hover:not(:disabled) { border-color: #1d76b2; background: #e5f3fd; }
+:global(body:not(.ops-console-body)) .outline-button:hover:not(:disabled), :global(body:not(.ops-console-body)) .secondary-button:hover:not(:disabled) { border-color: #1d76b2; background: #e5f3fd; }
 .icon-button { width: 30px; padding: 0; color: #fff; background: #2479b5; font-size: 16px; }
 .danger-button { color: #a32620; border-color: #d58d88; }
 .danger-fill-button { color: #fff; background: linear-gradient(#cf554b, #a92d25); border-color: #92241e; }
@@ -601,7 +683,7 @@ label { display: grid; gap: 2px; color: #3f596f; font-size: 11px; font-weight: 7
 .player-stat-total strong, .player-stat strong { overflow: hidden; color: #145b8e; font-size: 14px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .player-stat { cursor: pointer; }
 .player-stat:last-child { border-right: 0; }
-.player-stat.active { background: #d9edfc; box-shadow: inset 0 -2px #1d78b7; }
+.player-stat.active { background: #409eff; color: #fff; box-shadow: none; }
 .player-stat span, .player-stat-total span { font-size: 10px; }
 .create-action-stack { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
 .create-action-stack .create-actions, .create-action-stack .record-actions { display: contents; }
@@ -611,8 +693,10 @@ label { display: grid; gap: 2px; color: #3f596f; font-size: 11px; font-weight: 7
 .filter-row input, .filter-row select, .filter-row button { min-height: 27px; height: 27px; }
 .refresh-rank-button { min-width: 0; padding: 0 4px; }
 .player-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; align-items: center; width: 100%; min-height: 43px; padding: 4px 5px; border: 0; border-bottom: 1px solid #d8e5f0; border-left: 3px solid transparent; text-align: left; background: #fff; }
-.player-row:hover { background: #eef7ff; }
+:global(body:not(.ops-console-body)) .player-row:hover { background: #eef7ff; }
 .player-row.selected { border-left-color: #1d78b7; background: #dcedfb; }
+.player-row-select { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; align-items: center; min-width: 0; width: 100%; min-height: 30px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.player-row-delete { min-height: 24px; padding: 0 4px; border: 0; background: transparent; color: #b42318; font-size: 10px; white-space: nowrap; }
 .player-row-main, .player-row-side { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
 .player-row-main strong, .player-row-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player-row-main strong { font-size: 11px; }
@@ -637,9 +721,9 @@ label { display: grid; gap: 2px; color: #3f596f; font-size: 11px; font-weight: 7
 .detail-identity > div { min-width: 0; }
 .detail-identity h2 { overflow: hidden; margin: 0; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
 .detail-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
-.desk-avatar { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; overflow: hidden; border: 1px solid #5b94c3; border-radius: 2px; color: #fff; background: #287cb4; font-size: 13px; font-weight: 800; }
+.desk-avatar { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; overflow: hidden; border: 1px solid #dcdfe6; border-radius: 2px; color: #333; background: #fff; font-size: 13px; font-weight: 800; }
 .desk-avatar.large { flex-basis: 40px; width: 40px; height: 40px; font-size: 16px; }
-.desk-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.desk-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; image-rendering: auto; }
 em { font-style: normal; }
 .player-kind-normal, .player-kind-bot, .test-badge { display: inline-block; padding: 1px 4px; border: 1px solid; border-radius: 2px; font-size: 9px; font-weight: 700; line-height: 14px; }
 .player-kind-normal { color: #155e75; border-color: #6fc4d4; background: #dcf8fb; }
@@ -658,6 +742,7 @@ em { font-style: normal; }
 .days-editor input { width: 52px; }
 .days-editor small { color: #667c90; font-size: 10px; white-space: nowrap; }
 .player-edit-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.player-edit-balance { width: 100%; color: #20364b; font-size: 11px; font-weight: 700; text-align: right; }
 .detail-section { padding: 7px 0; border-top: 1px solid #c7daeb; }
 .section-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
 .section-title > div { min-width: 0; }
@@ -698,7 +783,7 @@ em { font-style: normal; }
 .link-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .issued-link { display: grid; gap: 3px; margin-top: 5px; padding: 5px 6px; border: 1px solid #9ec2e0; border-radius: 2px; background: #f3f9fe; }
 .issued-link-url { color: #1265a5; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; text-decoration: none; }
-.issued-link-url:hover { text-decoration: underline; }
+:global(body:not(.ops-console-body)) .issued-link-url:hover { text-decoration: underline; }
 .issued-link small { color: #667c90; font-size: 10px; }
 
 .action-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) 64px 132px; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid #d8e5f0; font-size: 11px; }
@@ -709,20 +794,32 @@ em { font-style: normal; }
 .action-failed { color: #b91c1c; }
 .action-pending, .action-processing { color: #a16207; }
 
+.blacklist-confirm-layer { position: fixed; inset: 0; z-index: 1100; background: rgb(0 0 0 / 30%); }
+.blacklist-confirm-dialog { position: fixed; top: 50%; left: 50%; box-sizing: border-box; width: min(300px, calc(100vw - 32px)); min-height: 161px; padding: 16px 19px 14px; border: 0; border-radius: 2px; color: #303133; background: #fff; box-shadow: 0 10px 28px rgb(0 0 0 / 20%); font-family: Arial, "Helvetica Neue", Helvetica, "Microsoft YaHei", sans-serif; font-size: 14px; }
+.blacklist-confirm-header { display: flex; align-items: center; justify-content: space-between; height: 18px; color: #606266; font-size: 13px; user-select: none; cursor: move; touch-action: none; }
+.blacklist-confirm-close { display: grid; width: 18px; height: 18px; padding: 0; place-items: center; border: 0; color: #909399; background: transparent; font-size: 18px; line-height: 1; cursor: pointer; }
+:global(body:not(.ops-console-body)) .blacklist-confirm-close:hover:not(:disabled) { color: #409eff; }
+.blacklist-confirm-message { margin-top: 34px; color: #303133; font-size: 14px; line-height: 20px; }
+.blacklist-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 25px; }
+.blacklist-confirm-actions button { width: 60px; height: 30px; padding: 0; border: 1px solid #409eff; border-radius: 1px; font-size: 14px; font-weight: 400; cursor: pointer; }
+.blacklist-confirm-accept { color: #fff; background: #409eff; }
+.blacklist-confirm-cancel { color: #606266; background: #fff; }
+.blacklist-confirm-actions button:disabled, .blacklist-confirm-close:disabled { opacity: .65; cursor: not-allowed; }
 .create-modal-layer { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; overflow: auto; padding: 12px; background: rgb(38 61 82 / 48%); }
 .create-modal { width: min(420px, 100%); overflow: hidden; border: 1px solid #6f9fc6; border-radius: 2px; background: #fff; box-shadow: 0 5px 24px rgb(20 50 75 / 30%); }
 .create-modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 6px 8px; border-bottom: 1px solid #83afd3; background: linear-gradient(#f2f9ff, #d2e8f9); }
 .create-modal-header h2 { margin: 0; font-size: 14px; }
 .modal-close { display: grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 2px; color: #4b6378; background: transparent; font-size: 18px; line-height: 1; }
-.modal-close:hover:not(:disabled) { border-color: #93b8d6; background: #e4f2fc; }
+:global(body:not(.ops-console-body)) .modal-close:hover:not(:disabled) { border-color: #93b8d6; background: #e4f2fc; }
 .create-modal .create-form { margin: 0; padding: 8px; border: 0; background: #fff; }
 
 .avatar-trigger { padding: 0; cursor: pointer; }
+:global(body:not(.ops-console-body)) .avatar-trigger:hover:not(:disabled) { border-color: #dcdfe6; background: #fff; color: #333; box-shadow: none; filter: none; transform: none; }
 .avatar-trigger:disabled { cursor: default; opacity: .75; }
 .avatar-picker-modal { width: min(760px, 100%); max-height: min(760px, calc(100dvh - 24px)); display: flex; flex-direction: column; }
 .avatar-picker-content { min-height: 0; overflow: auto; padding: 8px; }
 .avatar-picker-grid { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
-.avatar-option { position: relative; aspect-ratio: 1; padding: 2px; overflow: hidden; border: 1px solid #9bc0dc; border-radius: 3px; background: #eef7fd; cursor: pointer; }
+.avatar-option { position: relative; aspect-ratio: 1; padding: 2px; overflow: hidden; border: 1px solid #dcdfe6; border-radius: 3px; background: #fff; cursor: pointer; }
 .avatar-option img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 2px; }
 .avatar-option span { position: absolute; right: 2px; bottom: 2px; left: 2px; overflow: hidden; padding: 2px 3px; border-radius: 2px; color: #fff; background: rgb(20 45 65 / 78%); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .avatar-option.selected { border-color: #d97706; box-shadow: 0 0 0 2px #fdba74; }

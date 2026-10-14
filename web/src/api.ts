@@ -795,6 +795,8 @@ export const api = {
   getPlatformPasswordForm: () => request<PlatformPasswordForm>('/api/admin/password'),
   changePlatformPassword: (payload: PlatformPasswordChangeInput) =>
     request<PlatformPasswordChangeResult>('/api/admin/password', { method: 'PUT', body: JSON.stringify(payload) }),
+  changeAgentPassword: (payload: Pick<PlatformPasswordChangeInput, 'oldPassword' | 'newPassword' | 'confirmPassword'>) =>
+    request<{ message: string }>('/api/agent/password', { method: 'POST', body: JSON.stringify(payload) }),
   getPlatformSettings: () => request<PlatformSettings>('/api/admin/settings'),
   updatePlatformSettings: (payload: PlatformSettingsInput) =>
     request<PlatformSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),

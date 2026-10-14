@@ -57,5 +57,6 @@ export function formatRecentPointTime(value: string | Date) {
 }
 
 export function recentPointAmount(operation: Pick<RecentPointOperation, 'amount'>) {
-  return formatSignedPoints(operation.amount)
+  const amount = Math.round(Math.abs(operation.amount)).toString()
+  return operation.amount < 0 ? `-${amount}` : `+${amount}`
 }

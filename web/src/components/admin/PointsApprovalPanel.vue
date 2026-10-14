@@ -20,8 +20,7 @@ const processingId = ref<number | null>(null)
 const confirmTarget = ref<PendingPointRequest | null>(null)
 const soundChoice = ref<PointSoundChoice>(readPointSoundPreference(window.localStorage))
 const soundReady = ref(false)
-const soundHint = ref('')
-const newRequestCount = ref(0)
+const soundTestActive = ref(false)
 
 const seenRequestIds = new Set<number>()
 let initialized = false
@@ -45,7 +44,6 @@ async function ensureAudioContext() {
   if (!audioContext) audioContext = new AudioContext()
   if (audioContext.state === 'suspended') await audioContext.resume()
   soundReady.value = true
-  soundHint.value = ''
   return audioContext
 }
 
@@ -73,11 +71,10 @@ async function playTone(choice: PointSoundChoice) {
 }
 
 async function testSound() {
+  soundTestActive.value = !soundTestActive.value
   try {
     await playTone(soundChoice.value)
-  } catch {
-    soundHint.value = '浏览器未允许播放提示音，请检查声音权限'
-  }
+  } catch {}
 }
 
 async function loadRequests(showLoading = false) {
@@ -94,15 +91,10 @@ async function loadRequests(showLoading = false) {
     initialized = true
     error.value = ''
     if (!isInitialLoad && newIds.length) {
-      newRequestCount.value += newIds.length
       if (soundReady.value) {
         try {
           await playTone(soundChoice.value)
-        } catch {
-          soundHint.value = '有新的上下分申请，点击测试提示音可启用声音'
-        }
-      } else {
-        soundHint.value = '有新的上下分申请，点击测试提示音可启用声音'
+        } catch {}
       }
     }
   } catch (cause) {
@@ -171,12 +163,16 @@ onBeforeUnmount(() => {
 <template>
   <section class="points-approval-panel" aria-label="上下分确认">
     <header class="panel-heading">
-      <div>
+      <div class="panel-title">
         <h2>上下分确认</h2>
-        <span v-if="newRequestCount" class="new-count" aria-live="polite">{{ newRequestCount }} 条新申请</span>
       </div>
       <div class="sound-controls">
-        <button class="sound-test-button" type="button" @click="testSound">测试提示音</button>
+        <button
+          class="sound-test-button"
+          :class="{ 'is-active': soundTestActive }"
+          type="button"
+          @click="testSound"
+        >测试提示音</button>
         <label><input type="radio" name="point-sound" :checked="soundChoice === 'sound1'" @change="selectSound('sound1')" />声音1</label>
         <label><input type="radio" name="point-sound" :checked="soundChoice === 'sound2'" @change="selectSound('sound2')" />声音2</label>
       </div>
@@ -185,21 +181,13 @@ onBeforeUnmount(() => {
     <div class="panel-body">
       <p v-if="notice" class="panel-notice" role="status">{{ notice }}</p>
       <p v-if="error" class="panel-error" role="alert">{{ error }}</p>
-      <p v-else-if="soundHint" class="panel-hint" role="status">{{ soundHint }}</p>
 
       <div v-if="loading" class="panel-state">正在加载待处理申请...</div>
-      <div v-else-if="!requests.length" class="panel-state panel-empty">
-        <strong>暂无待处理的上下分申请</strong>
-        <span>玩家或托提交后会自动出现在这里</span>
-      </div>
+      <div v-else-if="!requests.length" class="panel-state panel-empty"></div>
       <ul v-else class="request-list">
         <li v-for="request in requests" :key="request.id" class="request-row">
           <div class="request-label">
-            <span :class="['request-direction', request.requestType === 'TOP_UP' ? 'is-top-up' : 'is-down']">
-              {{ request.requestType === 'TOP_UP' ? '上分' : '下分' }}
-            </span>
-            <strong :class="request.requestType === 'TOP_UP' ? 'is-top-up' : 'is-down'">{{ request.requestType === 'TOP_UP' ? '+' : '-' }}{{ Number(request.amount).toFixed(2) }}</strong>
-            <span class="request-player">（{{ request.displayName }}）</span>
+            <span class="request-text">{{ request.memberCode }}：{{ request.requestType === 'TOP_UP' ? '上分 +' : '下分 -' }}{{ Number(request.amount) }} ({{ request.displayName }})</span>
           </div>
           <div class="request-actions">
             <button class="approve-button" type="button" :disabled="processingId !== null" @click="openApproval(request)">同意</button>
@@ -250,11 +238,12 @@ onBeforeUnmount(() => {
   padding: 5px 8px;
 }
 
-.panel-heading > div:first-child {
+.panel-heading > .panel-title {
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
 }
 
 .panel-heading h2 {
@@ -264,16 +253,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.new-count {
-  color: var(--ops-red, #d94747);
-  font-size: 10px;
-  font-weight: 700;
-}
-
 .sound-controls {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  flex: 0 1 auto;
   justify-content: flex-end;
   gap: 7px;
   color: var(--ops-text, #243b53);
@@ -289,10 +273,9 @@ onBeforeUnmount(() => {
 }
 
 .sound-controls input {
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  accent-color: var(--ops-blue, #2d7bcd);
+  width: 20px;
+  height: auto;
+  margin: 0 3px 0 5px;
 }
 
 .sound-test-button {
@@ -315,8 +298,7 @@ onBeforeUnmount(() => {
 }
 
 .panel-notice,
-.panel-error,
-.panel-hint {
+.panel-error {
   margin: 0 0 7px;
   border: 1px solid var(--ops-line, #8eb7e6);
   border-radius: 2px;
@@ -330,12 +312,6 @@ onBeforeUnmount(() => {
   border-color: #efb6b6;
   background: #fff5f5;
   color: var(--ops-red, #d94747);
-}
-
-.panel-hint {
-  border-color: #efd08c;
-  background: #fffbeb;
-  color: #9a6700;
 }
 
 .panel-state {
@@ -358,7 +334,7 @@ onBeforeUnmount(() => {
 
 .request-list {
   display: grid;
-  gap: 3px;
+  gap: 0;
   max-height: 360px;
   overflow-y: auto;
   margin: 0;
@@ -370,43 +346,36 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 36px;
-  border: 1px solid #c8dfef;
-  border-radius: 2px;
-  background: #f9fcfd;
-  padding: 4px 6px;
+  gap: 0;
+  height: 30px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  padding: 0;
+  line-height: 30px;
 }
+
+.request-row:nth-child(even) { background: #f5f5f5; }
+:global(body:not(.ops-console-body)) .request-row:hover { background: #d5f3f7; }
 
 .request-label {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 5px;
+  align-items: center;
+  flex: 1 1 auto;
   min-width: 0;
+  height: 30px;
+  overflow: hidden;
+  padding-left: 10px;
 }
 
-.request-label strong {
-  color: var(--ops-red, #d94747);
+.request-text {
+  overflow: hidden;
+  color: #000;
   font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.request-direction {
-  color: var(--ops-red, #d94747);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.request-label strong.is-down,
-.request-direction.is-down {
-  color: var(--ops-green, #23845f);
-}
-
-.request-player {
-  color: var(--ops-muted, #6d8093);
-  font-size: 12px;
-  overflow-wrap: anywhere;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .request-actions,
@@ -415,6 +384,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   flex: 0 0 auto;
+}
+
+.request-actions {
+  position: relative;
+  flex: 0 0 120px;
+  width: 120px;
+  height: 30px;
 }
 
 .approve-button,
@@ -427,6 +403,28 @@ onBeforeUnmount(() => {
   font-weight: 700;
   cursor: pointer;
 }
+
+.request-actions .approve-button,
+.request-actions .cancel-button {
+  position: absolute;
+  top: 2px;
+  width: 42px;
+  min-width: 42px;
+  height: 26px;
+  min-height: 26px;
+  border: 1px solid #000;
+  border-radius: 0;
+  color: #000;
+  padding: 2px 5px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.request-actions .approve-button { left: 0; background: #c9efb5; }
+:global(body:not(.ops-console-body)) .request-actions .approve-button:hover:not(:disabled) { background: #31a924; color: #fff; }
+.request-actions .cancel-button { left: 60px; background: #f2f2f2; }
+:global(body:not(.ops-console-body)) .request-actions .cancel-button:hover:not(:disabled) { background: #808080; color: #fff; }
 
 .approve-button {
   border-color: var(--ops-green, #23845f);

@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -102,7 +103,7 @@ public class PlayerDeskScopeService {
 
         /** 机器账号：只含 {@code agent_id = 自己} 的玩家与配置。 */
         record Machine(long agentId, long accountId, String agentCode, String agentName, BigDecimal score,
-                       long botLimit, long playerCount, long botCount, Long groupId, String groupName,
+                       long botLimit, long playerCount, long botCount, Instant expiresAt, Long groupId, String groupName,
                        String status) implements Scope {
             @Override
             public String mode() {
@@ -209,7 +210,7 @@ public class PlayerDeskScopeService {
 
     private Scope.Machine requireMachine(long agentId, long accountUserId) {
         List<Scope.Machine> rows = jdbc.query("""
-                SELECT ag.id, ag.account_user_id, ag.agent_code, ag.display_name, ag.score, ag.bot_count,
+                SELECT ag.id, ag.account_user_id, ag.agent_code, ag.display_name, ag.score, ag.bot_count, ag.expires_at,
                        ag.group_id, g.display_name AS group_display_name, ag.status,
                        (SELECT COUNT(*) FROM demo_user_account a
                          WHERE a.agent_id = ag.id AND a.player_kind = 'NORMAL' AND a.status <> 'DELETED'
@@ -223,6 +224,7 @@ public class PlayerDeskScopeService {
                 """, (rs, rowNum) -> new Scope.Machine(rs.getLong("id"), accountUserId,
                 rs.getString("agent_code"), rs.getString("display_name"), money(rs.getBigDecimal("score")),
                 rs.getLong("bot_count"), rs.getLong("player_count"), rs.getLong("bot_count_current"),
+                instant(rs.getTimestamp("expires_at")),
                 nullableLong(rs, "group_id"), rs.getString("group_display_name"),
                 rs.getString("status")), agentId);
         return rows.stream().findFirst()
@@ -236,5 +238,9 @@ public class PlayerDeskScopeService {
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;
+    }
+
+    private static Instant instant(java.sql.Timestamp value) {
+        return value == null ? null : value.toInstant();
     }
 }

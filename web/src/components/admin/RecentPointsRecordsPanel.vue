@@ -8,38 +8,61 @@ const props = withDefaults(defineProps<{ refreshToken?: number }>(), { refreshTo
 
 const kind = ref<PlayerKind>('NORMAL')
 const items = ref<RecentPointOperation[]>([])
-const businessDate = ref('')
 const nextBeforeId = ref<number | null>(null)
 const hasMore = ref(false)
 const loading = ref(true)
 const loadingMore = ref(false)
+const requestInFlight = ref(false)
 const error = ref('')
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let requestId = 0
+let queuedReset = false
 
-async function loadRecords(reset = true) {
+async function loadRecords(reset = true, silent = false) {
+  if (requestInFlight.value) {
+    if (reset) queuedReset = true
+    return
+  }
   const currentRequestId = ++requestId
-  if (reset) loading.value = true
-  else loadingMore.value = true
-  error.value = ''
+  const requestedKind = kind.value
+  requestInFlight.value = true
+  if (reset) {
+    if (!silent && !items.value.length) loading.value = true
+  } else loadingMore.value = true
   try {
     const result = await api.getRecentPointOperations({
-      kind: kind.value,
+      kind: requestedKind,
       beforeId: reset ? null : nextBeforeId.value,
       limit: 50,
     })
-    if (currentRequestId !== requestId) return
-    items.value = reset ? result.items : [...items.value, ...result.items]
-    businessDate.value = result.businessDate
+    if (currentRequestId !== requestId || requestedKind !== kind.value) return
+    const unchanged = reset
+      && items.value.length === result.items.length
+      && items.value.every((item, index) => {
+        const next = result.items[index]
+        return item.ledgerId === next.ledgerId
+          && item.createdAt === next.createdAt
+          && item.displayName === next.displayName
+          && item.amount === next.amount
+      })
+    if (!unchanged) items.value = reset ? result.items : [...items.value, ...result.items]
     nextBeforeId.value = result.nextBeforeId
     hasMore.value = result.hasMore
+    error.value = ''
   } catch (cause) {
-    if (currentRequestId !== requestId) return
+    if (currentRequestId !== requestId || requestedKind !== kind.value) return
     error.value = apiErrorMessage(cause, '最近上下分记录加载失败')
   } finally {
     if (currentRequestId === requestId) {
-      loading.value = false
-      loadingMore.value = false
+      if (requestedKind === kind.value) {
+        loading.value = false
+        loadingMore.value = false
+      }
+      requestInFlight.value = false
+      if (queuedReset) {
+        queuedReset = false
+        void loadRecords(true, true)
+      }
     }
   }
 }
@@ -50,19 +73,21 @@ function selectKind(nextKind: PlayerKind) {
   items.value = []
   nextBeforeId.value = null
   hasMore.value = false
+  loading.value = true
+  error.value = ''
   void loadRecords(true)
 }
 
 function loadMore() {
-  if (!hasMore.value || loadingMore.value || !nextBeforeId.value) return
+  if (!hasMore.value || loadingMore.value || requestInFlight.value || !nextBeforeId.value) return
   void loadRecords(false)
 }
 
-watch(() => props.refreshToken, () => { void loadRecords(true) })
+watch(() => props.refreshToken, () => { void loadRecords(true, true) })
 
 onMounted(() => {
   void loadRecords(true)
-  pollTimer = setInterval(() => { void loadRecords(true) }, 10000)
+  pollTimer = setInterval(() => { void loadRecords(true, true) }, 10000)
 })
 
 onBeforeUnmount(() => {
@@ -75,8 +100,7 @@ onBeforeUnmount(() => {
   <section class="recent-points-panel" aria-label="最近上下分记录">
     <header class="panel-heading">
       <div>
-        <h2>最近上下分记录</h2>
-        <span>{{ businessDate ? `${businessDate} 业务日` : '当天实时记录' }}</span>
+        <h2>最近上下分记录：</h2>
       </div>
       <div class="kind-switch" role="group" aria-label="记录类型">
         <button type="button" :class="{ active: kind === 'NORMAL' }" :aria-pressed="kind === 'NORMAL'" @click="selectKind('NORMAL')">玩家</button>
@@ -87,7 +111,7 @@ onBeforeUnmount(() => {
     <div class="panel-body">
       <p v-if="error" class="panel-error" role="alert">
         <span>{{ error }}</span>
-        <button type="button" @click="loadRecords(true)">重试</button>
+        <button type="button" :disabled="requestInFlight" @click="loadRecords(true)">重试</button>
       </p>
 
       <div v-if="loading" class="panel-state">正在加载最近记录...</div>
@@ -95,11 +119,11 @@ onBeforeUnmount(() => {
       <ul v-else class="record-list">
         <li v-for="item in items" :key="item.ledgerId" class="record-row">
           <time :datetime="item.createdAt">{{ formatRecentPointTime(item.createdAt) }}</time>
-          <span class="record-name">{{ item.displayName }}：</span>
+          <span class="record-name">{{ item.displayName }}:</span>
           <strong :class="item.amount < 0 ? 'is-negative' : 'is-positive'">{{ recentPointAmount(item) }}</strong>
         </li>
       </ul>
-      <button v-if="hasMore && !loading" class="load-more-button" type="button" :disabled="loadingMore" @click="loadMore">
+      <button v-if="hasMore && !loading" class="load-more-button" type="button" :disabled="loadingMore || requestInFlight" @click="loadMore">
         {{ loadingMore ? '加载中...' : '加载更多' }}
       </button>
     </div>
@@ -267,11 +291,11 @@ onBeforeUnmount(() => {
 }
 
 .is-positive {
-  color: var(--ops-red, #d94747);
+  color: #f00;
 }
 
 .is-negative {
-  color: var(--ops-green, #23845f);
+  color: #008000;
 }
 
 .load-more-button {

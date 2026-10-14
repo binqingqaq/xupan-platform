@@ -1,30 +1,39 @@
-body.ops-console-body {
-  --ops-bg: #edf3fb;
-  --ops-shell: #f8fbff;
-  --ops-panel: #ffffff;
-  --ops-panel-soft: #f3f8ff;
-  --ops-line: #8eb7e6;
-  --ops-line-strong: #4b8ed3;
-  --ops-header: #dceeff;
-  --ops-header-deep: #bfdffb;
-  --ops-blue: #2d7bcd;
-  --ops-blue-deep: #15599d;
-  --ops-cyan: #37a9dd;
-  --ops-red: #d94747;
-  --ops-green: #23845f;
-  --ops-text: #243b53;
-  --ops-muted: #6d8093;
-  --ops-shadow: 0 2px 8px rgb(50 94 140 / 12%);
+html:has(body.ops-console-body) {
+  background: #fff;
 }
 
 body.ops-console-body {
-  min-width: 1000px;
-  background:
-    linear-gradient(180deg, rgb(255 255 255 / 70%), rgb(218 232 247 / 58%)),
-    repeating-linear-gradient(0deg, transparent 0 23px, rgb(91 137 183 / 7%) 23px 24px),
-    var(--ops-bg);
+  --ops-bg: #ffffff;
+  --ops-shell: #fefefe;
+  --ops-panel: #ffffff;
+  --ops-panel-soft: #fbfbfb;
+  --ops-line: #409eff;
+  --ops-line-strong: #409eff;
+  --ops-header: #fbfbfb;
+  --ops-header-deep: #f4f4f5;
+  --ops-blue: #409eff;
+  --ops-blue-deep: #2679c8;
+  --ops-cyan: #409eff;
+  --ops-red: #d94747;
+  --ops-green: #23845f;
+  --ops-text: #333333;
+  --ops-muted: #606266;
+  --ops-shadow: none;
+}
+
+body.ops-console-body {
+  min-width: 925px;
+  min-height: 100vh;
+  background: var(--ops-bg);
   color: var(--ops-text);
-  font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Arial, Roboto, "PingFang SC", miui, "Hiragino Sans GB", "Microsoft Yahei", sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+body.ops-console-body #app {
+  min-height: 100vh;
+  background: #fff;
 }
 
 body.ops-console-body button,
@@ -37,16 +46,12 @@ body.ops-console-body textarea {
 body.ops-console-body button {
   min-height: 26px;
   border: 1px solid var(--ops-line);
-  background: linear-gradient(#ffffff, #eaf4ff);
+  background: #fff;
   color: var(--ops-text);
   padding: 2px 8px;
   line-height: 1.2;
 }
 
-body.ops-console-body button:hover:not(:disabled) {
-  border-color: var(--ops-line-strong);
-  background: linear-gradient(#f7fbff, #d8ecff);
-}
 
 body.ops-console-body button:disabled {
   cursor: not-allowed;
@@ -72,23 +77,29 @@ body.ops-console-body textarea:focus {
 
 body.ops-console-body .primary-button {
   border-color: var(--ops-blue);
-  background: linear-gradient(#4d9ce0, #2471b9);
+  background: #409eff;
   color: #fff;
   font-weight: 700;
 }
 
 body.ops-console-body .secondary-button {
   border-color: var(--ops-line);
-  background: linear-gradient(#ffffff, #e8f3ff);
+  background: #fff;
 }
 
-body.ops-console-body .admin-page,
-body.ops-console-body .unified-admin-page {
+body.ops-console-body .admin-page {
   width: 1000px;
   min-width: 1000px;
   min-height: 100vh;
   margin: 0 auto;
   background: var(--ops-shell);
+}
+
+body.ops-console-body .unified-admin-page {
+  width: 925px;
+  min-width: 925px;
+  max-width: 925px;
+  margin: 8px auto;
 }
 
 body.ops-console-body .admin-header,
@@ -119,7 +130,7 @@ body.ops-console-body .section-title,
 body.ops-console-body .panel-heading,
 body.ops-console-body .bet-board-heading {
   border-bottom: 1px solid var(--ops-line);
-  background: linear-gradient(#eef8ff, #d8ecff);
+  background: #fbfbfb;
 }
 
 body.ops-console-body .eyebrow {
@@ -135,10 +146,290 @@ body.ops-console-body .points-approval-panel,
 body.ops-console-body .recent-points-panel,
 body.ops-console-body .report-control-panel,
 body.ops-console-body .bet-board-panel,
-body.ops-console-body .admin-bottom-control,
 body.ops-console-body .admin-domain-footer,
 body.ops-console-body .admin-placeholder-panel,
 body.ops-console-body .unified-stash-entry,
 body.ops-console-body .unified-compat-links {
   overflow: clip;
+}
+
+body.ops-console-body .unified-admin-page {
+  overflow: visible;
+}
+
+body.ops-console-body .unified-admin-page {
+  position: relative;
+  border: 2px solid #409eff;
+  border-radius: 15px;
+  background: #fefefe;
+  box-shadow: none;
+  color: #333;
+  font-size: 14px;
+}
+
+body.ops-console-body .unified-admin-page::after {
+  position: absolute;
+  z-index: 20;
+  inset: -2px;
+  border: 2px solid #409eff;
+  border-radius: 15px;
+  content: '';
+  pointer-events: none;
+}
+
+body.ops-console-body .unified-admin-page .unified-admin-layout,
+body.ops-console-body .unified-admin-page .player-desk-body {
+  background: #fff;
+}
+
+body.ops-console-body .unified-admin-page .unified-admin-topbar,
+body.ops-console-body .unified-admin-page .unified-control-strip,
+body.ops-console-body .unified-admin-page .panel-heading,
+body.ops-console-body .unified-admin-page .bet-board-heading,
+body.ops-console-body .unified-admin-page .section-title {
+  border-color: #409eff;
+  background: #f8f8f8;
+  box-shadow: none;
+  color: #333;
+}
+
+body.ops-console-body .unified-admin-page .unified-status-grid,
+body.ops-console-body .unified-admin-page .unified-content-report,
+body.ops-console-body .unified-admin-page .report-control-panel,
+body.ops-console-body .unified-admin-page .points-approval-panel,
+body.ops-console-body .unified-admin-page .recent-points-panel,
+body.ops-console-body .unified-admin-page .unified-player-workbench,
+body.ops-console-body .unified-admin-page .bet-board-panel {
+  border-color: #409eff;
+  background: #fff;
+  box-shadow: none;
+  color: #111;
+}
+
+body.ops-console-body .unified-admin-page .player-list-items,
+body.ops-console-body .unified-admin-page .player-detail-pane {
+  border: 1px solid #409eff;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+}
+
+body.ops-console-body .unified-admin-page .player-desk-page,
+body.ops-console-body .unified-admin-page .player-detail-content,
+body.ops-console-body .unified-admin-page .player-edit-rows,
+body.ops-console-body .unified-admin-page .player-stats,
+body.ops-console-body .unified-admin-page .unified-content-report,
+body.ops-console-body .unified-admin-page .report-control-panel,
+body.ops-console-body .unified-admin-page .admin-game-control-bar,
+body.ops-console-body .unified-admin-page .panel-body {
+  color: #111;
+}
+
+body.ops-console-body .unified-admin-page .unified-admin-topbar,
+body.ops-console-body .unified-admin-page .unified-control-strip,
+body.ops-console-body .unified-admin-page .unified-status-grid,
+body.ops-console-body .unified-admin-page .unified-content-report,
+body.ops-console-body .unified-admin-page .panel-heading,
+body.ops-console-body .unified-admin-page .bet-board-heading,
+body.ops-console-body .unified-admin-page .player-edit-balance,
+body.ops-console-body .unified-admin-page .player-stat-total span,
+body.ops-console-body .unified-admin-page .player-stat span {
+  color: #111;
+}
+
+body.ops-console-body .unified-admin-page .unified-admin-layout {
+  background: #fff;
+}
+
+body.ops-console-body .unified-admin-page .unified-admin-topbar,
+body.ops-console-body .unified-admin-page .unified-control-strip,
+body.ops-console-body .unified-admin-page .unified-status-grid,
+body.ops-console-body .unified-admin-page .unified-content-report,
+body.ops-console-body .unified-admin-page .report-control-panel,
+body.ops-console-body .unified-admin-page .admin-game-control-bar {
+  background: #fff;
+  box-shadow: none;
+}
+
+body.ops-console-body .unified-admin-page .unified-player-workbench .pane-heading {
+  border-color: transparent;
+  background: #fff;
+}
+
+body.ops-console-body .unified-admin-page .unified-player-workbench {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .panel-body,
+body.ops-console-body .unified-admin-page .recent-points-panel .panel-body {
+  background: #fff;
+}
+
+body.ops-console-body .unified-admin-page .unified-player-workbench .player-row.selected {
+  border-left-color: #409eff;
+  background: #eaf4ff;
+}
+
+body.ops-console-body .unified-admin-page .player-detail-pane .player-edit-row > span,
+body.ops-console-body .unified-admin-page .player-detail-pane .player-edit-row > span strong,
+body.ops-console-body .unified-admin-page .player-detail-pane .player-edit-balance,
+body.ops-console-body .unified-admin-page .panel-heading h2,
+body.ops-console-body .unified-admin-page .bet-board-heading,
+body.ops-console-body .unified-admin-page .section-title h2,
+body.ops-console-body .unified-admin-page .section-title h3,
+body.ops-console-body .unified-admin-page .pane-heading,
+body.ops-console-body .unified-admin-page .welcome-label,
+body.ops-console-body .unified-admin-page .welcome-meta,
+body.ops-console-body .unified-admin-page .welcome-user,
+body.ops-console-body .unified-admin-page .game-control-label,
+body.ops-console-body .unified-admin-page .report-control-label,
+body.ops-console-body .unified-admin-page .player-row-main strong,
+body.ops-console-body .unified-admin-page .player-row-side strong,
+body.ops-console-body .unified-admin-page .player-stat-total span,
+body.ops-console-body .unified-admin-page .player-stat-total strong,
+body.ops-console-body .unified-admin-page .player-stat span {
+  color: #333;
+}
+
+body.ops-console-body .unified-admin-page .player-row-main strong,
+body.ops-console-body .unified-admin-page .player-row-side strong {
+  color: #000;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, "Segoe UI", Arial, Roboto, "PingFang SC", miui, "Hiragino Sans GB", "Microsoft Yahei", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .player-row-delete {
+  color: #f00;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .player-stat {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .player-stat span {
+  color: #333;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .player-stat strong { color: #909399; }
+
+body.ops-console-body .unified-admin-page .player-stat.active span,
+body.ops-console-body .unified-admin-page .player-stat.active strong { color: #fff; }
+
+body.ops-console-body .unified-admin-page .player-stat-total,
+body.ops-console-body .unified-admin-page .player-stat-total span,
+body.ops-console-body .unified-admin-page .player-stat-total strong {
+  color: rgb(255, 0, 0);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .admin-welcome-bar .welcome-action {
+  color: rgb(41, 137, 236) !important;
+  text-decoration: none;
+}
+
+
+body.ops-console-body .unified-admin-page .admin-welcome-bar .welcome-password {
+  color: rgb(255, 0, 0) !important;
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .panel-heading h2 {
+  color: red !important;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .sound-controls {
+  color: #000;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .sound-controls label {
+  color: #000;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .sound-test-button {
+  min-height: 22px;
+  border: 1px solid #dcdfe6;
+  border-radius: 10px;
+  background: #fff;
+  color: #606266;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 12px !important;
+  font-weight: 400 !important;
+  line-height: normal;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+  text-shadow: 0 1px 1px rgb(0 0 0 / 30%);
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .sound-test-button.is-active {
+  border-color: red;
+  background: red;
+  color: #fff;
+}
+
+body.ops-console-body .unified-admin-page :is(
+  button,
+  input:not([type="radio"]):not([type="checkbox"]),
+  select,
+  textarea,
+  [class*="panel"],
+  [class*="pane"],
+  [class*="list"],
+  [class*="row"],
+  [class*="box"],
+  [class*="control"],
+  [class*="stats"],
+  [class*="modal"],
+  [class*="filter"],
+  [class*="table"],
+  [class*="heading"],
+  [class*="tabs"],
+  [class*="item"],
+  [class*="content"],
+  [class*="workbench"],
+  [class*="toolbar"],
+  [class*="search"]
+) {
+  border-radius: 6px !important;
+}
+
+body.ops-console-body .unified-admin-page .points-approval-panel .request-row,
+body.ops-console-body .unified-admin-page .points-approval-panel .request-actions button {
+  border-radius: 0 !important;
+}
+
+body.ops-console-body .unified-admin-page .bet-board-panel,
+body.ops-console-body .unified-admin-page .report-control-panel,
+body.ops-console-body .unified-admin-page .points-approval-panel,
+body.ops-console-body .unified-admin-page .recent-points-panel {
+  border-radius: 4px;
+}
+
+body.ops-console-body .unified-admin-page .bet-board-panel .bet-board-tabs button {
+  font-size: 15px !important;
+}
+
+body.ops-console-body .unified-admin-page .report-control-panel .report-control-label,
+body.ops-console-body .unified-admin-page .report-control-panel .report-control-check {
+  font-family: inherit !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  line-height: 1.4 !important;
+}
+
+body.ops-console-body .unified-admin-page .report-control-panel .report-control-label {
+  color: #000 !important;
 }

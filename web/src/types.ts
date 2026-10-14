@@ -207,6 +207,7 @@ export interface PlayerDeskItem {
   lastLoginAt?: string | null
   behaviorEnabled: boolean
   lastActionAt: string | null
+  blacklisted: boolean
 }
 
 export interface PlayerDeskPage {
@@ -570,6 +571,8 @@ export interface PlayerDeskScope {
   machineCode: string | null
   machineName: string | null
   machineStatus: string | null
+  /** 机器账号自身失效时间；GLOBAL/GROUP 为 null。 */
+  expiresAt: string | null
   /** 机器代理积分；GLOBAL/GROUP 为 null。 */
   score: number | null
   /** 托上限（`agent.bot_count`）。 */

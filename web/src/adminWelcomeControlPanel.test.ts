@@ -1,5 +1,6 @@
 import { createApp, nextTick } from 'vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from './api'
 import AdminWelcomeControlPanel from './components/admin/AdminWelcomeControlPanel.vue'
 
 // 本组件在 `part="welcome"` 且由父级传入 `scope`/`machines` 时不自行取数，
@@ -8,6 +9,8 @@ vi.mock('./api', () => ({
   api: {
     getPlayerDeskScope: vi.fn(),
     listMachines: vi.fn(),
+    changeAgentPassword: vi.fn(),
+    logout: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
@@ -33,6 +36,7 @@ function scope(mode: 'GLOBAL' | 'GROUP' | 'MACHINE', overrides: Record<string, u
     machineCode: mode === 'MACHINE' ? 'BOT003' : null,
     machineName: mode === 'MACHINE' ? '机器三号' : null,
     machineStatus: mode === 'MACHINE' ? 'ACTIVE' : null,
+    expiresAt: mode === 'MACHINE' ? '2026-11-01T00:00:00Z' : null,
     score: mode === 'GLOBAL' ? null : 500,
     botLimit: null,
     playerCount: null,
@@ -146,5 +150,29 @@ describe('admin welcome control panel 机器选择器', () => {
 
     expect(machineSelect()).toBeNull()
     expect(hintText()).toBe('')
+  })
+
+  it('shows the machine expiry and opens a working own-password form', async () => {
+    vi.mocked(api.changeAgentPassword).mockResolvedValue({ message: '1' })
+    await mountWelcome({ scope: scope('MACHINE', { botLimit: 20, expiresAt: '2026-10-31T16:00:00Z' }), operatorName: 'bhy019' })
+
+    expect(container?.textContent).toContain('bhy019')
+    expect(container?.textContent).toContain('托：20')
+    expect(container?.textContent).toContain('过期时间：2026/11/01 00:00:00')
+    expect(container?.textContent).not.toContain('机器编码：')
+    const passwordButton = Array.from(container?.querySelectorAll('button') ?? []).find(button => button.textContent?.trim() === '修改密码')
+    passwordButton?.click()
+    await nextTick()
+    const form = container?.querySelector<HTMLFormElement>('.password-dialog')
+    if (!form) throw new Error('missing machine password form')
+    const inputs = Array.from(form.querySelectorAll('input'))
+    for (const [index, value] of ['current-pass', 'new-pass', 'new-pass'].entries()) {
+      inputs[index].value = value
+      inputs[index].dispatchEvent(new Event('input'))
+    }
+    form.dispatchEvent(new Event('submit'))
+    await nextTick()
+    expect(api.changeAgentPassword).toHaveBeenCalledWith({ oldPassword: 'current-pass', newPassword: 'new-pass', confirmPassword: 'new-pass' })
+    await vi.waitFor(() => expect(container?.textContent).toContain('密码已修改，请重新登录'))
   })
 })
