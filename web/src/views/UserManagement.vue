@@ -426,7 +426,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <div v-if="passwordOpen && selectedUser" class="user-modal-layer nested-modal" role="presentation" @click.self="closePasswordModal">
+    <div v-if="passwordOpen && selectedUser" class="user-modal-layer nested-modal" role="presentation">
       <section class="user-modal compact-modal" role="dialog" aria-modal="true" aria-labelledby="reset-password-title">
         <header><div><span class="eyebrow">RESET PASSWORD</span><h2 id="reset-password-title">重置密码</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="closePasswordModal">×</button></header>
         <p class="modal-note">目标用户：{{ selectedUser.username }}。提交后该用户的旧会话会失效。</p>
@@ -434,7 +434,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <div v-if="rolesOpen && selectedUser" class="user-modal-layer nested-modal" role="presentation" @click.self="rolesOpen = false">
+    <div v-if="rolesOpen && selectedUser" class="user-modal-layer nested-modal" role="presentation">
       <section class="user-modal compact-modal" role="dialog" aria-modal="true" aria-labelledby="roles-title">
         <header><div><span class="eyebrow">ROLE AUTHORIZATION</span><h2 id="roles-title">角色授权</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="rolesOpen = false">×</button></header>
         <div class="role-options"><label v-for="role in activeRoles" :key="role.code" class="role-option"><input v-model="selectedRoleCodes" type="checkbox" :value="role.code" /><span><strong>{{ role.name }}</strong><small>{{ role.code }}</small></span></label><p v-if="!activeRoles.length" class="user-empty-state">暂无可用角色</p></div>
@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <div v-if="confirmOpen && confirmAction" class="user-modal-layer nested-modal" role="presentation" @click.self="closeConfirmation">
+    <div v-if="confirmOpen && confirmAction" class="user-modal-layer nested-modal" role="presentation">
       <section class="user-modal compact-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <header><div><span class="eyebrow">CONFIRM ACTION</span><h2 id="confirm-title">确认{{ confirmAction.status === 'ACTIVE' ? '启用' : confirmAction.status === 'LOCKED' ? '锁定' : '停用' }}</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="closeConfirmation">×</button></header>
         <p class="modal-note">将对用户“{{ confirmAction.user.displayName }}（{{ confirmAction.user.username }}）”执行此操作。状态变更后会撤销其有效会话。</p>

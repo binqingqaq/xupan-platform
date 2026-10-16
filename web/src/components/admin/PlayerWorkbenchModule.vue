@@ -526,7 +526,7 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
     <Teleport to="body">
-      <div v-if="deleteConfirmOpen && selected" class="create-modal-layer" role="presentation" @click.self="closeDeleteConfirm">
+      <div v-if="deleteConfirmOpen && selected" class="create-modal-layer" role="presentation">
         <section class="create-modal delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-player-title">
           <header class="create-modal-header"><div><span class="eyebrow">DELETE PLAYER</span><h2 id="delete-player-title">删除玩家</h2></div><button class="modal-close" type="button" aria-label="关闭" :disabled="saving" @click="closeDeleteConfirm">×</button></header>
           <div class="delete-modal-content"><p>是否删除 <strong>{{ selected.memberCode }} ({{ playerDisplayName(selected) }})</strong> 数据？</p><p class="form-hint danger-hint">删除后不可恢复：该玩家会被物理删除（登录链接立即失效、无法再登录）；历史积分流水、下注、中奖流水和聊天记录会保留。</p><div class="modal-actions"><button class="outline-button" type="button" :disabled="saving" @click="closeDeleteConfirm">取消</button><button class="danger-fill-button" type="button" :disabled="saving" @click="confirmDeletePlayer">{{ saving ? '删除中...' : '确定删除' }}</button></div></div>
@@ -542,7 +542,7 @@ onBeforeUnmount(() => {
       </div>
     </Teleport>
     <Teleport to="body">
-      <div v-if="pointRecordsOpen" class="create-modal-layer" role="presentation" @click.self="closePointRecords">
+      <div v-if="pointRecordsOpen" class="create-modal-layer" role="presentation">
         <section class="create-modal records-modal" role="dialog" aria-modal="true" aria-labelledby="point-records-title">
           <header class="create-modal-header"><div><span class="eyebrow">POINT RECORDS</span><h2 id="point-records-title">{{ pointRecordsTitle }}</h2><p class="modal-subtitle">按每天 06:00 切换业务日期</p></div><button class="modal-close" type="button" aria-label="关闭" @click="closePointRecords">×</button></header>
           <div class="record-modal-content">

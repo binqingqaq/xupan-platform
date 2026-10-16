@@ -198,7 +198,7 @@ onBeforeUnmount(() => {
     </div>
 
     <Teleport to="body">
-      <div v-if="confirmTarget" class="point-confirm-layer" role="presentation" @click.self="closeApproval">
+      <div v-if="confirmTarget" class="point-confirm-layer" role="presentation">
         <section class="point-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="point-confirm-title">
           <h3 id="point-confirm-title">确认积分操作</h3>
           <p>是否确认{{ pointRequestLabel(confirmTarget) }}？</p>
