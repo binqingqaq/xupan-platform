@@ -20,6 +20,7 @@ import LoginView from './views/LoginView.vue'
 import NotFoundView from './views/NotFoundView.vue'
 import UserRoom from './views/UserRoom.vue'
 import PlayerLinkLoginView from './views/PlayerLinkLoginView.vue'
+import Hby019SourcePage from './views/Hby019SourcePage.vue'
 import { adminRoutes } from './adminRoutes'
 import { getAuthAudience, restoreSession, subscribeAuthState } from './api'
 import { authEntryForRoute, loginPathForRoute, resolveRouteGuardDecision, type AuthEntry } from './consoleScope'
@@ -48,6 +49,12 @@ const router = createRouter({
     { path: '/display', redirect: '/display/mobile' },
     { path: '/display/mobile', component: () => import('./views/DisplayDrawBoard.vue'), meta: { title: '开奖首页' } },
     { path: '/login', component: LoginView, meta: { title: 'AI模型房间管理' } },
+    { path: '/hby019-demo', redirect: to => ({ path: '/hby019-demo/login', query: to.query, hash: to.hash }) },
+    { path: '/hby019-demo/login', component: Hby019SourcePage, meta: { title: 'AI模型登录页' } },
+    { path: '/hby019-demo/console', component: Hby019SourcePage, meta: { title: 'AI模型房间管理' } },
+    { path: '/hby019-demo/portal', component: Hby019SourcePage, meta: { title: 'AI校验密码' } },
+    { path: '/hby019-demo/player.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },
+    { path: '/hby019-demo/player-ui1.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },
     { path: '/platform-admin/login', component: PlatformAdminLoginView, meta: { title: 'XUPAN 超级管理后台' } },
     { path: '/platform-admin', component: PlatformAdminHome, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_HOME_READ', title: 'XUPAN 超级管理后台' } },
     { path: '/platform-admin/sub-accounts', component: PlatformAdminSubAccounts, meta: { requiresAuth: true, requiredPermission: 'SUB_ACCOUNT_MANAGE', title: '子账号' } },
@@ -100,13 +107,27 @@ function isAdminRoute(path: string): boolean {
  */
 function setViewportForRoute(path: string, originalPath = '') {
   const effectivePath = path === '/404' && originalPath ? originalPath : path
+  const isHbyDemo = effectivePath.startsWith('/hby019-demo')
   const isConsolePath = effectivePath.startsWith('/platform-admin') || effectivePath === '/console' || effectivePath.startsWith('/console/') || effectivePath === '/agent' || effectivePath.startsWith('/agent/')
   document.body.classList.toggle('ops-console-body', isConsolePath)
-  const viewport = document.querySelector('meta[name="viewport"]')
-  if (!viewport) return
-  viewport.setAttribute('content', isAdminRoute(effectivePath)
-    ? 'width=1000, user-scalable=yes'
-    : 'width=device-width, initial-scale=1.0')
+  let viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
+  if (isHbyDemo && ['/hby019-demo/console', '/hby019-demo/portal'].includes(effectivePath)) {
+    viewport?.remove()
+    return
+  }
+  if (!viewport) {
+    viewport = document.createElement('meta')
+    viewport.name = 'viewport'
+    document.head.append(viewport)
+  }
+  const hbyContent: Record<string, string> = {
+    '/hby019-demo/login': 'width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no',
+    '/hby019-demo/player.html': 'width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no',
+    '/hby019-demo/player-ui1.html': 'width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no',
+  }
+  viewport.setAttribute('content', isHbyDemo
+    ? hbyContent[effectivePath] || 'width=device-width,initial-scale=1.0'
+    : isAdminRoute(effectivePath) ? 'width=1000, user-scalable=yes' : 'width=device-width, initial-scale=1.0')
 }
 
 router.afterEach(to => {
