@@ -133,7 +133,7 @@ public class SecurityConfig {
                         .hasAnyAuthority("PERM_CHAT_ROOM_READ", "SCOPE_CHAT_ONLY")
                         .requestMatchers("/api/demo/game/current", "/api/demo/game/catalog", "/api/demo/game/bets/summary").hasAuthority("PERM_GAME_CURRENT_READ")
                         .requestMatchers("/api/demo/game/bets").hasAuthority("PERM_GAME_BET_PLACE")
-                        .requestMatchers("/api/demo/account").hasAuthority("PERM_GAME_CURRENT_READ")
+                        .requestMatchers("/api/demo/account", "/api/demo/preferences").hasAuthority("PERM_GAME_CURRENT_READ")
                         .requestMatchers("/api/demo/game/admin/**").hasAuthority("PERM_GAME_ODDS_WRITE")
                         .requestMatchers("/api/demo/admin/**").hasAuthority("PERM_USER_MANAGE")
                         .anyRequest().access(nonChatOnly()))

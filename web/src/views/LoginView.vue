@@ -36,7 +36,7 @@ function canEnter(user: CurrentUserView) {
 function landingPath(user: CurrentUserView): string {
   // 只回跳本入口（`CONSOLE`）的地址；跨入口 redirect 直接丢弃，避免"回跳→被弹回"死循环。
   if (canRedirectWithinEntry(explicitRedirect.value, 'CONSOLE')) return explicitRedirect.value
-  // 阶段 3 第 5 项 + 计划 §6「登录后落地页」：机器账号 → `/console`。
+  // 机器账号登录后进入当前接入的 HBY019 代理后台。
   return consoleLandingPath(user.roles)
 }
 

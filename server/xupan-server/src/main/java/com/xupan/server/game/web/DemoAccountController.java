@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
@@ -24,15 +25,30 @@ public class DemoAccountController {
 
     private final DemoAccountRepository accountRepository;
     private final VirtualWalletService walletService;
+    private final JdbcTemplate jdbc;
 
-    public DemoAccountController(DemoAccountRepository accountRepository, VirtualWalletService walletService) {
+    public DemoAccountController(DemoAccountRepository accountRepository, VirtualWalletService walletService,
+                                 JdbcTemplate jdbc) {
         this.accountRepository = accountRepository;
         this.walletService = walletService;
+        this.jdbc = jdbc;
     }
 
     @GetMapping("/account")
     public AccountView account(Authentication authentication) {
         return AccountView.from(walletService.getForCurrentUser(authenticatedUser(authentication).getUserId()));
+    }
+
+    @GetMapping("/preferences")
+    public PlayerPreferences preferences(Authentication authentication) {
+        long userId = authenticatedUser(authentication).getUserId();
+        Boolean countdownVisible = jdbc.query("""
+                SELECT COALESCE(ag.countdown_visible, TRUE)
+                  FROM demo_user_account a
+                  LEFT JOIN agent ag ON ag.id = a.agent_id AND ag.deleted_at IS NULL
+                 WHERE a.sys_user_id = ?
+                """, rs -> rs.next() ? rs.getBoolean(1) : Boolean.TRUE, userId);
+        return new PlayerPreferences(Boolean.TRUE.equals(countdownVisible));
     }
 
     @GetMapping("/admin/accounts")
@@ -72,6 +88,8 @@ public class DemoAccountController {
                     wallet.balance(), wallet.status());
         }
     }
+
+    public record PlayerPreferences(boolean countdownVisible) {}
 
     public record LedgerView(long id, String userCode, String operationType,
                              BigDecimal amount, BigDecimal balanceBefore,

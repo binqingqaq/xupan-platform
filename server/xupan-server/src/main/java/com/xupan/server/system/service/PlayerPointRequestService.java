@@ -5,6 +5,7 @@ import com.xupan.server.agent.service.AgentConsoleService;
 import com.xupan.server.agent.service.AgentLedgerService;
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.chat.repository.PlayerPointRequestRepository;
+import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.stereotype.Service;
@@ -49,19 +50,22 @@ public class PlayerPointRequestService {
     private final AgentRepository agentRepository;
     private final VirtualWalletService walletService;
     private final OperationAuditRepository auditRepository;
+    private final ChatMessageService chatMessageService;
 
     public PlayerPointRequestService(PlayerPointRequestRepository repository,
                                      PlayerDeskScopeService scopeService,
                                      AgentConsoleService agentConsoleService,
                                      AgentRepository agentRepository,
                                      VirtualWalletService walletService,
-                                     OperationAuditRepository auditRepository) {
+                                     OperationAuditRepository auditRepository,
+                                     ChatMessageService chatMessageService) {
         this.repository = repository;
         this.scopeService = scopeService;
         this.agentConsoleService = agentConsoleService;
         this.agentRepository = agentRepository;
         this.walletService = walletService;
         this.auditRepository = auditRepository;
+        this.chatMessageService = chatMessageService;
     }
 
     @Transactional(readOnly = true)
@@ -99,6 +103,8 @@ public class PlayerPointRequestService {
         if (!repository.markReviewed(request.id(), "APPROVED", operatorUserId, reviewReason, Instant.now())) {
             throw new IllegalStateException("积分申请审批状态更新失败");
         }
+        chatMessageService.publishPointRequestApproved(request.id(), request.sourceMessageId(),
+                request.displayName(), request.requestType(), request.amount(), Instant.now());
         auditRepository.record(operatorUserId, "USER_MANAGE", "POST",
                 "/api/admin/player-desk/point-requests/" + request.id() + "/approve",
                 Long.toString(request.id()), "SUCCESS", null,

@@ -10,17 +10,14 @@ function route(path: string) {
 }
 
 describe('unified admin routes', () => {
-  it('uses the unified shell as the main admin entry', () => {
+  it('routes /console to the HBY019 machine console and protects its destination', () => {
     const consoleRoute = route('/console')
+    const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
 
-    expect(consoleRoute.component).toBeDefined()
-    // 阶段 4：`/console` 由"权限命中"改为"只认机器账号角色"。
-    expect(consoleRoute.meta).toMatchObject({
-      requiresAuth: true,
-      requiredRoles: ['AGENT'],
-      excludeRoles: ['ADMIN', 'SUB_ACCOUNT'],
-      title: 'AI模型房间管理',
-    })
+    expect(consoleRoute.redirect).toBe('/hby019-demo/console')
+    expect(routerSource).toContain("path: '/hby019-demo/console'")
+    expect(routerSource).toContain("requiredRoles: ['AGENT']")
+    expect(routerSource).toContain("excludeRoles: ['ADMIN', 'SUB_ACCOUNT']")
     // 2026-10-08 严格对齐 BY220（阶段 2）：平台侧不得有任何玩家/托运营入口，
     // `/platform-admin/players`（`TestPlayerManagement.vue`）已整条删除。
     expect(adminRoutes.find(item => item.path === '/platform-admin/players')).toBeUndefined()
@@ -75,8 +72,8 @@ describe('unified admin routes', () => {
       // 路由表里连字面量都不能再出现（含旧 `/admin/*` 重定向目标）。
       expect(source).not.toContain(path)
     }
-    // 唯一保留的 `/console` 主入口（本批准入行为不变，阶段 4 才收成只认 AGENT 角色）。
-    expect(route('/console')).toBeDefined()
+    // `/console` 保留为兼容入口，最终页面地址为 HBY019 源码页。
+    expect(route('/console').redirect).toBe('/hby019-demo/console')
   })
 
   it('redirects legacy admin paths to the platform admin paths', () => {
@@ -92,6 +89,10 @@ describe('unified admin routes', () => {
     // 兜住所有重定向目标：不得再有一条指回 `/console/*`，也不得再有指向"测试玩家/玩家工作台"的目标。
     for (const item of adminRoutes) {
       if (!item.redirect) continue
+      if (item.path === '/console') {
+        expect(String(item.redirect)).toBe('/hby019-demo/console')
+        continue
+      }
       expect(String(item.redirect), `unexpected redirect target on ${item.path}`).toMatch(/^\/platform-admin/)
       expect(String(item.redirect), `stale redirect target on ${item.path}`).not.toContain('players')
     }
@@ -117,14 +118,14 @@ describe('unified admin routes', () => {
     expect(routerSource).toContain("redirect: to => ({ path: '/404', query: { path: to.path } })")
   })
 
-  it('mounts the machine-side panels in the unified shell', () => {
+  it('keeps previous Vue machine modules available during phased HBY019 migration', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/views/UnifiedAdminPanel.vue'), 'utf8')
     const reportSource = readFileSync(resolve(process.cwd(), 'src/components/admin/ReportControlPanel.vue'), 'utf8')
     const welcomeSource = readFileSync(resolve(process.cwd(), 'src/components/admin/AdminWelcomeControlPanel.vue'), 'utf8')
     const footerSource = readFileSync(resolve(process.cwd(), 'src/components/admin/AdminDomainFooterPanel.vue'), 'utf8')
     const bottomControlSource = readFileSync(resolve(process.cwd(), 'src/components/admin/AdminBottomControlPanel.vue'), 'utf8')
 
-    // 计划 §3.2 面板归属表：`/console` 只留机器侧内容（下注榜、状态栏、报网、底部控制区）。
+    // 原 Vue 机器模块保留作后续逐块 API 对接参考；当前 `/console` 已转到 HBY019 源码页。
     expect(source).toContain('BetBoardPanel')
     expect(source).toContain('ReportControlPanel')
     expect(source).toContain('AdminWelcomeControlPanel')

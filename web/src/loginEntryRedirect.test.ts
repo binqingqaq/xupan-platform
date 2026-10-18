@@ -59,6 +59,7 @@ async function mountAt(path: string) {
       { path: '/login', component: LoginView },
       { path: '/platform-admin/login', component: PlatformAdminLoginView },
       { path: '/console', component: { template: '<div>console</div>' } },
+      { path: '/hby019-demo/console', component: { template: '<div>HBY019 console</div>' } },
       { path: '/room', component: { template: '<div>room</div>' } },
       { path: '/platform-admin', component: { template: '<div>platform-home</div>' } },
       { path: '/platform-admin/users', component: { template: '<div>users</div>' } },
@@ -106,6 +107,7 @@ describe('路由 → 入口映射', () => {
   it('三个入口各自映射，公共页不绑定入口', () => {
     expect(authEntryForRoute('/console')).toBe('CONSOLE')
     expect(authEntryForRoute('/agent')).toBe('CONSOLE')
+    expect(authEntryForRoute('/hby019-demo/console')).toBe('CONSOLE')
     expect(authEntryForRoute('/login')).toBe('PLATFORM')
     expect(authEntryForRoute('/platform-admin/login')).toBe('PLATFORM')
     // 平台首页与平台子页都归 PLATFORM 入口（原用例用的是已删除的平台侧玩家工作台路径）。
@@ -134,7 +136,7 @@ describe('路由 → 入口映射', () => {
 })
 
 describe('机器端登录页 /login（CONSOLE 入口）', () => {
-  it('机器账号登录后落 /console，并把 CONSOLE 入口传给 api.login', async () => {
+  it('机器账号登录后落 HBY019 代理后台，并把 CONSOLE 入口传给 api.login', async () => {
     mocks.login.mockResolvedValue({ accessToken: 't', user: machineAccount })
 
     await mountAt('/login')
@@ -142,7 +144,7 @@ describe('机器端登录页 /login（CONSOLE 入口）', () => {
     await settle()
 
     expect(mocks.login).toHaveBeenCalledWith('machine-account', 'secret', 'CONSOLE')
-    expect(router?.currentRoute.value.path).toBe('/console')
+    expect(router?.currentRoute.value.path).toBe('/hby019-demo/console')
   })
 
   it('非机器账号登录被本地角色门禁拒绝，不跳转', async () => {
@@ -163,7 +165,7 @@ describe('机器端登录页 /login（CONSOLE 入口）', () => {
     // 登录页不能把它再送回 `/room`，否则会「回跳 → 被弹回」无限循环。
     await mountAt('/login?redirect=/room&reason=required')
 
-    expect(router?.currentRoute.value.path).toBe('/console')
+    expect(router?.currentRoute.value.path).toBe('/hby019-demo/console')
   })
 
   it('本入口 redirect（/console）仍然照旧回跳', async () => {

@@ -218,6 +218,7 @@ export function machineConfigPayload(
     botCount: config.botLimit,
     closeSeconds: config.closeSeconds,
     cancelSeconds: config.cancelSeconds,
+    countdownVisible: config.countdownVisible ?? true,
     rebateRate: config.rebateRate,
     oddsRate: config.oddsRate,
     specialRebateRate: config.specialRebateRate,

@@ -305,8 +305,9 @@ import java.util.List;
     public record Item(long userId, long accountId, String internalCode, String memberCode, String userCode,
                        String username, String displayName, String avatarKey, String authMode, String status,
                        String playerKind, String userType, BigDecimal balance, Instant createdAt,
-                       Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, boolean blacklisted) {
-        static Item from(PlayerDeskRepository.PlayerRow x) { return new Item(x.userId(), x.accountId(), x.internalCode(), x.memberCode(), x.userCode(), x.username(), x.displayName(), x.avatarKey(), x.authMode(), x.userStatus(), x.playerKind(), x.userType(), x.balance(), x.createdAt(), x.lastLoginAt(), x.behaviorEnabled(), x.lastActionAt(), x.blacklisted()); }
+                       Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, boolean blacklisted,
+                       String runMode, boolean playerChaseEnabled) {
+        static Item from(PlayerDeskRepository.PlayerRow x) { return new Item(x.userId(), x.accountId(), x.internalCode(), x.memberCode(), x.userCode(), x.username(), x.displayName(), x.avatarKey(), x.authMode(), x.userStatus(), x.playerKind(), x.userType(), x.balance(), x.createdAt(), x.lastLoginAt(), x.behaviorEnabled(), x.lastActionAt(), x.blacklisted(), x.runMode(), x.playerChaseEnabled()); }
     }
     public record Detail(long userId, long accountId, String internalCode, String memberCode, String userCode,
                          String username, String displayName, String avatarKey, String authMode, String status,
@@ -423,7 +424,8 @@ import java.util.List;
     }
     /** 机器级配置请求体；字段与 {@link PlayerDeskAdminService.MachineConfigUpdate} 一一对应。 */
     public record MachineConfigRequest(Long machineId, boolean boardOpen, boolean chaseEnabled, int botCount,
-                                       int closeSeconds, int cancelSeconds, BigDecimal rebateRate, BigDecimal oddsRate,
+                                       int closeSeconds, int cancelSeconds, boolean countdownVisible,
+                                       BigDecimal rebateRate, BigDecimal oddsRate,
                                        BigDecimal specialRebateRate, BigDecimal specialOddsRate, String rebateMode,
                                        BigDecimal totalLimit, BigDecimal positiveLimit, BigDecimal angleLimit,
                                        BigDecimal strictLimit, BigDecimal tongLimit, BigDecimal carLimit,
@@ -432,7 +434,7 @@ import java.util.List;
                                        BigDecimal playerMaxStake) {
         PlayerDeskAdminService.MachineConfigUpdate toUpdate() {
             return new PlayerDeskAdminService.MachineConfigUpdate(boardOpen, chaseEnabled, botCount, closeSeconds,
-                    cancelSeconds, rebateRate, oddsRate, specialRebateRate, specialOddsRate, rebateMode,
+                    cancelSeconds, countdownVisible, rebateRate, oddsRate, specialRebateRate, specialOddsRate, rebateMode,
                     totalLimit, positiveLimit, angleLimit, strictLimit, tongLimit, carLimit, specialLimit,
                     oddEvenLimit, bigSmallLimit, fanLimit, addLimit, playerMinStake, playerMaxStake);
         }

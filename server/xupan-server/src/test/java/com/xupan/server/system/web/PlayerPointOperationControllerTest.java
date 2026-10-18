@@ -247,6 +247,14 @@ class PlayerPointOperationControllerTest {
         assertThat(lastMachineLedgerAmount()).isEqualByComparingTo("30.00");
         assertThat(machineLedgerCount()).isEqualTo(1L);
         assertThat(requestStatus(requestId)).isEqualTo("APPROVED");
+        assertThat(approvedFeedbackCount(requestId)).isEqualTo(1);
+        assertThat(approvedFeedbackContent(requestId)).isEqualTo("@普通积分玩家，成功上分30");
+
+        mockMvc.perform(post("/api/admin/player-desk/point-requests/" + requestId + "/approve")
+                        .contentType("application/json").content("{\"reason\":\"重复同意\"}")
+                        .header("Authorization", bearer(machineToken)))
+                .andExpect(status().isOk());
+        assertThat(approvedFeedbackCount(requestId)).as("重复审批不得重复发布成功消息").isEqualTo(1);
     }
 
     /**
@@ -630,14 +638,27 @@ class PlayerPointOperationControllerTest {
     private long insertPending(long accountId, String requestType, String amount, String clientMessageId) {
         long userId = jdbc.queryForObject("SELECT sys_user_id FROM demo_user_account WHERE id=?",
                 Long.class, accountId);
+        var sourceMessage = chatMessageService.sendUserMessage(userId, "main", clientMessageId,
+                "上下分申请测试消息", now);
         jdbc.update("""
                 INSERT INTO player_point_request
                     (user_id, request_type, amount, status, client_message_id,
                      source_message_id, requested_at)
-                VALUES (?, ?, ?, 'PENDING', ?, 1, ?)
-                """, userId, requestType, new BigDecimal(amount), clientMessageId, Timestamp.from(now));
+                VALUES (?, ?, ?, 'PENDING', ?, ?, ?)
+                """, userId, requestType, new BigDecimal(amount), clientMessageId,
+                sourceMessage.id(), Timestamp.from(now));
         return jdbc.queryForObject("SELECT id FROM player_point_request WHERE user_id=? AND client_message_id=?",
                 Long.class, userId, clientMessageId);
+    }
+
+    private int approvedFeedbackCount(long requestId) {
+        return count("SELECT COUNT(*) FROM chat_message WHERE idempotency_key=?",
+                "POINT-REQUEST-APPROVED:" + requestId);
+    }
+
+    private String approvedFeedbackContent(long requestId) {
+        return jdbc.queryForObject("SELECT content FROM chat_message WHERE idempotency_key=?",
+                String.class, "POINT-REQUEST-APPROVED:" + requestId);
     }
 
     private int ledgerCount(long accountId) {

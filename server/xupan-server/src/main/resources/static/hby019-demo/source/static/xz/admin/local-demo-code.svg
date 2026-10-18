@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220" viewBox="0 0 220 220" role="img" aria-label="本地演示码">
+  <rect width="220" height="220" rx="8" fill="#fff"/>
+  <g fill="#253143">
+    <path d="M12 12h68v68H12zM22 22v48h48V22zM35 35h22v22H35z"/>
+    <path d="M140 12h68v68h-68zM150 22v48h48V22zM163 35h22v22h-22z"/>
+    <path d="M12 140h68v68H12zM22 150v48h48v-48zM35 163h22v22H35z"/>
+    <path d="M94 14h14v14H94zM108 42h14v14h-14zM94 70h14v14H94zM92 98h14v14H92zM120 98h14v14h-14zM148 98h14v14h-14zM176 98h14v14h-14zM94 126h14v14H94zM108 140h14v14h-14zM122 126h14v14h-14zM150 126h14v14h-14zM178 126h14v14h-14zM94 154h14v14H94zM122 154h14v14h-14zM150 168h14v14h-14zM178 154h14v14h-14zM94 182h14v14H94zM122 182h14v14h-14zM178 182h14v14h-14z"/>
+  </g>
+  <rect x="70" y="96" width="80" height="28" rx="4" fill="#fff" stroke="#d8e2ee"/>
+  <text x="110" y="115" text-anchor="middle" font-family="Arial,sans-serif" font-size="12" font-weight="700" fill="#52657a">LOCAL DEMO</text>
+</svg>

@@ -113,6 +113,85 @@
   }
   let db = readDb();
   function save() { localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+
+  let xupanRequestSequence = 0;
+  const xupanRequests = new Map();
+  const xupanPlayerDetails = Object.create(null);
+  function requestXupan(path, data, success, error) {
+    const requestId = 'player-' + (++xupanRequestSequence);
+    const timeout = setTimeout(function () {
+      xupanRequests.delete(requestId);
+      if (typeof error === 'function') error({ status: 0 }, 'timeout');
+    }, 30000);
+    xupanRequests.set(requestId, {
+      path: path,
+      data: parseBody(data),
+      success: success,
+      error: error,
+      timeout: timeout
+    });
+    window.parent.postMessage({ type: 'xupan-player-request', requestId: requestId, path: path, data: parseBody(data) }, location.origin);
+  }
+
+  window.addEventListener('message', function (event) {
+    if (event.origin !== location.origin || event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || message.type !== 'xupan-player-response' || !message.requestId) return;
+    const pending = xupanRequests.get(message.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timeout);
+    xupanRequests.delete(message.requestId);
+    if (message.error) {
+      if (typeof pending.error === 'function') pending.error({ status: message.status || 500, responseJSON: message.error }, 'error');
+      return;
+    }
+    if (pending.path === '/xupan/player/detail' && message.data && message.data.wxid) {
+      xupanPlayerDetails[String(message.data.wxid)] = clone(message.data);
+    } else if (pending.path === '/rbt/index/updatenickname') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user]) xupanPlayerDetails[user].NickName = String(pending.data.newNickName || '');
+    } else if (pending.path === '/rbt/index/setlinkexpire') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user] && message.data) {
+        xupanPlayerDetails[user].link_expire_days = message.data.link_expire_days;
+        xupanPlayerDetails[user].link_expire = message.data.expire;
+      }
+    } else if (pending.path === '/rbt/index/getuserlink') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user] && message.data) {
+        xupanPlayerDetails[user].link = message.data.Data;
+        xupanPlayerDetails[user].link_expire = message.data.link_expire;
+        xupanPlayerDetails[user].link_expire_days = message.data.link_expire_days;
+      }
+    } else if (pending.path === '/rbt/index/setblack') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user]) xupanPlayerDetails[user].isBlack = Number(pending.data.type) === 1 ? 1 : 0;
+    } else if (pending.path === '/rbt/index/setzhui') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user]) xupanPlayerDetails[user].zhui = Number(pending.data.type) === 1 ? 1 : 0;
+    } else if (pending.path === '/rbt/index/setauto') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user]) xupanPlayerDetails[user].isauto = Number(pending.data.type) === 1 ? 1 : 0;
+    } else if (pending.path === '/rbt/index/changeheadimage2') {
+      const user = String(pending.data.wxid || '');
+      if (xupanPlayerDetails[user]) xupanPlayerDetails[user].imgName = message.data;
+    }
+    if (pending.path === '/rbt/index/getmembers' && message.data && Array.isArray(message.data.data)) {
+      message.data.data = message.data.data.map(function (player) {
+        return Object.assign({}, player, xupanPlayerDetails[String(player.wxid)] || {});
+      });
+    } else if (pending.path === '/rbt/index/needhandle' && message.data && Array.isArray(message.data.users)) {
+      message.data.users.forEach(function (player) {
+        if (xupanPlayerDetails[String(player.wxid)]) {
+          player.zhui = xupanPlayerDetails[String(player.wxid)].zhui;
+          player.isBlack = xupanPlayerDetails[String(player.wxid)].isBlack;
+          player.isauto = xupanPlayerDetails[String(player.wxid)].isauto;
+        }
+      });
+    }
+    if (typeof pending.success === 'function') pending.success(message.data, 'success', { status: 200 });
+  });
+
   function memberList(type) { return db.users.filter(function (user) { return Number(user.kind) === Number(type || 0); }); }
   function memberTotal(type) {
     return memberList(type).reduce(function (sum, user) { return sum + Number(user.score || 0); }, 0).toFixed(2);
@@ -143,35 +222,162 @@
         score: Math.abs(Number(row.delta)).toFixed(0), isTuo: Number(row.kind) === 1 ? 1 : 0 };
     });
   }
-  function historySummary(kind) {
-    const rows = db.ledger.filter(function (row) { return Number(row.kind) === Number(kind); });
-    const up = rows.filter(function (row) { return Number(row.delta) > 0; }).reduce(function (sum, row) { return sum + Number(row.delta); }, 0);
-    const down = rows.filter(function (row) { return Number(row.delta) < 0; }).reduce(function (sum, row) { return sum + Math.abs(Number(row.delta)); }, 0);
-    const detail = [];
-    const ids = Array.from(new Set(rows.map(function (row) { return row.userWxid; }).filter(Boolean)));
-    ids.forEach(function (id) {
-      const user = findUser(id);
-      if (!user) return;
-      const userRows = rows.filter(function (row) { return row.userWxid === id; });
-      const userUp = userRows.filter(function (row) { return Number(row.delta) > 0; }).reduce(function (sum, row) { return sum + Number(row.delta); }, 0);
-      const userDown = userRows.filter(function (row) { return Number(row.delta) < 0; }).reduce(function (sum, row) { return sum + Math.abs(Number(row.delta)); }, 0);
-      detail.push({ wxid: user.wxid, NickName: user.NickName, nickChanged: user.nickChanged || 0,
-        nickNewName: user.nickNewName || '', totalFanShui: 0, totalLiuShui: 0, totalValidLiuShuis: 0,
-        totalYingKui: 0, totalUp: Number(userUp.toFixed(2)), totalDown: Number(userDown.toFixed(2)),
-        totalUpDown: Number((userUp - userDown).toFixed(2)), ZuoYu: Number(user.score), JieYu: Number(user.score) });
+  const historyDays = ['2026-10-07', '2026-10-08', '2026-10-09', '2026-10-10',
+    '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14'];
+  function historyDate(row) {
+    const match = String(row.time || '').match(/20\d{2}-\d{2}-\d{2}/);
+    return match ? match[0] : '';
+  }
+  function historyUsers(kind) {
+    return memberList(kind).filter(function (user) { return !user.isDeleted; });
+  }
+  function historyFixture(kind, day) {
+    const date = historyDays.indexOf(String(day)) === -1 ? historyDays[historyDays.length - 1] : String(day);
+    const dayNo = Math.max(0, historyDays.indexOf(date));
+    const users = historyUsers(kind);
+    const details = [];
+    const bets = [];
+    const summaries = Object.create(null);
+    users.forEach(function (user, index) {
+      const seed = (index + 3) * 17 + (dayNo + 1) * 29 + Number(kind) * 11;
+      const opening = Number((Number(user.score || 0) + (dayNo - 3) * (kind ? 13 : 27) + index * 9).toFixed(2));
+      const up = 80 + seed % 371;
+      const down = seed % 4 === 0 ? 20 + seed % 91 : 0;
+      const water = Number((12 + (seed % 63) / 10).toFixed(2));
+      const profit = Number(((seed % 7 - 3) * (25 + seed % 46)).toFixed(2));
+      const turnover = 260 + seed % 1600;
+      const close = Number((opening + up - down + profit).toFixed(2));
+      const clock = function (hour, minute) {
+        return date + ' ' + String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+      };
+      details.push({ wxid: user.wxid, dttype: 0, score: up, count: up,
+        afterScore: Number((opening + up).toFixed(2)), dtJieSuan: clock(8 + seed % 7, 12 + seed % 40), _sort: 1 });
+      if (down) details.push({ wxid: user.wxid, dttype: 1, score: down, count: -down,
+        afterScore: Number((opening + up - down).toFixed(2)), dtJieSuan: clock(12 + seed % 6, 8 + seed % 49), _sort: 2 });
+      const qihao = '202610' + String(7 + dayNo).padStart(2, '0') + String(101 + index).padStart(3, '0');
+      const bet = { wxid: user.wxid, NickName: user.NickName, qihao: qihao,
+        zhuscore: turnover, validscore: Number((turnover * 0.92).toFixed(2)), totalYingKui: profit,
+        dtfanshui: water, submitStatus: seed % 3 === 0 ? 0 : 1,
+        result: profit >= 0 ? '中奖' : '未中',
+        cmdText: kind ? '第' + (1 + seed % 8) + '球/2正/80' : '第' + (1 + seed % 8) + '球/3番/120',
+        opencode: '03,11,18,26,32', lastcode: '03,11,18,26,32', fan: '小双',
+        dtJieSuan: clock(19 + Math.floor(seed % 4 / 2), 3 + seed % 54),
+        dtCmd: clock(18 + seed % 3, 7 + seed % 50) };
+      bets.push(bet);
+      details.push({ wxid: user.wxid, dttype: 5, score: turnover, count: profit, afterScore: close, _sort: 3,
+        dtJieSuan: bet.dtJieSuan, dtCmd: bet.dtCmd, qihao: qihao, cmdText: bet.cmdText,
+        flyersColor: bet.submitStatus ? 'flyersSuc' : 'flyersWait',
+        flyersStatus: bet.submitStatus ? '已报' : '未报', code: bet.opencode,
+        lastResult: bet.lastcode, fan: bet.fan, dtfanshui: water, ying: profit >= 0 ? 1 : 0 });
+      summaries[String(user.wxid)] = { up: up, down: down, water: water, profit: profit,
+        turnover: turnover, opening: opening, close: close,
+        valid: Number((turnover * 0.92).toFixed(2)), submitStatus: bet.submitStatus };
     });
-    return { bOK: 0, totalFanShui: 0, totalYingKui: 0, totalLiuShui: 0, totalYouXiaoLiuShui: 0,
-      totalYouXiaoLiuShuis: 0, totalUp: Number(up.toFixed(2)), totalDown: Number(down.toFixed(2)),
-      totalUpDown: Number((up - down).toFixed(2)), totalZuoYu: 0, flyersWait: 0, flyersSuc: 0,
-      flyersFail: 0, detail: detail, data: detail, list: [], total: rows.length };
+    const actualRows = db.ledger.filter(function (row) {
+      return Number(row.kind) === Number(kind) && historyDate(row) === date;
+    });
+    actualRows.forEach(function (row, index) {
+      const delta = Number(row.delta || 0);
+      const user = findUser(row.userWxid);
+      details.push({ wxid: row.userWxid, dttype: Number(row.dttype || (delta >= 0 ? 0 : 1)),
+        score: Math.abs(delta), count: delta, afterScore: Number(row.afterScore || 0),
+        dtJieSuan: row.time, _sort: 10 + index });
+      if (!user) return;
+      let summary = summaries[String(user.wxid)];
+      if (!summary) {
+        summary = summaries[String(user.wxid)] = { up: 0, down: 0, water: 0, profit: 0, turnover: 0,
+          opening: Number(user.score || 0), close: Number(user.score || 0), valid: 0, submitStatus: 1 };
+      }
+      if (delta > 0) summary.up += delta;
+      if (delta < 0) summary.down += Math.abs(delta);
+      summary.close = Number(row.afterScore || (summary.close + delta));
+    });
+    const userViews = users.map(function (user) {
+      const summary = summaries[String(user.wxid)] || { up: 0, down: 0, water: 0,
+        profit: 0, turnover: 0, opening: Number(user.score || 0), close: Number(user.score || 0), valid: 0 };
+      return { id: String(user.id).replace(/^v+/i, ''), wxid: user.wxid, NickName: user.NickName, nickChanged: user.nickChanged || 0,
+        nickNewName: user.nickNewName || '', totalFanShui: Number(summary.water.toFixed(2)),
+        totalLiuShui: Number(summary.turnover.toFixed(2)), totalValidLiuShuis: Number(summary.valid.toFixed(2)),
+        totalYingKui: Number(summary.profit.toFixed(2)), totalUp: Number(summary.up.toFixed(2)),
+        totalDown: Number(summary.down.toFixed(2)),
+        totalUpDown: Number((summary.up - summary.down).toFixed(2)),
+        ZuoYu: Number(summary.opening.toFixed(2)), JieYu: Number(summary.close.toFixed(2)) };
+    });
+    details.sort(function (a, b) { return String(b.dtJieSuan).localeCompare(String(a.dtJieSuan)); });
+    return { date: date, users: users, userViews: userViews, summaries: summaries,
+      details: details, bets: bets, actualRows: actualRows };
+  }
+  function historySummary(kind, day) {
+    const fixture = historyFixture(kind, day);
+    const sums = fixture.userViews.reduce(function (total, row) {
+      total.water += row.totalFanShui; total.turnover += row.totalLiuShui;
+      total.valid += row.totalValidLiuShuis; total.profit += row.totalYingKui;
+      total.up += row.totalUp; total.down += row.totalDown; total.opening += row.ZuoYu;
+      return total;
+    }, { water: 0, turnover: 0, valid: 0, profit: 0, up: 0, down: 0, opening: 0 });
+    const counts = fixture.bets.reduce(function (result, row) {
+      result[row.submitStatus === 0 ? 'wait' : 'success'] += 1;
+      return result;
+    }, { wait: 0, success: 0 });
+    return { bOK: 0, totalFanShui: Number(sums.water.toFixed(2)), totalYingKui: Number(sums.profit.toFixed(2)),
+      totalLiuShui: Number(sums.turnover.toFixed(2)), totalYouXiaoLiuShui: Number(sums.valid.toFixed(2)),
+      totalYouXiaoLiuShuis: Number(sums.valid.toFixed(2)), totalUp: Number(sums.up.toFixed(2)),
+      totalDown: Number(sums.down.toFixed(2)), totalUpDown: Number((sums.up - sums.down).toFixed(2)),
+      totalZuoYu: Number(sums.opening.toFixed(2)), flyersWait: counts.wait, flyersSuc: counts.success,
+      flyersFail: 0, detail: fixture.userViews, data: fixture.userViews, list: [], total: fixture.userViews.length };
   }
   function historyDetail(data) {
-    return db.ledger.filter(function (row) {
-      return !data.wxid || String(row.userWxid) === String(data.wxid);
-    }).map(function (row) {
-      return { dttype: Number(row.delta) >= 0 ? 0 : 1, score: Math.abs(Number(row.delta)),
-        count: Number(row.delta), afterScore: row.afterScore, dtJieSuan: row.time };
+    const selectedUser = findUser(data.wxid);
+    const kind = selectedUser ? Number(selectedUser.kind) : Number(data.kind || data.type || 0);
+    const fixture = historyFixture(kind, data.day);
+    return fixture.details.filter(function (row) {
+      return !data.wxid || String(row.wxid || '') === String(data.wxid);
+    }).map(function (row) { const copy = Object.assign({}, row); delete copy._sort; return copy; });
+  }
+  function historyWay2(day) {
+    return [0, 1].reduce(function (rows, kind) {
+      const fixture = historyFixture(kind, day);
+      fixture.users.forEach(function (user) {
+        const summary = fixture.summaries[String(user.wxid)];
+        if (!summary) return;
+        if (summary.up) rows.push({ type: 0, des: '上分 +' + Number(summary.up).toFixed(2),
+          dt: fixture.date + ' 09:18', wxid: user.wxid, NickName: user.NickName });
+        if (summary.down) rows.push({ type: 1, des: '下分 -' + Number(summary.down).toFixed(2),
+          dt: fixture.date + ' 13:42', wxid: user.wxid, NickName: user.NickName });
+      });
+      return rows;
+    }, []).sort(function (a, b) { return String(b.dt).localeCompare(String(a.dt)); });
+  }
+  function historyWay3(day) {
+    const bets = [0, 1].reduce(function (all, kind) { return all.concat(historyFixture(kind, day).bets); }, []);
+    const grouped = {};
+    bets.forEach(function (bet) {
+      if (!grouped[bet.qihao]) grouped[bet.qihao] = { qihao: bet.qihao, totalZhu: 0, totalYingKui: 0 };
+      grouped[bet.qihao].totalZhu += Number(bet.zhuscore);
+      grouped[bet.qihao].totalYingKui += Number(bet.totalYingKui);
     });
+    return {
+      lstJiLu: bets.map(function (bet) {
+        return { qihao: bet.qihao, dtwxid: bet.wxid, dtNickName: bet.NickName,
+          zhuscore: bet.zhuscore, validscore: bet.validscore, result: bet.result,
+          cmdText: bet.cmdText, opencode: bet.opencode, lastcode: bet.lastcode, fan: bet.fan,
+          dtJieSuan: bet.dtJieSuan, submitStatus: bet.submitStatus };
+      }).sort(function (a, b) { return String(b.dtJieSuan).localeCompare(String(a.dtJieSuan)); }),
+      lstQiDuiZhang: Object.keys(grouped).map(function (key) {
+        const row = grouped[key];
+        return { qihao: row.qihao, totalZhu: Number(row.totalZhu.toFixed(2)), totalYingKui: Number(row.totalYingKui.toFixed(2)) };
+      })
+    };
+  }
+  function historyWay4(day) {
+    const date = historyDays.indexOf(String(day)) === -1 ? historyDays[historyDays.length - 1] : String(day);
+    return [{ dt: date + ' 08:05', msg: '普通玩家抽水比例调整为 5%' },
+      { dt: date + ' 14:30', msg: '托抽水比例调整为 3%' }];
+  }
+  function historyWay5(day) {
+    const date = historyDays.indexOf(String(day)) === -1 ? historyDays[historyDays.length - 1] : String(day);
+    return [{ dt: date + ' 08:06', msg: '普通赔率调整为 95' },
+      { dt: date + ' 14:32', msg: '特码赔率调整为 18' }];
   }
   function commandList(data) {
     const isPrev = data.prev === '1';
@@ -197,10 +403,11 @@
     }, s.limits || {});
     return Object.assign({
       IsNeedLogin: false, OverdueTime: new Date('2026-11-01T00:00:00+08:00').getTime(), ServerTime: Date.now(),
-      score: 157, IsKaiPan: s.open ? 1 : 0, lType: 1, qh: '20261015001', PeiLv: s.odds,
+      score: 157, IsKaiPan: s.open ? 1 : 0, lType: localStorage.getItem('xupan.admin.point-request-sound') === 'sound2' ? 2 : 1, qh: '20261015001', PeiLv: s.odds,
       FanShui: s.normalRebate, Hold5TimeSeconds: s.hold, CancelInSecs: s.cancel,
       tePeilv: s.specialOdds, teFanshui: s.rebate, HideMsg: s.hideMsg,
       rob: rob,
+      playersManagedByXupan: true,
       config: {
         gd: '', rbMsg: '需请联系代理！<br>新增飞单失败退单功能<br>新增飞单加倍数功能<br>新增封盘后台合并统一飞单<br>新增聊天室弹出广告<br>新增飞单账号分投功能<br>新增飞单反投功能<br>#预下版全新用GO言语写',
         mp3_1: '/hby019-demo/source/static/xz/admin/861.mp3', mp3_2: '/hby019-demo/source/static/xz/admin/886.mp3',
@@ -241,8 +448,8 @@
       case '/rbt/index/getwplist': return [{ id: 1, name: '本地模拟', fstype: 0, searchCode: '', apiKey: '' }];
       case '/rbt/index/flyerslist': return needHandle(data);
       case '/rbt/index/getopenresultlist': return { list: [] };
-      case '/rbt/index/getscorehis': return historySummary(0);
-      case '/rbt/index/getscorehistuo': return historySummary(1);
+      case '/rbt/index/getscorehis': return historySummary(0, data.day);
+      case '/rbt/index/getscorehistuo': return historySummary(1, data.day);
       case '/rbt/index/getscorehisdetail': return historyDetail(data);
       case '/rbt/index/getnicknamelog': return { list: clone(db.nickLogs[String(data.wxid)] || []), maxCount: 2, todayCount: 0 };
       case '/rbt/index/getuserlink': {
@@ -299,7 +506,11 @@
       case '/rbt/index/setmanual2':
       case '/rbt/index/setzhui':
         return changeFlag(path, data);
-      case '/rbt/index/settype': db.settings.limits = Object.assign({}, db.settings.limits, data); save(); return 0;
+      case '/rbt/index/settype':
+        if (data.ltype !== undefined) {
+          localStorage.setItem('xupan.admin.point-request-sound', Number(data.ltype) === 2 ? 'sound2' : 'sound1');
+        }
+        db.settings.limits = Object.assign({}, db.settings.limits, data); save(); return 0;
       case '/rbt/index/updatehidemsg': db.settings.hideMsg = Number(data.HideMsg); save(); return 1;
       case '/rbt/index/setlinkexpire': {
         const user = findUser(data.uid), days = Math.max(0, Number(data.days || 0));
@@ -345,10 +556,10 @@
         }
         return ok('本地托设置已保存');
       }
-      case '/rbt/index/getway2data':
-      case '/rbt/index/getway4data':
-      case '/rbt/index/getway5data': return [];
-      case '/rbt/index/getway3data': return { lstJiLu: [], lstQiDuiZhang: [] };
+      case '/rbt/index/getway2data': return historyWay2(data.day);
+      case '/rbt/index/getway3data': return historyWay3(data.day);
+      case '/rbt/index/getway4data': return historyWay4(data.day);
+      case '/rbt/index/getway5data': return historyWay5(data.day);
       case '/rbt/index/qrcode': return { img: DEMO_QR, localDemo: true };
       case '/rbt/index/qrcode4': return ok('本地演示：已模拟切换登录设备');
       case '/rbt/index/changeheadimage':
@@ -368,6 +579,40 @@
     if (typeof url === 'string') settings = $.extend(true, {}, options || {}, { url: url });
     else settings = $.extend(true, {}, url || {});
     const path = new URL(settings.url || location.pathname, location.href).pathname;
+    const xupanPaths = [
+      '/rbt/index/needhandle', '/rbt/index/updatepeilv', '/rbt/index/settype',
+      '/rbt/index/getcmdlist', '/rbt/index/getopenresultlist',
+      '/rbt/index/addmember', '/rbt/index/getmembers', '/rbt/index/delmember', '/rbt/index/updatenickname',
+      '/rbt/index/getnicknamelog', '/rbt/index/setlinkexpire', '/rbt/index/getuserlink',
+      '/rbt/index/setblack', '/rbt/index/setauto', '/rbt/index/setzhui',
+      '/rbt/index/updownscore', '/rbt/index/gettodayscorelog',
+      '/rbt/index/getupdownscorereq', '/rbt/index/acceptupdownscorereq', '/rbt/index/denyupdownscorereq',
+      '/rbt/index/getavatarlist', '/rbt/index/changeheadimage2'
+    ];
+    if (xupanPaths.indexOf(path) !== -1) {
+      (window.__localApiLog || (window.__localApiLog = [])).push({ path: path, method: settings.type || 'GET', source: 'xupan' });
+      requestXupan(path, settings.data, function (response) {
+        if (path === '/rbt/index/needhandle' && response) {
+          const demoState = needHandle(parseBody(settings.data));
+          response = Object.assign(demoState, response, { users: demoState.users });
+          response.rob = Object.assign({}, demoState.rob, response.rob || {});
+        }
+        if (path === '/rbt/index/getmembers' && response && Array.isArray(response.data)) {
+          response.data = response.data.map(function (player) {
+            return Object.assign({}, player, xupanPlayerDetails[String(player.wxid)] || {});
+          });
+        }
+        if (typeof settings.success === 'function') settings.success(response, 'success', { status: 200 });
+        if (typeof settings.complete === 'function') settings.complete({ status: 200 }, 'success');
+      }, function (xhr, status) {
+        if (typeof settings.error === 'function') settings.error(xhr, status);
+        if (typeof settings.complete === 'function') settings.complete(xhr, status);
+      });
+      const deferred = $.Deferred();
+      const xhr = deferred.promise({ readyState: 1, status: 0, statusText: 'pending',
+        abort: function () { return this; }, getResponseHeader: function () { return 'application/json'; } });
+      return xhr;
+    }
     const response = respond(path, settings.data);
     (window.__localApiLog || (window.__localApiLog = [])).push({ path: path, method: settings.type || 'GET' });
     const deferred = $.Deferred();
@@ -389,11 +634,15 @@
   $(function () { $('.el-alert__title').text('星海AI，欢迎您'); });
   document.addEventListener('click', function (event) {
     if (event.target.closest && event.target.closest('#ExitLink')) {
-      event.preventDefault(); event.stopImmediatePropagation(); window.top.location.href = '/hby019-demo/login';
+      event.preventDefault(); event.stopImmediatePropagation();
+      window.parent.postMessage({ type: 'xupan-console-logout' }, location.origin);
     }
   }, true);
   window.localApiBridge = {
     getState: function () { return clone(db); },
+    getPlayerDetails: function (wxid, success, error) {
+      requestXupan('/xupan/player/detail', { wxid: wxid }, success, error);
+    },
     reset: function () { db = initial(); save(); localKeys.forEach(function (key) { localStorage.removeItem(key); }); }
   };
 })(window.jQuery);

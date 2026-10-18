@@ -71,7 +71,7 @@ export type AuthEntry = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
 
 /**
  * 路由 → 入口级使用端（阶段 5，Flyway V75 `auth_session.entry`）：
- * - `/console`、`/agent` → `CONSOLE`（机器账号入口，Cookie `xupan_console_refresh`）；
+ * - `/console`、`/agent`、`/hby019-demo/console` → `CONSOLE`（机器账号入口，Cookie `xupan_console_refresh`）；
  * - `/login`、`/platform-admin/**` → `PLATFORM`（平台后台入口，Cookie `xupan_refresh`）；
  * - `/player-login`、`/33/**`、`/room` → `PLAYER`（玩家链接，Cookie `xupan_player_refresh`）；
  * - 其余（`/display/**`、`/forbidden`、`/404`、`/`）不绑定入口，返回 `undefined`。
@@ -79,7 +79,8 @@ export type AuthEntry = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
  * 守卫的 `requiredAudience` 与两个登录页的 `redirect` 校验都用它，避免两处口径漂移。
  */
 export function authEntryForRoute(path: string): AuthEntry | undefined {
-  if (path === '/console' || path.startsWith('/console/') || path === '/agent' || path.startsWith('/agent/')) return 'CONSOLE'
+  if (path === '/console' || path.startsWith('/console/') || path === '/agent' || path.startsWith('/agent/')
+    || path === '/hby019-demo/console') return 'CONSOLE'
   if (path === '/login' || path.startsWith('/platform-admin')) return 'PLATFORM'
   if (path === '/player-login' || path.startsWith('/33/') || path === '/room') return 'PLAYER'
   return undefined
@@ -102,7 +103,7 @@ export function canRedirectWithinEntry(redirect: string, entry: AuthEntry): bool
 
 /**
  * 目标路由 → 本入口登录页（计划 §3.4）：
- * `/platform-admin/**` 回平台登录页，其余后台路径（`/console`、`/agent`）回机器端 `/login`。
+ * `/platform-admin/**` 回平台登录页，其余后台路径（`/console`、`/agent`、HBY019 代理后台）回机器端 `/login`。
  */
 export function loginPathForRoute(path: string): string {
   return path.startsWith('/platform-admin') ? '/platform-admin/login' : '/login'
@@ -194,14 +195,14 @@ export function resolveRouteGuardDecision(input: RouteGuardInput): RouteGuardDec
 
 /**
  * 登录后的默认落地页（计划 §6「登录后落地页」；2026-10-08 严格对齐 BY220 计划 §3.2 第 2 项更正）：
- * 机器账号 → `/console`（BY220 `robot.php`）；超管/子账号 → `/platform-admin`
+ * 机器账号 → `/hby019-demo/console`（BY220 `robot.php` 的当前 HBY019 页面）；超管/子账号 → `/platform-admin`
  * （BY220 `admin.php` 首页 = `Index/index` 开奖信息，即本项目的平台首页）；
  * 其余（没有后台角色）→ 本入口登录页 `/login`，**不再返回 `/forbidden`**。
  *
  * 原落地页是平台侧「玩家工作台」（BY220 不存在的越界新增，计划 §1.2 错误二），已整条删除。
  */
 export function consoleLandingPath(roles: readonly string[] | null | undefined): string {
-  if (isConsoleEntryAccount(roles)) return '/console'
+  if (isConsoleEntryAccount(roles)) return '/hby019-demo/console'
   if (roles && PLATFORM_ADMIN_ROLES.some(role => roles.includes(role))) return '/platform-admin'
   return '/login'
 }

@@ -11,7 +11,7 @@
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/notify.min.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/base.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/home.css?1791996724">
-        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=12"></script>
+        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=19"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
         <script type="text/javascript">
             (function() {
                 var prevOnError = window.onerror;
@@ -820,9 +820,9 @@
 
         <div class="topframe">
             <div class="tophead">
-                欢迎您：<b>hby019                </b>，托：<b>20 </b>，过期时间：<b class="guoqitime"></b>&nbsp;&nbsp; &nbsp;&nbsp; <a
+                欢迎您：<b data-xupan-username>--</b>，托：<b data-xupan-bot-limit>--</b>，过期时间：<b class="guoqitime" data-xupan-expires-at>--</b>&nbsp;&nbsp; &nbsp;&nbsp; <a
                     href="#" id="ExitLink">退出登录</a>
-                <div class="scoremm">剩余积分:<b><span id="leftScore">0</span> </b></div>
+                <div class="scoremm">剩余积分:<b><span id="leftScore" data-xupan-score>--</span> </b></div>
                 <div class="topheadmenu"><span>修改密码</span></div>
             </div>
 
@@ -834,7 +834,8 @@
                                 id="btnShowPuCmd" data-type="0">普(<span></span>)</button>&nbsp;&nbsp;&nbsp;<button class="loginwxbtn"
                                 style="width:60px;"
                                 id="btnShowTuoCmd" data-type="1">托(<span></span>)</button>&nbsp;&nbsp;&nbsp;<button class="loginwxbtn"
-                                style="width:60px;" id="btnPrevCmd">上期</button></div>
+                                style="width:60px;" id="btnPrevCmd">上期</button>&nbsp;&nbsp;&nbsp;<button class="loginwxbtn"
+                                style="width:60px;" id="btnOpenResult">开奖</button></div>
                         <div id="xiazhubanlist" style="border-radius: 0 0 10px 10px;height:445px;overflow-y: auto;">
                         </div>
                                             </div>
@@ -1634,8 +1635,7 @@
                                 totalFanShui = 0;
                             }
                             							$("#content").html($("#content").html() + '<div class="infoitem" data-wxid=' +
-								val.wxid + '><div class="item_top">会员ID：<span class="userid">' + val
-								.wxid + '</span>，昵称：<span class="nickname">' + val.NickName +
+								val.wxid + '><div class="item_top">会员ID：<span class="userid">v' + val.id + '</span>，昵称：<span class="nickname">' + val.NickName +
 								'</span>' + (val.nickChanged == 1 ? '<span style="color:#e6a23c;font-weight:bold;margin-left:5px;">已换名 ---&gt; ' + val.nickNewName + '</span>' : '') +
 								'</div><div class="all_fanshui stat_line" style="display: block;"><span class="stat_label">总抽水：</span><span class="stat_num">' +
 								parseFloat(totalFanShui) + '</span>，&nbsp;&nbsp; <span class="stat_label">流水：</span><span class="stat_num_liushui">' + val.totalLiuShui + '</span>' +
@@ -2940,7 +2940,11 @@
                     // 右侧玩家列表降频:每 5 秒刷一次(_autoHandleTick 每次 autoHandle 自增)
                     // 首次加载必刷,之后每 3 拍(3*2s=6s≈5s)刷一次
                     if (isFirstLoad || _autoHandleTick % 3 === 0) {
-                        setJifenList(data);
+                        if (data.playersManagedByXupan) {
+                            updateJifenList();
+                        } else {
+                            setJifenList(data);
+                        }
                     }
                     _autoHandleTick++;
                     isFirstLoad = false;
@@ -3268,6 +3272,10 @@
                         var $textSpan = $node.children('span').first();
                         var newText = '[' + v.wid + '] "' + v.text + '" 合计：' + v.score;
                         if ($textSpan.text() !== newText) $textSpan.text(newText);
+                        var $reportLabel = $node.children('.xupan-report-status');
+                        if ($reportLabel.text() !== (v.reportStatusText || '')) {
+                            $reportLabel.text(v.reportStatusText || '');
+                        }
                     }
                     return;
                 }
@@ -3282,10 +3290,16 @@
                     var val = detail[index];
                     var tuoprefix = val.isTuo == "1" ? "" : "";
                     var statusStyle = isPrev ? "display:none;" : "display:" + ((val.isTuo == "1" || val.chi == "1") ? "none" : "inline-block") + ";";
-                    var div = $('<div ' + (index % 2 == 0 ? "" : " class=\"se\"") + '  cusLink="' + val.id +
-                        '"><b class="status' + val.flyers_status + '" title="" status="' + val
-                        .flyers_status + '" style="' + statusStyle + '">●</b><span>' + tuoprefix + '[' + val.wid + '] "' + val.text +
-                        '" 合计：' + val.score + '</span><s style="' + (isPrev ? 'display:none' : '') + '">×</s></div>');
+                    var div = $('<div><b class="status"></b><span></span><em class="xupan-report-status"></em><s>×</s></div>');
+                    if (index % 2 != 0) div.addClass('se');
+                    div.attr('cusLink', val.id);
+                    $('b.status', div).addClass('status' + val.flyers_status)
+                        .attr('status', val.flyers_status).css('display', statusStyle.replace(/^display:|;$/g, ''))
+                        .text('●');
+                    $('span', div).text(tuoprefix + '[' + val.wid + '] "' + val.text + '" 合计：' + val.score);
+                    $('.xupan-report-status', div).text(val.reportStatusText || '')
+                        .css({ 'font-style': 'normal', 'font-size': '12px', 'color': '#777', 'margin-left': '4px' });
+                    $('s', div).css('display', isPrev ? 'none' : '');
                     //绑定事件
                     $("s", div).click(function() {
                         if (!isPrev && (div.attr("status")==0||div.attr("status")==3)) {
@@ -3317,7 +3331,10 @@
                         }
                     });
                     if (gameName!=val.gameName) {
-                        $("#xiazhubanlist").append('<div><b>'+val.gameName+'</b>&nbsp;&nbsp;(<span>'+val.qihao+'期</span>)</div>');
+                        var groupTitle = $('<div><b></b>&nbsp;&nbsp;(<span></span>)</div>');
+                        $('b', groupTitle).text(val.gameName);
+                        $('span', groupTitle).text(val.qihao + '期');
+                        $("#xiazhubanlist").append(groupTitle);
                     }
                     gameName = val.gameName;
                     _cmdCache[val.id] = div;
@@ -3336,7 +3353,8 @@
             }
             function formatOpenCountdown(seconds) {
                 seconds = parseInt(seconds, 10);
-                if (isNaN(seconds) || seconds <= 0) return '开奖中';
+                if (isNaN(seconds)) return '--:--';
+                if (seconds <= 0) return '开奖中';
                 var m = Math.floor(seconds / 60);
                 var s = seconds % 60;
                 return (m < 10 ? '0' + m : m) + ':' + (s < 10 ? '0' + s : s);
@@ -3348,7 +3366,11 @@
                 $("#xiazhubanlist").addClass("open-result-mode").empty();
                 var list = data.list || [];
                 if (!list.length) {
-                    $("#xiazhubanlist").html('<div style="padding:10px;text-align:center;color:#999;">暂无开奖数据</div>');
+                    var emptyTitle = $('<div class="open-result-game"><span></span><span class="open-result-countdown"></span></div>');
+                    $('span:first', emptyTitle).text(data.gameName || '澳8番摊/8球');
+                    $('.open-result-countdown', emptyTitle).text('倒计时：' + formatOpenCountdown(data.countdown));
+                    $("#xiazhubanlist").empty().append(emptyTitle)
+                        .append('<div style="padding:10px;text-align:center;color:#999;">暂无开奖数据</div>');
                     return;
                 }
                 var html = '<div class="open-result-table">';
@@ -3484,7 +3506,11 @@
                 })
                 //绑定点击报警按钮
                 $("#baojingbtn").click(function() {
-                    baojing(!isBaojing);
+                    if (centerConfig.ltype == 2) {
+                        PlayXF();
+                    } else {
+                        PlaySF();
+                    }
                 });
                 //下注列表
                 $(".xiazhutitle button").click(function() {
@@ -3735,6 +3761,7 @@
                 return String(str || "0").replace(/([.]\d{2})[\s\S]*$/, "$1");
             };
             var _lastSxfIds = []; // 记录上一次的上下分请求ID列表
+            var _hasLoadedSxfRequests = false;
             var _processingIds = []; // 正在处理中的ID，防止轮询重绘
             function checkApplyStillPending(aid, done) {
                 $.ajax({
@@ -3762,6 +3789,8 @@
             function checkApply(url, data, aid) {
                 var div = $('.aid' + aid);
                 var tempId = 'temp_' + aid;
+                var startedAt = Date.now();
+                var isFinishing = false;
                 var content = div.find('.content').text();
                 var isTuoItem = content.indexOf('[托]') === 0;
                 var match = content.match(/(上分|下分)\s*[+\-]?([\d.]+)\s*\((.+)\)/);
@@ -3789,27 +3818,35 @@
                         $('#todayScoreLogPlayer').prepend(pendingRow);
                     }
                 }
-                div.hide(900);
+                div.find('.ty,.qx').css({ 'pointer-events': 'none', opacity: 0.45 });
+                div.find('.ld').text('处理中');
                 // 从 ID 列表中移除,防止轮询重绘把已处理的项加回来
                 _lastSxfIds = _lastSxfIds.filter(function(id) { return id != aid; });
                 _processingIds.push(parseInt(aid));
 
                 function finishApplySuccess() {
-                    // 后端真成功:把"处理中"占位行升级为正式红/绿色行
-                    if (rowMeta && $('#'+tempId).length) {
-                        var color = rowMeta.isUp ? 'red' : 'green';
-                        var sign  = rowMeta.isUp ? '+' : '-';
-                        var finalRow = '<div id="'+tempId+'" style="line-height:1.8;border-bottom:1px solid #ddd !important;">'
-                            + rowMeta.mm + ' ' + rowMeta.hh + ' ' + rowMeta.who + ':'
-                            + '<span style="color:'+color+';font-weight:bold;">'+sign+rowMeta.num+'</span></div>';
-                        $('#'+tempId).replaceWith(finalRow);
-                    }
-                    div.hide().remove();
-                    audio.pause();
-                    audio2.pause();
-                    updateJifenList();
-                    loadTodayScoreLog();
-                    _processingIds = _processingIds.filter(function(id) { return id != aid; });
+                    if (isFinishing) return;
+                    isFinishing = true;
+                    // Keep the pending feedback visible briefly, then run the source page's 900ms exit.
+                    setTimeout(function() {
+                        // Upgrade the pending record only after the server has confirmed success.
+                        if (rowMeta && $('#'+tempId).length) {
+                            var color = rowMeta.isUp ? 'red' : 'green';
+                            var sign  = rowMeta.isUp ? '+' : '-';
+                            var finalRow = '<div id="'+tempId+'" style="line-height:1.8;border-bottom:1px solid #ddd !important;">'
+                                + rowMeta.mm + ' ' + rowMeta.hh + ' ' + rowMeta.who + ':'
+                                + '<span style="color:'+color+';font-weight:bold;">'+sign+rowMeta.num+'</span></div>';
+                            $('#'+tempId).replaceWith(finalRow);
+                        }
+                        div.stop(true, true).hide(900, function() {
+                            $(this).remove();
+                        });
+                        audio.pause();
+                        audio2.pause();
+                        updateJifenList();
+                        loadTodayScoreLog();
+                        _processingIds = _processingIds.filter(function(id) { return id != aid; });
+                    }, Math.max(0, 500 - (Date.now() - startedAt)));
                 }
 
                 function restoreApplyItem() {
@@ -3873,6 +3910,7 @@
                         $(".sxflist").html("");
                         _lastSxfIds = [];
                     }
+                    _hasLoadedSxfRequests = true;
                     return;
                 }
                 
@@ -3885,8 +3923,9 @@
 
                 var oldIds = _lastSxfIds.map(function(id) { return String(id); });
                 var hasNewReq = false;
+                var isInitialRequestLoad = !_hasLoadedSxfRequests;
                 for (var n = 0; n < currentIds.length; n++) {
-                    if (oldIds.indexOf(currentIds[n]) < 0) {
+                    if (!isInitialRequestLoad && oldIds.indexOf(currentIds[n]) < 0) {
                         hasNewReq = true;
                         break;
                     }
@@ -3909,6 +3948,7 @@
                 
                 // 有变化才重绘
                 _lastSxfIds = currentIds;
+                _hasLoadedSxfRequests = true;
                 $(".sxflist").html("");
                 var i = 0;
                 for (var k in list) {
@@ -4089,9 +4129,7 @@
 
             function resetJifen(s) {
                 selectChangejifen = s;
-                $(".jifenright .headimg").attr("src", s.imgName ? s.imgName : "/hby019-demo/source/static/xz/admin/14.jpg");
-                // $(".jifenright .headimg").attr("src", s.imgName ? (s.imgName.substr(s.imgName.indexOf('/static'))) :
-                //     "/hby019-demo/source/static/xz/admin/14.jpg");
+                $(".jifenright .headimg").attr("src", s.imgName ? s.imgName : "/hby019-demo/source/static/xz/admin/defaultheadimg.jpg");
                 $(".jifenright .score").text("积分：" + s.score);
                 $(".jifenright [name='changejifenval']").val(0);
                 $(".setmanual,.setmanual2,.setblack,.setzhui").removeClass("myShow myHide");
@@ -4127,17 +4165,16 @@
                 applyDisplayToggles(s);
             }
 
-            function selectJifen(s) {
+            function selectJifen(s, skipRemoteLoad) {
                 // 高亮选中的玩家行
                 $(".jifenleftlist .selected-user").removeClass("selected-user");
                 if (centerConfig.dicUser[s.wxid]) {
                     centerConfig.dicUser[s.wxid].addClass("selected-user");
                 }
                 selectChangejifen = s;
-                $(".jifenright .usernumber").html('会员ID：v' + s.id + ' <span class="link-expire-box" style="margin-left:auto;"><input id="linkExpireDays" type="number" min="0" max="9999" placeholder="天" style="width:45px;border:1px solid #888;border-radius:5px;text-align:center;" title="链接有效天数，0=永不过期"><span style="font-size:12px;">天</span><button class="saveLinkExpire" style="font-size:12px;padding:0px 6px;height:20px;margin-left:3px;">保存</button><span class="link-expire-tip" style="font-size:11px;color:#999;margin-left:3px;"></span></span>');
+                $(".jifenright .usernumber").html('会员ID：v' + String(s.id).replace(/^v+/i, '') + ' <span class="link-expire-box" style="margin-left:auto;"><input id="linkExpireDays" type="number" min="1" max="3650" placeholder="天" style="width:45px;border:1px solid #888;border-radius:5px;text-align:center;" title="链接有效天数，1-3650天"><span style="font-size:12px;">天</span><button class="saveLinkExpire" style="font-size:12px;padding:0px 6px;height:20px;margin-left:3px;">保存</button><span class="link-expire-tip" style="font-size:11px;color:#999;margin-left:3px;"></span></span>');
                 // 填充链接有效天数
-                var setDays = s.link_expire_days ? parseInt(s.link_expire_days) : 0;
-                $("#linkExpireDays").val(setDays);
+                $("#linkExpireDays").val(7);
                 if (s.link_expire && s.link_expire > 0) {
                     var remainMs = (s.link_expire * 1000) - Date.now();
                     var remainDays = Math.ceil(remainMs / 86400000);
@@ -4150,6 +4187,24 @@
                 $(".jifenright #userName").val(s.UserName);
                 $(".jifenright #loginPwd").val(s.logincode);
                 resetJifen(s);
+                if (!skipRemoteLoad && window.localApiBridge && window.localApiBridge.getPlayerDetails) {
+                    window.localApiBridge.getPlayerDetails(s.wxid, function(detail) {
+                        if (!detail || !selectChangejifen || String(selectChangejifen.wxid) !== String(s.wxid)) return;
+                        $.extend(s, detail);
+                        selectJifen(s, true);
+                        var row = centerConfig.dicUser[s.wxid];
+                        if (row) {
+                            $("b.black", row).text(s.isBlack == 1 ? "黑" : "");
+                            $("b.zhui", row).text(s.zhui == 1 ? "追" : "");
+                            var isBotWithAutoState = s.isrobot == 1 && (s.isauto == 0 || s.isauto == 1);
+                            var autoLabel = isBotWithAutoState ? (s.isauto == 1 ? "自动" : "手动") : "";
+                            var $autoState = $("i", row).text(autoLabel).removeClass("t h");
+                            if (isBotWithAutoState) $autoState.addClass(s.isauto == 1 ? "h" : "t");
+                        }
+                    }, function() {
+                        alertErr("玩家详情加载失败，请稍后重试");
+                    });
+                }
             }
             //更换wx
             $("#changewx").click(function() {
@@ -4157,10 +4212,10 @@
             });
             $("#btnQR").click(RefreshQR);
 
-            function bindSet(url, data, tar) {
+            function bindSet(url, data, tar, displayWxid) {
                 putAjax(url, data, function(res) {
                     if (res == 0) {
-                        alertSuc(data.wxid + "设置成功!");
+                        alertSuc((displayWxid || data.wxid) + "设置成功!");
                         selectChangejifen[tar] = data.type;
                         resetJifen(selectChangejifen);
                         updateJifenList();
@@ -4176,44 +4231,45 @@
             $(".setblack").click(function() {
                 var mywxid = $(this).attr("curWxid"),
                     type = $(this).attr("data-type");
-                layer.confirm("将[" + mywxid + "]" + $(this).text() + "么?", function() {
+                var displayWxid = selectChangejifen.wxidDisplay || mywxid;
+                layer.confirm("将[" + displayWxid + "]" + $(this).text() + "么?", function() {
                     bindSet("/rbt/index/setblack", {
                         "wxid": mywxid,
                         "type": type
-                    }, 'isBlack');
+                    }, 'isBlack', displayWxid);
                 });
             });
             //托手动自动按钮
             $(".setmanual").click(function() {
                 var mywxid = $(this).attr("curWxid"),
                     type = $(this).attr("data-type");
-                layer.confirm("将托[" + mywxid + "]改为" + $(this).text() + "投注么?", function() {
+                layer.confirm("将托[" + (selectChangejifen.wxidDisplay || mywxid) + "]改为" + $(this).text() + "投注么?", function() {
                     bindSet("/rbt/index/setauto", {
                         "wxid": mywxid,
                         "type": type
-                    }, 'isauto');
+                    }, 'isauto', selectChangejifen.wxidDisplay || mywxid);
                 });
             });
             //吃单按钮
             $(".setmanual2").click(function() {
                 var mywxid = $(this).attr("curWxid"),
                     type = $(this).attr("data-type");
-                layer.confirm("将托[" + mywxid + "]改为" + $(this).text() + "投注么?", function() {
+                layer.confirm("将托[" + (selectChangejifen.wxidDisplay || mywxid) + "]改为" + $(this).text() + "投注么?", function() {
                     bindSet("/rbt/index/setmanual2", {
                         "wxid": mywxid,
                         "type": type
-                    }, 'chi');
+                    }, 'chi', selectChangejifen.wxidDisplay || mywxid);
                 });
             });
             //开通追按钮
             $(".setzhui").click(function() {
                 var mywxid = $(this).attr("curWxid"),
                     type = $(this).attr("data-type");
-                layer.confirm("将[" + mywxid + "]" + $(this).text() + "投注么?", function() {
+                layer.confirm("将[" + (selectChangejifen.wxidDisplay || mywxid) + "]" + $(this).text() + "投注么?", function() {
                     bindSet("/rbt/index/setzhui", {
                         "wxid": mywxid,
                         "type": type
-                    }, 'zhui');
+                    }, 'zhui', selectChangejifen.wxidDisplay || mywxid);
                 });
             });
             //点击上下分的确认按钮
@@ -4275,8 +4331,19 @@
                 putAjax(url, data, function(data) {
                     if (data.bOK == 0) {
                         alertSuc(data.Message);
-                        resetJifen(selectChangejifen);
-                        updateJifenList();
+                        if (url === "/rbt/index/updownscore" && s && data.playerBalance != null) {
+                            s.score = String(data.playerBalance);
+                            var playerRow = centerConfig.dicUser[s.wxid];
+                            if (playerRow) $("span.user-score", playerRow).text(autoMoney(s.score));
+                            if (selectChangejifen && String(selectChangejifen.wxid) === String(s.wxid)) {
+                                resetJifen(s);
+                            }
+                            window.setTimeout(updateJifenList, 0);
+                            loadTodayScoreLog();
+                        } else {
+                            resetJifen(selectChangejifen);
+                            updateJifenList();
+                        }
                     } else {
                         alertErr(data.Message);
                     }
@@ -4322,7 +4389,7 @@
                     var isNew = !divB;
                     if (isNew) {
                         divB = $(
-                            '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;overflow:hidden;"><em class="online-dot">○</em><b class="black"></b><b class="zhui"></b><b class="fake" style="display:block;"></b><i style="width:35px;flex:none;">托</i><b class="nick" style="flex:1;min-width:0;text-align:left;margin-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></b><span class="user-score" style="width:80px;text-align:right;flex:none;"></span><s style="margin-left:0;width:35px;flex:none;">删除</s></div>'
+                            '<div style="display:flex;align-items:center;justify-content:space-between;width:100%;overflow:hidden;"><em class="online-dot">○</em><b class="black"></b><b class="zhui"></b><b class="fake" style="display:block;"></b><i style="width:35px;flex:none;">托</i><b class="nick" style="flex:1;min-width:0;text-align:left;margin-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></b><span class="user-score" style="width:auto;min-width:80px;max-width:140px;text-align:right;flex:none;white-space:nowrap;font-size:12px;"></span><s style="margin-left:0;width:35px;flex:none;">删除</s></div>'
                         );
                         centerConfig.dicUser[sB.wxid] = divB;
                     }
@@ -4352,9 +4419,9 @@
                     }
 
                     var $nick = $("b.nick", divB);
-                    var nickText = "@v" + sB.id + '.' + sB.NickName.substr(0, 8) + "：";
+                    var nickText = "@v" + String(sB.id).replace(/^v+/i, '') + '.' + sB.NickName.substr(0, 8) + "：";
                     if (sB.nickChanged == 1) {
-                        nickText = "@v" + sB.id + '.' + sB.NickName.substr(0, 8) + "：";
+                        nickText = "@v" + String(sB.id).replace(/^v+/i, '') + '.' + sB.NickName.substr(0, 8) + "：";
                     }
                     if ($nick.text() !== nickText) {
                         if (sB.nickChanged == 1) {
@@ -4390,7 +4457,7 @@
                         //点击删除按钮
                         $("s", divB).click(function(event) {
                             event.stopPropagation();
-                            layer.confirm("是否删除" + sB.wxid + " (" + sB.NickName + ") " + "数据？",
+                            layer.confirm("是否删除" + (sB.wxidDisplay || sB.wxid) + " (" + sB.NickName + ") " + "数据？",
                                 function() {
                                     divB.hide();
                                     putAjax("/rbt/index/delmember", {
@@ -4399,6 +4466,7 @@
                                         if (data == 0) {
                                             divB.remove();
                                             delete centerConfig.dicUser[sB.wxid];
+                                            window.setTimeout(updateJifenList, 0);
                                         } else {
                                             divB.show();
                                         }
@@ -4437,7 +4505,9 @@
                     }
 
                     if (selectChangejifen && selectChangejifen.wxid == sB.wxid) {
-                        // selectJifen(sB);
+                        $.extend(selectChangejifen, sB);
+                        $(".jifenright #NickName").val(selectChangejifen.NickName);
+                        resetJifen(selectChangejifen);
                     }
                 });
 
@@ -4474,6 +4544,7 @@
                     "newNickName": val
                 }, function(data) {
                     if (data.code == 0) {
+                        s.NickName = val;
                         updateJifenList();
                         alertSuc(s.wxid + "昵称改为：" + val);
                     } else {
@@ -4585,6 +4656,7 @@
                 $.ajax({
                     type: "GET",
                     url: "/rbt/index/getavatarlist",
+                    data: { "wxid": s.wxid },
                     dataType: "json",
                     success: function(avatarList) {
                         var html = '<div style="padding:10px;">';
@@ -4631,11 +4703,16 @@
                                     processData: false,
                                     contentType: false,
                                     success: function(res) {
+                                        s.imgName = res;
                                         $(".jifenright .headimg").attr("src", res);
                                         updateJifenList();
+                                        layer.close(index);
+                                    },
+                                    error: function() {
+                                        alertErr("头像保存失败，请重试");
                                     }
                                 });
-                                layer.close(index);
+                                return false;
                             },
                             btn3: function(index) {
                                 // 取消按钮
@@ -4649,6 +4726,9 @@
                                 });
                             }
                         });
+                    },
+                    error: function() {
+                        alertErr("头像列表加载失败，请重试");
                     }
                 });
             });
@@ -4689,7 +4769,7 @@
                 }
                 var days = parseInt($("#linkExpireDays").val()) || 0;
                 putAjax("/rbt/index/setlinkexpire", {
-                    "uid": s.id,
+                    "wxid": s.wxid,
                     "days": days
                 }, function(data) {
                     if (data.bOK == 0) {
@@ -4712,7 +4792,7 @@
                     return;
                 }
                 putAjax("/rbt/index/getuserlink", {
-                    "uid": s.id
+                    "wxid": s.wxid
                 }, function(data) {
                     if (data.bOK == 0) {
                         $("#copylinkArea").html(data.Data); //显示复制按钮

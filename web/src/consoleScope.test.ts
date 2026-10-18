@@ -171,17 +171,18 @@ describe('console scope helpers', () => {
     expect(isRoutePermissionAllowed({}, [])).toBe(true)
   })
 
-  // 阶段 4：`/console` 由"权限命中"改为"角色命中"（BY220 `robot.php` 只认 `x_robot`）。
-  it('gates /console by role only: AGENT allowed, platform accounts denied', () => {
+  // HBY019 代理后台继续沿用机器账号角色门禁。
+  it('gates the HBY019 machine console by role only: AGENT allowed, platform accounts denied', () => {
     const consoleRoute = adminRoutes.find(route => route.path === '/console')
     if (!consoleRoute) throw new Error('missing /console route')
-    const meta = consoleRoute.meta ?? {}
+    const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
+    const meta = { requiredRoles: ['AGENT'], excludeRoles: ['ADMIN', 'SUB_ACCOUNT'] }
 
-    expect(meta).toMatchObject({
-      requiresAuth: true,
-      requiredRoles: ['AGENT'],
-      excludeRoles: ['ADMIN', 'SUB_ACCOUNT'],
-    })
+    expect(consoleRoute.redirect).toBe('/hby019-demo/console')
+    expect(routerSource).toContain("path: '/hby019-demo/console'")
+    expect(routerSource).toContain('requiresAuth: true')
+    expect(routerSource).toContain("requiredRoles: ['AGENT']")
+    expect(routerSource).toContain("excludeRoles: ['ADMIN', 'SUB_ACCOUNT']")
     // 机器账号：即使 V76 撤权后权限集合变化，角色仍然放行。
     expect(isRouteRoleAllowed(meta, ['AGENT'])).toBe(true)
     expect(isRouteAccessAllowed(meta, ['AGENT_CONSOLE_READ'], ['AGENT'])).toBe(true)
@@ -215,7 +216,7 @@ describe('console scope helpers', () => {
   it('selects the post-login landing page by role', () => {
     // 计划 §3.2 第 2 项：机器账号 → /console；超管/子账号 → 平台首页 /platform-admin（BY220 admin 首页 = 开奖信息）；
     // 其余 → 本入口登录页。
-    expect(consoleLandingPath(['AGENT'])).toBe('/console')
+    expect(consoleLandingPath(['AGENT'])).toBe('/hby019-demo/console')
     expect(consoleLandingPath(['ADMIN'])).toBe('/platform-admin')
     expect(consoleLandingPath(['SUB_ACCOUNT'])).toBe('/platform-admin')
     // 同时带平台角色时不再算机器账号（与 `/console` 的 `excludeRoles` 口径一致）。

@@ -494,6 +494,30 @@ public class ChatMessageService {
                 agentId, createdAt);
     }
 
+    /** Publishes the room reply for an approved chat point request exactly once. */
+    @Transactional
+    public ChatMessage publishPointRequestApproved(long requestId, long sourceMessageId,
+                                                   String displayName, String requestType,
+                                                   java.math.BigDecimal amount, Instant createdAt) {
+        if (requestId <= 0 || sourceMessageId <= 0 || amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("积分申请反馈参数无效");
+        }
+        String action = switch (requestType) {
+            case "TOP_UP" -> "上分";
+            case "DOWN" -> "下分";
+            default -> throw new IllegalArgumentException("积分申请类型无效");
+        };
+        ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
+                .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
+        long agentId = messageRepository.findMachineAgentId(sourceMessageId)
+                .orElseThrow(() -> new IllegalStateException("积分申请来源消息缺少机器归属"));
+        String content = "@" + requireRobotName(displayName) + "，成功" + action + formatMoney(amount);
+        String payload = feedbackPayload(sourceMessageId, "POINT_REQUEST_APPROVED");
+        return publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE, feedbackIssueNumber(),
+                "POINT-REQUEST-APPROVED:" + requestId, content, payload,
+                ChatMessageVisibility.MACHINE, agentId, createdAt == null ? Instant.now() : createdAt);
+    }
+
     private String feedbackPayload(long sourceMessageId, String feedbackType) {
         try {
             return objectMapper.writeValueAsString(new FeedbackPayload(

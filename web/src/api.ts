@@ -594,7 +594,7 @@ export const api = {
     request<AgentPlayer>('/api/agent/players/normal', {
       method: 'POST', body: JSON.stringify({ displayName }),
     }),
-  createAgentBot: (payload: { userCode: string; displayName: string }) =>
+  createAgentBot: (payload: { userCode?: string; displayName: string }) =>
     request<AgentPlayer>('/api/agent/players/bot', {
       method: 'POST', body: JSON.stringify(payload),
     }),
@@ -840,6 +840,7 @@ export const api = {
     if (params.subAccountId) search.set('subAccountId', String(params.subAccountId))
     return request<ProfitReport>(`/api/admin/reports/profit?${search.toString()}`)
   },  getGameCatalog: () => request<GameCatalogItem[]>('/api/demo/game/catalog'),
+  getPlayerPreferences: () => request<{ countdownVisible: boolean }>('/api/demo/preferences'),
   current: (gameCode = 'AU8') => request<GameView>(`/api/demo/game/current?gameCode=${encodeURIComponent(gameCode)}`),
   getMyBetSummary: () => request<MyBetSummaryResponse>('/api/demo/game/bets/summary'),
   placeBet: (payload: { ballNumber: number; playType: PlayType; parameters: number[]; stake: number; idempotencyKey: string; gameCode?: string }) =>

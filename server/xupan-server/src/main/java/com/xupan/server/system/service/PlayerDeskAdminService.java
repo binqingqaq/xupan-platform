@@ -119,6 +119,7 @@ public class PlayerDeskAdminService {
         long targetAgentId = machineIdOf(scope, machineId);
         MachineConfig config = jdbc.query("""
                 SELECT ag.id, ag.agent_code, ag.display_name, ag.board_open, ag.chase_enabled, ag.bot_count,
+                       ag.countdown_visible,
                        ag.close_seconds, ag.cancel_seconds, ag.rebate_rate, ag.odds_rate,
                        ag.special_rebate_rate, ag.special_odds_rate, ag.rebate_mode,
                        ag.total_limit, ag.positive_limit, ag.angle_limit, ag.strict_limit, ag.tong_limit,
@@ -127,7 +128,8 @@ public class PlayerDeskAdminService {
                   FROM agent ag WHERE ag.id = ? AND ag.deleted_at IS NULL
                 """, (rs, rowNum) -> new MachineConfig(rs.getLong("id"), rs.getString("agent_code"),
                 rs.getString("display_name"), rs.getBoolean("board_open"), rs.getBoolean("chase_enabled"),
-                rs.getInt("bot_count"), rs.getInt("close_seconds"), rs.getInt("cancel_seconds"),
+                rs.getBoolean("countdown_visible"), rs.getInt("bot_count"), rs.getInt("close_seconds"),
+                rs.getInt("cancel_seconds"),
                 rs.getBigDecimal("rebate_rate"), rs.getBigDecimal("odds_rate"),
                 rs.getBigDecimal("special_rebate_rate"), rs.getBigDecimal("special_odds_rate"),
                 rs.getString("rebate_mode"), rs.getBigDecimal("total_limit"), rs.getBigDecimal("positive_limit"),
@@ -167,14 +169,14 @@ public class PlayerDeskAdminService {
             throw BusinessException.badRequest("MACHINE_STAKE_RANGE_INVALID", "玩家注额范围无效");
         }
         jdbc.update("""
-                UPDATE agent SET board_open=?, chase_enabled=?, bot_count=?, close_seconds=?, cancel_seconds=?,
+                UPDATE agent SET board_open=?, chase_enabled=?, bot_count=?, close_seconds=?, cancel_seconds=?, countdown_visible=?,
                     rebate_rate=?, odds_rate=?, special_rebate_rate=?, special_odds_rate=?, rebate_mode=?,
                     total_limit=?, positive_limit=?, angle_limit=?, strict_limit=?, tong_limit=?, car_limit=?,
                     special_limit=?, odd_even_limit=?, big_small_limit=?, fan_limit=?, add_limit=?,
                     player_min_stake=?, player_max_stake=?, updated_at=CURRENT_TIMESTAMP
                  WHERE id=? AND deleted_at IS NULL
                 """, update.boardOpen(), update.chaseEnabled(), Math.max(0, update.botCount()),
-                Math.max(0, update.closeSeconds()), Math.max(0, update.cancelSeconds()), amount(update.rebateRate()),
+                Math.max(0, update.closeSeconds()), Math.max(0, update.cancelSeconds()), update.countdownVisible(), amount(update.rebateRate()),
                 amount(update.oddsRate()), amount(update.specialRebateRate()), amount(update.specialOddsRate()),
                 rebateMode, limit(update.totalLimit()), limit(update.positiveLimit()), limit(update.angleLimit()),
                 limit(update.strictLimit()), limit(update.tongLimit()), limit(update.carLimit()),
@@ -185,7 +187,8 @@ public class PlayerDeskAdminService {
                 "machineId=" + targetAgentId + ",oddsRate=" + update.oddsRate() + ",specialOddsRate="
                         + update.specialOddsRate() + ",rebateRate=" + update.rebateRate() + ",specialRebateRate="
                         + update.specialRebateRate() + ",rebateMode=" + rebateMode + ",closeSeconds="
-                        + update.closeSeconds() + ",cancelSeconds=" + update.cancelSeconds() + ",boardOpen="
+                        + update.closeSeconds() + ",cancelSeconds=" + update.cancelSeconds()
+                        + ",countdownVisible=" + update.countdownVisible() + ",boardOpen="
                         + update.boardOpen(), null, Instant.now());
         return machineConfig(operator, targetAgentId);
     }
@@ -219,7 +222,7 @@ public class PlayerDeskAdminService {
 
     /** 机器级配置的读模型（BY220 {@code robot.php} 顶部状态栏与底部控制区）。 */
     public record MachineConfig(long machineId, String machineCode, String machineName, boolean boardOpen,
-                                boolean chaseEnabled, int botLimit, int closeSeconds, int cancelSeconds,
+                                boolean chaseEnabled, boolean countdownVisible, int botLimit, int closeSeconds, int cancelSeconds,
                                 BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
                                 BigDecimal specialOddsRate, String rebateMode, BigDecimal totalLimit,
                                 BigDecimal positiveLimit, BigDecimal angleLimit, BigDecimal strictLimit,
@@ -230,7 +233,7 @@ public class PlayerDeskAdminService {
 
     /** 机器级配置的写模型；字段与读模型一一对应。 */
     public record MachineConfigUpdate(boolean boardOpen, boolean chaseEnabled, int botCount, int closeSeconds,
-                                      int cancelSeconds, BigDecimal rebateRate, BigDecimal oddsRate,
+                                      int cancelSeconds, boolean countdownVisible, BigDecimal rebateRate, BigDecimal oddsRate,
                                       BigDecimal specialRebateRate, BigDecimal specialOddsRate, String rebateMode,
                                       BigDecimal totalLimit, BigDecimal positiveLimit, BigDecimal angleLimit,
                                       BigDecimal strictLimit, BigDecimal tongLimit, BigDecimal carLimit,

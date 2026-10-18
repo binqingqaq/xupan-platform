@@ -1,0 +1,2 @@
+ALTER TABLE agent
+    ADD COLUMN countdown_visible BOOLEAN NOT NULL DEFAULT TRUE;

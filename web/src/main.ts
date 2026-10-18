@@ -51,7 +51,15 @@ const router = createRouter({
     { path: '/login', component: LoginView, meta: { title: 'AI模型房间管理' } },
     { path: '/hby019-demo', redirect: to => ({ path: '/hby019-demo/login', query: to.query, hash: to.hash }) },
     { path: '/hby019-demo/login', component: Hby019SourcePage, meta: { title: 'AI模型登录页' } },
-    { path: '/hby019-demo/console', component: Hby019SourcePage, meta: { title: 'AI模型房间管理' } },
+    {
+      path: '/hby019-demo/console', component: Hby019SourcePage,
+      meta: {
+        requiresAuth: true,
+        requiredRoles: ['AGENT'],
+        excludeRoles: ['ADMIN', 'SUB_ACCOUNT'],
+        title: 'AI模型房间管理',
+      },
+    },
     { path: '/hby019-demo/portal', component: Hby019SourcePage, meta: { title: 'AI校验密码' } },
     { path: '/hby019-demo/player.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },
     { path: '/hby019-demo/player-ui1.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },

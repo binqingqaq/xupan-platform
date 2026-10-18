@@ -208,6 +208,8 @@ export interface PlayerDeskItem {
   behaviorEnabled: boolean
   lastActionAt: string | null
   blacklisted: boolean
+  runMode: 'AUTOMATIC' | 'MANUAL' | null
+  playerChaseEnabled: boolean
 }
 
 export interface PlayerDeskPage {
@@ -493,6 +495,7 @@ export interface MachineConfigView {
   botLimit: number
   closeSeconds: number
   cancelSeconds: number
+  countdownVisible?: boolean
   /** 返水（底部控制区"返水"，BY220 `FanShui`）。 */
   rebateRate: number
   /** 赔率（顶部状态栏"赔率"，BY220 `PeiLv`）。 */
@@ -531,6 +534,7 @@ export interface MachineConfigUpdateRequest {
   botCount: number
   closeSeconds: number
   cancelSeconds: number
+  countdownVisible: boolean
   rebateRate: number
   oddsRate: number
   specialRebateRate: number

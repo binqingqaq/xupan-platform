@@ -71,6 +71,7 @@ const room = ref<ChatRoomView | null>(null)
 const chatMessages = ref<ChatMessage[]>([])
 const adminNotices = ref<ChatMessage[]>([])
 const platformSettings = ref<PublicPlatformSettings | null>(null)
+const countdownVisible = ref(true)
 const pendingChatMessage = ref<PendingChatMessage | null>(null)
 const chatUnread = ref(0)
 const chatLoading = ref(false)
@@ -626,7 +627,8 @@ async function load() {
     stopAdminNoticePolling()
     adminNotices.value = []
 
-    const user = await api.me()
+    const [user, preferences] = await Promise.all([api.me(), api.getPlayerPreferences()])
+    countdownVisible.value = preferences.countdownVisible
     gameCatalog.value = await api.getGameCatalog()
     const savedGameCode = window.localStorage.getItem('xupan.selectedGameCode')
     if (savedGameCode && gameCatalog.value.some(game => game.gameCode === savedGameCode)) {
@@ -1079,7 +1081,7 @@ onUnmounted(() => {
           <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')"><span class="interface-check">{{ interfaceMode === 'ui2' ? '✓' : '' }}</span>界面2</button>
         </div>
       </div>
-      <div v-show="platformSettings?.statusBarEnabled !== false" class="reference-issuebar">
+      <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
         <div class="reference-ball-row" :aria-label="ballNumbersLabel">
           <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8 }">

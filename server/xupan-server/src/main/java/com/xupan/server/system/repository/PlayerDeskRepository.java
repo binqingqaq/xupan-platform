@@ -36,7 +36,8 @@ public class PlayerDeskRepository {
         String sql = "SELECT u.id user_id, u.username, u.internal_code, u.display_name, u.avatar_key, u.status user_status, "
                 + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.member_code, a.display_name account_display_name, "
                 + "u.auth_mode, "
-                + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
+                + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, b.run_mode, "
+                + "COALESCE(b.player_chase_enabled,FALSE) player_chase_enabled, "
                 + "(SELECT x.revoked_at IS NOT NULL FROM player_access_link x WHERE x.user_id=u.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) blacklisted, "
                 + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
                 + from() + where + " ORDER BY a.balance DESC, a.id DESC LIMIT ? OFFSET ?";
@@ -66,7 +67,8 @@ public class PlayerDeskRepository {
         return jdbc.query("SELECT u.id user_id, u.username, u.internal_code, u.display_name, u.avatar_key, u.status user_status, "
                         + "u.created_at, u.last_login_at, u.user_type, a.id account_id, a.user_code, a.member_code, a.display_name account_display_name, "
                         + "u.auth_mode, "
-                        + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, "
+                        + "a.balance, a.status account_status, a.player_kind, b.enabled behavior_enabled, b.run_mode, "
+                        + "COALESCE(b.player_chase_enabled,FALSE) player_chase_enabled, "
                         + "(SELECT x.revoked_at IS NOT NULL FROM player_access_link x WHERE x.user_id=u.id ORDER BY x.created_at DESC, x.id DESC LIMIT 1) blacklisted, "
                 + "(SELECT MAX(x.updated_at) FROM test_player_action x WHERE x.user_id=u.id) last_action_at "
                         + from() + scope.agentIdCondition() + " AND u.id=?" + (includeDeleted ? "" : " AND u.status <> 'DELETED' AND a.status <> 'DELETED'"),
@@ -82,7 +84,7 @@ public class PlayerDeskRepository {
 
     public Behavior ensureBehavior(long accountId) {
         try {
-            jdbc.update("INSERT INTO test_player_behavior(account_id) VALUES (?)", accountId);
+            jdbc.update("INSERT INTO test_player_behavior(account_id, enabled, run_mode) VALUES (?, TRUE, 'AUTOMATIC')", accountId);
         } catch (DuplicateKeyException ignored) {
             // The unique account_id makes creation idempotent.
         }
@@ -166,7 +168,8 @@ public class PlayerDeskRepository {
                 rs.getString("display_name"), rs.getString("avatar_key"), rs.getString("auth_mode"),
                 rs.getString("user_status"), rs.getString("account_status"), rs.getString("player_kind"),
                 rs.getString("user_type"), rs.getBigDecimal("balance"), instant(rs.getTimestamp("created_at")),
-                instant(rs.getTimestamp("last_login_at")), rs.getBoolean("behavior_enabled"), instant(rs.getTimestamp("last_action_at")), rs.getBoolean("blacklisted"));
+                instant(rs.getTimestamp("last_login_at")), rs.getBoolean("behavior_enabled"), instant(rs.getTimestamp("last_action_at")),
+                rs.getBoolean("blacklisted"), rs.getString("run_mode"), rs.getBoolean("player_chase_enabled"));
     }
 
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
@@ -175,7 +178,8 @@ public class PlayerDeskRepository {
     public record PlayerRow(long userId, long accountId, String username, String internalCode, String userCode,
                             String memberCode, String displayName, String avatarKey, String authMode,
                             String userStatus, String accountStatus, String playerKind, String userType,
-                            BigDecimal balance, Instant createdAt, Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt, boolean blacklisted) {}
+                            BigDecimal balance, Instant createdAt, Instant lastLoginAt, boolean behaviorEnabled, Instant lastActionAt,
+                            boolean blacklisted, String runMode, boolean playerChaseEnabled) {}
     public record Behavior(long id, long accountId, String mode, boolean enabled, BigDecimal stakeMin,
                            BigDecimal stakeMax, Instant nextRunAt, String lastIssueNumber,
                            String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt,
