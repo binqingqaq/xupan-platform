@@ -14,7 +14,6 @@ import {
   chatHistoryCutoffMs,
   isWithinChatHistoryWindow,
   restoredScrollTop,
-  unreadMessageLabel,
 } from '../chatHistory'
 import PlayerLinkExpiredView from './PlayerLinkExpiredView.vue'
 import type {
@@ -76,6 +75,7 @@ const platformSettings = ref<PublicPlatformSettings | null>(null)
 const countdownVisible = ref(true)
 const pendingChatMessage = ref<PendingChatMessage | null>(null)
 const chatUnread = ref(0)
+const chatAwayFromBottom = ref(false)
 const chatLoading = ref(false)
 const chatPolling = ref(false)
 const chatLastSequence = ref(0)
@@ -91,8 +91,8 @@ const interfaceOpen = ref(false)
 const menuOpen = ref(false)
 const betSummary = ref<MyBetSummaryResponse | null>(null)
 const accountPanelTab = ref<'pending' | 'settled'>('pending')
-const accountFontSize = ref<'mini' | 'small' | 'medium' | 'big'>('small')
-const accountFontBold = ref(false)
+const chatFontSize = ref<'mini' | 'small' | 'medium' | 'big'>('small')
+const chatFontBold = ref(false)
 const accountPanelLoading = ref(false)
 const accountPanelError = ref('')
 const expandedAccountRows = ref(new Set<string>())
@@ -106,8 +106,6 @@ const keyboardOpen = ref(interfaceMode.value === 'ui2')
 const viewMode = ref<'chat' | 'odds'>('chat')
 const historyOpen = ref(false)
 const settingsOpen = ref(false)
-const scratchOpen = ref(false)
-const scratchRevealed = ref(false)
 const noticeOpen = ref(false)
 const feedback = ref('')
 const feedbackKind = ref<'success' | 'error' | ''>('')
@@ -136,6 +134,8 @@ let gameRefreshTimer: number | undefined
 let chatRefreshTimer: number | undefined
 let adminNoticeTimer: number | undefined
 let countdownTimer: number | undefined
+let chatAwayTimer: number | undefined
+let chatPageInactive = false
 const chatSocket = new ChatSocket()
 
 const props = defineProps<{
@@ -281,14 +281,14 @@ function toggleAccountRow(id: string) {
   expandedAccountRows.value = expanded
 }
 
-function setAccountFontSize(size: typeof accountFontSize.value) {
-  accountFontSize.value = size
+function setChatFontSize(size: typeof chatFontSize.value) {
+  chatFontSize.value = size
   window.localStorage.setItem('chat_font_size', `font_${size}`)
 }
 
-function toggleAccountFontBold() {
-  accountFontBold.value = !accountFontBold.value
-  window.localStorage.setItem('chat_font_bold', accountFontBold.value ? '1' : '0')
+function toggleChatFontBold() {
+  chatFontBold.value = !chatFontBold.value
+  window.localStorage.setItem('chat_font_bold', chatFontBold.value ? '1' : '0')
 }
 
 function playTypeLabel(playType: PlayType) {
@@ -453,6 +453,11 @@ function scrollToBottom() {
       element.scrollTop = element.scrollHeight
       chatUnread.value = 0
     }
+    if (chatAwayTimer !== undefined) {
+      window.clearTimeout(chatAwayTimer)
+      chatAwayTimer = undefined
+    }
+    chatAwayFromBottom.value = false
   })
 }
 
@@ -471,10 +476,37 @@ function isNearChatBottom() {
 function handleChatScroll() {
   const element = messageScroll.value
   if (element && element.scrollTop < 80) void loadOlderChatMessages()
-  if (isNearChatBottom()) {
+  const nearBottom = isNearChatBottom()
+  if (nearBottom) {
+    if (chatAwayTimer !== undefined) {
+      window.clearTimeout(chatAwayTimer)
+      chatAwayTimer = undefined
+    }
+    chatAwayFromBottom.value = false
     chatUnread.value = 0
     if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
+  } else if (chatAwayTimer === undefined && !chatAwayFromBottom.value) {
+    chatAwayTimer = window.setTimeout(() => {
+      chatAwayTimer = undefined
+      if (!isNearChatBottom()) chatAwayFromBottom.value = true
+    }, 1000)
   }
+}
+
+function markChatPageInactive() {
+  chatPageInactive = true
+}
+
+function restoreChatToLatestOnReturn() {
+  if (!chatPageInactive || document.visibilityState === 'hidden') return
+  chatPageInactive = false
+  scrollToBottom()
+  if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
+}
+
+function handleChatVisibilityChange() {
+  if (document.visibilityState === 'hidden') markChatPageInactive()
+  else restoreChatToLatestOnReturn()
 }
 
 async function saveChatReadCursor(sequence: number) {
@@ -1071,14 +1103,8 @@ function toggleKeyboard() {
   scrollToBottom()
 }
 
-function openScratch() {
-  scratchOpen.value = true
-  scratchRevealed.value = false
-}
-
 function closeOverlays() {
   menuOpen.value = false
-  scratchOpen.value = false
   noticeOpen.value = false
   settingsOpen.value = false
 }
@@ -1108,9 +1134,9 @@ async function switchGame() {
 onMounted(() => {
   const savedFontSize = window.localStorage.getItem('chat_font_size')
   if (savedFontSize && ['font_mini', 'font_small', 'font_medium', 'font_big'].includes(savedFontSize)) {
-    accountFontSize.value = savedFontSize.slice(5) as typeof accountFontSize.value
+    chatFontSize.value = savedFontSize.slice(5) as typeof chatFontSize.value
   }
-  accountFontBold.value = window.localStorage.getItem('chat_font_bold') === '1'
+  chatFontBold.value = window.localStorage.getItem('chat_font_bold') === '1'
   if (!document.querySelector('link[data-hby019-keyboard-bulma]')) {
     keyboardBulmaLink = document.createElement('link')
     keyboardBulmaLink.rel = 'stylesheet'
@@ -1120,6 +1146,9 @@ onMounted(() => {
   }
   document.documentElement.classList.add('reference-room-html')
   document.body.classList.add('reference-room-body')
+  window.addEventListener('blur', markChatPageInactive)
+  window.addEventListener('focus', restoreChatToLatestOnReturn)
+  document.addEventListener('visibilitychange', handleChatVisibilityChange)
   updateComposerHeight()
   if (typeof ResizeObserver !== 'undefined' && composerElement.value) {
     composerResizeObserver = new ResizeObserver(() => {
@@ -1142,6 +1171,9 @@ onUnmounted(() => {
   keyboardBulmaLink = null
   document.documentElement.classList.remove('reference-room-html')
   document.body.classList.remove('reference-room-body')
+  window.removeEventListener('blur', markChatPageInactive)
+  window.removeEventListener('focus', restoreChatToLatestOnReturn)
+  document.removeEventListener('visibilitychange', handleChatVisibilityChange)
   composerResizeObserver?.disconnect()
   window.removeEventListener('resize', updateComposerHeight)
   if (gameRefreshTimer) window.clearInterval(gameRefreshTimer)
@@ -1149,12 +1181,21 @@ onUnmounted(() => {
   stopAdminNoticePolling()
   chatSocket.disconnect()
   if (countdownTimer) window.clearInterval(countdownTimer)
+  if (chatAwayTimer !== undefined) window.clearTimeout(chatAwayTimer)
 })
 </script>
 
 <template>
   <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" />
-  <div v-else class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2', 'account-open': menuOpen }">
+  <div v-else class="reference-room" :class="{
+    'interface-two': interfaceMode === 'ui2',
+    'account-open': menuOpen,
+    'chat-font-mini': chatFontSize === 'mini',
+    'chat-font-small': chatFontSize === 'small',
+    'chat-font-medium': chatFontSize === 'medium',
+    'chat-font-big': chatFontSize === 'big',
+    'chat-font-bold': chatFontBold,
+  }">
     <header v-show="platformSettings?.headerEnabled !== false" class="reference-header">
       <div class="reference-toolbar">
         <select v-if="gameCatalog.length > 1" v-model="selectedGameCode" class="game-select" aria-label="选择彩种" @change="switchGame">
@@ -1174,13 +1215,11 @@ onUnmounted(() => {
           <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')"><span class="interface-check">{{ interfaceMode === 'ui2' ? '✓' : '' }}</span>界面2</button>
         </div>
       </div>
-      <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar">
+      <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar" :aria-label="ballNumbersLabel">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
-        <div class="reference-ball-row" :aria-label="ballNumbersLabel">
-          <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === selectedBallNumber }">
-            {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
-          </span>
-        </div>
+        <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === selectedBallNumber }" :aria-label="`${ball.ballNumber}球 ${ball.number ?? '未开奖'}`">
+          {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
+        </span>
         <span class="reference-countdown" :class="{ 'is-drawing': current?.phase === 'DRAWING' }">{{ phaseLabel }}</span>
         <button class="collapse-button" :class="{ expanded: historyOpen }" type="button" :aria-expanded="historyOpen" aria-label="展开历史开奖记录" title="展开历史开奖记录" @click="toggleHistory"><span class="collapse-chevron" aria-hidden="true"></span></button>
       </div>
@@ -1208,8 +1247,8 @@ onUnmounted(() => {
       :today-turnover="Number(betSummary?.todayTurnover ?? 0)"
       :today-net-profit="Number(betSummary?.todayNetProfit ?? 0)"
       :tab="accountPanelTab"
-      :font-size="accountFontSize"
-      :font-bold="accountFontBold"
+      :font-size="chatFontSize"
+      :font-bold="chatFontBold"
       :loading="accountPanelLoading"
       :error="accountPanelError"
       :rows="accountPanelRows"
@@ -1219,8 +1258,8 @@ onUnmounted(() => {
       :bet-result="accountBetResult"
       @close="closeAccountPanel"
       @update:tab="accountPanelTab = $event"
-      @update:font-size="setAccountFontSize"
-      @toggle:bold="toggleAccountFontBold"
+      @update:font-size="setChatFontSize"
+      @toggle:bold="toggleChatFontBold"
       @toggle:row="toggleAccountRow"
     />
 
@@ -1228,9 +1267,9 @@ onUnmounted(() => {
     <div v-if="historyOpen" class="reference-history-panel" role="dialog" aria-label="历史记录">
       <div class="history-panel-table">
         <div v-for="row in historyRows" :key="`panel-${row.issue}`" class="history-panel-row">
-          <strong>{{ row.issue }}期</strong>
+          <strong class="history-issue-number">{{ row.issue }}期</strong>
           <span v-for="(number, index) in row.numbers" :key="`${row.issue}-${index}`" class="history-ball" :class="{ 'is-red': index === 7 }">{{ number }}</span>
-          <b>{{ row.fan }}番</b><b>{{ row.size }}</b><b>{{ row.parity }}</b>
+          <b class="history-result-fan">{{ row.fan }}番</b><b class="history-result-emphasis">{{ row.size }}</b><b class="history-result-emphasis">{{ row.parity }}</b>
         </div>
       </div>
     </div>
@@ -1292,14 +1331,12 @@ onUnmounted(() => {
     </main>
 
     <button
-      v-if="chatUnread > 0"
+      v-if="chatAwayFromBottom"
       class="chat-unread"
       type="button"
-      :style="{ bottom: `${composerHeight + 12}px` }"
+      :style="{ bottom: `${composerHeight + 6}px` }"
       @click="scrollToBottom"
-    >{{ unreadMessageLabel(chatUnread) }}</button>
-
-    <button class="scratch-entry" type="button" @click="openScratch">搓牌开奖</button>
+    ><b>{{ Math.max(0, chatUnread) }}条新消息</b></button>
 
     <footer ref="composerElement" class="reference-composer" :class="interfaceMode === 'ui1' ? ['divBottom', 'msgdown', 'selekb'] : []">
       <div v-if="interfaceMode === 'ui1'" style="background:#dadadc;width:100%;height:1px;position:absolute;top:0px;"></div>
@@ -1377,22 +1414,6 @@ onUnmounted(() => {
         </div>
       </div>
     </footer>
-
-    <div v-if="scratchOpen" class="reference-overlay" @click.self="closeOverlays">
-      <section class="scratch-panel" role="dialog" aria-modal="true" aria-label="搓牌开奖">
-        <button class="overlay-close" type="button" aria-label="关闭" @click="closeOverlays">×</button>
-        <div class="scratch-time">{{ countdown }}</div>
-        <h2>已开奖,请开牌,祝您好运</h2>
-        <p>期号：{{ displayIssueNumber }}</p>
-        <div class="scratch-balls"><span v-for="ball in ballNumbers" :key="ball.ballNumber">{{ ball.ballNumber }}</span></div>
-        <div class="scratch-cards">
-          <button v-for="card in 2" :key="card" class="scratch-card" type="button" :class="{ revealed: scratchRevealed }" @click="scratchRevealed = true">
-            <span>{{ scratchRevealed ? (ballNumbers[card - 1]?.number ?? '--') : '刮开' }}</span>
-          </button>
-        </div>
-        <button class="scratch-open-button" type="button" @click="scratchRevealed = true">开牌</button>
-      </section>
-    </div>
 
     <div v-if="noticeOpen" class="reference-overlay light-overlay" @click.self="closeOverlays">
       <section class="notice-panel" role="dialog" aria-modal="true" aria-label="玩法说明">
