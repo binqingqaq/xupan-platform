@@ -2,6 +2,7 @@ package com.xupan.server.system.repository;
 
 import com.xupan.server.system.service.PlayerDeskScopeService.Scope;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
@@ -9,6 +10,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 @Repository
 public class PlayerPointsReportRepository {
@@ -24,7 +26,8 @@ public class PlayerPointsReportRepository {
         List<Object> args = new ArrayList<>(List.of(timestamp(fromInclusive), timestamp(toExclusive), playerKind));
         args.addAll(scope.agentIdParameters());
         return jdbc.query("""
-                SELECT u.id AS user_id, a.id AS account_id, a.member_code, a.user_code,
+                SELECT u.id AS user_id, a.id AS account_id, a.agent_id, a.member_code, a.user_code,
+                       COALESCE(g.rebate_mode, 'SINGLE') AS rebate_mode,
                        u.display_name, a.player_kind,
                        COALESCE((
                            SELECT l.balance_after
@@ -42,16 +45,23 @@ public class PlayerPointsReportRepository {
                        ), 0.00) AS closing_balance
                   FROM sys_user u
                   JOIN demo_user_account a ON a.sys_user_id = u.id
+                  LEFT JOIN agent g ON g.id = a.agent_id
                  WHERE a.identity_type IN ('REAL', 'TEST')
                    AND a.player_kind = ?
                    AND u.status <> 'DELETED'
                    AND a.status <> 'DELETED'
                 """ + scope.agentIdCondition() + " ORDER BY a.id",
                 (rs, rowNum) -> new PlayerAccount(
-                rs.getLong("user_id"), rs.getLong("account_id"), rs.getString("member_code"),
+                rs.getLong("user_id"), rs.getLong("account_id"), rs.getLong("agent_id"),
+                rs.getString("rebate_mode"), rs.getString("member_code"),
                 rs.getString("user_code"), rs.getString("display_name"), rs.getString("player_kind"),
                 money(rs.getBigDecimal("opening_balance")), money(rs.getBigDecimal("closing_balance"))),
                 args.toArray());
+    }
+
+    public String findAgentRebateMode(long agentId) {
+        return jdbc.queryForObject("SELECT COALESCE(rebate_mode, 'SINGLE') FROM agent WHERE id = ?",
+                String.class, agentId);
     }
 
     public List<BetEvent> findBetEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
@@ -64,11 +74,13 @@ public class PlayerPointsReportRepository {
         args.add(perPlayerLimit);
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.bet_code, x.issue_number, x.ball_number, x.play_type,
-                       x.parameters_text, x.stake, x.odds_snapshot, x.settlement_status,
+                       x.parameters_text, x.stake, x.odds_snapshot, x.rebate_rate_snapshot,
+                       x.special_rebate_rate_snapshot, x.settlement_status,
                        x.net_profit, x.explanation, x.created_at, x.settled_at
                   FROM (
                         SELECT b.id, b.user_id AS account_id, b.bet_code, b.issue_number, b.ball_number,
                                b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
+                               b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
                                b.settlement_status, b.net_profit, b.explanation,
                                b.created_at, b.settled_at,
                                ROW_NUMBER() OVER (
@@ -91,10 +103,33 @@ public class PlayerPointsReportRepository {
                 rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
                 rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
                 rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
-                money(rs.getBigDecimal("odds_snapshot")), rs.getString("settlement_status"),
+                money(rs.getBigDecimal("odds_snapshot")), money(rs.getBigDecimal("rebate_rate_snapshot")),
+                money(rs.getBigDecimal("special_rebate_rate_snapshot")), rs.getString("settlement_status"),
                 money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at"))),
                 args.toArray());
+    }
+
+    public void forEachBetEvent(String playerKind, Instant fromInclusive, Instant toExclusive,
+                                Scope scope, Consumer<BetEvent> consumer) {
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive)));
+        args.addAll(scope.agentIdParameters());
+        jdbc.query("""
+                SELECT b.id, b.user_id AS account_id, b.bet_code, b.issue_number, b.ball_number,
+                       b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
+                       b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
+                       b.settlement_status, b.net_profit, b.explanation, b.created_at, b.settled_at
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id = b.user_id
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.identity_type IN ('REAL', 'TEST')
+                   AND a.player_kind = ?
+                   AND u.status <> 'DELETED'
+                   AND a.status <> 'DELETED'
+                   AND b.settlement_status <> 'CANCELED'
+                   AND b.created_at >= ? AND b.created_at < ?
+                """ + scope.agentIdCondition() + " ORDER BY b.user_id, b.created_at, b.id",
+                (RowCallbackHandler) rs -> consumer.accept(mapBetEvent(rs)), args.toArray());
     }
 
     public List<LedgerEvent> findLedgerEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
@@ -134,6 +169,30 @@ public class PlayerPointsReportRepository {
                 rs.getString("operator_name"), rs.getString("idempotency_key"),
                 rs.getObject("related_bet_id", Long.class), rs.getString("issue_number"),
                 rs.getString("reason"), instant(rs.getTimestamp("created_at"))),
+                args.toArray());
+    }
+
+    public List<LedgerTotals> findLedgerTotals(String playerKind, Instant fromInclusive, Instant toExclusive,
+                                                Scope scope) {
+        List<Object> args = new ArrayList<>(List.of(playerKind, timestamp(fromInclusive), timestamp(toExclusive)));
+        args.addAll(scope.agentIdParameters());
+        return jdbc.query("""
+                SELECT l.user_id AS account_id,
+                       SUM(CASE WHEN l.operation_type IN ('ADMIN_GRANT','ADMIN_ADJUST') AND l.amount > 0
+                                THEN l.amount ELSE 0 END) AS top_up,
+                       SUM(CASE WHEN l.operation_type IN ('ADMIN_GRANT','ADMIN_ADJUST') AND l.amount < 0
+                                THEN -l.amount ELSE 0 END) AS down_amount
+                  FROM demo_balance_ledger l
+                  JOIN demo_user_account a ON a.id = l.user_id
+                  JOIN sys_user u ON u.id = a.sys_user_id
+                 WHERE a.identity_type IN ('REAL', 'TEST')
+                   AND a.player_kind = ?
+                   AND u.status <> 'DELETED'
+                   AND a.status <> 'DELETED'
+                   AND l.created_at >= ? AND l.created_at < ?
+                """ + scope.agentIdCondition() + " GROUP BY l.user_id",
+                (rs, rowNum) -> new LedgerTotals(rs.getLong("account_id"),
+                        money(rs.getBigDecimal("top_up")), money(rs.getBigDecimal("down_amount"))),
                 args.toArray());
     }
 
@@ -188,12 +247,24 @@ public class PlayerPointsReportRepository {
         return value == null ? BigDecimal.ZERO.setScale(2) : value.setScale(2);
     }
 
-    public record PlayerAccount(long userId, long accountId, String memberCode, String userCode,
+    private static BetEvent mapBetEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new BetEvent(rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
+                rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
+                rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
+                money(rs.getBigDecimal("odds_snapshot")), money(rs.getBigDecimal("rebate_rate_snapshot")),
+                money(rs.getBigDecimal("special_rebate_rate_snapshot")), rs.getString("settlement_status"),
+                money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
+                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at")));
+    }
+
+    public record PlayerAccount(long userId, long accountId, long agentId, String rebateMode,
+                                String memberCode, String userCode,
                                 String displayName, String playerKind, BigDecimal openingBalance,
                                 BigDecimal closingBalance) {}
 
     public record BetEvent(long id, long accountId, String betCode, String issueNumber, int ballNumber,
                            String playType, String parametersText, BigDecimal stake, BigDecimal odds,
+                           BigDecimal rebateRate, BigDecimal specialRebateRate,
                            String settlementStatus, BigDecimal netProfit, String explanation,
                            Instant createdAt, Instant settledAt) {}
 
@@ -201,6 +272,8 @@ public class PlayerPointsReportRepository {
                               BigDecimal balanceBefore, BigDecimal balanceAfter, Long operatorUserId,
                               String operatorName, String idempotencyKey, Long relatedBetId,
                               String issueNumber, String reason, Instant createdAt) {}
+
+    public record LedgerTotals(long accountId, BigDecimal topUp, BigDecimal down) {}
 
     public record ActionEvent(long id, long accountId, String issueNumber, int actionNo,
                               String actionType, String sourceText, String status, int attempts,

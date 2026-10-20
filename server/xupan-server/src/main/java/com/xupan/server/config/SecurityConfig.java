@@ -10,6 +10,7 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.header.HeaderWriter;
 import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.security.authorization.AuthorizationManager;
 import org.springframework.security.web.access.intercept.RequestAuthorizationContext;
@@ -33,6 +34,9 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain demoSecurity(HttpSecurity http) throws Exception {
         http.csrf(csrf -> csrf.disable())
+                .headers(headers -> headers
+                        .frameOptions(frameOptions -> frameOptions.disable())
+                        .addHeaderWriter(frameOptionsWriter()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(errors -> errors
                         .authenticationEntryPoint(exceptionHandler)
@@ -139,6 +143,13 @@ public class SecurityConfig {
                         .anyRequest().access(nonChatOnly()))
                 .addFilterBefore(bearerTokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
+    }
+
+    static HeaderWriter frameOptionsWriter() {
+        return (request, response) -> response.setHeader("X-Frame-Options",
+                "/hby019-demo/source/account-panel.html".equals(request.getServletPath())
+                        ? "SAMEORIGIN"
+                        : "DENY");
     }
 
     private static AuthorizationManager<RequestAuthorizationContext> nonChatOnly() {

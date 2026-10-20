@@ -1,6 +1,8 @@
 package com.xupan.server.system.service;
 
 import com.xupan.server.system.repository.PlayerPointsReportRepository;
+import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.service.BetFlowMetricsCalculator;
 import com.xupan.server.web.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,11 +52,22 @@ public class PlayerPointsReportService {
             cards.put(player.accountId(), new CardBuilder(player));
         }
 
+        repository.forEachBetEvent(playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), scope, bet -> {
+            CardBuilder card = cards.get(bet.accountId());
+            if (card != null) card.addBetAggregate(bet);
+        });
+
         List<PlayerPointsReportRepository.BetEvent> bets = repository.findBetEvents(
                 playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), safeDetailLimit, scope);
         for (PlayerPointsReportRepository.BetEvent bet : bets) {
             CardBuilder card = cards.get(bet.accountId());
-            if (card != null) card.addBet(bet);
+            if (card != null) card.addBetDetail(bet);
+        }
+
+        for (PlayerPointsReportRepository.LedgerTotals totals : repository.findLedgerTotals(
+                playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), scope)) {
+            CardBuilder card = cards.get(totals.accountId());
+            if (card != null) card.addLedgerTotals(totals);
         }
 
         List<PlayerPointsReportRepository.LedgerEvent> ledgers = repository.findLedgerEvents(
@@ -72,8 +85,12 @@ public class PlayerPointsReportService {
         }
 
         List<Card> resultCards = cards.values().stream().map(CardBuilder::build).toList();
+        String rebateMode = scope instanceof PlayerDeskScopeService.Scope.Machine machine
+                ? normalizeRebateMode(repository.findAgentRebateMode(machine.agentId()))
+                : reportRebateMode(resultCards);
         return new Report(businessDay.businessDate(), businessDay.fromInclusive(), businessDay.toExclusive(),
-                availableDates(businessDay.businessDate()), playerKind, summary(resultCards), resultCards, safeDetailLimit);
+                availableDates(businessDay.businessDate()), playerKind, rebateMode,
+                summary(resultCards), resultCards, safeDetailLimit);
     }
 
     private static List<LocalDate> availableDates(LocalDate selectedDate) {
@@ -132,6 +149,16 @@ public class PlayerPointsReportService {
         return result.build(cards.size());
     }
 
+    private static String reportRebateMode(List<Card> cards) {
+        List<String> modes = cards.stream().map(Card::rebateMode).distinct().toList();
+        if (modes.isEmpty()) return "SINGLE";
+        return modes.size() == 1 ? modes.getFirst() : "MIXED";
+    }
+
+    private static String normalizeRebateMode(String value) {
+        return "DOUBLE".equalsIgnoreCase(value) ? "DOUBLE" : "SINGLE";
+    }
+
     private static BigDecimal money(BigDecimal value) {
         return (value == null ? BigDecimal.ZERO : value).setScale(2);
     }
@@ -145,6 +172,12 @@ public class PlayerPointsReportService {
         private BigDecimal down = BigDecimal.ZERO;
         private BigDecimal openingBalance = BigDecimal.ZERO;
         private BigDecimal closingBalance = BigDecimal.ZERO;
+        private BigDecimal singleFlow = BigDecimal.ZERO;
+        private BigDecimal doubleFlow = BigDecimal.ZERO;
+        private BigDecimal singleRebate = BigDecimal.ZERO;
+        private BigDecimal doubleRebate = BigDecimal.ZERO;
+        private BigDecimal effectiveFlow = BigDecimal.ZERO;
+        private BigDecimal effectiveRebate = BigDecimal.ZERO;
 
         void add(Card card) {
             betCount += card.betCount();
@@ -155,11 +188,18 @@ public class PlayerPointsReportService {
             down = down.add(card.down());
             openingBalance = openingBalance.add(card.openingBalance());
             closingBalance = closingBalance.add(card.closingBalance());
+            singleFlow = singleFlow.add(card.singleFlow());
+            doubleFlow = doubleFlow.add(card.doubleFlow());
+            singleRebate = singleRebate.add(card.singleRebate());
+            doubleRebate = doubleRebate.add(card.doubleRebate());
+            effectiveFlow = effectiveFlow.add(card.effectiveFlow());
+            effectiveRebate = effectiveRebate.add(card.effectiveRebate());
         }
 
         Summary build(int playerCount) {
             return new Summary(playerCount, betCount, settledBetCount, money(turnover), money(netProfit),
-                    money(topUp), money(down), money(openingBalance), money(closingBalance));
+                    money(topUp), money(down), money(openingBalance), money(closingBalance), money(singleFlow),
+                    money(doubleFlow), money(singleRebate), money(doubleRebate), money(effectiveFlow), money(effectiveRebate));
         }
     }
 
@@ -171,29 +211,48 @@ public class PlayerPointsReportService {
         private BigDecimal netProfit = BigDecimal.ZERO;
         private BigDecimal topUp = BigDecimal.ZERO;
         private BigDecimal down = BigDecimal.ZERO;
+        private final String rebateMode;
+        private BigDecimal singleFlow = BigDecimal.ZERO;
+        private BigDecimal doubleFlow = BigDecimal.ZERO;
+        private BigDecimal singleRebate = BigDecimal.ZERO;
+        private BigDecimal doubleRebate = BigDecimal.ZERO;
         private final List<BetDetail> bets = new ArrayList<>();
         private final List<PointsOperation> pointOperations = new ArrayList<>();
         private final List<BotAction> botActions = new ArrayList<>();
 
-        CardBuilder(PlayerPointsReportRepository.PlayerAccount player) { this.player = player; }
+        CardBuilder(PlayerPointsReportRepository.PlayerAccount player) {
+            this.player = player;
+            this.rebateMode = "DOUBLE".equalsIgnoreCase(player.rebateMode()) ? "DOUBLE" : "SINGLE";
+        }
 
-        void addBet(PlayerPointsReportRepository.BetEvent value) {
+        void addBetAggregate(PlayerPointsReportRepository.BetEvent value) {
             betCount++;
             turnover = turnover.add(value.stake());
             if (!"PENDING".equals(value.settlementStatus())) {
                 settledBetCount++;
                 netProfit = netProfit.add(value.netProfit());
             }
+            BetFlowMetricsCalculator.Metrics metrics = BetFlowMetricsCalculator.calculate(
+                    PlayType.valueOf(value.playType()), value.parametersText(), value.stake(), value.odds(),
+                    value.netProfit(), value.settlementStatus(), value.rebateRate(), value.specialRebateRate());
+            singleFlow = singleFlow.add(metrics.singleFlow());
+            doubleFlow = doubleFlow.add(metrics.doubleFlow());
+            singleRebate = singleRebate.add(metrics.fanShui());
+            doubleRebate = doubleRebate.add(metrics.doubleFanShui());
+        }
+
+        void addBetDetail(PlayerPointsReportRepository.BetEvent value) {
             bets.add(new BetDetail(value.id(), value.betCode(), value.issueNumber(), value.ballNumber(),
                     value.playType(), value.parametersText(), value.stake(), value.odds(), value.settlementStatus(),
                     value.netProfit(), value.explanation(), value.createdAt(), value.settledAt()));
         }
 
+        void addLedgerTotals(PlayerPointsReportRepository.LedgerTotals value) {
+            topUp = topUp.add(value.topUp());
+            down = down.add(value.down());
+        }
+
         void addLedger(PlayerPointsReportRepository.LedgerEvent value) {
-            if (("ADMIN_GRANT".equals(value.operationType()) || "ADMIN_ADJUST".equals(value.operationType()))) {
-                if (value.amount().signum() > 0) topUp = topUp.add(value.amount());
-                else down = down.add(value.amount().abs());
-            }
             pointOperations.add(new PointsOperation(value.id(), value.operationType(), value.amount(),
                     value.balanceBefore(), value.balanceAfter(), value.operatorUserId(), value.operatorName(),
                     value.idempotencyKey(), value.relatedBetId(), value.issueNumber(), value.reason(), value.createdAt()));
@@ -206,26 +265,34 @@ public class PlayerPointsReportService {
         }
 
         Card build() {
+            boolean doubleMode = "DOUBLE".equals(rebateMode);
             return new Card(player.userId(), player.accountId(), player.memberCode(), player.userCode(),
                     player.displayName(), player.playerKind(), money(player.openingBalance()), money(player.closingBalance()),
                     betCount, settledBetCount, money(turnover), money(netProfit), money(topUp), money(down),
-                    bets, pointOperations, botActions);
+                    money(singleFlow), money(doubleFlow), money(singleRebate), money(doubleRebate),
+                    money(doubleMode ? doubleFlow : singleFlow), money(doubleMode ? doubleRebate : singleRebate),
+                    rebateMode, bets, pointOperations, botActions);
         }
     }
 
     public record BusinessDay(LocalDate businessDate, Instant fromInclusive, Instant toExclusive) {}
 
     public record Report(LocalDate businessDate, Instant fromInclusive, Instant toExclusive, List<LocalDate> availableDates, String playerKind,
+                         String rebateMode,
                          Summary summary, List<Card> players, int detailLimit) {}
 
     public record Summary(int playerCount, long betCount, long settledBetCount, BigDecimal turnover,
                           BigDecimal netProfit, BigDecimal topUp, BigDecimal down,
-                          BigDecimal openingBalance, BigDecimal closingBalance) {}
+                          BigDecimal openingBalance, BigDecimal closingBalance, BigDecimal singleFlow,
+                          BigDecimal doubleFlow, BigDecimal singleRebate, BigDecimal doubleRebate,
+                          BigDecimal effectiveFlow, BigDecimal effectiveRebate) {}
 
     public record Card(long userId, long accountId, String memberCode, String userCode, String displayName,
                        String playerKind, BigDecimal openingBalance, BigDecimal closingBalance,
                        long betCount, long settledBetCount, BigDecimal turnover, BigDecimal netProfit,
-                       BigDecimal topUp, BigDecimal down, List<BetDetail> bets,
+                       BigDecimal topUp, BigDecimal down, BigDecimal singleFlow, BigDecimal doubleFlow,
+                       BigDecimal singleRebate, BigDecimal doubleRebate, BigDecimal effectiveFlow,
+                       BigDecimal effectiveRebate, String rebateMode, List<BetDetail> bets,
                        List<PointsOperation> pointOperations, List<BotAction> botActions) {}
 
     public record BetDetail(long id, String betCode, String issueNumber, int ballNumber, String playType,

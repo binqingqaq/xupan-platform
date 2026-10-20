@@ -306,17 +306,19 @@ export interface PlayerDeskDeleteResult {
 }
 
 export interface PlayerDeskPointRecordBet {
-  id: string
+  id: number
+  betCode: string
   issueNumber: string
   ballNumber: number
   playType: string
-  parameters: number[]
+  parametersText: string
   stake: number
+  odds: number
   settlementStatus: string
   netProfit: number | null
-  explanation?: string | null
+  explanation: string | null
   createdAt: string
-  settledAt?: string | null
+  settledAt: string | null
 }
 
 export interface PlayerDeskPointOperation {
@@ -325,16 +327,36 @@ export interface PlayerDeskPointOperation {
   amount: number
   balanceBefore: number
   balanceAfter: number
+  operatorUserId: number | null
   operatorName: string | null
+  idempotencyKey: string | null
   relatedBetId: number | null
   issueNumber: string | null
   reason: string | null
   createdAt: string
 }
 
+export interface PlayerDeskPointBotAction {
+  id: number
+  issueNumber: string | null
+  actionNo: number
+  actionType: string
+  sourceText: string
+  status: string
+  attempts: number
+  errorCode: string | null
+  errorMessage: string | null
+  messageId: number | null
+  betId: number | null
+  createdAt: string
+  updatedAt: string
+}
+
 export interface PlayerDeskPointRecordPlayer {
   userId: number
+  accountId: number
   memberCode: string
+  userCode: string
   displayName: string
   playerKind: PlayerKind
   openingBalance: number
@@ -345,8 +367,16 @@ export interface PlayerDeskPointRecordPlayer {
   topUp: number
   down: number
   closingBalance: number
+  singleFlow: number
+  doubleFlow: number
+  singleRebate: number
+  doubleRebate: number
+  effectiveFlow: number
+  effectiveRebate: number
+  rebateMode: 'SINGLE' | 'DOUBLE'
   bets: PlayerDeskPointRecordBet[]
   pointOperations: PlayerDeskPointOperation[]
+  botActions: PlayerDeskPointBotAction[]
 }
 
 export interface PlayerDeskPointRecordSummary {
@@ -359,14 +389,24 @@ export interface PlayerDeskPointRecordSummary {
   down: number
   openingBalance: number
   closingBalance: number
+  singleFlow: number
+  doubleFlow: number
+  singleRebate: number
+  doubleRebate: number
+  effectiveFlow: number
+  effectiveRebate: number
 }
 
 export interface PlayerDeskPointRecords {
-  kind: PlayerKind
+  playerKind: PlayerKind
   businessDate: string
+  fromInclusive: string
+  toExclusive: string
   availableDates: string[]
+  rebateMode: 'SINGLE' | 'DOUBLE' | 'MIXED'
   summary: PlayerDeskPointRecordSummary
   players: PlayerDeskPointRecordPlayer[]
+  detailLimit: number
 }
 
 export type PointRequestType = 'TOP_UP' | 'DOWN'

@@ -337,29 +337,36 @@ import java.util.List;
         }
     }
     public record PointsReport(String businessDate, Instant fromInclusive, Instant toExclusive, List<String> availableDates, String playerKind,
+                               String rebateMode,
                                PointsSummary summary, List<PointsCard> players, int detailLimit) {
         static PointsReport from(PlayerPointsReportService.Report x) {
             return new PointsReport(x.businessDate().toString(), x.fromInclusive(), x.toExclusive(), x.availableDates().stream().map(Object::toString).toList(), x.playerKind(),
-                    PointsSummary.from(x.summary()), x.players().stream().map(PointsCard::from).toList(), x.detailLimit());
+                    x.rebateMode(), PointsSummary.from(x.summary()), x.players().stream().map(PointsCard::from).toList(), x.detailLimit());
         }
     }
     public record PointsSummary(int playerCount, long betCount, long settledBetCount, BigDecimal turnover,
                                 BigDecimal netProfit, BigDecimal topUp, BigDecimal down,
-                                BigDecimal openingBalance, BigDecimal closingBalance) {
+                                BigDecimal openingBalance, BigDecimal closingBalance, BigDecimal singleFlow,
+                                BigDecimal doubleFlow, BigDecimal singleRebate, BigDecimal doubleRebate,
+                                BigDecimal effectiveFlow, BigDecimal effectiveRebate) {
         static PointsSummary from(PlayerPointsReportService.Summary x) {
             return new PointsSummary(x.playerCount(), x.betCount(), x.settledBetCount(), x.turnover(), x.netProfit(),
-                    x.topUp(), x.down(), x.openingBalance(), x.closingBalance());
+                    x.topUp(), x.down(), x.openingBalance(), x.closingBalance(), x.singleFlow(), x.doubleFlow(),
+                    x.singleRebate(), x.doubleRebate(), x.effectiveFlow(), x.effectiveRebate());
         }
     }
     public record PointsCard(long userId, long accountId, String memberCode, String userCode, String displayName,
                              String playerKind, BigDecimal openingBalance, BigDecimal closingBalance,
                              long betCount, long settledBetCount, BigDecimal turnover, BigDecimal netProfit,
-                             BigDecimal topUp, BigDecimal down, List<BetDetail> bets,
+                             BigDecimal topUp, BigDecimal down, BigDecimal singleFlow, BigDecimal doubleFlow,
+                             BigDecimal singleRebate, BigDecimal doubleRebate, BigDecimal effectiveFlow,
+                             BigDecimal effectiveRebate, String rebateMode, List<BetDetail> bets,
                              List<PointsOperation> pointOperations, List<BotAction> botActions) {
         static PointsCard from(PlayerPointsReportService.Card x) {
             return new PointsCard(x.userId(), x.accountId(), x.memberCode(), x.userCode(), x.displayName(), x.playerKind(),
                     x.openingBalance(), x.closingBalance(), x.betCount(), x.settledBetCount(), x.turnover(), x.netProfit(),
-                    x.topUp(), x.down(), x.bets().stream().map(BetDetail::from).toList(),
+                    x.topUp(), x.down(), x.singleFlow(), x.doubleFlow(), x.singleRebate(), x.doubleRebate(),
+                    x.effectiveFlow(), x.effectiveRebate(), x.rebateMode(), x.bets().stream().map(BetDetail::from).toList(),
                     x.pointOperations().stream().map(PointsOperation::from).toList(),
                     x.botActions().stream().map(BotAction::from).toList());
         }

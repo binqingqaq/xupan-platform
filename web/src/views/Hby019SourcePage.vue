@@ -145,9 +145,175 @@ async function loadHbyOpenResults() {
   }
 }
 
+function legacyDateTime(value: string | null | undefined) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date)
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value ?? ''
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')}`
+}
+
+function pointRecordLegacyCard(player: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]) {
+  const amount = (value: number) => Number(value ?? 0)
+  return {
+    id: String(player.memberCode || player.accountId).replace(/^v+/i, ''),
+    wxid: player.memberCode || player.userCode,
+    NickName: player.displayName,
+    nickChanged: 0,
+    nickNewName: '',
+    totalFanShui: amount(player.effectiveRebate),
+    totalLiuShui: amount(player.turnover),
+    totalValidLiuShuis: amount(player.effectiveFlow),
+    totalYingKui: amount(player.netProfit),
+    totalUp: amount(player.topUp),
+    totalDown: amount(player.down),
+    totalUpDown: amount(player.topUp) - amount(player.down),
+    ZuoYu: amount(player.openingBalance),
+    JieYu: amount(player.closingBalance),
+  }
+}
+
+function legacyPointOperation(operation: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]['pointOperations'][number],
+                              player: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]) {
+  if (operation.operationType !== 'ADMIN_GRANT' && operation.operationType !== 'ADMIN_ADJUST') return null
+  const up = operation.amount > 0
+  const score = Math.abs(operation.amount)
+  return {
+    dttype: up ? 0 : 1,
+    score,
+    count: operation.amount,
+    afterScore: operation.balanceAfter,
+    qihao: operation.issueNumber ?? '',
+    cmdText: operation.reason ?? (up ? '机器人上分' : '机器人下分'),
+    dtJieSuan: legacyDateTime(operation.createdAt),
+    dtCmd: legacyDateTime(operation.createdAt),
+    wxid: player.memberCode || player.userCode,
+    NickName: player.displayName,
+  }
+}
+
+function legacyBetDetail(bet: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]['bets'][number],
+                         player: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]) {
+  const relatedLedger = player.pointOperations
+    .filter(operation => operation.relatedBetId === bet.id)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+  const unresolved = bet.netProfit === null
+  const detailText = [bet.explanation || `${bet.playType} ${bet.parametersText} ${bet.stake}`.trim(),
+    unresolved ? '待结算' : ''].filter(Boolean).join(' ')
+  return {
+    dttype: 5,
+    count: bet.netProfit ?? 0,
+    settlementStatus: bet.settlementStatus,
+    afterScore: relatedLedger?.balanceAfter ?? '',
+    qihao: bet.issueNumber,
+    cmdText: detailText,
+    dtJieSuan: legacyDateTime(bet.settledAt),
+    dtCmd: legacyDateTime(bet.createdAt),
+    code: '',
+    lastResult: '',
+    fan: '',
+    dtfanshui: '',
+    ying: bet.netProfit === null ? '' : bet.netProfit > 0 ? 1 : 0,
+    flyersStatus: '',
+    flyersColor: '',
+        wxid: player.memberCode || player.userCode,
+    NickName: player.displayName,
+  }
+}
+
+function legacyHistoryDetail(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>, wxid: unknown) {
+  const player = report.players.find(item => String(item.userId) === String(wxid)
+    || item.memberCode === String(wxid) || item.userCode === String(wxid))
+  if (!player) return []
+  return [
+    ...player.pointOperations.map(operation => legacyPointOperation(operation, player)).filter(item => item !== null),
+    ...player.bets.map(bet => legacyBetDetail(bet, player)),
+  ].sort((left, right) => {
+    const leftTime = left.dtJieSuan || left.dtCmd
+    const rightTime = right.dtJieSuan || right.dtCmd
+    return leftTime.localeCompare(rightTime)
+  })
+}
+
+function legacyPointReport(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>) {
+  const summary = report.summary
+  const detail = report.players.map(pointRecordLegacyCard)
+  return {
+    bOK: 0,
+    businessDate: report.businessDate,
+    availableDates: report.availableDates,
+    totalFanShui: summary.effectiveRebate,
+    totalYingKui: summary.netProfit,
+    totalLiuShui: summary.turnover,
+    totalYouXiaoLiuShui: summary.effectiveFlow,
+    totalYouXiaoLiuShuis: summary.effectiveFlow,
+    totalUp: summary.topUp,
+    totalDown: summary.down,
+    totalUpDown: summary.topUp - summary.down,
+    totalZuoYu: summary.openingBalance,
+    totalJieYu: summary.closingBalance,
+    detail,
+    data: detail,
+  }
+}
+
+function legacyWay2(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>) {
+  return report.players.flatMap(player => player.pointOperations
+    .map(operation => {
+      const row = legacyPointOperation(operation, player)
+      if (!row) return null
+      return {
+        type: row.dttype,
+        des: `${row.cmdText} ${row.count > 0 ? '+' : ''}${row.count}`,
+        dt: row.dtJieSuan,
+        wxid: player.memberCode || player.userCode,
+        NickName: player.displayName,
+      }
+    })
+    .filter(row => row !== null))
+    .sort((left, right) => right.dt.localeCompare(left.dt))
+}
+
+function legacyWay3(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>) {
+  const bets = report.players.flatMap(player => player.bets.map(bet => ({ player, bet })))
+  const issues = new Map<string, { totalZhu: number; totalYingKui: number }>()
+  for (const { bet } of bets) {
+    const issue = issues.get(bet.issueNumber) ?? { totalZhu: 0, totalYingKui: 0 }
+    issue.totalZhu += bet.stake
+    if (bet.netProfit !== null) issue.totalYingKui += bet.netProfit
+    issues.set(bet.issueNumber, issue)
+  }
+  const detailsComplete = bets.length >= report.summary.betCount
+  const settlementLabels: Record<string, string> = {
+    PENDING: '待结算', WIN: '中奖', DRAW: '和局', LOSE: '未中奖', CANCELED: '已撤销',
+  }
+  return {
+    detailTruncated: !detailsComplete,
+    lstJiLu: bets.map(({ player, bet }) => ({
+      qihao: bet.issueNumber,
+      dtwxid: player.memberCode || player.userCode,
+      dtNickName: player.displayName,
+      zhuscore: bet.stake,
+      validscore: '暂无',
+      result: settlementLabels[bet.settlementStatus] ?? bet.settlementStatus,
+      cmdText: bet.explanation || `${bet.playType} ${bet.parametersText} ${bet.stake}`.trim(),
+      opencode: null,
+      lastcode: null,
+      fan: null,
+      dtJieSuan: legacyDateTime(bet.settledAt),
+      submitStatus: null,
+    })),
+    lstQiDuiZhang: detailsComplete ? Array.from(issues, ([qihao, totals]) => ({ qihao, ...totals })) : [],
+  }
+}
+
 async function handlePlayerRequest(data: Record<string, unknown>) {
   const requestId = typeof data.requestId === 'string' ? data.requestId : ''
-  if (!requestId || route.path !== '/hby019-demo/console') return
+  if (!requestId || !['/hby019-demo/console', '/hby019-demo/showdetails'].includes(route.path)) return
   try {
     if (data.path === '/rbt/index/needhandle') {
       const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
@@ -192,6 +358,28 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
     }
     if (data.path === '/rbt/index/getopenresultlist') {
       sendToFrame({ type: 'xupan-player-response', requestId, data: await loadHbyOpenResults() })
+      return
+    }
+    if (data.path === '/rbt/index/getscorehis'
+      || data.path === '/rbt/index/getscorehistuo'
+      || data.path === '/rbt/index/getscorehisdetail'
+      || data.path === '/rbt/index/getway2data'
+      || data.path === '/rbt/index/getway3data') {
+      const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
+      const requestedKind = String(requestData.kind ?? '').toUpperCase()
+      const kind = requestedKind === 'NORMAL' ? 'NORMAL'
+        : requestedKind === 'BOT' || data.path === '/rbt/index/getscorehistuo' || Number(requestData.type) === 1 ? 'BOT' : 'NORMAL'
+      let report = await api.getPlayerDeskPointRecords(kind, String(requestData.day ?? ''))
+      if (data.path === '/rbt/index/getscorehisdetail'
+        && !report.players.some(player => String(player.userId) === String(requestData.wxid))) {
+        report = await api.getPlayerDeskPointRecords(kind === 'BOT' ? 'NORMAL' : 'BOT', String(requestData.day ?? ''))
+      }
+      let response: unknown
+      if (data.path === '/rbt/index/getscorehisdetail') response = legacyHistoryDetail(report, requestData.wxid)
+      else if (data.path === '/rbt/index/getway2data') response = legacyWay2(report)
+      else if (data.path === '/rbt/index/getway3data') response = legacyWay3(report)
+      else response = legacyPointReport(report)
+      sendToFrame({ type: 'xupan-player-response', requestId, data: response })
       return
     }
     if (data.path === '/rbt/index/updatepeilv') {
@@ -609,6 +797,8 @@ const sourceUrl = computed(() => {
       ? 'player.html'
       : route.path.endsWith('/console')
         ? 'console.html'
+        : route.path.endsWith('/showdetails')
+          ? 'showdetails.html'
         : route.path.endsWith('/portal')
           ? 'portal.html'
           : 'index.html'

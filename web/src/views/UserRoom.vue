@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage, ApiError, pointRequestErrorMessage } from '../api'
+import Hby019AccountPanelFrame from '../components/Hby019AccountPanelFrame.vue'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import QuickBetPanel from '../components/QuickBetPanel.vue'
 import { toHistoryRows } from '../gameHistory'
@@ -18,6 +19,7 @@ import {
 import PlayerLinkExpiredView from './PlayerLinkExpiredView.vue'
 import type {
   BallView,
+  BetView,
   ChatMessage,
   ChatRoomView,
   CurrentUserView,
@@ -89,8 +91,11 @@ const interfaceOpen = ref(false)
 const menuOpen = ref(false)
 const betSummary = ref<MyBetSummaryResponse | null>(null)
 const accountPanelTab = ref<'pending' | 'settled'>('pending')
+const accountFontSize = ref<'mini' | 'small' | 'medium' | 'big'>('small')
+const accountFontBold = ref(false)
 const accountPanelLoading = ref(false)
 const accountPanelError = ref('')
+const expandedAccountRows = ref(new Set<string>())
 function interfaceModeFromUrl(): 'ui1' | 'ui2' {
   if (typeof window === 'undefined') return 'ui1'
   return new URLSearchParams(window.location.search).get('ui') === '1' ? 'ui2' : 'ui1'
@@ -123,8 +128,10 @@ const selectedQuickNumber = ref('1')
 const selectedQuickAmount = ref(100)
 const settingAmounts = ref(DEFAULT_QUICK_BET_AMOUNTS.map(String))
 const quickBetScrollTop = ref(0)
-const keyboardFlat = ref(false)
+const keyboardFlat = ref(true)
 const voiceEnabled = ref(false)
+const selectedBallNumber = ref(8)
+let keyboardBulmaLink: HTMLLinkElement | null = null
 let gameRefreshTimer: number | undefined
 let chatRefreshTimer: number | undefined
 let adminNoticeTimer: number | undefined
@@ -136,10 +143,8 @@ const props = defineProps<{
 }>()
 
 const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单', '双', '大', '小', '特', '查', '上', '下', '流水', '历史', '♫', '取消', '说明', '⇅']
-const playMainTokens = playTokens.slice(0, -3)
 const keyboardActionTokens = playTokens.slice(-3)
-const keyboardFirstRowActionTokens = ['取消']
-const keyboardSecondRowActionTokens = ['说明', '⇅']
+const keyboardMainTokens = playTokens.slice(0, -keyboardActionTokens.length)
 const numberTokens = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '/', ',', '-', '↲', '✘', '⇦']
 const quickTokens = ['1番100', '12角100', '3通12/100', '01特100', '查', '流水', '历史']
 const interfaceTwoKeyboardRows = [
@@ -171,6 +176,7 @@ const ballNumbers = computed(() => {
   }
   return game.balls ?? []
 })
+const selectedGameLabel = computed(() => gameCatalog.value.find(game => game.gameCode === selectedGameCode.value)?.displayName || selectedGameCode.value)
 const showingPreviousBalls = computed(() => current.value?.phase !== 'SETTLED' && Boolean(current.value?.previousBalls?.length))
 const ballNumbersLabel = computed(() => showingPreviousBalls.value
   ? '上期开奖号码（当前期暂未开奖，仅作参考）'
@@ -226,7 +232,7 @@ const accountPanelBets = computed(() => accountPanelTab.value === 'pending'
   : (betSummary.value?.settled ?? []))
 
 const settlementStatusLabels: Record<string, string> = {
-  PENDING: '待开奖',
+  PENDING: '未开奖',
   WIN: '中奖',
   DRAW: '和局',
   LOSE: '未中',
@@ -235,6 +241,54 @@ const settlementStatusLabels: Record<string, string> = {
 
 function settlementStatusLabel(status: string) {
   return settlementStatusLabels[status] ?? status
+}
+
+function accountBetResult(bet: BetView) {
+  if (bet.netProfit === null || bet.settlementStatus === 'PENDING') return '未开奖'
+  if (bet.settlementStatus === 'CANCELED') return '退单'
+  return signedMoney(Number(bet.netProfit))
+}
+
+function accountBetResultClass(bet: BetView) {
+  if (bet.settlementStatus === 'CANCELED') return 'is-refunded'
+  return Number(bet.netProfit ?? 0) > 0 ? 'is-winning' : ''
+}
+
+function accountBetText(bet: BetView) {
+  const amount = Number(bet.stake).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+  return `第${bet.ballNumber}球/${formatBetParameters(bet)}${playTypeLabel(bet.playType)}/${amount}`
+}
+
+function accountIssueLabel(value: string) {
+  const digits = value.match(/\d+$/)?.[0]
+  return digits && digits.length > 4 ? digits.slice(-4) : digits || value
+}
+
+const accountPanelRows = computed(() => {
+  let lastIssue = ''
+  let colorIndex = 0
+  return accountPanelBets.value.map(bet => {
+    if (lastIssue !== '' && bet.issueNumber !== lastIssue) colorIndex = 1 - colorIndex
+    lastIssue = bet.issueNumber
+    return { bet, colorIndex, expanded: expandedAccountRows.value.has(bet.id) }
+  })
+})
+
+function toggleAccountRow(id: string) {
+  const expanded = new Set(expandedAccountRows.value)
+  if (expanded.has(id)) expanded.delete(id)
+  else expanded.add(id)
+  expandedAccountRows.value = expanded
+}
+
+function setAccountFontSize(size: typeof accountFontSize.value) {
+  accountFontSize.value = size
+  window.localStorage.setItem('chat_font_size', `font_${size}`)
+}
+
+function toggleAccountFontBold() {
+  accountFontBold.value = !accountFontBold.value
+  window.localStorage.setItem('chat_font_bold', accountFontBold.value ? '1' : '0')
 }
 
 function playTypeLabel(playType: PlayType) {
@@ -737,8 +791,8 @@ function resizeMessageInput() {
   nextTick(() => {
     const element = messageInputElement.value
     if (!element) return
-    element.style.height = '34px'
-    element.style.height = `${Math.min(Math.max(element.scrollHeight, 34), 176)}px`
+    element.style.height = '32px'
+    element.style.height = `${Math.min(Math.max(element.scrollHeight, 32), 176)}px`
   })
 }
 
@@ -750,10 +804,29 @@ function keyboardKeyClass(token: string) {
   if (/^\d$/.test(token) || token === '/' || token === ',' || token === '-') return 'keyboard-key-primary'
   if (token === '✘') return 'keyboard-key-danger-light'
   if (token === '⇦') return 'keyboard-key-warning'
-  if (token === '♫' || token === '⇅') return 'keyboard-key-danger'
-  if (token === '取消' || token === '说明') return 'keyboard-key-link'
+  if (token === '↲' || token === '取消' || token === '说明') return 'keyboard-key-link'
+  if (token === '♫') return voiceEnabled.value ? 'keyboard-key-success' : 'keyboard-key-danger'
+  if (token === '⇅') return keyboardFlat.value ? 'keyboard-key-danger' : 'keyboard-key-primary'
   if (['查', '上', '下', '流水', '历史'].includes(token)) return 'keyboard-key-info'
   return 'keyboard-key-success'
+}
+
+function sourcePlayKeyClass(token: string) {
+  if (['查', '上', '下', '流水', '历史'].includes(token)) return 'has-background-info-light'
+  if (token === '取消' || token === '说明') return 'has-background-link-light'
+  if (token === '♫') return voiceEnabled.value ? 'has-background-success' : 'has-background-danger'
+  if (token === '⇅') return keyboardFlat.value ? 'has-background-danger' : 'has-background-primary'
+  return 'has-background-success-light'
+}
+
+function sourceNumberKeyClass(token: string) {
+  if (/^\d$/.test(token) || token === '/' || token === ',' || token === '-') return 'has-background-primary-light'
+  if (token === '↲') return 'has-background-link-light'
+  if (token === '✘') return 'has-background-danger-light'
+  if (token === '⇦') return 'has-background-warning-light'
+  if (token === '取消' || token === '说明') return 'has-background-link-light'
+  if (token === '⇅') return keyboardFlat.value ? 'has-background-danger' : 'has-background-primary'
+  return 'has-background-primary-light'
 }
 
 function setViewMode(mode: 'chat' | 'odds') {
@@ -905,7 +978,7 @@ async function submitMessage() {
   if (!text) return
   messageInput.value = ''
   resizeMessageInput()
-  const sent = await sendPlainTextMessage(text)
+  const sent = await sendPlainTextMessage(withSelectedBallPrefix(text))
   if (sent && isRulesRequest(text)) {
     keyboardOpen.value = false
     noticeOpen.value = true
@@ -956,11 +1029,15 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
 }
 
 async function submitQuickBet(message: string) {
-  const sent = await sendPlainTextMessage(message)
+  const sent = await sendPlainTextMessage(withSelectedBallPrefix(message))
   if (sent) {
     closeQuickBet()
     showFeedback('快速下注已提交')
   }
+}
+
+function withSelectedBallPrefix(message: string) {
+  return selectedGameCode.value === 'AU8' ? `第${selectedBallNumber.value}球/${message}` : message
 }
 
 async function refreshAccountAfterBetSubmission() {
@@ -1029,6 +1106,19 @@ async function switchGame() {
 }
 
 onMounted(() => {
+  const savedFontSize = window.localStorage.getItem('chat_font_size')
+  if (savedFontSize && ['font_mini', 'font_small', 'font_medium', 'font_big'].includes(savedFontSize)) {
+    accountFontSize.value = savedFontSize.slice(5) as typeof accountFontSize.value
+  }
+  accountFontBold.value = window.localStorage.getItem('chat_font_bold') === '1'
+  if (!document.querySelector('link[data-hby019-keyboard-bulma]')) {
+    keyboardBulmaLink = document.createElement('link')
+    keyboardBulmaLink.rel = 'stylesheet'
+    keyboardBulmaLink.href = '/hby019-demo/source/static/reference-player/vendor/bulma.min.css'
+    keyboardBulmaLink.dataset.hby019KeyboardBulma = 'true'
+    document.head.append(keyboardBulmaLink)
+  }
+  document.documentElement.classList.add('reference-room-html')
   document.body.classList.add('reference-room-body')
   updateComposerHeight()
   if (typeof ResizeObserver !== 'undefined' && composerElement.value) {
@@ -1048,6 +1138,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  keyboardBulmaLink?.remove()
+  keyboardBulmaLink = null
+  document.documentElement.classList.remove('reference-room-html')
   document.body.classList.remove('reference-room-body')
   composerResizeObserver?.disconnect()
   window.removeEventListener('resize', updateComposerHeight)
@@ -1061,7 +1154,7 @@ onUnmounted(() => {
 
 <template>
   <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" />
-  <div v-else class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2' }">
+  <div v-else class="reference-room" :class="{ 'interface-two': interfaceMode === 'ui2', 'account-open': menuOpen }">
     <header v-show="platformSettings?.headerEnabled !== false" class="reference-header">
       <div class="reference-toolbar">
         <select v-if="gameCatalog.length > 1" v-model="selectedGameCode" class="game-select" aria-label="选择彩种" @change="switchGame">
@@ -1084,7 +1177,7 @@ onUnmounted(() => {
       <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
         <div class="reference-ball-row" :aria-label="ballNumbersLabel">
-          <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': ball.ballNumber === 8 }">
+          <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === selectedBallNumber }">
             {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
           </span>
         </div>
@@ -1107,52 +1200,29 @@ onUnmounted(() => {
       @scroll-position="handleQuickBetScroll"
     />
 
-    <div v-if="menuOpen" class="account-panel-layer" role="presentation" @click.self="closeAccountPanel">
-      <section class="account-panel" role="dialog" aria-modal="true" aria-label="账户流水">
-        <header class="account-panel-toolbar">
-          <strong>账户流水</strong>
-          <button type="button" aria-label="关闭账户流水" title="关闭" @click="closeAccountPanel">×</button>
-        </header>
-        <div class="account-panel-summary">
-          <div class="account-panel-avatar">
-            <img v-if="isStoredAvatarKey(currentUser?.avatarKey)" :src="api.avatarUrl(currentUser.avatarKey)" alt="当前头像" />
-            <span v-else>{{ avatarText(currentUser?.displayName || '我') }}</span>
-          </div>
-          <div class="account-panel-identity">
-            <strong>{{ currentUser?.displayName || '我' }}</strong>
-            <span>余额 {{ balance }}</span>
-          </div>
-          <div class="account-panel-stat">
-            <span>今日流水</span>
-            <strong>{{ Number(betSummary?.todayTurnover ?? 0).toFixed(2) }}</strong>
-          </div>
-          <div class="account-panel-stat" :class="{ positive: Number(betSummary?.todayNetProfit ?? 0) > 0, negative: Number(betSummary?.todayNetProfit ?? 0) < 0 }">
-            <span>今日总盈亏</span>
-            <strong>{{ signedMoney(Number(betSummary?.todayNetProfit ?? 0)) }}</strong>
-          </div>
-        </div>
-        <div class="account-panel-tabs" role="tablist" aria-label="注单状态">
-          <button type="button" role="tab" :aria-selected="accountPanelTab === 'pending'" :class="{ active: accountPanelTab === 'pending' }" @click="accountPanelTab = 'pending'">未结算</button>
-          <button type="button" role="tab" :aria-selected="accountPanelTab === 'settled'" :class="{ active: accountPanelTab === 'settled' }" @click="accountPanelTab = 'settled'">已结算</button>
-        </div>
-        <div class="account-bet-table" role="table" aria-label="注单列表">
-          <div class="account-bet-row account-bet-heading" role="row">
-            <span>期号</span><span>球位</span><span>内容</span><span>结果</span>
-          </div>
-          <div v-if="accountPanelLoading" class="account-panel-empty">正在加载账户数据...</div>
-          <div v-else-if="accountPanelError" class="account-panel-empty account-panel-error">{{ accountPanelError }}</div>
-          <div v-else-if="!accountPanelBets.length" class="account-panel-empty">暂无{{ accountPanelTab === 'pending' ? '未结算' : '已结算' }}注单</div>
-          <div v-else v-for="bet in accountPanelBets" :key="`account-${bet.id}`" class="account-bet-row" role="row">
-            <span>{{ bet.issueNumber }}</span>
-            <span>第{{ bet.ballNumber }}球</span>
-            <span>{{ formatBetParameters(bet) }}{{ playTypeLabel(bet.playType) }} / {{ Number(bet.stake).toFixed(2) }}</span>
-            <strong :class="{ positive: Number(bet.netProfit ?? 0) > 0, negative: Number(bet.netProfit ?? 0) < 0 }">
-              {{ settlementStatusLabel(bet.settlementStatus) }}<template v-if="bet.netProfit !== null"> {{ signedMoney(Number(bet.netProfit)) }}</template>
-            </strong>
-          </div>
-        </div>
-      </section>
-    </div>
+    <Hby019AccountPanelFrame
+      v-if="menuOpen"
+      :user="currentUser"
+      :avatar-url="isStoredAvatarKey(currentUser?.avatarKey) ? api.avatarUrl(currentUser.avatarKey) : null"
+      :avatar-text="avatarText(currentUser?.displayName || '我')"
+      :today-turnover="Number(betSummary?.todayTurnover ?? 0)"
+      :today-net-profit="Number(betSummary?.todayNetProfit ?? 0)"
+      :tab="accountPanelTab"
+      :font-size="accountFontSize"
+      :font-bold="accountFontBold"
+      :loading="accountPanelLoading"
+      :error="accountPanelError"
+      :rows="accountPanelRows"
+      :expanded-rows="expandedAccountRows"
+      :issue-label="accountIssueLabel"
+      :bet-text="accountBetText"
+      :bet-result="accountBetResult"
+      @close="closeAccountPanel"
+      @update:tab="accountPanelTab = $event"
+      @update:font-size="setAccountFontSize"
+      @toggle:bold="toggleAccountFontBold"
+      @toggle:row="toggleAccountRow"
+    />
 
     <div v-if="historyOpen" class="reference-history-scrim" aria-hidden="true" @click="closeHistory"></div>
     <div v-if="historyOpen" class="reference-history-panel" role="dialog" aria-label="历史记录">
@@ -1231,38 +1301,73 @@ onUnmounted(() => {
 
     <button class="scratch-entry" type="button" @click="openScratch">搓牌开奖</button>
 
-    <footer ref="composerElement" class="reference-composer">
-      <div class="composer-row">
-        <button class="keyboard-toggle" type="button" aria-label="打开数字键盘" title="打开数字键盘" :class="{ active: keyboardOpen }" @click="toggleKeyboard">
+    <footer ref="composerElement" class="reference-composer" :class="interfaceMode === 'ui1' ? ['divBottom', 'msgdown', 'selekb'] : []">
+      <div v-if="interfaceMode === 'ui1'" style="background:#dadadc;width:100%;height:1px;position:absolute;top:0px;"></div>
+      <div class="divBottom_top" :class="{ 'composer-row': interfaceMode === 'ui2' }">
+        <div v-if="interfaceMode === 'ui1'" class="vkb" role="button" tabindex="0" aria-label="打开或关闭键盘" title="打开或关闭键盘" @click="toggleKeyboard" @keydown.enter.prevent="toggleKeyboard" @keydown.space.prevent="toggleKeyboard">
+          <ul><li></li><li></li><li></li><li></li></ul>
+        </div>
+        <button v-else class="keyboard-toggle" type="button" aria-label="打开数字键盘" title="打开数字键盘" :class="{ active: keyboardOpen }" @click="toggleKeyboard">
           <span v-for="row in 2" :key="row"><i v-for="dot in 4" :key="dot"></i></span>
         </button>
-        <textarea ref="messageInputElement" v-model="messageInput" class="reference-input" rows="1" aria-label="下注或聊天内容" @click="openKeyboardFromInput" @input="resizeMessageInput" @keydown.enter.exact.prevent="submitMessage"></textarea>
-        <button class="reference-send" type="button" :disabled="pendingChatMessage?.status === 'sending'" @click="submitMessage">发送</button>
-      </div>
-      <div v-if="keyboardOpen && interfaceMode === 'ui1'" class="reference-keyboard">
-        <div class="keyboard-columns" :class="{ 'keyboard-columns-flat': keyboardFlat, 'keyboard-columns-stacked': !keyboardFlat }">
-          <div class="keyboard-panel keyboard-play-panel">
-            <div class="keyboard-buttons">
-              <button v-for="token in playMainTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput.includes(token), selected: token === '♫' && voiceEnabled, wide: token.length > 1 }]" @click="appendToken(token)">{{ token }}</button>
-              <template v-if="!keyboardFlat">
-                <button v-for="token in keyboardFirstRowActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token }]" @click="appendToken(token)">{{ token }}</button>
-              </template>
-            </div>
-            <div v-if="!keyboardFlat" class="keyboard-second-row-buttons">
-              <button v-for="token in keyboardSecondRowActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token }]" @click="appendToken(token)">{{ token }}</button>
-            </div>
-          </div>
-          <div class="keyboard-panel keyboard-number-panel">
-            <div class="keyboard-buttons">
-              <button v-for="token in numberTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { wide: token.length > 1 }]" @click="appendToken(token)">{{ token }}</button>
-            </div>
-          </div>
-          <div v-if="keyboardFlat" class="keyboard-action-panel">
-            <div class="keyboard-buttons">
-              <button v-for="token in keyboardActionTokens" :key="token" type="button" :class="[keyboardKeyClass(token), { active: messageInput === token }]" @click="appendToken(token)">{{ token }}</button>
-            </div>
-          </div>
+        <textarea
+          id="txtMsg"
+          ref="messageInputElement"
+          v-model="messageInput"
+          :class="interfaceMode === 'ui1' ? 'nostart' : 'reference-input'"
+          :style="interfaceMode === 'ui1' ? { width: 'calc(100% - 210px)', height: '32px', visibility: 'visible' } : undefined"
+          rows="1"
+          autocomplete="off"
+          aria-label="下注或聊天内容"
+          @click="openKeyboardFromInput"
+          @input="resizeMessageInput"
+          @keydown.enter.exact.prevent="submitMessage"
+        ></textarea>
+        <div v-if="selectedGameCode === 'AU8'" style="width:85px;text-align:center;background-color:#fff;height:32px;padding-left:0;border-radius:3px;border:1px solid #ccc;">
+          <select id="changeQiu" v-model.number="selectedBallNumber" style="border:none;width:100%;display:block;height:100%;background:#fff;" aria-label="选择下注球号">
+            <option v-for="ballNumber in 8" :key="ballNumber" :value="ballNumber">第 {{ ballNumber }} 球</option>
+          </select>
         </div>
+        <button
+          type="button"
+          :class="interfaceMode === 'ui1' ? ['send', 'nostart'] : 'reference-send'"
+          :disabled="pendingChatMessage?.status === 'sending'"
+          @click="submitMessage"
+        >发送</button>
+      </div>
+      <div v-if="keyboardOpen && interfaceMode === 'ui1'" class="columns pb-1 mb-1" :class="{ 'is-mobile': !keyboardFlat }" style="padding-top: 8px">
+          <div class="column is-half pl-1 pt-0 pb-0 mb-0 pr-1" :class="keyboardFlat ? 'pr-1' : 'pr-0'">
+            <div class="buttons is-centered mb-0">
+              <button
+                v-for="token in keyboardFlat ? playTokens : keyboardMainTokens"
+                :key="`source-play-${token}`"
+                class="button is-small is-rounded mr-1 ml-1 has-background-success-light"
+                :class="sourcePlayKeyClass(token)"
+                type="button"
+                @click="appendToken(token)"
+              ><span class="icon has-text-weight-bold is-large" :class="token.length === 2 && 'ml-0 mr-0'" style="font-size: large">{{ token }}</span></button>
+            </div>
+          </div>
+          <div class="column is-half pr-1 pt-0 pb-0 mb-0 pl-1" :class="keyboardFlat ? 'pl-1' : 'pl-0'">
+            <div class="buttons is-centered mb-0">
+              <button
+                v-for="token in numberTokens"
+                :key="`source-number-${token}`"
+                class="button is-small is-rounded mr-1 ml-1 has-background-primary-light"
+                :class="sourceNumberKeyClass(token)"
+                type="button"
+                @click="appendToken(token)"
+              ><span class="icon has-text-weight-bold is-large" :class="token.length === 2 && 'ml-0 mr-0'" style="font-size: large">{{ token }}</span></button>
+              <button
+                v-for="token in keyboardFlat ? [] : keyboardActionTokens"
+                :key="`source-action-${token}`"
+                class="button is-small is-rounded mr-1 ml-1 has-background-success-light"
+                :class="sourcePlayKeyClass(token)"
+                type="button"
+                @click="appendToken(token)"
+              ><span class="icon has-text-weight-bold is-large" :class="token.length === 2 && 'ml-0 mr-0'" style="font-size: large">{{ token }}</span></button>
+            </div>
+          </div>
       </div>
       <div v-if="keyboardOpen && interfaceMode === 'ui2'" class="reference-keyboard interface-two-keyboard">
         <div class="interface-two-keyboard-grid">

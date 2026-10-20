@@ -50,9 +50,13 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class ChatMessageService {
+
+    private static final Pattern SELECTED_BALL_PREFIX = Pattern.compile("^第\\s*([1-8])\\s*球\\s*/\\s*(.*)$", Pattern.DOTALL);
 
     private final UserRepository userRepository;
     private final PermissionService permissionService;
@@ -252,7 +256,12 @@ public class ChatMessageService {
             }
             return new ChatMessageSendOutcome(existing.get(), true);
         }
-        Optional<ChatCommandParser.Command> command = ChatCommandParser.parse(normalizedContent);
+        Matcher selectedBallMatcher = SELECTED_BALL_PREFIX.matcher(normalizedContent);
+        int selectedBallNumber = selectedBallMatcher.matches()
+                ? Integer.parseInt(selectedBallMatcher.group(1)) : 1;
+        String commandContent = selectedBallMatcher.matches()
+                ? selectedBallMatcher.group(2).trim() : normalizedContent;
+        Optional<ChatCommandParser.Command> command = ChatCommandParser.parse(commandContent);
         if (command.isPresent()) {
             ChatMessage message = messageRepository.insertUserMessage(room.id(),
                     roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo()), userId,
@@ -261,7 +270,7 @@ public class ChatMessageService {
             return processCommand(userId, roomCode, clientId, user, message, command.get(), now);
         }
 
-        BetTextParser.ParseResult parsedBet = BetTextParser.parse(normalizedContent);
+        BetTextParser.ParseResult parsedBet = BetTextParser.parse(commandContent, selectedBallNumber);
         List<BetTextParser.ParsedBet> bets = parsedBet.bets();
         if (!bets.isEmpty()) {
             if (gameService == null) {
@@ -276,7 +285,7 @@ public class ChatMessageService {
                             ? "CHAT-" + clientId
                             : "CHAT-" + clientId + "-" + (index + 1);
                     placedBets.add(gameService.placeBet(userId, new PlaceBetRequest(
-                            1, bet.playType(), bet.parameters(), bet.stake(), idempotencyKey, gameCode)));
+                            bet.ballNumber(), bet.playType(), bet.parameters(), bet.stake(), idempotencyKey, gameCode)));
                 } catch (BetLimitExceededException rejection) {
                     // Only the offending item is dropped; the remaining items keep their normal path.
                     rejectedBets.add(rejection);

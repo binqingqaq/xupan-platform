@@ -117,6 +117,34 @@
   let xupanRequestSequence = 0;
   const xupanRequests = new Map();
   const xupanPlayerDetails = Object.create(null);
+  let reportDatesInitialized = false;
+  let initialDetailReportDay = new URLSearchParams(location.search).get('day') || '';
+
+  function updateReportDates(dates, selectedDate) {
+    if (!Array.isArray(dates) || dates.length === 0) return;
+    const orderedDates = dates.map(String).filter(function (date) { return /^\d{4}-\d{2}-\d{2}$/.test(date); }).sort();
+    if (!orderedDates.length) return;
+    function update(selector, syncDayIndex) {
+      const nodes = $(selector).toArray();
+      let selectedIndex = -1;
+      nodes.forEach(function (node, index) {
+        const date = orderedDates[index];
+        if (!date) {
+          $(node).hide();
+          return;
+        }
+        if (date === selectedDate) selectedIndex = index;
+        $(node).show().attr('data-full', date).toggleClass('sele', date === selectedDate)
+          .text(date === selectedDate ? date : date.substring(5));
+      });
+      if (syncDayIndex && selectedIndex >= 0) window.dayIndex = selectedIndex;
+    }
+    update('.jifenKuang .dates span', true);
+    update('.tuoJifenKuang .tuo-day-item');
+    update('.detail-date-bar .dates span', true);
+    reportDatesInitialized = true;
+  }
+
   function requestXupan(path, data, success, error) {
     const requestId = 'player-' + (++xupanRequestSequence);
     const timeout = setTimeout(function () {
@@ -144,6 +172,9 @@
     if (message.error) {
       if (typeof pending.error === 'function') pending.error({ status: message.status || 500, responseJSON: message.error }, 'error');
       return;
+    }
+    if (['/rbt/index/getscorehis', '/rbt/index/getscorehistuo'].indexOf(pending.path) !== -1 && message.data) {
+      updateReportDates(message.data.availableDates, message.data.businessDate);
     }
     if (pending.path === '/xupan/player/detail' && message.data && message.data.wxid) {
       xupanPlayerDetails[String(message.data.wxid)] = clone(message.data);
@@ -587,11 +618,22 @@
       '/rbt/index/setblack', '/rbt/index/setauto', '/rbt/index/setzhui',
       '/rbt/index/updownscore', '/rbt/index/gettodayscorelog',
       '/rbt/index/getupdownscorereq', '/rbt/index/acceptupdownscorereq', '/rbt/index/denyupdownscorereq',
-      '/rbt/index/getavatarlist', '/rbt/index/changeheadimage2'
+      '/rbt/index/getavatarlist', '/rbt/index/changeheadimage2',
+      '/rbt/index/getscorehis', '/rbt/index/getscorehistuo', '/rbt/index/getscorehisdetail',
+      '/rbt/index/getway2data', '/rbt/index/getway3data'
     ];
     if (xupanPaths.indexOf(path) !== -1) {
       (window.__localApiLog || (window.__localApiLog = [])).push({ path: path, method: settings.type || 'GET', source: 'xupan' });
-      requestXupan(path, settings.data, function (response) {
+      const requestData = parseBody(settings.data);
+      if (!reportDatesInitialized && ['/rbt/index/getscorehis', '/rbt/index/getscorehistuo'].indexOf(path) !== -1) {
+        if (location.pathname.endsWith('/showdetails.html') && initialDetailReportDay) {
+          requestData.day = initialDetailReportDay;
+          initialDetailReportDay = '';
+        } else {
+          requestData.day = '';
+        }
+      }
+      requestXupan(path, requestData, function (response) {
         if (path === '/rbt/index/needhandle' && response) {
           const demoState = needHandle(parseBody(settings.data));
           response = Object.assign(demoState, response, { users: demoState.users });

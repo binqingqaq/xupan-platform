@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "predev": "node scripts/build-hby019-account-panel.mjs",
     "build": "vite build",
+    "prebuild": "node scripts/build-hby019-account-panel.mjs",
     "demo:hby019:rebuild": "node scripts/rebuild-hby019-demo.mjs",
     "test": "vitest",
     "test:run": "vitest run",

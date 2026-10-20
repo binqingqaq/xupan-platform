@@ -60,6 +60,15 @@ const router = createRouter({
         title: 'AI模型房间管理',
       },
     },
+    {
+      path: '/hby019-demo/showdetails', component: Hby019SourcePage,
+      meta: {
+        requiresAuth: true,
+        requiredRoles: ['AGENT'],
+        excludeRoles: ['ADMIN', 'SUB_ACCOUNT'],
+        title: '积分记录与对账',
+      },
+    },
     { path: '/hby019-demo/portal', component: Hby019SourcePage, meta: { title: 'AI校验密码' } },
     { path: '/hby019-demo/player.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },
     { path: '/hby019-demo/player-ui1.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },

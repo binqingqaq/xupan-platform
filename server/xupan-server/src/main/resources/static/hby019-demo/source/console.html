@@ -11,7 +11,7 @@
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/notify.min.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/base.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/home.css?1791996724">
-        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=17"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
+        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=20"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
         <script type="text/javascript">
             (function() {
                 var prevOnError = window.onerror;
@@ -1672,7 +1672,8 @@
 						data: {
 							"day": day,
 							"timeType": timeType,
-							"wxid": wxid
+							"wxid": wxid,
+							"kind": "NORMAL"
 						},
 						//成功返回之后调用的函数
 						success: function(data) {
@@ -1732,6 +1733,9 @@
                                         //删除用户下分
                                         detailRows.push('<div class="infoitem_row type2" style="margin-top: 10px; margin-bottom: 10px;"><span class="rowtype">积分操作：</span><span class="rowqi"></span><span class="rowcontent xf">删除会员下分' + parseFloat(mingxi.count) + '</span><br><span class="rowresult" style="display: block;"></span><span class="rowbefore"></span><span class="rowchange lose">' + parseFloat(mingxi.count) + '</span><span class="fanshui"></span><span class="rowscore">' + setRunningScore(mingxi.afterScore) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '</span></div>');
                                     }
+                                    else if (t == 5 && mingxi.settlementStatus == 'PENDING') {
+                                        detailRows.push('<div class="infoitem_row type1" style="margin-top: 10px; margin-bottom: 10px;"><span class="rowtype">下注记录：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent">报网状态：暂无</span><br><span class="rowresult" style="display: block;">开奖结果：暂无</span><span class="rowbefore"></span><span class="rowchange">待结算</span><span class="fanshui"></span><span class="rowscore"></span><br><span class="rowtime">' + mingxi.dtCmd + '</span></div>');
+                                    }
                                     else {
                                         //盈亏变动
                                         if (lastQihao !== '' && mingxi.qihao !== lastQihao) { colorIdx = 1 - colorIdx; }
@@ -1749,17 +1753,20 @@
                                         }
         
                                         lastMingXi = mingxi;
+                                        var betResultText = (mingxi.code || mingxi.lastResult || mingxi.fan)
+                                            ? [mingxi.code, mingxi.lastResult, mingxi.fan].filter(Boolean).join('=&gt;')
+                                            : '开奖结果：暂无';
         
                                         if (mingxi.count > 0) {
-                                            detailRows.push('<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + mingxi.flyersStatus + '</span><br><span class="rowresult" style="display: block;">' + mingxi.code + '=&gt;' + mingxi.lastResult + '=&gt;' + mingxi.fan + '</span><span class="rowbefore"></span><span class="rowchange win">+' + parseFloat(mingxi.count) + '</span><span class="fanshui">[抽水' + mingxi.dtfanshui + ']</span><span class="rowscore">' + getProfitScore(mingxi) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>');
+                                            detailRows.push('<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">报网状态：暂无</span><br><span class="rowresult" style="display: block;">' + betResultText + '</span><span class="rowbefore"></span><span class="rowchange win">+' + parseFloat(mingxi.count) + '</span><span class="fanshui">[返水暂无]</span><span class="rowscore">' + getProfitScore(mingxi) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>');
                                         }
                                         else if (mingxi.count == 0) {
                                             var fs = mingxi.ying==1?'[抽水' + mingxi.dtfanshui + ']':'';
-                                            detailRows.push('<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + mingxi.flyersStatus + '</span><br><span class="rowresult" style="display: block;">' + mingxi.code + '=&gt;' + mingxi.lastResult + '=&gt;' + mingxi.fan + '</span><span class="rowbefore"></span><span class="rowchange win">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + getProfitScore(mingxi) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>');
+                                            detailRows.push('<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">报网状态：暂无</span><br><span class="rowresult" style="display: block;">' + betResultText + '</span><span class="rowbefore"></span><span class="rowchange win">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + getProfitScore(mingxi) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>');
                                         }
                                         else {
                                             var fs = mingxi.ying==1?'[抽水' + mingxi.dtfanshui + ']':'';
-                                            detailRows.push('<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + mingxi.flyersStatus + '</span><br><span class="rowresult" style="display: block;">' + mingxi.code + '=&gt;' + mingxi.lastResult + '=&gt;' + mingxi.fan + '</span><span class="rowbefore"></span><span class="rowchange lose">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + getProfitScore(mingxi) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>');
+                                            detailRows.push('<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">报网状态：暂无</span><br><span class="rowresult" style="display: block;">' + betResultText + '</span><span class="rowbefore"></span><span class="rowchange lose">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + getProfitScore(mingxi) + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>');
                                         }
                                     }
         
@@ -1846,17 +1853,19 @@
 						$("#content3_2").html("");
 						$(data.lstJiLu).each(function(index) {
 							var mingxi = data.lstJiLu[index];
-							var submitTxt = mingxi.submitStatus == 0 ? "未报" : "已报";
+							var submitTxt = mingxi.submitStatus == 0 ? "未报" : (mingxi.submitStatus == 1 ? "已报" : "暂无");
+							var resultChain = (mingxi.opencode || mingxi.lastcode || mingxi.fan)
+								? [mingxi.opencode, mingxi.lastcode, mingxi.fan].filter(Boolean).join("=>")
+								: "开奖：暂无";
 							sub +=
 								"<div style='margin-top:6px;'><span style='color:black;font-weight:bold;'>" +
 								mingxi.qihao + "：wxid：" + mingxi.dtwxid + ", 昵称：" + mingxi.dtNickName + "，注：" +
 								mingxi.zhuscore + "， 有效：" + mingxi.validscore + "，" + mingxi.result +
-								"</span><span style='color:black;'>" + "，内容：" + mingxi.cmdText + ", 结果：" + mingxi
-								.opencode + "=>" + mingxi.lastcode + "=>" + mingxi.fan + " 【" + mingxi
+				"</span><span style='color:black;'>" + "，内容：" + mingxi.cmdText + ", 结果：" + resultChain + " 【" + mingxi
 								.dtJieSuan + "】入网:" + submitTxt + "</span></div>";
 						});
 						//将明细加入该用户概况
-						$("#content3_1").html($("#content3_1").html() + sub);
+						$("#content3_1").html($("#content3_1").html() + (sub || "<div>当前业务日暂无下注记录</div>"));
 						var sub2 = "";
 						$(data.lstQiDuiZhang).each(function(index) {
 							var mingxi = data.lstQiDuiZhang[index];
@@ -1868,6 +1877,11 @@
 								"</span></div>";
 						});
 						//将明细加入该用户概况
+						if (data.detailTruncated) {
+							sub2 = "<div>注单明细已达接口返回上限，期号汇总暂不展示</div>";
+						} else if (!sub2) {
+							sub2 = "<div>当前业务日暂无期号记录</div>";
+						}
 						$("#content3_2").html($("#content3_2").html() + sub2);
 					},
 					//调用出错执行的函数
@@ -3632,7 +3646,8 @@
                     openKuang('jifenKuang');
                 });
                 $("#jifenExpandLink").click(function() {
-                    window.open("/hby019-demo/source/showdetails.html", "_blank");
+                    var day = $(".jifenKuang .dates .sele").attr("data-full") || $("#day" + dayIndex).attr("data-full") || "";
+                    window.open("/hby019-demo/showdetails?day=" + encodeURIComponent(day), "_blank");
                 });
                 $("#jifenTuo").click(function() {
                     //载入托积分数据
@@ -5068,7 +5083,8 @@
                                     data: {
                                         "day": day,
                                         "timeType": 1,
-                                        "wxid": wxid
+										"wxid": wxid,
+										"kind": "BOT"
                                     },
                                     success: function(data) {
                                         if (data.length > 0) {
