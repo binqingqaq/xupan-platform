@@ -1,3 +1,4 @@
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminHome from './views/PlatformAdminHome.vue'
@@ -65,23 +66,24 @@ describe('platform admin home', () => {
     app = createApp(PlatformAdminHome)
     app.component('RouterLink', { props: ['to'], template: '<a><slot /></a>' })
     app.mount(container)
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleOperations()
 
     expect(api.getGameCatalog).toHaveBeenCalledTimes(1)
     expect(api.listDrawHistory).toHaveBeenCalledWith({ gameCode: 'AU8', pageSize: 48 })
     expect(container.querySelectorAll('.platform-admin-route-color')).toHaveLength(1)
-    expect(Array.from(container.querySelectorAll('.platform-admin-nav a')).map(link => link.textContent?.trim()))
+    expect(Array.from(container.querySelectorAll('.platform-admin-nav [role="menuitem"]')).map(link => link.textContent?.trim()))
       .toContain('中心上游')
 
-    const select = container.querySelector<HTMLSelectElement>('select[aria-label="选择游戏"]')
+    const select = container.querySelector<HTMLElement>('.el-select__wrapper')
     if (!select) throw new Error('missing game selector')
-    expect(select.disabled).toBe(false)
-    select.value = 'MULTI'
-    select.dispatchEvent(new Event('change'))
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(select.classList.contains('is-disabled')).toBe(false)
+    select.click()
+    await settleOperations()
+    const option = [...document.querySelectorAll<HTMLElement>('.el-select-dropdown__item')]
+      .find(item => item.textContent?.includes('多彩种测试'))
+    if (!option) throw new Error('missing MULTI game option')
+    option.click()
+    await settleOperations()
 
     expect(api.listDrawHistory).toHaveBeenLastCalledWith({ gameCode: 'MULTI', pageSize: 48 })
   })

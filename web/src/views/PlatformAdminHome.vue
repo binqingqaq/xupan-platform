@@ -63,41 +63,48 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
   <main class="platform-admin-page">
     <PlatformAdminNav />
 
-    <p v-if="error" class="platform-admin-alert">{{ error }}</p>
+    <el-alert v-if="error" class="platform-admin-alert" type="error" :title="error" :closable="false" />
 
     <section class="platform-admin-content">
-      <select v-model="selectedGameCode" class="platform-admin-game-select" aria-label="选择游戏" @change="load">
-        <option v-for="game in gameCatalog" :key="game.gameCode" :value="game.gameCode">{{ game.displayName }}</option>
-      </select>
-      <p class="platform-admin-section-label">上期开奖结果：</p>
+      <header class="page-heading">
+        <div>
+          <h1>开奖信息</h1>
+          <p>开奖数据每 5 秒自动刷新</p>
+        </div>
+        <el-select v-model="selectedGameCode" aria-label="选择游戏" @change="load">
+          <el-option v-for="game in gameCatalog" :key="game.gameCode" :label="game.displayName" :value="game.gameCode" />
+        </el-select>
+      </header>
+      <h2 class="section-title">上期开奖结果</h2>
 
-      <article v-if="loading" class="platform-admin-draw-card"><p>正在加载开奖结果...</p></article>
+      <article v-if="loading" class="platform-admin-draw-card"><el-skeleton :rows="2" animated /></article>
       <article v-else-if="lastDraw" class="platform-admin-draw-card">
-        <header><h1>开盘结果</h1><strong>第{{ lastDraw.issueNumber }}期</strong></header>
-        <div class="platform-admin-draw-meta"><span>{{ formatDateTime(lastDraw.settledAt) }}</span><b v-if="specialFan !== null">{{ specialFan }}番</b></div>
-        <div class="platform-admin-ball-row"><span v-for="(number,index) in lastDraw.balls" :key="index" :class="['platform-admin-ball', ballClass(number)]">{{ displayBall(number) }}</span></div>
+        <header><h2>开盘结果</h2><strong>第{{ lastDraw.issueNumber }}期</strong></header>
+        <div class="platform-admin-draw-meta"><span>{{ formatDateTime(lastDraw.settledAt) }}</span><el-tag v-if="specialFan !== null" type="danger" effect="dark" size="large">{{ specialFan }}番</el-tag></div>
+        <div class="platform-admin-ball-row"><el-tag v-for="(number,index) in lastDraw.balls" :key="index" round :class="['platform-admin-ball', ballClass(number)]">{{ displayBall(number) }}</el-tag></div>
       </article>
+      <el-empty v-else description="暂无开奖结果" />
 
-      <p class="platform-admin-section-label">历史开奖结果：</p>
+      <h2 class="section-title">历史开奖结果</h2>
       <section id="history" class="platform-admin-history">
-        <table>
-          <thead><tr><th>期数</th><th>时间</th><th>结果</th><th>番</th></tr></thead>
-          <tbody><tr v-for="row in historyRows" :key="row.gameCode + row.issueNumber"><td>{{ issueTail(row.issueNumber) }}</td><td>{{ formatShortTime(row.settledAt) }}</td><td><span class="platform-admin-history-balls"><i v-for="(number,index) in row.balls" :key="index">{{ displayBall(number) }}</i></span></td><td><span class="platform-admin-history-fan">{{ row.balls[7] !== undefined ? fan(row.balls[7]) : '--' }}番</span></td></tr></tbody>
-        </table>
+        <el-table scrollbar-always-on v-if="!loading" :data="historyRows" row-key="issueNumber" stripe border empty-text="暂无历史开奖">
+          <el-table-column label="期数" min-width="100"><template #default="{ row }">{{ issueTail(row.issueNumber) }}</template></el-table-column>
+          <el-table-column label="时间" min-width="130"><template #default="{ row }">{{ formatShortTime(row.settledAt) }}</template></el-table-column>
+          <el-table-column label="结果" min-width="360"><template #default="{ row }"><el-space class="platform-admin-history-balls" wrap><el-tag v-for="(number,index) in row.balls" :key="index" round>{{ displayBall(number) }}</el-tag></el-space></template></el-table-column>
+          <el-table-column label="番" width="100" align="center"><template #default="{ row }"><el-tag type="primary" effect="plain">{{ row.balls[7] !== undefined ? fan(row.balls[7]) : '--' }}番</el-tag></template></el-table-column>
+        </el-table>
+        <el-skeleton v-else :rows="5" animated />
       </section>
 
-      <p class="platform-admin-section-label">路字图：</p>
+      <h2 class="section-title">路字图</h2>
       <section class="platform-admin-route">
-        <table>
-          <thead><tr><th></th><th></th><th></th><th></th><th>路</th><th>字</th><th>图</th><th></th><th></th><th></th><th></th><th></th></tr></thead>
-          <tbody>
-            <tr v-for="(routeRow, rowIndex) in routeRows" :key="rowIndex">
-              <td v-for="(cell, cellIndex) in routeRow" :key="cell.issueNumber + cellIndex">
-                <span :class="['platform-admin-route-color', 'fan-' + cell.fan]">{{ cell.fan }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <el-table scrollbar-always-on :data="routeRows" :show-header="false" row-key="0.issueNumber" border>
+          <el-table-column v-for="columnIndex in 12" :key="columnIndex" :min-width="54" align="center">
+            <template #default="{ row }">
+              <span v-if="row[columnIndex - 1]" :class="['platform-admin-route-color', 'fan-' + row[columnIndex - 1].fan]">{{ row[columnIndex - 1].fan }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
       </section>
     </section>
   </main>
@@ -105,34 +112,29 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 
 <style scoped>
 .platform-admin-page { min-height: 100vh; background: #eaf4fb; color: #1d1d1d; }
-.platform-admin-content { padding: 8px 10px 28px; }
-.platform-admin-game-select { width: 100%; margin: 0 0 8px; padding: 9px; border: 1px solid #a8c8dc; background: #fff; }
-.platform-admin-section-label { margin: 8px 0; padding: 7px 10px; border-left: 4px solid #1976a9; background: #dfeef8; color: #2e5268; }
-.platform-admin-draw-card { padding: 18px 26px 10px; border: 1px solid #d6e4ec; background: #fff; }
-.platform-admin-draw-card header { display: flex; align-items: baseline; gap: 26px; }
-.platform-admin-draw-card h1 { margin: 0; color: #e12a1a; font-size: 40px; font-weight: 500; }
-.platform-admin-draw-card header strong { font-size: 21px; }
-.platform-admin-draw-meta { display: flex; justify-content: space-between; align-items: center; margin: 22px 0 18px; font-size: 20px; }
-.platform-admin-draw-meta b { padding: 20px 26px; background: #e22313; color: #fff; font-size: 30px; }
-.platform-admin-ball-row { display: flex; gap: 64px; padding: 4px 0 14px; }
-.platform-admin-ball { display: grid; place-items: center; width: 48px; height: 48px; border: 2px solid #e33323; border-radius: 50%; color: #e33323; font-size: 20px; }
-.platform-admin-history { overflow-x: auto; border: 1px solid #bcdcef; background: #fff; }
-.platform-admin-history table { width: 100%; min-width: 820px; border-collapse: collapse; }
-.platform-admin-history th { padding: 11px; background: #40b2db; color: #fff; font-size: 19px; }
-.platform-admin-history td { padding: 6px 12px; border-bottom: 1px solid #ddd; text-align: center; font-size: 16px; }
-.platform-admin-history tbody tr:first-child { border: 1px solid #dc3f32; background: #fff6f5; }
-.platform-admin-history-balls { display: flex; justify-content: center; gap: 5px; }
-.platform-admin-history-balls i { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #e33323; border-radius: 50%; color: #e33323; font-style: normal; font-size: 13px; }
-.platform-admin-history-fan { display: inline-block; min-width: 54px; padding: 3px 7px; background: #eef8fc; color: #176a96; font-weight: 700; }
-.platform-admin-route { overflow-x: auto; border: 1px solid #bcdcef; background: #fff; }
-.platform-admin-route table { width: 100%; min-width: 720px; border-collapse: collapse; }
-.platform-admin-route th, .platform-admin-route td { padding: 6px; border: 1px solid #d9e3e8; text-align: center; font-size: 13px; }
-.platform-admin-route th { background: #eef8fc; color: #176a96; }
-.platform-admin-route-color { display: grid; place-items: center; width: 28px; height: 28px; margin: auto; color: #fff; font-weight: 700; }
+.platform-admin-content { display: grid; gap: 10px; padding: 16px; }
+.page-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading h1, .section-title { margin: 0; color: #263746; }
+.page-heading h1 { font-size: 22px; }
+.page-heading p { margin: 4px 0 0; color: #758391; font-size: 13px; }
+.page-heading .el-select { width: 220px; }
+.section-title { padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; font-size: 16px; }
+.platform-admin-draw-card { display: grid; gap: 14px; padding: 18px; border: 1px solid #dfe5ec; background: #fff; }
+.platform-admin-draw-card header { display: flex; align-items: baseline; gap: 16px; }
+.platform-admin-draw-card h2 { margin: 0; font-size: 18px; }
+.platform-admin-draw-card header strong { font-size: 20px; }
+.platform-admin-draw-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #5f6c7b; }
+.platform-admin-ball-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.platform-admin-ball { display: inline-flex; width: 42px; height: 42px; justify-content: center; border-color: #cfd9e5; color: #344054; font-size: 16px; }
+.platform-admin-ball.is-odd { border-color: #d92d20; color: #b42318; }
+.platform-admin-ball.is-even { border-color: #2e90fa; color: #175cd3; }
+.platform-admin-history-balls { display: flex; justify-content: center; }
+.platform-admin-history-balls .el-tag { min-width: 28px; justify-content: center; }
+.platform-admin-route :deep(.el-table__cell) { padding: 4px 0; }
 .platform-admin-route-color.fan-1 { background: #2f69d6; }
 .platform-admin-route-color.fan-2 { background: #25a25e; }
 .platform-admin-route-color.fan-3 { background: #d0b30d; }
 .platform-admin-route-color.fan-4 { background: #e21919; }
-.platform-admin-alert { margin: 10px; padding: 10px; background: #ffe1de; color: #a51e13; }
-@media (max-width: 900px) { .platform-admin-nav { padding: 4px 8px; } .platform-admin-welcome { width: 100%; padding: 8px 12px; } .platform-admin-draw-card { padding: 12px; } .platform-admin-draw-card h1 { font-size: 28px; } .platform-admin-ball-row { gap: 14px; } .platform-admin-ball { width: 36px; height: 36px; font-size: 16px; } }
+.platform-admin-route-color { display: grid; width: 28px; height: 28px; place-items: center; margin: auto; border-radius: 2px; color: #fff; font-weight: 700; }
+.platform-admin-alert { margin: 10px; }
 </style>

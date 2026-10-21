@@ -2,6 +2,7 @@ import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminSubAccounts from './views/PlatformAdminSubAccounts.vue'
 import { api } from './api'
+import { formField, formInput, setFormInput, selectFormOption, dialogSubmit } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -47,9 +48,9 @@ async function mountSubAccounts() {
   document.body.appendChild(container)
   app = createApp(PlatformAdminSubAccounts)
   app.mount(container)
-  await nextTick()
+  await settle()
   await new Promise(resolve => setTimeout(resolve, 0))
-  await nextTick()
+  await settle()
 }
 
 async function settle() {
@@ -58,35 +59,18 @@ async function settle() {
   await nextTick()
 }
 
-function fieldInput(labelText: string) {
-  const labels = Array.from(container?.querySelectorAll<HTMLLabelElement>('.modal .form-grid label') ?? [])
-  const label = labels.find(item => item.textContent?.trim().startsWith(labelText))
-  return label?.querySelector<HTMLInputElement>('input') ?? null
-}
-
-function fieldSelect(labelText: string) {
-  const labels = Array.from(container?.querySelectorAll<HTMLLabelElement>('.modal .form-grid label') ?? [])
-  const label = labels.find(item => item.textContent?.trim().startsWith(labelText))
-  return label?.querySelector<HTMLSelectElement>('select') ?? null
-}
+const fieldInput = formInput
 
 function openFirstRowEditor() {
   const rowButtons = container?.querySelectorAll<HTMLButtonElement>('tbody tr button') ?? []
   rowButtons[0]?.click()
 }
 
-function setField(labelText: string, value: string) {
-  const input = fieldInput(labelText)
-  if (!input) throw new Error(`missing ${labelText} input`)
-  input.value = value
-  input.dispatchEvent(new Event('input'))
-}
+const setField = setFormInput
 
 function setCheckbox(labelText: string, checked: boolean) {
-  const input = fieldInput(labelText)
-  if (!input) throw new Error(`missing ${labelText} checkbox`)
-  input.checked = checked
-  input.dispatchEvent(new Event('change'))
+  const control = formField(labelText).querySelector<HTMLElement>('[role="switch"]')!
+  if ((control.getAttribute('aria-checked') === 'true') !== checked) control.click()
 }
 
 describe('platform admin sub accounts', () => {
@@ -115,11 +99,11 @@ describe('platform admin sub accounts', () => {
   it('backfills the stored report username when editing', async () => {
     await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
     expect(fieldInput('飞单账号')?.value).toBe('feidan-user')
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
     expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({
       reportUsername: 'feidan-user',
@@ -140,17 +124,12 @@ describe('platform admin sub accounts', () => {
     vi.mocked(api.listSubAccounts).mockResolvedValue([subAccount({ reportType: 'K28' })] as never)
     await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
-    expect(fieldSelect('报网类型')?.value).toBe('K28')
+    expect(formField('报网类型').textContent).toContain('K28')
+    await selectFormOption('报网类型', 'wns')
 
-    const select = fieldSelect('报网类型')
-    if (!select) throw new Error('missing report type select')
-    select.value = 'WNS'
-    select.dispatchEvent(new Event('change'))
-    await nextTick()
-
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
     expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({ reportType: 'WNS' }))
   })
@@ -177,27 +156,28 @@ describe('platform admin sub accounts', () => {
     expect(text).toContain('66.00')
 
     openFirstRowEditor()
-    await nextTick()
+    await settle()
     expect(fieldInput('上游地址')?.value).toBe('http://127.0.0.1:9001')
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
     expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({
       reportUrl: 'http://127.0.0.1:9001',
     }))
   })
 
-  it('clears the report username only when the field is emptied on purpose', async () => {    await mountSubAccounts()
+  it('clears the report username only when the field is emptied on purpose', async () => {
+    await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
     const input = fieldInput('飞单账号')
     if (!input) throw new Error('missing report username input')
     input.value = ''
     input.dispatchEvent(new Event('input'))
-    await nextTick()
+    await settle()
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
     expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({ reportUsername: '' }))
   })
@@ -217,8 +197,8 @@ describe('platform admin sub accounts', () => {
     expect(row?.textContent).toContain('已锁定')
 
     const buttons = Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? [])
-    expect(buttons.some(button => button.textContent === '停用')).toBe(false)
-    buttons.find(button => button.textContent === '解锁')?.click()
+    expect(buttons.some(button => button.textContent?.trim() === '停用')).toBe(false)
+    buttons.find(button => button.textContent?.trim() === '解锁')?.click()
     await settle()
     expect(api.changeSubAccountStatus).toHaveBeenCalledWith(3, 'ACTIVE')
   })
@@ -230,18 +210,18 @@ describe('platform admin sub accounts', () => {
   it('submits up/down/online when editing and never submits the read-only score', async () => {
     await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
     const scoreInput = fieldInput('积分')
-    expect(scoreInput?.readOnly).toBe(true)
-    expect(scoreInput?.value).toBe('1000')
+    expect(scoreInput?.disabled).toBe(true)
+    expect(Number(scoreInput?.value)).toBe(1000)
 
     setField('上分', '100')
     setField('下分', '30')
     setCheckbox('在线/下线', true)
-    await nextTick()
+    await settle()
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
 
     expect(api.updateSubAccount).toHaveBeenCalledTimes(1)
@@ -261,7 +241,7 @@ describe('platform admin sub accounts', () => {
   it('declares 0.01 precision on the up/down amount inputs', async () => {
     await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
     for (const label of ['上分', '下分']) {
       const input = fieldInput(label)
@@ -271,7 +251,7 @@ describe('platform admin sub accounts', () => {
     }
 
     // 编辑弹窗里的数字字段（积分/上分/下分）统一按「最多两位小数」声明 step，避免任何一处退回默认 step=1。
-    const numberInputs = Array.from(container?.querySelectorAll<HTMLInputElement>('.modal input[type="number"]') ?? [])
+    const numberInputs = Array.from(container?.querySelectorAll<HTMLInputElement>('.el-dialog input[role="spinbutton"]') ?? [])
     expect(numberInputs).toHaveLength(3)
     expect(numberInputs.every(input => input.getAttribute('step') === '0.01')).toBe(true)
   })
@@ -280,12 +260,12 @@ describe('platform admin sub accounts', () => {
   it('submits a 0.1 up amount instead of blocking it with the native step check', async () => {
     await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
     setField('上分', '0.1')
-    await nextTick()
+    await settle()
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
 
     expect(api.updateSubAccount).toHaveBeenCalledTimes(1)
@@ -296,9 +276,9 @@ describe('platform admin sub accounts', () => {
   it('omits up/down when the adjustment inputs are left empty', async () => {
     await mountSubAccounts()
     openFirstRowEditor()
-    await nextTick()
+    await settle()
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
 
     const payload = vi.mocked(api.updateSubAccount).mock.calls[0][1]
@@ -314,15 +294,15 @@ describe('platform admin sub accounts', () => {
   it('posts comma separated usernames in one batch create call', async () => {
     await mountSubAccounts()
     container?.querySelector<HTMLButtonElement>('.page-heading button')?.click()
-    await nextTick()
+    await settle()
 
-    expect(fieldInput('积分')?.readOnly).toBe(false)
+    expect(fieldInput('积分')?.disabled).toBe(false)
     expect(container?.textContent).not.toContain('子账号名称')
     setField('用户名', 'a,b,c')
     setField('密码', '123456')
-    await nextTick()
+    await settle()
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
 
     expect(api.createSubAccount).toHaveBeenCalledTimes(1)

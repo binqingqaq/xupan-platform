@@ -1,7 +1,8 @@
-import { createApp, nextTick } from 'vue'
+import { createApp } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminGames from './views/PlatformAdminGames.vue'
 import { api } from './api'
+import { settleControls, dialogSubmit, clickText } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -39,9 +40,9 @@ async function mountGames() {
   document.body.appendChild(container)
   app = createApp(PlatformAdminGames)
   app.mount(container)
-  await nextTick()
+  await settleControls()
   await new Promise(resolve => setTimeout(resolve, 0))
-  await nextTick()
+  await settleControls()
 }
 
 beforeEach(() => {
@@ -67,15 +68,15 @@ describe('platform admin games', () => {
     expect(container?.textContent).toContain('测试彩种')
     expect(container?.querySelectorAll('tbody tr').length).toBe(2)
     expect(container?.querySelector<HTMLButtonElement>('header button')?.disabled).toBe(false)
-    expect(container?.querySelectorAll<HTMLButtonElement>('tbody .danger')[0]?.disabled).toBe(true)
-    expect(container?.querySelectorAll<HTMLButtonElement>('tbody .danger')[1]?.disabled).toBe(false)
+    expect(container?.querySelectorAll<HTMLButtonElement>('tbody .el-button--danger')[0]?.disabled).toBe(true)
+    expect(container?.querySelectorAll<HTMLButtonElement>('tbody .el-button--danger')[1]?.disabled).toBe(false)
 
     container?.querySelectorAll<HTMLButtonElement>('tbody tr:first-child button')[0]?.click()
-    await nextTick()
+    await settleControls()
     expect(container?.textContent).toContain('A盘特码赔率')
     expect(container?.textContent).toContain('D盘大小单双')
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
-    await nextTick()
+    dialogSubmit()
+    await settleControls()
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(api.updateGameSettings).toHaveBeenCalledWith(1, 0, expect.objectContaining({
@@ -86,27 +87,29 @@ describe('platform admin games', () => {
   })
 
   it('creates a secondary game and deletes it through BY220 action', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     await mountGames()
-    container?.querySelectorAll<HTMLButtonElement>('header button')[0]?.click()
-    await nextTick()
-    const inputs = container?.querySelectorAll<HTMLInputElement>('.modal input')
+    clickText(container!, '添加彩种')
+    await settleControls()
+    const inputs = container?.querySelectorAll<HTMLInputElement>('.el-dialog input')
     if (!inputs || inputs.length < 3) throw new Error('missing create game inputs')
     inputs[0]!.value = '测试彩种'
     inputs[0]!.dispatchEvent(new Event('input'))
     inputs[1]!.value = 'TEST2'
     inputs[1]!.dispatchEvent(new Event('input'))
-    await nextTick()
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
-    await nextTick()
+    await settleControls()
+    dialogSubmit()
+    await settleControls()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.createGameSettings).toHaveBeenCalledWith(expect.objectContaining({
       displayName: '测试彩种', gameCode: 'TEST2',
     }))
 
-    container?.querySelectorAll<HTMLButtonElement>('tbody tr:nth-child(2) .danger')[0]?.click()
-    await nextTick()
+    container?.querySelectorAll<HTMLButtonElement>('tbody tr:nth-child(2) .el-button--danger')[0]?.click()
+    await settleControls()
     await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.deleteGameSettings).not.toHaveBeenCalled()
+    clickText(document.querySelector('.el-message-box')!, '删除')
+    await settleControls()
     expect(api.deleteGameSettings).toHaveBeenCalledWith(2)
   })
 })

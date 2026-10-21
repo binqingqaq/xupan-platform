@@ -1,3 +1,5 @@
+import { ElMessageBox } from 'element-plus'
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminUnsettledOrders from './views/PlatformAdminUnsettledOrders.vue'
@@ -49,7 +51,7 @@ afterEach(() => {
 
 describe('platform admin unsettled orders', () => {
   it('renders BY220 columns and safely invokes delete action', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     vi.mocked(api.cancelUnsettledOrder).mockResolvedValue({ id: 7, status: 'DELETED', refundedAmount: 100 })
     vi.mocked(api.listUnsettledOrders)
       .mockResolvedValueOnce({
@@ -64,9 +66,7 @@ describe('platform admin unsettled orders', () => {
     document.body.appendChild(container)
     app = createApp(PlatformAdminUnsettledOrders)
     app.mount(container)
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleOperations()
 
     expect(container.textContent).toContain('子帐号')
     expect(container.textContent).toContain('机器人')
@@ -74,12 +74,10 @@ describe('platform admin unsettled orders', () => {
     expect(container.textContent).toContain('1番100')
     expect(container.textContent).toContain('未报')
 
-    const remove = container.querySelector<HTMLButtonElement>('.danger')
+    const remove = operationButton('删除', container)
     expect(remove?.textContent?.trim()).toBe('删除')
     remove?.click()
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleOperations()
 
     expect(api.cancelUnsettledOrder).toHaveBeenCalledWith(7)
     expect(container.textContent).toContain('成功！')

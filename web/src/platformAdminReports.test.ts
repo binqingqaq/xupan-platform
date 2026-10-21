@@ -1,3 +1,4 @@
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminReports from './views/PlatformAdminReports.vue'
@@ -64,7 +65,7 @@ describe('platform admin reports', () => {
     app.mount(container)
     await settle()
 
-    const profitTab = [...container.querySelectorAll<HTMLButtonElement>('.tabs button')]
+    const profitTab = [...container.querySelectorAll<HTMLElement>('[role="tab"]')]
       .find(button => button.textContent?.includes('盈亏报表'))
     profitTab?.click()
     await settle()

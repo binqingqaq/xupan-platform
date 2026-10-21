@@ -1,3 +1,5 @@
+import { ElMessageBox } from 'element-plus'
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminDrawHistory from './views/PlatformAdminDrawHistory.vue'
@@ -24,7 +26,8 @@ let container: HTMLDivElement | null = null
 let app: ReturnType<typeof createApp> | null = null
 
 beforeEach(() => {
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
+  vi.clearAllMocks()
+  vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
   vi.mocked(api.me).mockResolvedValue({
     displayName: '超级管理员', username: 'admin', permissions: ['DRAW_HISTORY_FORCE_SETTLE', 'DRAW_HISTORY_SUPPLEMENT'],
   } as never)
@@ -61,18 +64,61 @@ afterEach(() => {
 })
 
 describe('platform admin draw history', () => {
+  it('disables settlement and supplement actions without their permissions', async () => {
+    vi.mocked(api.me).mockResolvedValue({ displayName: '只读用户', username: 'reader', permissions: [] } as never)
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminDrawHistory)
+    app.mount(container)
+    await settleOperations()
+
+    for (const label of ['强制结算全部', '强制结算', '补期']) {
+      const button = operationButton(label, container)
+      expect(button.disabled).toBe(true)
+      button.click()
+    }
+    await settleOperations()
+    expect(api.forceSettleAllDrawHistory).not.toHaveBeenCalled()
+    expect(api.forceSettleDrawIssue).not.toHaveBeenCalled()
+    expect(api.supplementDrawHistory).not.toHaveBeenCalled()
+  })
+
+  it('does not settle or supplement when confirmation is cancelled', async () => {
+    vi.mocked(ElMessageBox.confirm).mockRejectedValue('cancel')
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminDrawHistory)
+    app.mount(container)
+    await settleOperations()
+
+    operationButton('强制结算全部', container).click()
+    await settleOperations()
+    expect(api.forceSettleAllDrawHistory).toHaveBeenCalledExactlyOnceWith({ confirm: 'FORCE_SETTLE_ALL', preview: true })
+    operationButton('强制结算', container).click()
+    await settleOperations()
+    expect(api.forceSettleDrawIssue).not.toHaveBeenCalled()
+
+    await fillOperationField('补期期号', '39999948', container)
+    await fillOperationField('开奖号码', '1,2,3,4,5,6,7,18', container)
+    operationButton('补期', container).click()
+    await settleOperations()
+    expect(api.supplementDrawHistory).not.toHaveBeenCalled()
+    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(3)
+    for (const call of vi.mocked(ElMessageBox.confirm).mock.calls) {
+      expect(call[2]).toEqual(expect.objectContaining({ closeOnClickModal: false }))
+    }
+  })
+
   it('renders force settlement controls and invokes single and all settlement', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     app = createApp(PlatformAdminDrawHistory)
     app.mount(container)
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleOperations()
 
     expect(container.textContent).toContain('未结算')
     expect(container.textContent).toContain('强制结算全部')
-    const allButton = container.querySelector<HTMLButtonElement>('.filters .danger')
+    const allButton = operationButton('强制结算全部', container)
     expect(allButton?.disabled).toBe(false)
     allButton?.click()
     await nextTick()
@@ -86,25 +132,15 @@ describe('platform admin draw history', () => {
     })
     expect(container.textContent).toContain('已强制结算 1 期')
 
-    const rowButtons = container.querySelectorAll<HTMLButtonElement>('.actions button')
-    rowButtons[1]?.click()
+    operationButton('强制结算', container).click()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.forceSettleDrawIssue).toHaveBeenCalledWith('39999946')
 
-    const supplementIssue = container.querySelector<HTMLInputElement>('input[placeholder="补期期号"]')
-    const supplementNumbers = container.querySelector<HTMLInputElement>('input[placeholder="8个开奖号码，逗号分隔"]')
-    if (!supplementIssue || !supplementNumbers) throw new Error('missing supplement inputs')
-    supplementIssue.value = '39999948'
-    supplementNumbers.value = '1,2,3,4,5,6,7,18'
-    supplementIssue.dispatchEvent(new Event('input'))
-    supplementNumbers.dispatchEvent(new Event('input'))
-    await nextTick()
-    const supplementButton = [...container.querySelectorAll<HTMLButtonElement>('.filters button')]
-      .find(button => button.textContent?.includes('补期'))
-    supplementButton?.click()
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await fillOperationField('补期期号', '39999948', container)
+    await fillOperationField('开奖号码', '1,2,3,4,5,6,7,18', container)
+    operationButton('补期', container).click()
+    await settleOperations()
     expect(api.supplementDrawHistory).toHaveBeenCalledWith(expect.objectContaining({
       gameCode: 'AU8', issueNumber: '39999948', numbers: [1, 2, 3, 4, 5, 6, 7, 18],
     }))

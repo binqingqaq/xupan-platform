@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { SwitchButton, UserFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 
 const props = defineProps<{ displayName?: string }>()
@@ -95,23 +96,43 @@ onMounted(async () => {
 async function logout() {
   try { await api.logout() } finally { await router.replace('/platform-admin/login') }
 }
+
+function navigateTo(path: string) {
+  if (path !== route.path) void router.push(path)
+}
 </script>
 
 <template>
   <nav class="platform-admin-nav" aria-label="超级管理菜单">
-    <RouterLink v-for="item in visibleItems" :key="item.label" :to="item.to" :class="{ active: activePath === item.to }">{{ item.label }}</RouterLink>
-    <button type="button" class="platform-admin-logout" @click="logout">安全退出</button>
-    <span class="platform-admin-welcome">{{ welcomeText }}</span>
+    <el-menu
+      class="platform-admin-menu"
+      mode="horizontal"
+      :default-active="activePath"
+      :ellipsis="true"
+      @select="navigateTo"
+    >
+      <el-menu-item v-for="item in visibleItems" :key="item.label" :index="item.to">{{ item.label }}</el-menu-item>
+    </el-menu>
+    <div class="platform-admin-account">
+      <span class="platform-admin-welcome"><el-icon><UserFilled /></el-icon>{{ welcomeText }}</span>
+      <el-button class="platform-admin-logout" text @click="logout"><el-icon><SwitchButton /></el-icon>安全退出</el-button>
+    </div>
   </nav>
 </template>
 
 <style scoped>
-.platform-admin-nav { display: flex; flex-wrap: wrap; align-items: center; min-height: 48px; padding: 0 18px; background: #202938; color: #fff; }
-.platform-admin-nav a, .platform-admin-logout, .platform-admin-nav .disabled { padding: 15px 12px; border: 0; background: transparent; color: #fff; text-decoration: none; font-size: 14px; }
-.platform-admin-nav a.active { color: #ffb6a4; }
-.platform-admin-nav .disabled { color: #89909a; cursor: not-allowed; }
-.platform-admin-logout { cursor: pointer; }
-.platform-admin-welcome { margin-left: auto; padding: 0 18px; color: #ffc6b8; font-size: 14px; }
-@media (max-width: 900px) { .platform-admin-nav { padding: 4px 8px; } .platform-admin-welcome { width: 100%; padding: 8px 12px; } }
+.platform-admin-nav { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--el-border-color-light); background: #fff; }
+.platform-admin-menu { min-width: 0; flex: 1; border-bottom: 0; }
+.platform-admin-menu :deep(.el-menu-item) { padding: 0 12px; font-size: 14px; }
+.platform-admin-account { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
+.platform-admin-welcome { display: inline-flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 13px; white-space: nowrap; }
+.platform-admin-logout { color: var(--el-color-danger); }
+.platform-admin-logout :deep(.el-icon) { margin-right: 4px; }
+@media (max-width: 900px) {
+  .platform-admin-nav { align-items: flex-start; flex-direction: column; gap: 2px; padding: 4px 10px 8px; }
+  .platform-admin-menu { width: 100%; }
+  .platform-admin-account { min-height: 34px; justify-content: flex-end; }
+  .platform-admin-welcome { white-space: normal; text-align: right; }
+}
 </style>
 

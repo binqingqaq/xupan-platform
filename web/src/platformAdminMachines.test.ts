@@ -2,6 +2,7 @@ import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminMachines from './views/PlatformAdminMachines.vue'
 import { api } from './api'
+import { formField, selectFormOption, dialogSubmit, clickText } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -43,9 +44,9 @@ async function mountMachines() {
   document.body.appendChild(container)
   app = createApp(PlatformAdminMachines)
   app.mount(container)
-  await nextTick()
+  await settle()
   await new Promise(resolve => setTimeout(resolve, 0))
-  await nextTick()
+  await settle()
 }
 
 async function settle() {
@@ -54,10 +55,8 @@ async function settle() {
   await nextTick()
 }
 
-function rebateModeSelect() {
-  const labels = Array.from(container?.querySelectorAll<HTMLLabelElement>('.modal .form-grid label') ?? [])
-  const label = labels.find(item => item.textContent?.includes('返水口径'))
-  return label?.querySelector<HTMLSelectElement>('select') ?? null
+function rebateModeLabel() {
+  return formField('返水口径').querySelector('.el-select__selected-item.el-select__placeholder')?.textContent?.trim()
 }
 
 beforeEach(() => {
@@ -91,25 +90,21 @@ describe('platform admin machines', () => {
     expect(container?.textContent).not.toContain('展示名')
 
     container?.querySelectorAll<HTMLButtonElement>('.content > header button')[0]?.click()
-    await nextTick()
+    await settle()
 
-    const inputs = container?.querySelectorAll<HTMLInputElement>('.modal .form-grid input')
+    const inputs = container?.querySelectorAll<HTMLInputElement>('.el-dialog .form-grid input')
     if (!inputs || inputs.length < 2) throw new Error('missing machine form inputs')
     inputs[0]!.value = 'bot002'
     inputs[0]!.dispatchEvent(new Event('input'))
     inputs[1]!.value = 'secret123'
     inputs[1]!.dispatchEvent(new Event('input'))
-    await nextTick()
+    await settle()
 
-    const select = rebateModeSelect()
-    if (!select) throw new Error('missing rebate mode select')
-    expect(select.value).toBe('SINGLE')
-    select.value = 'DOUBLE'
-    select.dispatchEvent(new Event('change'))
-    await nextTick()
-    expect(select.value).toBe('DOUBLE')
+    expect(rebateModeLabel()).toBe('单边')
+    await selectFormOption('返水口径', '双边')
+    expect(rebateModeLabel()).toBe('双边')
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
 
     expect(api.createMachine).toHaveBeenCalledWith(expect.objectContaining({
@@ -132,17 +127,16 @@ describe('platform admin machines', () => {
     expect(rows[1]?.textContent).toContain('单边')
 
     rows[0]?.querySelectorAll<HTMLButtonElement>('button')[0]?.click()
-    await nextTick()
-    const select = rebateModeSelect()
-    if (!select) throw new Error('missing rebate mode select')
-    expect(select.value).toBe('DOUBLE')
-    expect(select.selectedOptions[0]?.textContent).toBe('双边')
+    await settle()
+    expect(rebateModeLabel()).toBe('双边')
+    clickText(document.querySelector('.el-dialog')!, '取消')
+    await settle()
 
     container?.querySelectorAll<HTMLButtonElement>('tbody tr:nth-child(2) button')[0]?.click()
-    await nextTick()
-    expect(rebateModeSelect()?.value).toBe('SINGLE')
+    await settle()
+    expect(rebateModeLabel()).toBe('单边')
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
     expect(api.updateMachine).toHaveBeenCalledWith(2, expect.objectContaining({ rebateMode: 'SINGLE' }))
   })
@@ -153,8 +147,8 @@ describe('platform admin machines', () => {
     expect(container?.querySelector('tbody tr')?.textContent).toContain('单边')
 
     container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
-    await nextTick()
-    expect(rebateModeSelect()?.value).toBe('SINGLE')
+    await settle()
+    expect(rebateModeLabel()).toBe('单边')
   })
 
   /**
@@ -168,14 +162,14 @@ describe('platform admin machines', () => {
 
     await mountMachines()
     container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
-    await nextTick()
+    await settle()
 
     const checked = Array.from(container?.querySelectorAll<HTMLInputElement>('.games-checks input:checked') ?? [])
       .map(input => input.value)
       .sort()
     expect(checked).toEqual(['AU8', 'K28'])
 
-    container?.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
+    dialogSubmit()
     await settle()
     expect(api.updateMachine).toHaveBeenCalledWith(7, expect.objectContaining({ games: ['AU8', 'K28'] }))
   })
@@ -185,7 +179,7 @@ describe('platform admin machines', () => {
 
     await mountMachines()
     container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
-    await nextTick()
+    await settle()
 
     expect(container?.querySelectorAll('.games-checks input:checked').length).toBe(0)
     expect(container?.querySelector('.games-checks')?.textContent).toContain('澳8番摊')
@@ -208,10 +202,10 @@ describe('platform admin machines', () => {
     expect(row?.textContent).toContain('已锁定')
 
     const buttons = Array.from(row?.querySelectorAll<HTMLButtonElement>('button') ?? [])
-    const unlock = buttons.find(button => button.textContent === '解锁')
+    const unlock = buttons.find(button => button.textContent?.trim() === '解锁')
     expect(unlock).toBeTruthy()
     // 锁定时不能再给「停用」，否则超管容易误点成停用而看不出账号仍被锁
-    expect(buttons.some(button => button.textContent === '停用')).toBe(false)
+    expect(buttons.some(button => button.textContent?.trim() === '停用')).toBe(false)
 
     unlock?.click()
     await settle()

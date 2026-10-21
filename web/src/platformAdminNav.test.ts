@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminNav from './components/platform-admin/PlatformAdminNav.vue'
 import { api } from './api'
 
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+
 vi.mock('./api', () => ({
   api: {
     me: vi.fn(),
@@ -10,11 +12,11 @@ vi.mock('./api', () => ({
   },
 }))
 
-// 顶部菜单用 RouterLink 渲染，这里只关心欢迎语，给出最小桩即可。
+// 路由桩保留导航边界；菜单使用真实 Element Plus 组件。
 vi.mock('vue-router', () => ({
   RouterLink: { name: 'RouterLink', props: { to: { type: [String, Object] } }, template: '<a><slot /></a>' },
   useRoute: () => ({ path: '/platform-admin' }),
-  useRouter: () => ({ replace: vi.fn() }),
+  useRouter: () => router,
 }))
 
 let container: HTMLDivElement | null = null
@@ -35,7 +37,7 @@ function welcomeText() {
 }
 
 function navLabels() {
-  return Array.from(container?.querySelectorAll<HTMLAnchorElement>('.platform-admin-nav a') ?? [])
+  return Array.from(container?.querySelectorAll<HTMLAnchorElement>('.platform-admin-nav .el-menu-item') ?? [])
     .map(link => link.textContent?.trim() ?? '')
 }
 
@@ -190,5 +192,26 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
 
     await mountNav('超级管理员')
     expect(navLabels()).toEqual(['子账号'])
+  })
+
+  it('选择菜单跳转对应路由，当前菜单不重复导航', async () => {
+    vi.mocked(api.me).mockResolvedValue(me({ permissions: ['PLATFORM_HOME_READ', 'MACHINE_MANAGE'] }))
+    await mountNav('超级管理员')
+    const items = Array.from(container!.querySelectorAll<HTMLElement>('.el-menu-item'))
+    items.find(item => item.textContent?.trim() === '开奖信息')!.click()
+    await nextTick()
+    expect(router.push).not.toHaveBeenCalled()
+    items.find(item => item.textContent?.trim() === '机器管理')!.click()
+    await nextTick()
+    expect(router.push).toHaveBeenCalledExactlyOnceWith('/platform-admin/machines')
+  })
+
+  it('安全退出调用原退出接口并回到平台登录页', async () => {
+    vi.mocked(api.me).mockResolvedValue(me())
+    await mountNav('超级管理员')
+    container!.querySelector<HTMLButtonElement>('.platform-admin-logout')!.click()
+    await nextTick()
+    expect(api.logout).toHaveBeenCalledTimes(1)
+    expect(router.replace).toHaveBeenCalledExactlyOnceWith('/platform-admin/login')
   })
 })

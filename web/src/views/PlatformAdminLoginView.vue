@@ -81,32 +81,33 @@ onMounted(async () => {
 
 <template>
   <main class="platform-admin-login-page">
-    <section class="platform-admin-login-card">
+    <el-card class="platform-admin-login-card" shadow="never">
       <div class="platform-admin-login-brand"><span>X</span><strong>XUPAN 超级管理后台</strong></div>
-      <p>平台管理员独立入口</p>
-      <p class="platform-admin-login-message">{{ pageMessage }}</p>
-      <form @submit.prevent="submit">
-        <label>管理员账号<input v-model="username" autocomplete="username" autofocus /></label>
-        <label>登录密码<input v-model="password" type="password" autocomplete="current-password" /></label>
-        <button type="submit" :disabled="busy">{{ busy ? '登录中...' : '进入超级管理后台' }}</button>
-        <p v-if="error" class="platform-admin-login-error" role="alert">{{ error }}</p>
-      </form>
-    </section>
+      <p class="platform-admin-login-subtitle">平台管理员独立入口</p>
+      <el-alert class="platform-admin-login-message" :title="pageMessage" type="info" :closable="false" />
+      <el-form class="platform-admin-login-form" label-position="top" @keyup.enter="submit">
+        <el-form-item label="管理员账号">
+          <el-input v-model="username" autocomplete="username" autofocus />
+        </el-form-item>
+        <el-form-item label="登录密码">
+          <el-input v-model="password" type="password" show-password autocomplete="current-password" />
+        </el-form-item>
+        <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+        <el-button type="primary" size="large" :loading="busy" @click="submit">进入超级管理后台</el-button>
+      </el-form>
+    </el-card>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-login-page { min-height: 100vh; display: grid; place-items: center; background: #eaf4fb; color: #222; }
-.platform-admin-login-card { width: min(420px, calc(100vw - 32px)); padding: 28px; border: 1px solid #9fc4db; background: #fff; box-shadow: 0 8px 24px rgba(22, 73, 106, .15); }
-.platform-admin-login-brand { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
-.platform-admin-login-brand span { display: grid; place-items: center; width: 34px; height: 34px; background: #1f6d9a; color: #fff; font-weight: 700; }
-.platform-admin-login-brand strong { font-size: 19px; }
-.platform-admin-login-card > p { margin: 0 0 24px; color: #607789; font-size: 13px; }
-/* 守卫分流文案（reason=expired / no-permission / logged-out）单独一行，比副标题更醒目。 */
-.platform-admin-login-card > p.platform-admin-login-message { margin: -14px 0 20px; color: #1f6d9a; font-weight: 700; }
-.platform-admin-login-card form { display: grid; gap: 14px; }
-.platform-admin-login-card label { display: grid; gap: 6px; font-size: 14px; }
-.platform-admin-login-card input { padding: 10px; border: 1px solid #9fc4db; }
-.platform-admin-login-card button { padding: 11px; border: 0; background: #1f6d9a; color: #fff; cursor: pointer; }
-.platform-admin-login-error { margin: 0; color: #b42318; font-size: 13px; }
+.platform-admin-login-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: #f3f6f7; }
+.platform-admin-login-card { width: min(420px, 100%); }
+.platform-admin-login-card :deep(.el-card__body) { display: grid; gap: 18px; padding: 28px; }
+.platform-admin-login-brand { display: flex; align-items: center; gap: 12px; }
+.platform-admin-login-brand span { display: grid; width: 36px; aspect-ratio: 1; place-items: center; border-radius: 4px; background: var(--el-color-primary); color: #fff; font-size: 18px; font-weight: 700; }
+.platform-admin-login-brand strong { font-size: 18px; }
+.platform-admin-login-subtitle { margin: -12px 0 0; color: var(--el-text-color-secondary); font-size: 13px; }
+.platform-admin-login-form { display: grid; gap: 8px; }
+.platform-admin-login-form > .el-button { width: 100%; margin-top: 6px; }
+@media (max-width: 480px) { .platform-admin-login-page { padding: 14px; } .platform-admin-login-card :deep(.el-card__body) { padding: 22px 18px; } }
 </style>

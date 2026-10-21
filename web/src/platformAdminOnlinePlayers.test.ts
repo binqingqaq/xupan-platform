@@ -1,3 +1,5 @@
+import { ElMessageBox } from 'element-plus'
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminOnlinePlayers from './views/PlatformAdminOnlinePlayers.vue'
@@ -41,14 +43,12 @@ afterEach(() => {
 
 describe('platform admin online players', () => {
   it('renders BY220 columns and supports disconnect and message actions', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     container = document.createElement('div')
     document.body.appendChild(container)
     app = createApp(PlatformAdminOnlinePlayers)
     app.mount(container)
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleOperations()
 
     expect(container.textContent).toContain('玩家昵称')
     expect(container.textContent).toContain('用户类型')
@@ -56,24 +56,18 @@ describe('platform admin online players', () => {
     expect(container.textContent).toContain('已脱敏')
     expect(container.textContent).toContain('250.00')
 
-    container.querySelectorAll<HTMLButtonElement>('.actions button')[0]?.click()
+    operationButton('下线', container).click()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.disconnectOnlinePlayer).toHaveBeenCalledWith(8)
 
-    container.querySelectorAll<HTMLButtonElement>('.actions button')[1]?.click()
+    operationButton('发送信息', container).click()
     await nextTick()
-    const inputs = container.querySelectorAll<HTMLInputElement>('.modal input')
-    const textarea = container.querySelector<HTMLTextAreaElement>('.modal textarea')
-    if (!inputs[1] || !textarea) throw new Error('missing message fields')
-    inputs[1].value = '管理员消息'
-    inputs[1].dispatchEvent(new Event('input'))
-    textarea.value = '测试通知内容'
-    textarea.dispatchEvent(new Event('input'))
-    await nextTick()
-    container.querySelector<HTMLButtonElement>('.modal button[type="submit"]')?.click()
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await settleOperations()
+    await fillOperationField('标题', '管理员消息', document)
+    await fillOperationField('内容', '测试通知内容', document)
+    operationButton('发送', document).click()
+    await settleOperations()
 
     expect(api.sendOnlinePlayerMessage).toHaveBeenCalledWith(8, expect.objectContaining({
       title: '管理员消息',

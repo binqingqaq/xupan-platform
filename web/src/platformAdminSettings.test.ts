@@ -1,3 +1,5 @@
+import { ElMessageBox } from 'element-plus'
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminSettings from './views/PlatformAdminSettings.vue'
@@ -28,9 +30,7 @@ async function mountSettings() {
   document.body.appendChild(container)
   app = createApp(PlatformAdminSettings)
   app.mount(container)
-  await nextTick()
-  await new Promise(resolve => setTimeout(resolve, 0))
-  await nextTick()
+  await settleOperations()
 }
 
 beforeEach(() => {
@@ -100,17 +100,17 @@ describe('platform admin settings', () => {
     expect(container?.textContent).toContain('头部导航')
     expect(container?.textContent).toContain('游戏状态栏')
     expect(container?.textContent).toContain('键盘模式')
-    const dangerous = container?.querySelectorAll<HTMLButtonElement>('.danger')
+    const dangerous = container?.querySelectorAll<HTMLButtonElement>('.danger-zone .el-button--danger')
     expect(dangerous?.length).toBe(2)
     expect(dangerous?.[0]?.disabled).toBe(false)
     expect(dangerous?.[1]?.disabled).toBe(false)
 
-    const title = container?.querySelector<HTMLInputElement>('.settings-form > label input')
+    const title = container?.querySelector<HTMLInputElement>('.settings-form > .el-form-item input')
     if (!title) throw new Error('missing title input')
     title.value = '测试标题'
     title.dispatchEvent(new Event('input'))
     await nextTick()
-    container?.querySelector<HTMLButtonElement>('.settings-form footer button')?.click()
+    operationButton('保存').click()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
 
@@ -123,11 +123,11 @@ describe('platform admin settings', () => {
 
   it('previews and confirms the BY220 delete-all-accounts operation', async () => {
     // BY220 的 userDels 是物理删除，本项目已对齐：提示文案不再说"软删除"
-    vi.spyOn(window, 'prompt').mockReturnValue('DELETE_ALL_ACCOUNTS')
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(ElMessageBox, 'prompt').mockResolvedValue({ value: 'DELETE_ALL_ACCOUNTS', action: 'confirm' } as never)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     await mountSettings()
 
-    const dangerous = container?.querySelectorAll<HTMLButtonElement>('.danger')
+    const dangerous = container?.querySelectorAll<HTMLButtonElement>('.danger-zone .el-button--danger')
     dangerous?.[1]?.click()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
@@ -138,15 +138,15 @@ describe('platform admin settings', () => {
   })
 
   it('previews and confirms the BY220 clear-data operation', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue('confirm' as never)
     await mountSettings()
 
-    const timeInput = container?.querySelector<HTMLInputElement>('input[type="datetime-local"]')
-    if (!timeInput) throw new Error('missing clear time input')
-    timeInput.value = '2026-09-01T00:00'
-    timeInput.dispatchEvent(new Event('input'))
-    await nextTick()
-    container?.querySelectorAll<HTMLButtonElement>('.danger')[0]?.click()
+    await fillOperationField('清理时间', '2026-09-01 00:00', container!)
+    const dateInput = container?.querySelector<HTMLInputElement>('.el-date-editor input')
+    dateInput?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }))
+    dateInput?.dispatchEvent(new FocusEvent('blur', { bubbles: true }))
+    await settleOperations()
+    container?.querySelectorAll<HTMLButtonElement>('.danger-zone .el-button--danger')[0]?.click()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
 

@@ -1,0 +1,64 @@
+body.platform-admin-body:not(.ops-console-body) {
+  min-width: 320px;
+}
+
+.platform-admin-page {
+  --el-color-primary: #287d78;
+  --el-color-primary-light-3: #6aa6a2;
+  --el-color-primary-light-5: #93bebc;
+  --el-color-primary-light-7: #bdd6d4;
+  --el-color-primary-light-8: #d1e2e1;
+  --el-color-primary-light-9: #e5efee;
+  --el-color-primary-dark-2: #20635f;
+  --el-color-success: #2e805e;
+  --el-color-warning: #b87922;
+  --el-color-danger: #c24c48;
+  --el-border-radius-base: 4px;
+  --el-border-radius-small: 3px;
+  --el-text-color-primary: #293740;
+  --el-text-color-regular: #4f5d65;
+  --el-text-color-secondary: #73808a;
+  min-height: 100vh;
+  background: #f3f6f7;
+  color: var(--el-text-color-primary);
+}
+
+.platform-admin-page .el-table {
+  --el-table-header-bg-color: #f1f5f5;
+  --el-table-row-hover-bg-color: #f3f8f7;
+  --el-table-border-color: #e2e8e9;
+  font-variant-numeric: tabular-nums;
+}
+
+.platform-admin-page .el-table th.el-table__cell {
+  color: #45565e;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.platform-admin-dialog-overlay .el-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  margin: 16px auto !important;
+}
+
+.platform-admin-dialog-overlay .el-dialog__header,
+.platform-admin-dialog-overlay .el-dialog__footer {
+  flex: 0 0 auto;
+}
+
+.platform-admin-dialog-overlay .el-dialog__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.platform-admin-dialog-overlay .dialog-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-bottom: 12px;
+  background: var(--el-dialog-bg-color);
+}
+

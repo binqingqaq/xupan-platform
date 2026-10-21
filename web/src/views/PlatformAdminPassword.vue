@@ -64,21 +64,26 @@ onMounted(() => { document.title = '修改密码'; void load() })
   <main class="platform-admin-page">
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
-      <header><div><h1>修改密码</h1><p>对应 BY220 admin.php - 修改密码</p></div></header>
-      <p v-if="error" class="alert">{{ error }}</p>
-      <p v-if="feedback" class="feedback">{{ feedback }}</p>
-      <div v-if="loading" class="empty">正在加载...</div>
-      <form v-else class="password-form" @submit.prevent="submit">
-        <label>旧密码<input v-model="form.oldPassword" type="password" placeholder="请输入旧密码" autocomplete="off" /></label>
-        <label>新密码<input v-model="form.newPassword" type="password" placeholder="请输入新密码" autocomplete="off" /></label>
-        <label>确认密码<input v-model="form.confirmPassword" type="password" placeholder="请再次输入新密码" autocomplete="off" /></label>
-        <label v-if="canChangeUsername">登录账号<input v-model="form.username" type="text" :placeholder="`如修改请输入，当前：${currentUsername}`" autocomplete="off" /></label>
-        <div class="actions"><button type="submit" :disabled="saving">{{ saving ? '提交中...' : '提交' }}</button></div>
-      </form>
+      <header class="page-heading"><h1>修改密码</h1></header>
+      <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
+      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
+      <el-skeleton v-if="loading" :rows="4" animated />
+      <el-form v-else class="password-form" label-position="top" @submit.prevent="submit">
+        <el-form-item label="旧密码"><el-input v-model="form.oldPassword" type="password" show-password placeholder="请输入旧密码" autocomplete="off" /></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="form.newPassword" type="password" show-password placeholder="请输入新密码" autocomplete="off" /></el-form-item>
+        <el-form-item label="确认密码"><el-input v-model="form.confirmPassword" type="password" show-password placeholder="请再次输入新密码" autocomplete="off" /></el-form-item>
+        <el-form-item v-if="canChangeUsername" label="登录账号"><el-input v-model="form.username" type="text" :placeholder="`如修改请输入，当前：${currentUsername}`" autocomplete="off" /></el-form-item>
+        <div class="form-actions"><el-button type="primary" native-type="submit" :loading="saving">提交</el-button></div>
+      </el-form>
     </section>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-page{min-height:100vh;background:#eaf4fb;color:#1d1d1d}.content{padding:14px}.content h1{margin:0;font-size:24px}.content p{margin:4px 0 12px;color:#5f7280}.password-form{display:grid;gap:12px;max-width:720px;padding:18px;border:1px solid #d6e4ec;background:#fff}.password-form label{display:grid;grid-template-columns:110px 1fr;align-items:center;gap:12px}.password-form input{padding:9px;border:1px solid #a8c8dc;font:inherit}.actions{padding-left:122px}.actions button{padding:8px 18px;border:1px solid #7da9c1;background:#fff;cursor:pointer}.actions button:disabled{color:#98a1a8;cursor:not-allowed}.alert{padding:10px;background:#ffe1de}.feedback{padding:10px;background:#dff5e4;color:#166b2d}.empty{padding:30px;background:#fff;text-align:center}@media(max-width:700px){.password-form label{grid-template-columns:1fr}.actions{padding-left:0}}
+.content { display: grid; gap: 14px; padding: 18px; }
+.page-heading h1 { margin: 0; font-size: 22px; }
+.page-alert { margin-bottom: 2px; }
+.password-form { display: grid; gap: 4px; max-width: 520px; }
+.form-actions { display: flex; justify-content: flex-end; padding-top: 8px; }
+@media (max-width: 700px) { .content { padding: 12px; } }
 </style>

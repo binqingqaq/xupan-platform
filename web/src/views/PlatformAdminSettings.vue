@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { PlatformSettings, PlatformSettingsInput } from '../types/platformAdmin'
@@ -65,19 +66,33 @@ async function save() {
 }
 
 async function deleteAllAccounts() {
-  const confirm = window.prompt('此操作会删除除超级管理员和主机器人外的全部账号。请输入 DELETE_ALL_ACCOUNTS 确认：')
-  if (confirm !== 'DELETE_ALL_ACCOUNTS') {
-    if (confirm !== null) feedback.value = '确认文本不正确，已取消'
+  let confirmation: string
+  try {
+    const result = await ElMessageBox.prompt(
+      '此操作会删除除超级管理员和主机器人外的全部账号。请输入 DELETE_ALL_ACCOUNTS 确认：',
+      '删除全量账号',
+      { inputPlaceholder: 'DELETE_ALL_ACCOUNTS', inputType: 'text', confirmButtonText: '继续', cancelButtonText: '取消', closeOnClickModal: false },
+    )
+    confirmation = result.value
+  } catch {
+    return
+  }
+  if (confirmation !== 'DELETE_ALL_ACCOUNTS') {
+    feedback.value = '确认文本不正确，已取消'
     return
   }
   dangerSaving.value = true
   error.value = ''
   feedback.value = ''
   try {
-    const preview = await api.previewDeleteAllAccounts(confirm)
+    const preview = await api.previewDeleteAllAccounts(confirmation)
     const message = `将删除子账号 ${preview.counts.admins} 个、机器 ${preview.counts.robots} 个、玩家/托 ${preview.counts.players} 个，是否继续？`
-    if (!window.confirm(message)) return
-    const result = await api.deleteAllAccounts(confirm)
+    try {
+      await ElMessageBox.confirm(message, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', closeOnClickModal: false })
+    } catch {
+      return
+    }
+    const result = await api.deleteAllAccounts(confirmation)
     feedback.value = result.message
     await load()
   } catch (cause) {
@@ -100,7 +115,11 @@ async function clearData() {
   feedback.value = ''
   try {
     const preview = await api.previewClearData(clearTime.value, confirm)
-    if (!window.confirm(`将清理该时间之前的 ${preview.data} 条数据，是否继续？`)) return
+    try {
+      await ElMessageBox.confirm(`将清理该时间之前的 ${preview.data} 条数据，是否继续？`, '确认清空数据', { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消', closeOnClickModal: false })
+    } catch {
+      return
+    }
     const result = await api.clearData(clearTime.value, confirm)
     feedback.value = result.message
   } catch (cause) {
@@ -120,43 +139,59 @@ onMounted(async () => {
   <main class="platform-admin-page">
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
-      <header><div><h1>设置</h1><p>对应 BY220 admin.php - 设置</p></div></header>
-      <p v-if="error" class="alert">{{ error }}</p>
-      <p v-if="feedback" class="feedback">{{ feedback }}</p>
-      <div v-if="loading" class="empty">正在加载...</div>
-      <form v-else class="settings-form" @submit.prevent="save">
+      <header class="page-heading"><h1>设置</h1></header>
+      <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
+      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
+      <el-skeleton v-if="loading" :rows="7" animated />
+      <el-form v-else class="settings-form" label-position="top" @submit.prevent="save">
         <section class="danger-zone">
           <h2>数据操作</h2>
           <div class="inline-row">
-            <label>时间<input v-model="clearTime" type="datetime-local" /></label>
-            <button type="button" class="danger" :disabled="clearing" @click="clearData">{{ clearing ? '处理中...' : '清空数据' }}</button>
+            <el-form-item label="清理时间">
+              <el-date-picker v-model="clearTime" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" placeholder="选择日期和时间" />
+            </el-form-item>
+            <el-button type="danger" :loading="clearing" @click="clearData">清空数据</el-button>
           </div>
           <div class="inline-row">
             <strong>危险操作</strong>
-            <button type="button" class="danger" :disabled="dangerSaving" @click="deleteAllAccounts">{{ dangerSaving ? '处理中...' : '删除全量账号' }}</button>
-            <span>仅保留当前超级管理员和主机器人账号；按 BY220 先预检，再输入确认文本执行物理删除（删除后不可恢复，同名账号可重建）。</span>
+            <el-button type="danger" :loading="dangerSaving" @click="deleteAllAccounts">删除全量账号</el-button>
+            <span>仅保留当前超级管理员和主机器人账号；操作前会先显示删除数量，确认文本后执行物理删除（删除后不可恢复，同名账号可重建）。</span>
           </div>
         </section>
 
-        <label>群聊标题<input v-model="form.siteTitle" required maxlength="128" /></label>
-        <label>公告<textarea v-model="form.announcement" rows="4" maxlength="4000" /></label>
-        <label>域名链接<textarea v-model="form.domainLinks" rows="4" maxlength="4000" placeholder="每行一个链接" /></label>
-        <label>群聊警告<textarea v-model="form.chatWarning" rows="4" maxlength="2000" /></label>
+        <el-form-item label="群聊标题" required><el-input v-model="form.siteTitle" required maxlength="128" /></el-form-item>
+        <el-form-item label="公告"><el-input v-model="form.announcement" type="textarea" :rows="4" maxlength="4000" /></el-form-item>
+        <el-form-item label="域名链接"><el-input v-model="form.domainLinks" type="textarea" :rows="4" maxlength="4000" placeholder="每行一个链接" /></el-form-item>
+        <el-form-item label="群聊警告"><el-input v-model="form.chatWarning" type="textarea" :rows="4" maxlength="2000" /></el-form-item>
 
         <div class="switch-grid">
-          <label class="switch-row"><span>头部导航</span><input v-model="form.headerEnabled" type="checkbox" /><strong>{{ form.headerEnabled ? '显示' : '隐藏' }}</strong></label>
-          <label class="switch-row"><span>游戏状态栏</span><input v-model="form.statusBarEnabled" type="checkbox" /><strong>{{ form.statusBarEnabled ? '显示' : '隐藏' }}</strong></label>
-          <label class="switch-row"><span>键盘模式</span><input v-model="form.keyboardMode" type="checkbox" /><strong>{{ form.keyboardMode ? '双键' : '单键' }}</strong></label>
+          <div class="switch-row"><span>头部导航</span><el-switch v-model="form.headerEnabled" /><strong>{{ form.headerEnabled ? '显示' : '隐藏' }}</strong></div>
+          <div class="switch-row"><span>游戏状态栏</span><el-switch v-model="form.statusBarEnabled" /><strong>{{ form.statusBarEnabled ? '显示' : '隐藏' }}</strong></div>
+          <div class="switch-row"><span>键盘模式</span><el-switch v-model="form.keyboardMode" /><strong>{{ form.keyboardMode ? '双键' : '单键' }}</strong></div>
         </div>
 
-        <label>信息<textarea v-model="form.information" rows="6" maxlength="4000" /></label>
-        <p class="hint">公告、域名链接、群聊警告和信息按 BY220 后台真实保存；当前前台模板未发现这些字段的消费位置，因此不伪造显示效果。</p>
-        <footer><button type="submit" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button></footer>
-      </form>
+        <el-form-item label="信息"><el-input v-model="form.information" type="textarea" :rows="6" maxlength="4000" /></el-form-item>
+        <el-alert title="公告、域名链接、群聊警告和信息会保存；当前前台模板未使用这些字段，因此不会产生对应的前台展示效果。" type="info" :closable="false" />
+        <div class="form-actions"><el-button type="primary" native-type="submit" :loading="saving">保存</el-button></div>
+      </el-form>
     </section>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-page{min-height:100vh;background:#eaf4fb;color:#1d1d1d}.content{padding:14px}.content h1{margin:0;font-size:24px}.content p{margin:4px 0 12px;color:#5f7280}.settings-form{display:grid;gap:14px;max-width:900px}.settings-form>label{display:grid;gap:6px;padding:12px;background:#fff}.settings-form input,.settings-form textarea{padding:8px;border:1px solid #a8c8dc;font:inherit}.danger-zone{display:grid;gap:10px;padding:14px;background:#fff3f1;border:1px solid #f0b4aa}.danger-zone h2{margin:0;font-size:18px;color:#b3261e}.inline-row{display:flex;flex-wrap:wrap;align-items:end;gap:10px}.inline-row label{display:grid;gap:5px}.inline-row span{color:#8b4b43}.danger{padding:8px 12px;border:1px solid #d65a4a;background:#fff;color:#b3261e}.danger:disabled,.settings-form footer button:disabled{color:#98a1a8;cursor:not-allowed}.switch-grid{display:grid;gap:10px}.switch-row{display:flex;align-items:center;justify-content:space-between;padding:12px;background:#fff}.switch-row input{width:20px;height:20px}.hint{padding:10px;background:#fff9dd;color:#75621a}.alert{padding:10px;background:#ffe1de}.feedback{padding:10px;background:#dff5e4;color:#166b2d}.empty{padding:30px;background:#fff;text-align:center}.settings-form footer{display:flex;justify-content:flex-end}.settings-form footer button{padding:9px 18px;border:1px solid #7da9c1;background:#fff;cursor:pointer}
+.content { display: grid; gap: 14px; padding: 18px; }
+.page-heading { margin: 0; }
+.page-heading h1 { margin: 0; font-size: 22px; }
+.page-alert { margin-bottom: 2px; }
+.settings-form { display: grid; gap: 4px; max-width: 900px; }
+.danger-zone { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--el-border-color); border-radius: 4px; background: var(--el-color-danger-light-9); }
+.danger-zone h2 { margin: 0; font-size: 16px; color: var(--el-color-danger); }
+.inline-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.inline-row .el-form-item { margin: 0; }
+.inline-row span { max-width: 720px; color: var(--el-text-color-secondary); }
+.switch-grid { display: grid; gap: 8px; }
+.switch-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; background: #fff; }
+.switch-row strong { min-width: 36px; }
+.form-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 700px) { .content { padding: 12px; } .inline-row { align-items: flex-start; } .switch-row { grid-template-columns: 1fr auto; } .switch-row strong { grid-column: 1; } }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { OnlinePlayerItem } from '../types/platformAdmin'
 
@@ -34,7 +35,9 @@ async function load() {
 }
 
 async function disconnect(row: OnlinePlayerItem) {
-  if (!window.confirm(`确定将[${row.username}]强制下线么?`)) return
+  try {
+    await ElMessageBox.confirm(`确定将[${row.username}]强制下线么?`, '强制下线确认', { type: 'warning', confirmButtonText: '强制下线', cancelButtonText: '取消', closeOnClickModal: false })
+  } catch { return }
   error.value = ''
   feedback.value = ''
   try {
@@ -55,6 +58,10 @@ function openMessage(row: OnlinePlayerItem) {
 
 async function sendMessage() {
   if (!messageTarget.value || sending.value) return
+  if (messageTitle.value.length === 0 || messageContent.value.length === 0) {
+    ElMessage.warning('标题和内容不能为空')
+    return
+  }
   sending.value = true
   error.value = ''
   feedback.value = ''
@@ -92,71 +99,48 @@ onUnmounted(() => {
   <main class="platform-admin-page">
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
-      <header>
-        <div>
-          <h1>在线玩家</h1>
-          <p>对应 BY220 admin.php - 在线玩家；每 10 秒自动刷新</p>
-        </div>
-        <button type="button" :disabled="loading" @click="load">刷新</button>
+      <header class="page-heading">
+        <div><h1>在线玩家</h1><p>每 10 秒自动刷新</p></div>
+        <el-button :disabled="loading" @click="load">刷新</el-button>
       </header>
-      <p v-if="error" class="alert">{{ error }}</p>
-      <p v-if="feedback" class="feedback">{{ feedback }}</p>
-      <div v-if="loading && rows.length === 0" class="empty">正在加载...</div>
-      <div v-else class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>玩家昵称</th>
-              <th>用户类型</th>
-              <th>积分</th>
-              <th>子账号</th>
-              <th>机器人</th>
-              <th>在线</th>
-              <th>登录ip</th>
-              <th>地区</th>
-              <th>登录时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.userId">
-              <td>{{ row.displayName }}</td>
-              <td>{{ row.userType }}</td>
-              <td>{{ row.score.toFixed(2) }}</td>
-              <td>{{ row.subAccount || '--' }}</td>
-              <td>{{ row.robot || '--' }}</td>
-              <td class="online">在线</td>
-              <td>{{ row.ip || '已脱敏' }}</td>
-              <td>{{ row.city || '--' }}</td>
-              <td>{{ time(row.loginTime) }}</td>
-              <td class="actions">
-                <button class="danger" type="button" @click="disconnect(row)">下线</button>
-                <button type="button" @click="openMessage(row)">发送信息</button>
-              </td>
-            </tr>
-            <tr v-if="rows.length === 0"><td colspan="10">暂无在线用户</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
+      <el-skeleton v-if="loading && rows.length === 0" :rows="5" animated />
+      <el-table scrollbar-always-on v-else v-loading="loading" :data="rows" row-key="userId" stripe border empty-text="暂无在线用户">
+        <el-table-column prop="displayName" label="玩家昵称" min-width="140" />
+        <el-table-column prop="userType" label="用户类型" min-width="110" />
+        <el-table-column label="积分" min-width="100" align="right"><template #default="{ row }">{{ row.score.toFixed(2) }}</template></el-table-column>
+        <el-table-column prop="subAccount" label="子账号" min-width="120"><template #default="{ row }">{{ row.subAccount || '--' }}</template></el-table-column>
+        <el-table-column prop="robot" label="机器人" min-width="110"><template #default="{ row }">{{ row.robot || '--' }}</template></el-table-column>
+        <el-table-column label="在线" width="90"><template #default><el-tag type="success">在线</el-tag></template></el-table-column>
+        <el-table-column label="登录ip" min-width="130"><template #default="{ row }">{{ row.ip || '已脱敏' }}</template></el-table-column>
+        <el-table-column prop="city" label="地区" min-width="110"><template #default="{ row }">{{ row.city || '--' }}</template></el-table-column>
+        <el-table-column label="登录时间" min-width="180"><template #default="{ row }">{{ time(row.loginTime) }}</template></el-table-column>
+        <el-table-column label="操作" min-width="150" fixed="right"><template #default="{ row }">
+          <el-button type="danger" link @click="disconnect(row as OnlinePlayerItem)">下线</el-button>
+          <el-button type="primary" link @click="openMessage(row as OnlinePlayerItem)">发送信息</el-button>
+        </template></el-table-column>
+      </el-table>
     </section>
 
-    <div v-if="messageOpen && messageTarget" class="modal-mask" @click.self="messageOpen = false">
-      <form class="modal" @submit.prevent="sendMessage">
-        <header><h2>发送消息</h2><button type="button" @click="messageOpen = false">×</button></header>
-        <div class="form-grid">
-          <label>接收人<input :value="messageTarget.username" readonly /></label>
-          <label>标题<input v-model="messageTitle" required maxlength="128" /></label>
-          <label class="wide">内容<textarea v-model="messageContent" required maxlength="2000" rows="7" /></label>
-        </div>
-        <footer>
-          <button type="button" @click="messageOpen = false">取消</button>
-          <button type="submit" :disabled="sending">{{ sending ? '发送中...' : '发送' }}</button>
-        </footer>
-      </form>
-    </div>
+    <el-dialog v-if="messageTarget" v-model="messageOpen" title="发送消息" width="min(560px, 94vw)" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent="sendMessage">
+        <el-form-item label="接收人"><el-input :model-value="messageTarget.username" readonly /></el-form-item>
+        <el-form-item label="标题"><el-input v-model="messageTitle" required maxlength="128" /></el-form-item>
+        <el-form-item label="内容"><el-input v-model="messageContent" type="textarea" required maxlength="2000" :rows="7" show-word-limit /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="messageOpen = false">取消</el-button>
+        <el-button type="primary" :loading="sending" @click="sendMessage">发送</el-button>
+      </template>
+    </el-dialog>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-page{min-height:100vh;background:#eaf4fb;color:#1d1d1d}.content{padding:14px}.content header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.content h1{margin:0;font-size:24px}.content p{margin:4px 0 12px;color:#5f7280}.content header>button,.actions button,.modal button{padding:7px 12px;border:1px solid #7da9c1;background:#fff;cursor:pointer}.table-wrap{overflow:auto;background:#fff}.table-wrap table{width:100%;min-width:1100px}table{border-collapse:collapse;background:#fff;font-size:13px}th{padding:9px;background:#40b2db;color:#fff}td{padding:8px;border-bottom:1px solid #d9e3e8;text-align:center}.online{color:#2458c6;font-weight:600}.actions{display:flex;justify-content:center;gap:6px}.danger{border-color:#d65a4a!important;color:#b3261e}.alert{padding:10px;background:#ffe1de}.feedback{padding:10px;background:#dff5e4;color:#166b2d}.empty{padding:30px;background:#fff;text-align:center}.modal-mask{position:fixed;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.35);z-index:20}.modal{width:min(520px,calc(100vw - 24px));background:#fff}.modal header,.modal footer{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#eef6fb}.modal h2{margin:0;font-size:18px}.form-grid{display:grid;grid-template-columns:1fr;gap:10px;padding:16px}.form-grid label{display:grid;gap:5px}.form-grid input,.form-grid textarea{padding:7px;border:1px solid #a8c8dc;font:inherit}.modal footer{justify-content:flex-end}
+.platform-admin-page { min-height: 100vh; background: #f4f6f9; color: #303133; }
+.content { display: grid; gap: 14px; padding: 18px; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading p { margin: 4px 0 0; color: #909399; }
 </style>

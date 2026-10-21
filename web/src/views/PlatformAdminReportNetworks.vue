@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { ReportNetworkInput, ReportNetworkItem } from '../types/platformAdmin'
@@ -73,7 +74,11 @@ async function toggle(row: ReportNetworkItem) {
 }
 
 async function remove(row: ReportNetworkItem) {
-  if (!window.confirm(`确定将[${row.name}]删除么?`)) return
+  try {
+    await ElMessageBox.confirm(`确定将[${row.name}]删除么?`, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', closeOnClickModal: false })
+  } catch {
+    return
+  }
   error.value = ''
   feedback.value = ''
   try {
@@ -95,42 +100,47 @@ onMounted(async () => {
   <main class="platform-admin-page">
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
-      <header><div><h1>网盘设置</h1><p>对应 BY220 admin.php - 网盘设置；仅保存内部配置，不接外部网盘</p></div><button type="button" @click="openCreate">添加</button><button type="button" :disabled="loading" @click="load">刷新</button></header>
-      <p v-if="error" class="alert">{{ error }}</p>
-      <p v-if="feedback" class="feedback">{{ feedback }}</p>
-      <div v-if="loading" class="empty">正在加载...</div>
-      <div v-else class="table-wrap">
-        <table>
-          <thead><tr><th>网盘名称</th><th>网盘键名</th><th>状态</th><th>网盘链接</th><th>操作</th></tr></thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.id">
-              <td>{{ row.name }}</td><td>{{ row.code }}</td>
-              <td><button class="status-button" :class="{ disabled: row.status === 'DISABLED' }" type="button" @click="toggle(row)">{{ row.status === 'ACTIVE' ? '开' : '关' }}</button></td>
-              <td class="url">{{ row.websiteUrl }}</td>
-              <td class="actions"><button type="button" @click="openEdit(row)">编辑</button><button class="danger" type="button" @click="remove(row)">删除</button></td>
-            </tr>
-            <tr v-if="rows.length === 0"><td colspan="5">暂无数据</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="hint">BY220 表单中的搜索码、接口密钥和接口版本当前为注释字段，未在本页面开放；不会请求或探测所填链接。</p>
+      <header class="page-heading"><div><h1>网盘设置</h1><p>管理网盘链接和启用状态</p></div><div class="heading-actions"><el-button :disabled="loading" @click="load">刷新</el-button><el-button type="primary" @click="openCreate">添加</el-button></div></header>
+      <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
+      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
+      <el-table scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="networks-table">
+        <el-table-column prop="name" label="网盘名称" min-width="160" />
+        <el-table-column prop="code" label="网盘键名" min-width="150" />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }"><el-button text :type="row.status === 'ACTIVE' ? 'success' : 'info'" @click="toggle(row as ReportNetworkItem)">{{ row.status === 'ACTIVE' ? '开' : '关' }}</el-button></template>
+        </el-table-column>
+        <el-table-column prop="websiteUrl" label="网盘链接" min-width="260" show-overflow-tooltip />
+        <el-table-column label="操作" fixed="right" width="130">
+          <template #default="{ row }"><div class="actions"><el-button link type="primary" @click="openEdit(row as ReportNetworkItem)">编辑</el-button><el-button link type="danger" @click="remove(row as ReportNetworkItem)">删除</el-button></div></template>
+        </el-table-column>
+        <template #empty><el-empty description="暂无网盘配置" /></template>
+      </el-table>
+      <el-alert title="仅保存内部配置，不会请求或探测所填链接。搜索码、接口密钥和接口版本当前未开放配置。" type="info" :closable="false" class="page-alert" />
     </section>
 
-    <div v-if="formOpen" class="modal-mask" @click.self="formOpen = false">
-      <form class="modal" @submit.prevent="submit">
-        <header><h2>{{ editingId ? '编辑' : '添加' }}</h2><button type="button" @click="formOpen = false">×</button></header>
-        <div class="form-grid">
-          <label>网盘名称<input v-model="form.name" required maxlength="128" /></label>
-          <label>网盘键名<input v-model="form.code" required maxlength="64" /></label>
-          <label class="wide">网盘链接<input v-model="form.websiteUrl" required maxlength="512" placeholder="https://" /></label>
-          <label class="switch-row"><span>状态</span><input v-model="form.status" type="checkbox" true-value="ACTIVE" false-value="DISABLED" /><strong>{{ form.status === 'ACTIVE' ? '开通' : '关闭' }}</strong></label>
-        </div>
-        <footer><button type="button" @click="formOpen = false">取消</button><button type="submit" :disabled="saving">{{ saving ? '保存中...' : '确认' }}</button></footer>
-      </form>
-    </div>
+    <el-dialog v-model="formOpen" :title="editingId ? '编辑网盘' : '添加网盘'" width="min(560px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
+      <el-form class="form-grid" label-position="top" @submit.prevent="submit">
+        <el-form-item label="网盘名称" required><el-input v-model="form.name" required maxlength="128" /></el-form-item>
+        <el-form-item label="网盘键名" required><el-input v-model="form.code" required maxlength="64" /></el-form-item>
+        <el-form-item label="网盘链接" required><el-input v-model="form.websiteUrl" required maxlength="512" placeholder="https://" /></el-form-item>
+        <el-form-item label="状态"><el-switch v-model="form.status" active-value="ACTIVE" inactive-value="DISABLED" active-text="开通" inactive-text="关闭" /></el-form-item>
+        <div class="dialog-footer"><el-button @click="formOpen = false">取消</el-button><el-button type="primary" native-type="submit" :loading="saving">确认</el-button></div>
+      </el-form>
+    </el-dialog>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-page{min-height:100vh;background:#eaf4fb;color:#1d1d1d}.content{padding:14px}.content header{display:flex;align-items:center;gap:8px}.content header div{margin-right:auto}.content h1{margin:0;font-size:24px}.content p{margin:4px 0 12px;color:#5f7280}.content button,.modal button{padding:7px 12px;border:1px solid #7da9c1;background:#fff;cursor:pointer}.table-wrap{overflow:auto;background:#fff}.table-wrap table{width:100%;min-width:900px}table{border-collapse:collapse;background:#fff;font-size:13px}th{padding:9px;background:#40b2db;color:#fff}td{padding:8px;border-bottom:1px solid #d9e3e8;text-align:center}.url{text-align:left;word-break:break-all}.actions{display:flex;justify-content:center;gap:6px}.danger{border-color:#d65a4a!important;color:#b3261e}.status-button{min-width:44px}.status-button.disabled{color:#a94442}.alert{padding:10px;background:#ffe1de}.feedback{padding:10px;background:#dff5e4;color:#166b2d}.empty{padding:30px;background:#fff;text-align:center}.hint{padding:10px;background:#fff9dd;color:#75621a}.modal-mask{position:fixed;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.35);z-index:20}.modal{width:min(560px,calc(100vw - 24px));background:#fff}.modal header,.modal footer{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#eef6fb}.modal h2{margin:0;font-size:18px}.form-grid{display:grid;gap:10px;padding:16px}.form-grid label{display:grid;gap:5px}.form-grid input{padding:7px;border:1px solid #a8c8dc;font:inherit}.switch-row{display:flex;align-items:center;justify-content:space-between}.switch-row input{width:20px;height:20px}.modal footer{justify-content:flex-end}
+.content { display: grid; gap: 14px; padding: 18px; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading p { margin: 4px 0 0; color: var(--el-text-color-secondary); }
+.heading-actions { display: flex; gap: 8px; }
+.page-alert { margin-bottom: 2px; }
+.networks-table { width: 100%; }
+.actions { display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.form-grid :deep(.el-form-item:nth-child(3)), .dialog-footer { grid-column: 1 / -1; }
+.dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; }
+@media (max-width: 700px) { .content { padding: 12px; } .page-heading { align-items: flex-start; flex-direction: column; } .form-grid { grid-template-columns: 1fr; } }
 </style>

@@ -1,3 +1,4 @@
+import { settleOperations, operationButton, fillOperationField } from './platformAdminOperationsTestHelpers'
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminOrderCorrections from './views/PlatformAdminOrderCorrections.vue'
@@ -64,32 +65,26 @@ describe('platform admin order corrections', () => {
     document.body.appendChild(container)
     app = createApp(PlatformAdminOrderCorrections)
     app.mount(container)
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleOperations()
 
     expect(container.textContent).toContain('所属机器人')
     expect(container.textContent).toContain('投注内容')
     expect(container.textContent).toContain('1番100')
 
     container.querySelector<HTMLButtonElement>('tbody button')?.click()
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
-    expect(container.textContent).toContain('编辑订单')
+    await settleOperations()
+    expect(document.body.textContent).toContain('编辑订单')
 
-    const input = container.querySelector<HTMLInputElement>('.form-grid .wide input')
+    const input = document.querySelector<HTMLInputElement>('.el-dialog .form-grid .wide input')
     if (!input) throw new Error('missing command input')
     input.value = '1番200'
     input.dispatchEvent(new Event('input'))
-    const ballTwo = container.querySelector<HTMLInputElement>('input[type="radio"][value="2"]')
+    const ballTwo = document.querySelector<HTMLInputElement>('input[type="radio"][value="2"]')
     if (!ballTwo) throw new Error('missing ball 2 choice')
     ballTwo.click()
     await nextTick()
-    container.querySelector<HTMLButtonElement>('.modal footer button[type="submit"]')?.click()
-    await nextTick()
-    await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    operationButton('确认', document).click()
+    await settleOperations()
 
     expect(api.correctOrder).toHaveBeenCalledWith(7, expect.objectContaining({
       command: '1番200',

@@ -110,13 +110,14 @@ function mountPage() {
 }
 
 async function settle() {
-  for (let i = 0; i < 6; i += 1) {
+  for (let i = 0; i < 3; i += 1) {
     await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
   }
 }
 
 function clickTab(host: HTMLElement, label: string) {
-  const button = Array.from(host.querySelectorAll('.center-tabs button'))
+  const button = Array.from(host.querySelectorAll('.center-tabs [role="tab"]'))
     .find(item => item.textContent?.trim() === label)
   if (!button) throw new Error(`找不到页签：${label}`)
   ;(button as HTMLButtonElement).click()
@@ -156,7 +157,7 @@ describe('中心上游管理页', () => {
     expect(text).toContain('可用额度合计')
     expect(text).toContain('冻结额度合计')
     expect(text).toContain('上游未结算合计')
-    expect(text).toContain('9000.00')
+    expect(text).toContain('9,000.00')
     expect(text).toContain('100.00')
     expect(text).toContain('200.00')
     // 对账状态来自后端而非前端推断
@@ -224,7 +225,7 @@ describe('中心上游管理页', () => {
 
     clickTab(host, '代理管理')
     await settle()
-    const newButton = Array.from(host.querySelectorAll('.center-actions button'))
+    const newButton = Array.from(host.querySelectorAll('button'))
       .find(item => item.textContent?.includes('新建中心代理')) as HTMLButtonElement
     newButton.click()
     await settle()
@@ -243,7 +244,7 @@ describe('中心上游管理页', () => {
     expect(host.textContent ?? '').toContain('ctr_secret_once')
     expect(host.textContent ?? '').toContain('只显示这一次')
 
-    const dismiss = Array.from(host.querySelectorAll('.center-token button'))
+    const dismiss = Array.from(host.querySelectorAll('.center-messages button'))
       .find(item => item.textContent?.trim() === '我已保存') as HTMLButtonElement
     dismiss.click()
     await settle()
@@ -274,9 +275,12 @@ describe('中心上游管理页', () => {
     clickTab(host, '风险')
     await settle()
 
-    const select = host.querySelector('.center-form select') as HTMLSelectElement
-    select.value = '1'
-    select.dispatchEvent(new Event('change'))
+    const select = host.querySelector('.center-form .el-select__wrapper') as HTMLElement
+    select.click()
+    await settle()
+    const option = Array.from(document.querySelectorAll<HTMLElement>('.el-select-dropdown__item')).find(item => item.textContent?.trim() === 'CENTER_A')
+    expect(option).toBeDefined()
+    option!.click()
     await settle()
 
     const saveButton = Array.from(host.querySelectorAll('.center-form button'))
@@ -337,7 +341,7 @@ describe('中心上游管理页', () => {
     clickTab(host, '实时订单')
     await settle()
 
-    const labels = Array.from(host.querySelectorAll('.center-actions button'))
+    const labels = Array.from(host.querySelectorAll('button'))
       .map(item => item.textContent?.trim())
     // TIMEOUT 只能"确认受理 / 确认失败"，不能退款——超时不等于失败
     expect(labels).toContain('确认受理')
@@ -359,7 +363,7 @@ describe('中心上游管理页', () => {
     clickTab(host, '实时订单')
     await settle()
 
-    const refundButton = Array.from(host.querySelectorAll('.center-actions button'))
+    const refundButton = Array.from(host.querySelectorAll('button'))
       .find(item => item.textContent?.trim() === '退款') as HTMLButtonElement
     refundButton.click()
     await settle()
@@ -393,7 +397,7 @@ describe('中心上游管理页', () => {
     clickTab(host, '实时订单')
     await settle()
 
-    const historyButton = Array.from(host.querySelectorAll('.center-actions button'))
+    const historyButton = Array.from(host.querySelectorAll('button'))
       .find(item => item.textContent?.trim() === '处置记录') as HTMLButtonElement
     historyButton.click()
     await settle()
@@ -483,7 +487,7 @@ describe('中心上游管理页', () => {
     clickTab(host, '对账')
     await settle()
 
-    const button = Array.from(host.querySelectorAll('.center-actions button'))
+    const button = Array.from(host.querySelectorAll('button'))
       .find(item => item.textContent?.trim() === '标记处置') as HTMLButtonElement
     button.click()
     await settle()
@@ -516,7 +520,7 @@ describe('中心上游管理页', () => {
     clickTab(host, '对账')
     await settle()
 
-    const revokeButton = Array.from(host.querySelectorAll('.center-actions button'))
+    const revokeButton = Array.from(host.querySelectorAll('button'))
       .find(item => item.textContent?.trim() === '撤销') as HTMLButtonElement
     revokeButton.click()
     await settle()

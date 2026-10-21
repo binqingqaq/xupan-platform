@@ -23,8 +23,6 @@ import type {
  *
  * 一页覆盖总览 / 代理管理 / 实时订单 / 风险 / 财务 / 日志六块：
  * 这些数据都来自同一组中心接口，拆成六个页面只会让"看一眼中心状态"变麻烦。
- * 注意 BY220 `admin.php` **没有**中心上游菜单（BY220 本身没有中心上游），
- * 因此本页是对 BY220 的**有意扩展**，已在验收记录中标注。
  */
 
 type Tab = 'overview' | 'agents' | 'orders' | 'ledger' | 'risk' | 'reconcile'
@@ -454,374 +452,258 @@ onMounted(async () => {
   <main class="platform-admin-page">
     <PlatformAdminNav />
     <div class="center-admin">
-      <header class="center-header">
-        <h1>中心上游</h1>
-        <p class="center-hint">
+      <header class="page-heading center-header">
+        <div>
+          <h1>中心上游</h1>
+          <p class="center-hint">
           中心是代理的上级盘口：代理上报订单到这里，中心按开奖结果与代理做第二层结算。
           额度三层（可用 / 冻结 / 上游未结算）是三个独立事实。全部金额为虚拟积分。
-        </p>
+          </p>
+        </div>
+        <el-button type="primary" plain :loading="loading" @click="refresh">刷新</el-button>
       </header>
 
-      <nav class="center-tabs" aria-label="中心上游模块">
-        <button
-          v-for="item in tabs"
-          :key="item.key"
-          type="button"
-          :class="{ active: tab === item.key }"
-          :aria-pressed="tab === item.key"
-          @click="tab = item.key"
-        >
-          {{ item.label }}
-        </button>
-        <button type="button" class="center-refresh" :disabled="loading" @click="refresh">
-          {{ loading ? '加载中…' : '刷新' }}
-        </button>
-      </nav>
+      <el-tabs v-model="tab" class="center-tabs" aria-label="中心上游模块">
+        <el-tab-pane v-for="item in tabs" :key="item.key" :name="item.key" :label="item.label" />
+      </el-tabs>
 
-    <p v-if="error" class="center-error">{{ error }}</p>
-    <p v-if="feedback" class="center-feedback">{{ feedback }}</p>
+    <div class="center-messages" aria-live="polite">
+      <el-alert v-if="error" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="feedback" type="success" :title="feedback" show-icon :closable="false" />
 
     <!-- 一次性 Token 展示：原文只在创建时出现一次 -->
-    <section v-if="issuedToken && restoreTokenVisible" class="center-token">
-      <strong>Token（只显示这一次，请立即保存）</strong>
-      <code>{{ issuedToken }}</code>
-      <p>中心只保存该 Token 的哈希，关闭后无法再次查看。</p>
-      <button type="button" @click="restoreTokenVisible = false">我已保存</button>
-    </section>
+      <el-alert v-if="issuedToken && restoreTokenVisible" type="warning" show-icon :closable="false">
+        <template #title>Token（只显示这一次，请立即保存）</template>
+        <code class="issued-token">{{ issuedToken }}</code>
+        <p>中心只保存该 Token 的哈希，关闭后无法再次查看。</p>
+        <el-button size="small" type="warning" plain @click="restoreTokenVisible = false">我已保存</el-button>
+      </el-alert>
+    </div>
 
     <section v-if="tab === 'overview'" class="center-panel">
-      <div class="center-cards">
-        <div class="center-card"><span>中心代理（启用）</span><strong>{{ activeAgents.length }} / {{ agents.length }}</strong></div>
-        <div class="center-card"><span>可用额度合计</span><strong>{{ money(totals.available) }}</strong></div>
-        <div class="center-card"><span>冻结额度合计</span><strong>{{ money(totals.frozen) }}</strong></div>
-        <div class="center-card"><span>上游未结算合计</span><strong>{{ money(totals.unsettled) }}</strong></div>
-        <div class="center-card"><span>对账状态</span><strong>{{ reconciliation?.balanced ? '已对平' : '有差异' }}</strong></div>
-      </div>
+      <el-row :gutter="12" class="center-stats">
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心代理（启用）" :value="activeAgents.length"><template #suffix> / {{ agents.length }}</template></el-statistic></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="可用额度合计" :value="totals.available" :precision="2" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="冻结额度合计" :value="totals.frozen" :precision="2" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="上游未结算合计" :value="totals.unsettled" :precision="2" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="对账状态" :formatter="() => reconciliation?.balanced ? '已对平' : '有差异'" /></el-col>
+      </el-row>
 
       <h2>订单状态汇总</h2>
-      <table class="center-table">
-        <thead><tr><th>状态</th><th>笔数</th><th>金额合计</th></tr></thead>
-        <tbody>
-          <tr v-for="row in summaries" :key="row.status">
-            <td>{{ statusLabel(row.status) }}</td>
-            <td>{{ row.total }}</td>
-            <td>{{ money(row.amount) }}</td>
-          </tr>
-          <tr v-if="!summaries.length"><td colspan="3" class="center-empty">暂无中心订单</td></tr>
-        </tbody>
-      </table>
+      <el-table scrollbar-always-on :data="summaries" row-key="status" border stripe class="center-table" empty-text="暂无中心订单">
+        <el-table-column label="状态" min-width="150"><template #default="{ row }"><el-tag effect="plain">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
+        <el-table-column prop="total" label="笔数" width="120" align="right" />
+        <el-table-column label="金额合计" width="180" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
+        <template #empty><el-empty description="暂无中心订单" /></template>
+      </el-table>
 
       <h2>第二层结算</h2>
       <p class="center-hint">按开奖结果结算某期全部已接受订单：代理赢则中心赔出净额，代理输则本金归中心。</p>
-      <div class="center-form">
-        <label>游戏编码<input v-model="settleForm.gameCode" /></label>
-        <label>期号<input v-model="settleForm.issueNumber" placeholder="例如 3006478" /></label>
-        <label>开奖番<input v-model.number="settleForm.fan" type="number" min="1" max="4" /></label>
-        <button type="button" :disabled="busy || !settleForm.issueNumber.trim()" @click="settle">执行结算</button>
-      </div>
+      <el-form :model="settleForm" inline class="center-form">
+        <el-form-item label="游戏编码"><el-input v-model="settleForm.gameCode" /></el-form-item>
+        <el-form-item label="期号"><el-input v-model="settleForm.issueNumber" placeholder="例如 3006478" /></el-form-item>
+        <el-form-item label="开奖番"><el-input-number v-model="settleForm.fan" :min="1" :max="4" :step="1" controls-position="right" /></el-form-item>
+        <el-form-item><el-button type="primary" :disabled="busy || !settleForm.issueNumber.trim()" :loading="busy" @click="settle">执行结算</el-button></el-form-item>
+      </el-form>
       <div v-if="settlement" class="center-settle-result">
-        <p>结算 {{ settlement.settledCount }} 笔，跳过 {{ settlement.skippedCount }} 笔；
-          中心赔出 {{ money(settlement.agentWinTotal) }}，收走 {{ money(settlement.agentLoseTotal) }}</p>
-        <table class="center-table">
-          <thead><tr><th>中心订单号</th><th>结果</th><th>金额</th><th>说明</th></tr></thead>
-          <tbody>
-            <tr v-for="row in settlement.orders" :key="row.orderId">
-              <td>{{ row.agentOrderNo }}</td>
-              <td>{{ settleLabel(row.settleResult) }}</td>
-              <td>{{ money(row.settleAmount) }}</td>
-              <td>{{ row.label }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <el-alert type="info" :closable="false" :title="`结算 ${settlement.settledCount} 笔，跳过 ${settlement.skippedCount} 笔；中心赔出 ${money(settlement.agentWinTotal)}，收走 ${money(settlement.agentLoseTotal)}`" />
+        <el-table scrollbar-always-on :data="settlement.orders" row-key="orderId" border stripe class="center-table" empty-text="暂无结算明细">
+          <el-table-column prop="agentOrderNo" label="中心订单号" min-width="180" />
+          <el-table-column label="结果" min-width="120"><template #default="{ row }">{{ settleLabel(row.settleResult) }}</template></el-table-column>
+          <el-table-column label="金额" width="150" align="right"><template #default="{ row }">{{ money(row.settleAmount) }}</template></el-table-column>
+          <el-table-column prop="label" label="说明" min-width="200" show-overflow-tooltip />
+          <template #empty><el-empty description="暂无结算明细" /></template>
+        </el-table>
       </div>
     </section>
 
     <section v-else-if="tab === 'agents'" class="center-panel">
       <div class="center-actions">
-        <button type="button" @click="showCreate = !showCreate">新建中心代理</button>
+        <el-button type="primary" @click="showCreate = !showCreate">新建中心代理</el-button>
       </div>
 
-      <div v-if="showCreate" class="center-form center-form-block">
-        <label>代理编号<input v-model="createForm.agentCode" placeholder="CENTER_A" /></label>
-        <label>代理名称<input v-model="createForm.agentName" /></label>
-        <label>上游账号<input v-model="createForm.upstreamAccount" placeholder="唯一，不可与其它代理共用" /></label>
-        <label>信用额度<input v-model.number="createForm.creditLimit" type="number" min="0" /></label>
-        <button
-          type="button"
-          :disabled="busy || !createForm.agentCode.trim() || !createForm.agentName.trim() || !createForm.upstreamAccount.trim()"
-          @click="createAgent"
-        >
-          创建
-        </button>
-      </div>
+      <el-form v-if="showCreate" :model="createForm" inline class="center-form center-form-block">
+        <el-form-item label="代理编号"><el-input v-model="createForm.agentCode" placeholder="CENTER_A" /></el-form-item>
+        <el-form-item label="代理名称"><el-input v-model="createForm.agentName" /></el-form-item>
+        <el-form-item label="上游账号"><el-input v-model="createForm.upstreamAccount" placeholder="唯一，不可与其它代理共用" /></el-form-item>
+        <el-form-item label="信用额度"><el-input-number v-model="createForm.creditLimit" :min="0" controls-position="right" /></el-form-item>
+        <el-form-item>
+          <el-button type="primary" :disabled="busy || !createForm.agentCode.trim() || !createForm.agentName.trim() || !createForm.upstreamAccount.trim()" :loading="busy" @click="createAgent">创建</el-button>
+        </el-form-item>
+      </el-form>
 
-      <table class="center-table">
-        <thead>
-          <tr>
-            <th>代理编号</th><th>名称</th><th>上游账号</th><th>Token 前缀</th><th>状态</th>
-            <th>可用</th><th>冻结</th><th>未结算</th><th>信用额度</th><th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in agents" :key="row.id">
-            <td>{{ row.agentCode }}</td>
-            <td>{{ row.agentName }}</td>
-            <td>{{ row.upstreamAccount }}</td>
-            <td><code>{{ row.tokenPrefix }}…</code></td>
-            <td>{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</td>
-            <td>{{ money(row.availableBalance) }}</td>
-            <td>{{ money(row.frozenBalance) }}</td>
-            <td>{{ money(row.upstreamUnsettled) }}</td>
-            <td>{{ money(row.creditLimit) }}</td>
-            <td class="center-row-actions">
-              <button type="button" :disabled="busy" @click="toggleStatus(row)">
-                {{ row.status === 'ACTIVE' ? '停用' : '启用' }}
-              </button>
-              <button type="button" @click="grantForm.agentId = row.id">充值</button>
-              <button type="button" @click="limitForm.agentId = row.id; limitForm.creditLimit = Number(row.creditLimit)">改额度</button>
-              <button type="button" @click="loadLedger(row.id); tab = 'ledger'">流水</button>
-            </td>
-          </tr>
-          <tr v-if="!agents.length"><td colspan="10" class="center-empty">还没有中心代理</td></tr>
-        </tbody>
-      </table>
+      <el-table scrollbar-always-on :data="agents" row-key="id" border stripe class="center-table" empty-text="还没有中心代理">
+        <el-table-column prop="agentCode" label="代理编号" min-width="130" />
+        <el-table-column prop="agentName" label="名称" min-width="140" />
+        <el-table-column prop="upstreamAccount" label="上游账号" min-width="150" />
+        <el-table-column label="Token 前缀" min-width="140"><template #default="{ row }"><code>{{ row.tokenPrefix }}…</code></template></el-table-column>
+        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</el-tag></template></el-table-column>
+        <el-table-column label="可用" width="120" align="right"><template #default="{ row }">{{ money(row.availableBalance) }}</template></el-table-column>
+        <el-table-column label="冻结" width="120" align="right"><template #default="{ row }">{{ money(row.frozenBalance) }}</template></el-table-column>
+        <el-table-column label="未结算" width="120" align="right"><template #default="{ row }">{{ money(row.upstreamUnsettled) }}</template></el-table-column>
+        <el-table-column label="信用额度" width="120" align="right"><template #default="{ row }">{{ money(row.creditLimit) }}</template></el-table-column>
+        <el-table-column label="操作" fixed="right" width="250">
+          <template #default="{ row }">
+            <el-space wrap>
+              <el-button link type="primary" :disabled="busy" @click="toggleStatus(row as CenterAgent)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
+              <el-button link type="primary" @click="grantForm.agentId = row.id">充值</el-button>
+              <el-button link type="primary" @click="limitForm.agentId = row.id; limitForm.creditLimit = Number(row.creditLimit)">改额度</el-button>
+              <el-button link type="primary" @click="loadLedger(row.id); tab = 'ledger'">流水</el-button>
+            </el-space>
+          </template>
+        </el-table-column>
+        <template #empty><el-empty description="还没有中心代理" /></template>
+      </el-table>
 
-      <div v-if="grantForm.agentId" class="center-form center-form-block">
-        <strong>给代理 #{{ grantForm.agentId }} 充值可用额度</strong>
-        <label>金额<input v-model.number="grantForm.amount" type="number" min="0" /></label>
-        <button type="button" :disabled="busy" @click="grant">确认充值</button>
-        <button type="button" @click="grantForm.agentId = 0">取消</button>
-      </div>
+      <el-form v-if="grantForm.agentId" :model="grantForm" inline class="center-form center-form-block">
+        <el-form-item><template #label><strong>给代理 #{{ grantForm.agentId }} 充值可用额度</strong></template></el-form-item>
+        <el-form-item label="金额"><el-input-number v-model="grantForm.amount" :min="0" controls-position="right" /></el-form-item>
+        <el-form-item><el-button type="primary" :disabled="busy" :loading="busy" @click="grant">确认充值</el-button><el-button @click="grantForm.agentId = 0">取消</el-button></el-form-item>
+      </el-form>
 
-      <div v-if="limitForm.agentId" class="center-form center-form-block">
-        <strong>设置代理 #{{ limitForm.agentId }} 的信用额度</strong>
-        <label>额度<input v-model.number="limitForm.creditLimit" type="number" min="0" /></label>
-        <button type="button" :disabled="busy" @click="setLimit">确认</button>
-        <button type="button" @click="limitForm.agentId = 0">取消</button>
-      </div>
+      <el-form v-if="limitForm.agentId" :model="limitForm" inline class="center-form center-form-block">
+        <el-form-item><template #label><strong>设置代理 #{{ limitForm.agentId }} 的信用额度</strong></template></el-form-item>
+        <el-form-item label="额度"><el-input-number v-model="limitForm.creditLimit" :min="0" controls-position="right" /></el-form-item>
+        <el-form-item><el-button type="primary" :disabled="busy" :loading="busy" @click="setLimit">确认</el-button><el-button @click="limitForm.agentId = 0">取消</el-button></el-form-item>
+      </el-form>
     </section>
 
     <section v-else-if="tab === 'orders'" class="center-panel">
-      <div class="center-form">
-        <label>
-          状态
-          <select v-model="orderStatus" @change="loadOrders(1)">
-            <option value="">全部</option>
-            <option value="PENDING">待处理</option>
-            <option value="ACCEPTED">已接受</option>
-            <option value="REJECTED">已拒绝</option>
-            <option value="TIMEOUT">超时</option>
-            <option value="SETTLED">已结算</option>
-            <option value="CANCELLED">已撤单</option>
-            <option value="REFUNDED">已退款</option>
-            <option value="MANUAL">人工待处置</option>
-          </select>
-        </label>
-        <label>
-          处置原因
-          <input v-model="disposeForm.reason" type="text" placeholder="留空则用动作名" />
-        </label>
-      </div>
-      <p class="center-hint">
-        超时 <strong>不等于</strong>失败：超时单必须人工查证后明确落到终态。可处置的动作由当前状态决定，
-        重复点击不会二次退款（幂等键保证）。
-      </p>
-      <table class="center-table">
-        <thead>
-          <tr>
-            <th>中心订单号</th><th>本地注单</th><th>期号</th><th>玩法</th><th>本金</th>
-            <th>状态</th><th>拒绝原因</th><th>结算</th><th>操作</th><th>创建时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in orders" :key="row.id">
-            <td>{{ row.agentOrderNo }}</td>
-            <td>{{ row.localBetId ?? '—' }}</td>
-            <td>{{ row.gameCode }} / {{ row.issueNumber }}</td>
-            <td>{{ row.playType }}<small v-if="row.playText"> {{ row.playText }}</small></td>
-            <td>{{ money(row.amount) }}</td>
-            <td>{{ statusLabel(row.status) }}</td>
-            <td>{{ row.rejectReason ?? '—' }}</td>
-            <td>{{ settleLabel(row.settleResult) }}<span v-if="row.settleAmount !== null"> {{ money(row.settleAmount) }}</span></td>
-            <td class="center-actions">
-              <button
-                v-for="action in allowedActions(row.status)"
-                :key="action"
-                type="button"
-                :disabled="busy"
-                @click="dispose(row, action)"
-              >
-                {{ dispositionLabel(action) }}
-              </button>
-              <button type="button" @click="showDispositions(row.id)">
-                {{ disposeHistoryOrderId === row.id ? '收起' : '处置记录' }}
-              </button>
-            </td>
-            <td>{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
-          </tr>
-          <tr v-if="!orders.length"><td colspan="10" class="center-empty">暂无订单</td></tr>
-        </tbody>
-      </table>
-      <div v-if="disposeHistoryOrderId !== null" class="center-form">
+      <el-form :model="{ orderStatus, disposeForm }" inline class="center-form">
+        <el-form-item label="状态">
+          <el-select v-model="orderStatus" @change="loadOrders(1)">
+            <el-option label="全部" value="" />
+            <el-option label="待处理" value="PENDING" />
+            <el-option label="已接受" value="ACCEPTED" />
+            <el-option label="已拒绝" value="REJECTED" />
+            <el-option label="超时" value="TIMEOUT" />
+            <el-option label="已结算" value="SETTLED" />
+            <el-option label="已撤单" value="CANCELLED" />
+            <el-option label="已退款" value="REFUNDED" />
+            <el-option label="人工待处置" value="MANUAL" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="处置原因"><el-input v-model="disposeForm.reason" placeholder="留空则用动作名" /></el-form-item>
+      </el-form>
+      <el-alert class="center-hint" type="warning" :closable="false" title="超时不等于失败：超时单必须人工查证后明确落到终态。可处置的动作由当前状态决定，重复点击不会二次退款（幂等键保证）。" />
+      <el-table scrollbar-always-on :data="orders" row-key="id" border stripe class="center-table" empty-text="暂无订单">
+        <el-table-column prop="agentOrderNo" label="中心订单号" min-width="160" />
+        <el-table-column label="本地注单" min-width="110"><template #default="{ row }">{{ row.localBetId ?? '—' }}</template></el-table-column>
+        <el-table-column label="期号" min-width="150"><template #default="{ row }">{{ row.gameCode }} / {{ row.issueNumber }}</template></el-table-column>
+        <el-table-column label="玩法" min-width="140"><template #default="{ row }">{{ row.playType }}<small v-if="row.playText"> {{ row.playText }}</small></template></el-table-column>
+        <el-table-column label="本金" width="120" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACCEPTED' || row.status === 'SETTLED' ? 'success' : row.status === 'REJECTED' || row.status === 'CANCELLED' || row.status === 'REFUNDED' ? 'info' : row.status === 'TIMEOUT' ? 'warning' : 'primary'" effect="plain">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
+        <el-table-column label="拒绝原因" min-width="150"><template #default="{ row }">{{ row.rejectReason ?? '—' }}</template></el-table-column>
+        <el-table-column label="结算" min-width="130"><template #default="{ row }">{{ settleLabel(row.settleResult) }}<span v-if="row.settleAmount !== null"> {{ money(row.settleAmount) }}</span></template></el-table-column>
+        <el-table-column label="操作" fixed="right" min-width="180">
+          <template #default="{ row }">
+            <el-space wrap>
+              <el-button v-for="action in allowedActions(row.status)" :key="action" link type="primary" :disabled="busy" @click="dispose(row as CenterOrderItem, action)">{{ dispositionLabel(action) }}</el-button>
+              <el-button link type="primary" @click="showDispositions(row.id)">{{ disposeHistoryOrderId === row.id ? '收起' : '处置记录' }}</el-button>
+            </el-space>
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" min-width="170"><template #default="{ row }">{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
+        <template #empty><el-empty description="暂无订单" /></template>
+      </el-table>
+      <div v-if="disposeHistoryOrderId !== null" class="center-data-block">
         <p class="center-hint">订单 #{{ disposeHistoryOrderId }} 的处置记录</p>
-        <table class="center-table">
-          <thead>
-            <tr><th>动作</th><th>从</th><th>到</th><th>金额</th><th>原因</th><th>时间</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in disposeHistory" :key="item.id">
-              <td>{{ dispositionLabel(item.action) }}</td>
-              <td>{{ statusLabel(item.fromStatus) }}</td>
-              <td>{{ statusLabel(item.toStatus) }}</td>
-              <td>{{ money(item.amount) }}</td>
-              <td>{{ item.reason ?? '—' }}</td>
-              <td>{{ item.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
-            </tr>
-            <tr v-if="!disposeHistory.length"><td colspan="6" class="center-empty">尚无处置记录</td></tr>
-          </tbody>
-        </table>
+      <el-table scrollbar-always-on :data="disposeHistory" row-key="id" border stripe class="center-table" empty-text="尚无处置记录">
+          <el-table-column label="动作" min-width="130"><template #default="{ row }">{{ dispositionLabel(row.action) }}</template></el-table-column>
+          <el-table-column label="从" min-width="110"><template #default="{ row }">{{ statusLabel(row.fromStatus) }}</template></el-table-column>
+          <el-table-column label="到" min-width="110"><template #default="{ row }">{{ statusLabel(row.toStatus) }}</template></el-table-column>
+          <el-table-column label="金额" width="130" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
+          <el-table-column label="原因" min-width="180"><template #default="{ row }">{{ row.reason ?? '—' }}</template></el-table-column>
+          <el-table-column label="时间" min-width="170"><template #default="{ row }">{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
+          <template #empty><el-empty description="尚无处置记录" /></template>
+        </el-table>
       </div>
       <p class="center-hint">共 {{ orderTotal }} 笔</p>
     </section>
 
     <section v-else-if="tab === 'ledger'" class="center-panel">
-      <p v-if="!ledgerAgentId" class="center-hint">请到「代理管理」选择某个代理查看流水。</p>
+      <el-empty v-if="!ledgerAgentId" description="请到「代理管理」选择某个代理查看流水。" />
       <template v-else>
-        <p class="center-hint">
-          代理 #{{ ledgerAgentId }} 的账本流水 · 账本自检：<strong>{{ ledgerBalanced ? '一致' : '不一致' }}</strong>
-        </p>
-        <table class="center-table">
-          <thead>
-            <tr><th>层</th><th>类型</th><th>方向</th><th>金额</th><th>变动前</th><th>变动后</th><th>说明</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in ledger" :key="row.id">
-              <td>{{ bucketLabel(row.bucket) }}</td>
-              <td>{{ row.entryType }}</td>
-              <td>{{ row.direction === 'IN' ? '增加' : '减少' }}</td>
-              <td>{{ money(row.amount) }}</td>
-              <td>{{ money(row.balanceBefore) }}</td>
-              <td>{{ money(row.balanceAfter) }}</td>
-              <td>{{ row.reason ?? '—' }}</td>
-            </tr>
-            <tr v-if="!ledger.length"><td colspan="7" class="center-empty">暂无流水</td></tr>
-          </tbody>
-        </table>
+        <el-alert class="center-hint" :type="ledgerBalanced ? 'success' : 'error'" :closable="false" :title="`代理 #${ledgerAgentId} 的账本流水 · 账本自检：${ledgerBalanced ? '一致' : '不一致'}`" />
+        <el-table scrollbar-always-on :data="ledger" row-key="id" border stripe class="center-table" empty-text="暂无流水">
+          <el-table-column label="层" min-width="140"><template #default="{ row }">{{ bucketLabel(row.bucket) }}</template></el-table-column>
+          <el-table-column prop="entryType" label="类型" min-width="150" />
+          <el-table-column label="方向" width="100"><template #default="{ row }"><el-tag :type="row.direction === 'IN' ? 'success' : 'warning'" effect="plain">{{ row.direction === 'IN' ? '增加' : '减少' }}</el-tag></template></el-table-column>
+          <el-table-column label="金额" width="130" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
+          <el-table-column label="变动前" width="140" align="right"><template #default="{ row }">{{ money(row.balanceBefore) }}</template></el-table-column>
+          <el-table-column label="变动后" width="140" align="right"><template #default="{ row }">{{ money(row.balanceAfter) }}</template></el-table-column>
+          <el-table-column label="说明" min-width="200"><template #default="{ row }">{{ row.reason ?? '—' }}</template></el-table-column>
+          <template #empty><el-empty description="暂无流水" /></template>
+        </el-table>
       </template>
     </section>
 
     <section v-else-if="tab === 'risk'" class="center-panel">
-      <div class="center-cards">
-        <div class="center-card"><span>冻结敞口</span><strong>{{ money(totals.frozen) }}</strong></div>
-        <div class="center-card"><span>未结算敞口</span><strong>{{ money(totals.unsettled) }}</strong></div>
-        <div class="center-card"><span>总敞口</span><strong>{{ money(totals.risk) }}</strong></div>
-        <div class="center-card">
-          <span>24h 风控命中</span>
-          <strong>{{ riskSummary.reduce((sum, item) => sum + item.hitCount, 0) }}</strong>
-        </div>
-      </div>
-      <p class="center-hint">
-        敞口 = 冻结额度 + 上游未结算。中心对每笔订单做单笔上限、单期敞口上限、可用额度与异常行为校验；
-        超限的订单会被拒绝并留下命中记录，代理侧据此走失败退单。
-      </p>
+      <el-row :gutter="12" class="center-stats">
+        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="冻结敞口" :value="totals.frozen" :precision="2" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="未结算敞口" :value="totals.unsettled" :precision="2" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="总敞口" :value="totals.risk" :precision="2" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="24h 风控命中" :value="riskSummary.reduce((sum, item) => sum + item.hitCount, 0)" /></el-col>
+      </el-row>
+      <el-alert class="center-hint" type="info" :closable="false" title="敞口 = 冻结额度 + 上游未结算。中心对每笔订单做单笔上限、单期敞口上限、可用额度与异常行为校验；超限的订单会被拒绝并留下命中记录，代理侧据此走失败退单。" />
 
-      <div class="center-form">
-        <label>
-          代理
-          <select v-model.number="riskForm.agentId">
-            <option :value="0">请选择</option>
-            <option v-for="row in agents" :key="row.id" :value="row.id">{{ row.agentCode }}</option>
-          </select>
-        </label>
-        <label>
-          单笔上限（留空=全局默认）
-          <input v-model="riskForm.maxSingleAmount" type="number" min="0" placeholder="100000" />
-        </label>
-        <label>
-          单期敞口上限（留空=全局默认）
-          <input v-model="riskForm.maxIssueExposure" type="number" min="0" placeholder="500000" />
-        </label>
-        <button type="button" :disabled="busy || !riskForm.agentId" @click="saveRiskLimits">
-          保存代理级风控
-        </button>
-      </div>
+      <el-form :model="riskForm" inline class="center-form">
+        <el-form-item label="代理"><el-select v-model.number="riskForm.agentId" placeholder="请选择"><el-option label="请选择" :value="0" /><el-option v-for="row in agents" :key="row.id" :label="row.agentCode" :value="row.id" /></el-select></el-form-item>
+        <el-form-item label="单笔上限（留空=全局默认）"><el-input v-model="riskForm.maxSingleAmount" type="number" min="0" placeholder="100000" /></el-form-item>
+        <el-form-item label="单期敞口上限（留空=全局默认）"><el-input v-model="riskForm.maxIssueExposure" type="number" min="0" placeholder="500000" /></el-form-item>
+        <el-form-item><el-button type="primary" :disabled="busy || !riskForm.agentId" :loading="busy" @click="saveRiskLimits">保存代理级风控</el-button></el-form-item>
+      </el-form>
 
-      <table class="center-table">
-        <thead>
-          <tr>
-            <th>代理编号</th><th>可用</th><th>冻结</th><th>未结算</th><th>敞口</th><th>信用额度</th>
-            <th>单笔上限</th><th>单期敞口上限</th><th>最近拒绝</th><th>拒绝次数</th><th>命中记录</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in agents" :key="row.id">
-            <td>{{ row.agentCode }}</td>
-            <td>{{ money(row.availableBalance) }}</td>
-            <td>{{ money(row.frozenBalance) }}</td>
-            <td>{{ money(row.upstreamUnsettled) }}</td>
-            <td>{{ money(Number(row.frozenBalance) + Number(row.upstreamUnsettled)) }}</td>
-            <td>{{ money(row.creditLimit) }}</td>
-            <td>{{ row.maxSingleAmount === null ? '全局默认' : money(row.maxSingleAmount) }}</td>
-            <td>{{ row.maxIssueExposure === null ? '全局默认' : money(row.maxIssueExposure) }}</td>
-            <td>{{ row.lastRejectCode ?? '—' }}</td>
-            <td>{{ row.rejectCount }}</td>
-            <td>
-              <button type="button" @click="loadRiskHits(row.id)">
-                {{ riskAgentId === row.id ? '刷新' : '查看' }}
-              </button>
-            </td>
-          </tr>
-          <tr v-if="!agents.length"><td colspan="11" class="center-empty">还没有中心代理</td></tr>
-        </tbody>
-      </table>
+      <el-table scrollbar-always-on :data="agents" row-key="id" border stripe class="center-table" empty-text="还没有中心代理">
+        <el-table-column prop="agentCode" label="代理编号" min-width="130" />
+        <el-table-column label="可用" width="120" align="right"><template #default="{ row }">{{ money(row.availableBalance) }}</template></el-table-column>
+        <el-table-column label="冻结" width="120" align="right"><template #default="{ row }">{{ money(row.frozenBalance) }}</template></el-table-column>
+        <el-table-column label="未结算" width="120" align="right"><template #default="{ row }">{{ money(row.upstreamUnsettled) }}</template></el-table-column>
+        <el-table-column label="敞口" width="120" align="right"><template #default="{ row }">{{ money(Number(row.frozenBalance) + Number(row.upstreamUnsettled)) }}</template></el-table-column>
+        <el-table-column label="信用额度" width="120" align="right"><template #default="{ row }">{{ money(row.creditLimit) }}</template></el-table-column>
+        <el-table-column label="单笔上限" min-width="130"><template #default="{ row }">{{ row.maxSingleAmount === null ? '全局默认' : money(row.maxSingleAmount) }}</template></el-table-column>
+        <el-table-column label="单期敞口上限" min-width="145"><template #default="{ row }">{{ row.maxIssueExposure === null ? '全局默认' : money(row.maxIssueExposure) }}</template></el-table-column>
+        <el-table-column label="最近拒绝" min-width="130"><template #default="{ row }">{{ row.lastRejectCode ?? '—' }}</template></el-table-column>
+        <el-table-column prop="rejectCount" label="拒绝次数" width="100" align="right" />
+        <el-table-column label="命中记录" width="110" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="loadRiskHits(row.id)">{{ riskAgentId === row.id ? '刷新' : '查看' }}</el-button></template></el-table-column>
+        <template #empty><el-empty description="还没有中心代理" /></template>
+      </el-table>
 
-      <div v-if="riskAgentId !== null" class="center-form">
+      <div v-if="riskAgentId !== null" class="center-data-block">
         <p class="center-hint">代理 #{{ riskAgentId }} 最近的风控命中</p>
-        <table class="center-table">
-          <thead>
-            <tr><th>规则</th><th>类别</th><th>观测值</th><th>阈值</th><th>期号</th><th>说明</th><th>时间</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="hit in riskHits" :key="hit.id">
-              <td>{{ hit.ruleCode }}</td>
-              <td>{{ hit.ruleCategory }}</td>
-              <td>{{ hit.observedValue === null ? '—' : money(hit.observedValue) }}</td>
-              <td>{{ hit.thresholdValue === null ? '—' : money(hit.thresholdValue) }}</td>
-              <td>{{ hit.gameCode ?? '—' }} / {{ hit.issueNumber ?? '—' }}</td>
-              <td>{{ hit.detail ?? '—' }}</td>
-              <td>{{ hit.createdAt?.replace('T', ' ').slice(0, 19) }}</td>
-            </tr>
-            <tr v-if="!riskHits.length"><td colspan="7" class="center-empty">该代理暂无风控命中</td></tr>
-          </tbody>
-        </table>
+      <el-table scrollbar-always-on :data="riskHits" row-key="id" border stripe class="center-table" empty-text="该代理暂无风控命中">
+          <el-table-column prop="ruleCode" label="规则" min-width="130" />
+          <el-table-column prop="ruleCategory" label="类别" min-width="130" />
+          <el-table-column label="观测值" width="130" align="right"><template #default="{ row }">{{ row.observedValue === null ? '—' : money(row.observedValue) }}</template></el-table-column>
+          <el-table-column label="阈值" width="130" align="right"><template #default="{ row }">{{ row.thresholdValue === null ? '—' : money(row.thresholdValue) }}</template></el-table-column>
+          <el-table-column label="期号" min-width="160"><template #default="{ row }">{{ row.gameCode ?? '—' }} / {{ row.issueNumber ?? '—' }}</template></el-table-column>
+          <el-table-column label="说明" min-width="200"><template #default="{ row }">{{ row.detail ?? '—' }}</template></el-table-column>
+          <el-table-column label="时间" min-width="170"><template #default="{ row }">{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
+          <template #empty><el-empty description="该代理暂无风控命中" /></template>
+        </el-table>
       </div>
 
-      <div class="center-form">
+      <div class="center-data-block">
         <p class="center-hint">近 24 小时全量命中按规则聚合</p>
-        <table class="center-table">
-          <thead><tr><th>规则</th><th>类别</th><th>命中次数</th><th>涉及代理数</th></tr></thead>
-          <tbody>
-            <tr v-for="item in riskSummary" :key="item.ruleCode">
-              <td>{{ item.ruleCode }}</td>
-              <td>{{ item.ruleCategory }}</td>
-              <td>{{ item.hitCount }}</td>
-              <td>{{ item.agentCount }}</td>
-            </tr>
-            <tr v-if="!riskSummary.length"><td colspan="4" class="center-empty">近 24 小时没有风控命中</td></tr>
-          </tbody>
-        </table>
+        <el-table scrollbar-always-on :data="riskSummary" row-key="ruleCode" border stripe class="center-table" empty-text="近 24 小时没有风控命中">
+          <el-table-column prop="ruleCode" label="规则" min-width="150" />
+          <el-table-column prop="ruleCategory" label="类别" min-width="150" />
+          <el-table-column prop="hitCount" label="命中次数" width="130" align="right" />
+          <el-table-column prop="agentCount" label="涉及代理数" width="150" align="right" />
+          <template #empty><el-empty description="近 24 小时没有风控命中" /></template>
+        </el-table>
       </div>
     </section>
 
     <section v-else class="center-panel">
-      <div class="center-cards">
-        <div class="center-card"><span>对账结果</span><strong>{{ reconciliation?.balanced ? '已对平' : '有差异' }}</strong></div>
-        <div class="center-card"><span>差异总数</span><strong>{{ reconciliation?.differenceCount ?? 0 }}</strong></div>
-        <div class="center-card"><span>本地未解决</span><strong>{{ reconciliation?.counts.localUnresolved ?? 0 }}</strong></div>
-        <div class="center-card"><span>中心未解决</span><strong>{{ reconciliation?.counts.centerUnresolved ?? 0 }}</strong></div>
-        <div class="center-card"><span>中心账本</span><strong>{{ reconciliation?.inconsistentCenterBuckets ? '不一致' : '一致' }}</strong></div>
-        <div class="center-card"><span>本地代理账本</span><strong>{{ reconciliation?.inconsistentAgentBuckets ? '不一致' : '一致' }}</strong></div>
-      </div>
+      <el-row :gutter="12" class="center-stats">
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="对账结果" :formatter="() => reconciliation?.balanced ? '已对平' : '有差异'" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="差异总数" :value="reconciliation?.differenceCount ?? 0" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="本地未解决" :value="reconciliation?.counts.localUnresolved ?? 0" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心未解决" :value="reconciliation?.counts.centerUnresolved ?? 0" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心账本" :formatter="() => reconciliation?.inconsistentCenterBuckets ? '不一致' : '一致'" /></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="本地代理账本" :formatter="() => reconciliation?.inconsistentAgentBuckets ? '不一致' : '一致'" /></el-col>
+      </el-row>
       <p class="center-hint">
         本地总数 {{ reconciliation?.counts.localTotal ?? 0 }} · 中心总数 {{ reconciliation?.counts.centerTotal ?? 0 }}；
         缺口分类：缺中心 {{ reconciliation?.missingInCenterCount ?? 0 }}、
@@ -829,75 +711,45 @@ onMounted(async () => {
         状态不一致 {{ reconciliation?.statusMismatchCount ?? 0 }}、
         金额不一致 {{ reconciliation?.amountMismatchCount ?? 0 }}
       </p>
-      <table class="center-table">
-        <thead><tr><th>差异类型</th><th>注单</th><th>本地状态</th><th>中心状态</th><th>本地金额</th><th>中心金额</th><th>处置</th><th>操作</th></tr></thead>
-        <tbody>
-          <tr v-for="row in reconciliation?.differences ?? []" :key="`${row.type}-${row.betId}`">
-            <td>{{ differenceLabel(row.type) }}</td>
-            <td>{{ row.betId }}</td>
-            <td>{{ row.localStatus ?? '—' }}</td>
-            <td>{{ row.centerStatus ?? '—' }}</td>
-            <td>{{ row.localAmount === null ? '—' : money(row.localAmount) }}</td>
-            <td>{{ row.centerAmount === null ? '—' : money(row.centerAmount) }}</td>
-            <td>
-              <strong :class="{ 'center-disposed': row.disposed }">
-                {{ disposedLabel(row.type, row.betId) }}
-              </strong>
-            </td>
-            <td class="center-actions">
-              <button type="button" :disabled="busy || row.disposed" @click="disposeDifference(row)">
-                标记处置
-              </button>
-            </td>
-          </tr>
-          <tr v-if="!reconciliation?.differences?.length"><td colspan="8" class="center-empty">没有差异</td></tr>
-        </tbody>
-      </table>
+      <el-table scrollbar-always-on :data="reconciliation?.differences ?? []" border stripe class="center-table" empty-text="没有差异">
+        <el-table-column label="差异类型" min-width="180"><template #default="{ row }">{{ differenceLabel(row.type) }}</template></el-table-column>
+        <el-table-column prop="betId" label="注单" min-width="100" />
+        <el-table-column label="本地状态" min-width="130"><template #default="{ row }">{{ row.localStatus ?? '—' }}</template></el-table-column>
+        <el-table-column label="中心状态" min-width="130"><template #default="{ row }">{{ row.centerStatus ?? '—' }}</template></el-table-column>
+        <el-table-column label="本地金额" width="130" align="right"><template #default="{ row }">{{ row.localAmount === null ? '—' : money(row.localAmount) }}</template></el-table-column>
+        <el-table-column label="中心金额" width="130" align="right"><template #default="{ row }">{{ row.centerAmount === null ? '—' : money(row.centerAmount) }}</template></el-table-column>
+        <el-table-column label="处置" min-width="110"><template #default="{ row }"><el-tag :type="row.disposed ? 'success' : 'warning'" effect="plain">{{ disposedLabel(row.type, row.betId) }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="120" fixed="right"><template #default="{ row }"><el-button link type="primary" :disabled="busy || row.disposed" @click="disposeDifference(row as { type: string; betId: number })">标记处置</el-button></template></el-table-column>
+        <template #empty><el-empty description="没有差异" /></template>
+      </el-table>
 
-      <div class="center-form">
-        <p class="center-hint">
-          处置只记录判断，<strong>不修改订单或账本</strong>；差异事实仍会显示在列表中并带「已处置」标记。
-          处置默认 7 天后失效，届时差异会重新回到待处置状态。
-        </p>
-        <label>
-          处置结论
-          <select v-model="reconForm.resolution">
-            <option value="ACKNOWLEDGED">已知悉</option>
-            <option value="ACCEPTED">接受差异</option>
-            <option value="FIXED">已修复</option>
-            <option value="IGNORED">忽略</option>
-          </select>
-        </label>
-        <label>
-          处置理由
-          <input v-model="reconForm.reason" type="text" placeholder="留空则用结论名" />
-        </label>
-        <span v-if="reconRetention" class="center-hint">
-          保留策略：生效中 {{ reconRetention.effective }} 条、已失效 {{ reconRetention.expired }} 条
-          （处置记录只追加不删除，供审计追溯）
-        </span>
-      </div>
+      <el-alert class="center-hint" type="info" :closable="false" title="处置只记录判断，不修改订单或账本；差异事实仍会显示在列表中并带「已处置」标记。处置默认 7 天后失效，届时差异会重新回到待处置状态。" />
+      <el-form :model="reconForm" inline class="center-form">
+        <el-form-item label="处置结论">
+          <el-select v-model="reconForm.resolution">
+            <el-option label="已知悉" value="ACKNOWLEDGED" />
+            <el-option label="接受差异" value="ACCEPTED" />
+            <el-option label="已修复" value="FIXED" />
+            <el-option label="忽略" value="IGNORED" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="处置理由"><el-input v-model="reconForm.reason" placeholder="留空则用结论名" /></el-form-item>
+        <el-form-item v-if="reconRetention">
+          <span class="center-hint">保留策略：生效中 {{ reconRetention.effective }} 条、已失效 {{ reconRetention.expired }} 条（处置记录只追加不删除，供审计追溯）</span>
+        </el-form-item>
+      </el-form>
 
-      <div class="center-form">
+      <div class="center-data-block">
         <p class="center-hint">生效中的差异处置</p>
-        <table class="center-table">
-          <thead>
-            <tr><th>差异类型</th><th>注单</th><th>结论</th><th>理由</th><th>到期</th><th>操作</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in reconDispositions" :key="item.id">
-              <td>{{ differenceLabel(item.differenceType) }}</td>
-              <td>{{ item.betId }}</td>
-              <td>{{ resolutionLabel(item.resolution) }}</td>
-              <td>{{ item.reason ?? '—' }}</td>
-              <td>{{ item.expiresAt ? item.expiresAt.replace('T', ' ').slice(0, 19) : '永久' }}</td>
-              <td class="center-actions">
-                <button type="button" :disabled="busy" @click="revokeDifference(item)">撤销</button>
-              </td>
-            </tr>
-            <tr v-if="!reconDispositions.length"><td colspan="6" class="center-empty">没有生效中的处置</td></tr>
-          </tbody>
-        </table>
+        <el-table scrollbar-always-on :data="reconDispositions" row-key="id" border stripe class="center-table" empty-text="没有生效中的处置">
+          <el-table-column label="差异类型" min-width="180"><template #default="{ row }">{{ differenceLabel(row.differenceType) }}</template></el-table-column>
+          <el-table-column prop="betId" label="注单" min-width="100" />
+          <el-table-column label="结论" min-width="130"><template #default="{ row }">{{ resolutionLabel(row.resolution) }}</template></el-table-column>
+          <el-table-column label="理由" min-width="200"><template #default="{ row }">{{ row.reason ?? '—' }}</template></el-table-column>
+          <el-table-column label="到期" min-width="170"><template #default="{ row }">{{ row.expiresAt ? row.expiresAt.replace('T', ' ').slice(0, 19) : '永久' }}</template></el-table-column>
+          <el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="danger" :disabled="busy" @click="revokeDifference(row as ReconciliationDisposition)">撤销</el-button></template></el-table-column>
+          <template #empty><el-empty description="没有生效中的处置" /></template>
+        </el-table>
       </div>
     </section>
     </div>
@@ -905,67 +757,42 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.platform-admin-page { min-height: 100vh; background: #eaf4fb; color: #1d2933; }
 .center-admin { width: min(1600px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 36px; }
-.center-header { margin-bottom: 18px; }
+.center-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .center-header h1 { margin: 0; font-size: 24px; line-height: 1.3; }
-.center-hint { margin: 6px 0 12px; color: #5f7280; font-size: 13px; line-height: 1.55; }
-.center-header .center-hint { max-width: 1100px; margin-bottom: 0; }
-.center-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid #bfd1da; }
-.center-tabs button { min-height: 38px; padding: 8px 14px; border: 1px solid transparent; border-bottom: 0; border-radius: 4px 4px 0 0; background: transparent; color: #435766; font: inherit; cursor: pointer; }
-.center-tabs button:hover { background: #f3f8fa; color: #155d79; }
-.center-tabs button.active { border-color: #bfd1da; background: #fff; color: #155d79; font-weight: 600; }
-.center-tabs button:focus-visible, .center-admin button:focus-visible, .center-admin input:focus-visible, .center-admin select:focus-visible { outline: 2px solid #1685a5; outline-offset: 2px; }
-.center-refresh { margin-left: auto; min-height: 34px !important; align-self: center; border: 1px solid #8ba9b7 !important; border-radius: 4px !important; background: #fff !important; color: #253b48 !important; }
-.center-refresh:disabled, .center-admin button:disabled { color: #8998a0; cursor: not-allowed; opacity: .7; }
-.center-error, .center-feedback { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid; border-radius: 3px; }
-.center-error { border-color: #c43e36; background: #fff0ee; color: #8f261f; }
-.center-feedback { border-color: #24835f; background: #edf8f2; color: #205c45; }
-.center-token { margin-bottom: 14px; padding: 12px 14px; border: 1px solid #d4a84d; border-radius: 4px; background: #fff9e8; }
-.center-token code { display: block; margin: 8px 0; overflow-wrap: anywhere; font-size: 13px; }
-.center-token button { min-height: 34px; padding: 6px 12px; border: 1px solid #8ba9b7; border-radius: 4px; background: #fff; cursor: pointer; }
-.center-panel { min-width: 0; overflow-x: auto; padding-bottom: 8px; }
-.center-panel h2 { margin: 22px 0 10px; padding-bottom: 8px; border-bottom: 1px solid #ccdbe1; color: #293e4a; font-size: 16px; line-height: 1.4; }
-.center-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 18px; }
-.center-card { display: flex; min-height: 72px; flex-direction: column; justify-content: center; gap: 6px; padding: 10px 14px; border: 1px solid #d4e0e5; border-left: 3px solid #1b91a0; border-radius: 4px; background: #fff; }
-.center-card span { color: #61717a; font-size: 12px; }
-.center-card strong { color: #253a45; font-size: 19px; font-variant-numeric: tabular-nums; }
-.center-table { width: 100%; min-width: 760px; border-collapse: collapse; background: #fff; font-size: 13px; font-variant-numeric: tabular-nums; }
-.center-table th, .center-table td { padding: 9px 10px; border-bottom: 1px solid #dce5e9; text-align: left; vertical-align: top; }
-.center-table th { border-top: 1px solid #cbdbe1; background: #e6f1f5; color: #304957; font-size: 12px; font-weight: 600; white-space: nowrap; }
-.center-table tbody tr:hover { background: #f5fafb; }
-.center-table code { color: #315a6b; font-size: 12px; }
-.center-table small { color: #62737c; }
-.center-empty { padding: 24px 12px !important; color: #75858d; text-align: center !important; }
-.center-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 0 0 14px; }
-.center-form-block { width: 100%; padding: 14px; border: 1px solid #d3e0e5; border-radius: 4px; background: #fff; }
-.center-form-block > strong { flex-basis: 100%; color: #344b57; }
-.center-form label { display: flex; min-width: 180px; flex: 1 1 180px; flex-direction: column; gap: 5px; color: #465c67; font-size: 12px; }
-.center-form input, .center-form select { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid #bacbd2; border-radius: 3px; background: #fff; color: #202f36; font: inherit; }
-.center-form button, .center-actions button, .center-row-actions button { min-height: 32px; padding: 6px 10px; border: 1px solid #8ba9b7; border-radius: 3px; background: #fff; color: #284554; font: inherit; white-space: nowrap; cursor: pointer; }
+.center-header p { max-width: 1100px; margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.center-messages { display: grid; gap: 8px; margin-bottom: 12px; }
+.center-messages p { margin: 8px 0; }
+.issued-token { display: block; margin: 8px 0; overflow-wrap: anywhere; font-size: 13px; }
+.center-tabs { margin-bottom: 16px; }
+.center-tabs :deep(.el-tabs__content) { display: none; }
+.center-panel { min-width: 0; padding-bottom: 8px; }
+.center-panel > h2 { margin: 22px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-primary); font-size: 16px; line-height: 1.4; }
+.center-stats { margin-bottom: 18px; }
+.center-stats > .el-col { margin-bottom: 12px; }
+.center-hint { margin: 6px 0 12px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.center-form { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 12px; margin: 0 0 14px; }
+.center-form .el-form-item { margin-right: 0; }
+.center-form .el-input,
+.center-form .el-select { width: 220px; }
+.center-form .el-input-number { width: 180px; }
+.center-form-block { padding: 12px 14px 0; border: 1px solid var(--el-border-color); border-radius: 4px; background: var(--el-bg-color); }
+.center-data-block { margin-top: 16px; }
 .center-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
-.center-actions button { min-height: 36px; border-color: #146f8d; background: #146f8d; color: #fff; }
-.center-row-actions { display: flex; min-width: 190px; flex-wrap: wrap; gap: 5px; }
-.center-row-actions button { min-height: 30px; padding: 4px 8px; font-size: 12px; }
-.center-row-actions button:hover, .center-form button:hover, .center-token button:hover { background: #eef6f8; }
-.center-actions button:hover { background: #0f5b75; }
-.center-settle-result { margin-top: 14px; padding-top: 2px; }
+.center-table { width: 100%; font-variant-numeric: tabular-nums; }
+.center-table code { color: var(--el-color-primary); font-size: 12px; }
+.center-table small { color: var(--el-text-color-secondary); }
+.center-settle-result { display: grid; gap: 12px; margin-top: 14px; }
 @media (max-width: 900px) {
   .center-admin { width: calc(100% - 24px); padding-top: 14px; }
-  .center-tabs { gap: 2px; }
-  .center-tabs button { padding: 8px 10px; }
-  .center-refresh { margin-left: auto; }
-  .center-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
   .center-admin { width: calc(100% - 20px); padding-top: 12px; }
   .center-header h1 { font-size: 21px; }
-  .center-tabs button { min-height: 40px; padding: 7px 9px; font-size: 13px; }
-  .center-refresh { margin-left: 0; }
-  .center-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .center-card { min-height: 66px; padding: 8px 10px; }
-  .center-card strong { font-size: 17px; }
-  .center-form label { min-width: 100%; }
-  .center-row-actions { min-width: 180px; }
+  .center-form .el-form-item,
+  .center-form .el-input,
+  .center-form .el-select,
+  .center-form .el-input-number { width: 100%; }
+  .center-form .el-form-item { margin-bottom: 12px; }
 }
 </style>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
+import { ElMessage } from 'element-plus'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { OrderCorrectionDetail, OrderCorrectionItem } from '../types/platformAdmin'
 
@@ -57,6 +58,10 @@ async function openEditor(row: OrderCorrectionItem) {
 
 async function submit() {
   if (!detail.value || saving.value) return
+  if (command.value.length === 0) {
+    ElMessage.warning('指令不能为空')
+    return
+  }
   saving.value = true
   error.value = ''
   feedback.value = ''
@@ -91,83 +96,57 @@ onMounted(async () => {
   <main class="platform-admin-page">
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
-      <header>
-        <div>
-          <h1>订单改单</h1>
-          <p>对应 BY220 admin.php - 订单改单</p>
-        </div>
-        <button type="button" :disabled="loading" @click="load(page)">刷新</button>
-      </header>
-      <p v-if="error" class="alert">{{ error }}</p>
-      <p v-if="feedback" class="feedback">{{ feedback }}</p>
-      <div v-if="loading" class="empty">正在加载...</div>
-      <div v-else class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>所属机器人</th>
-              <th>昵称</th>
-              <th>期号</th>
-              <th>时间</th>
-              <th>金额</th>
-              <th>投注内容</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.id">
-              <td>{{ row.id }}</td>
-              <td>{{ row.machineName || '--' }}</td>
-              <td>{{ row.playerName || '--' }}</td>
-              <td>{{ row.issueNumber }}</td>
-              <td>{{ time(row.createdAt) }}</td>
-              <td>{{ row.stake.toFixed(2) }}</td>
-              <td class="command">{{ row.command }}</td>
-              <td><button type="button" @click="openEditor(row)">编辑</button></td>
-            </tr>
-            <tr v-if="rows.length === 0"><td colspan="8">暂无数据</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <footer v-if="total > pageSize">
-        <button type="button" :disabled="page <= 1 || loading" @click="load(page - 1)">上一页</button>
+      <header class="page-heading"><h1>订单改单</h1><el-button :disabled="loading" @click="load(page)">刷新</el-button></header>
+      <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
+      <el-skeleton v-if="loading" :rows="6" animated />
+      <el-table scrollbar-always-on v-else :data="rows" row-key="id" stripe border empty-text="暂无数据">
+        <el-table-column prop="id" label="ID" width="90" />
+        <el-table-column prop="machineName" label="所属机器人" min-width="140"><template #default="{ row }">{{ row.machineName || '--' }}</template></el-table-column>
+        <el-table-column prop="playerName" label="昵称" min-width="130"><template #default="{ row }">{{ row.playerName || '--' }}</template></el-table-column>
+        <el-table-column prop="issueNumber" label="期号" min-width="130" />
+        <el-table-column label="时间" min-width="180"><template #default="{ row }">{{ time(row.createdAt) }}</template></el-table-column>
+        <el-table-column label="金额" min-width="110" align="right"><template #default="{ row }">{{ row.stake.toFixed(2) }}</template></el-table-column>
+        <el-table-column prop="command" label="投注内容" min-width="240" show-overflow-tooltip />
+        <el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openEditor(row as OrderCorrectionItem)">编辑</el-button></template></el-table-column>
+      </el-table>
+      <footer v-if="total > pageSize" class="table-footer">
         <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
-        <button type="button" :disabled="page >= totalPages || loading" @click="load(page + 1)">下一页</button>
+        <el-pagination :current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" :disabled="loading" @current-change="load" />
       </footer>
     </section>
 
-    <div v-if="editorOpen && detail" class="modal-mask" @click.self="editorOpen = false">
-      <form class="modal" @submit.prevent="submit">
-        <header>
-          <h2>编辑订单</h2>
-          <button type="button" @click="editorOpen = false">×</button>
-        </header>
-        <div class="form-grid">
-          <label>订单ID<input :value="detail.id" readonly /></label>
-          <label>期号<input :value="detail.issueNumber" readonly /></label>
-          <label>所属机器人<input :value="detail.machineName" readonly /></label>
-          <label>昵称<input :value="detail.playerName" readonly /></label>
-          <label class="wide">指令<input v-model="command" required /></label>
-        </div>
-        <fieldset>
-          <legend>球</legend>
-          <label v-for="number in 8" :key="number" class="ball-choice">
-            <input v-model.number="ballNumber" type="radio" :value="number" />
-            <span>{{ number }}</span>
-          </label>
-          <small>支持第1至8球；开奖后按订单所选球位结算。</small>
-        </fieldset>
-        <footer>
-          <button type="button" @click="editorOpen = false">取消</button>
-          <button type="submit" :disabled="saving">{{ saving ? '保存中...' : '确认' }}</button>
-        </footer>
-      </form>
-    </div>
+    <el-dialog v-if="detail" v-model="editorOpen" title="编辑订单" width="min(620px, 94vw)" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false">
+      <el-form :model="detail" label-position="top" class="form-grid" @submit.prevent="submit">
+        <el-form-item label="订单ID"><el-input :model-value="String(detail.id)" readonly /></el-form-item>
+        <el-form-item label="期号"><el-input :model-value="detail.issueNumber" readonly /></el-form-item>
+        <el-form-item label="所属机器人"><el-input :model-value="detail.machineName" readonly /></el-form-item>
+        <el-form-item label="昵称"><el-input :model-value="detail.playerName" readonly /></el-form-item>
+        <el-form-item label="指令" class="wide"><el-input v-model="command" required /></el-form-item>
+        <el-form-item label="球" class="wide">
+          <el-radio-group v-model="ballNumber">
+            <el-radio-button v-for="number in 8" :key="number" :value="number">{{ number }}</el-radio-button>
+          </el-radio-group>
+          <small class="form-hint">支持第1至8球；开奖后按订单所选球位结算。</small>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editorOpen = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="submit">确认</el-button>
+      </template>
+    </el-dialog>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-page{min-height:100vh;background:#eaf4fb;color:#1d1d1d}.content{padding:14px}.content header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.content h1{margin:0;font-size:24px}.content p{margin:4px 0 12px;color:#5f7280}.content button,.modal button{padding:7px 12px;border:1px solid #7da9c1;background:#fff;cursor:pointer}.table-wrap{overflow:auto;background:#fff}.table-wrap table{width:100%;min-width:1000px}table{border-collapse:collapse;background:#fff;font-size:13px}th{padding:9px;background:#40b2db;color:#fff}td{padding:8px;border-bottom:1px solid #d9e3e8;text-align:center}.command{color:#2458c6;font-weight:600}.alert{padding:10px;background:#ffe1de}.feedback{padding:10px;background:#dff5e4;color:#166b2d}.empty{padding:30px;background:#fff;text-align:center}.content footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:12px 0}.modal-mask{position:fixed;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.35);z-index:20}.modal{width:min(520px,calc(100vw - 24px));background:#fff}.modal header,.modal footer{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#eef6fb}.modal h2{margin:0;font-size:18px}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:16px}.form-grid label{display:grid;gap:5px}.form-grid input{padding:7px;border:1px solid #a8c8dc}.wide{grid-column:1/-1}.modal fieldset{margin:0 16px 16px;padding:10px;border:1px solid #c5d9e6}.ball-choice{display:inline-flex;gap:4px;margin:5px}.modal small{display:block;margin-top:6px;color:#667985}.modal footer{justify-content:flex-end}
+.platform-admin-page { min-height: 100vh; background: #f4f6f9; color: #303133; }
+.content { display: grid; gap: 14px; padding: 18px; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading h1 { margin: 0; font-size: 22px; }
+.table-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 16px; padding: 12px 0; color: #606266; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.wide { grid-column: 1 / -1; }
+.form-hint { display: block; margin-top: 8px; color: #606266; }
+@media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } .wide { grid-column: auto; } }
 </style>
 

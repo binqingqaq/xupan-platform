@@ -1,7 +1,8 @@
-import { createApp, nextTick } from 'vue'
+import { createApp } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminReportNetworks from './views/PlatformAdminReportNetworks.vue'
 import { api } from './api'
+import { settleControls, clickText } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -45,7 +46,6 @@ afterEach(() => {
 
 describe('platform admin report networks', () => {
   it('renders BY220 columns and supports status and delete actions', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.mocked(api.listReportNetworks).mockResolvedValue([{
       id: 1, code: 'WP001', name: '测试网盘', websiteUrl: 'https://example.invalid',
       status: 'ACTIVE', version: 0, createdAt: '2026-10-02T01:00:00Z', updatedAt: '2026-10-02T01:00:00Z',
@@ -55,23 +55,26 @@ describe('platform admin report networks', () => {
     document.body.appendChild(container)
     app = createApp(PlatformAdminReportNetworks)
     app.mount(container)
-    await nextTick()
+    await settleControls()
     await new Promise(resolve => setTimeout(resolve, 0))
-    await nextTick()
+    await settleControls()
 
     expect(container.textContent).toContain('网盘名称')
     expect(container.textContent).toContain('网盘键名')
     expect(container.textContent).toContain('网盘链接')
     expect(container.textContent).toContain('测试网盘')
 
-    container.querySelector<HTMLButtonElement>('.status-button')?.click()
-    await nextTick()
+    clickText(container, '开')
+    await settleControls()
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(api.changeReportNetworkStatus).toHaveBeenCalledWith(1, 0, 'DISABLED')
 
-    container.querySelector<HTMLButtonElement>('.actions .danger')?.click()
-    await nextTick()
+    clickText(container, '删除')
+    await settleControls()
     await new Promise(resolve => setTimeout(resolve, 0))
+    expect(api.deleteReportNetwork).not.toHaveBeenCalled()
+    clickText(document.querySelector('.el-message-box')!, '删除')
+    await settleControls()
     expect(api.deleteReportNetwork).toHaveBeenCalledWith(1, 0)
   })
 })

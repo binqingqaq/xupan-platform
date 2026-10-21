@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
+import { ElMessageBox } from 'element-plus'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { UnsettledOrderItem } from '../types/platformAdmin'
 
@@ -32,7 +33,9 @@ async function load(nextPage = page.value) {
 }
 
 async function remove(row: UnsettledOrderItem) {
-  if (!window.confirm(`确定将注单[${row.command}]删除么?`)) return
+  try {
+    await ElMessageBox.confirm(`确定将注单[${row.command}]删除么?`, '删除确认', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', closeOnClickModal: false })
+  } catch { return }
   busyId.value = row.id
   error.value = ''
   feedback.value = ''
@@ -73,58 +76,33 @@ onMounted(async () => {
   <main class="platform-admin-page">
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
-      <header>
-        <div>
-          <h1>未结订单</h1>
-          <p>对应 BY220 admin.php - 未结订单</p>
-        </div>
-        <button type="button" :disabled="loading" @click="load(page)">刷新</button>
-      </header>
-      <p v-if="error" class="alert">{{ error }}</p>
-      <p v-if="feedback" class="feedback">{{ feedback }}</p>
-      <div v-if="loading" class="empty">正在加载...</div>
-      <div v-else class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>子帐号</th>
-              <th>机器人</th>
-              <th>玩家</th>
-              <th>期号</th>
-              <th>指令</th>
-              <th>投注时间</th>
-              <th>报网状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in rows" :key="row.id">
-              <td>{{ row.subAccount || '--' }}</td>
-              <td>{{ row.machineName || '--' }}</td>
-              <td>{{ player(row) || '--' }}</td>
-              <td>{{ row.issueNumber }}</td>
-              <td class="command">{{ row.command }}</td>
-              <td>{{ time(row.createdAt) }}</td>
-              <td :class="`report-${row.reportStatus.toLowerCase()}`">{{ reportStatus(row.reportStatus) }}</td>
-              <td>
-                <button class="danger" type="button" :disabled="busyId === row.id" @click="remove(row)">
-                  {{ busyId === row.id ? '处理中...' : '删除' }}
-                </button>
-              </td>
-            </tr>
-            <tr v-if="rows.length === 0"><td colspan="8">暂无数据</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <footer v-if="total > pageSize">
-        <button type="button" :disabled="page <= 1 || loading" @click="load(page - 1)">上一页</button>
+      <header class="page-heading"><h1>未结订单</h1><el-button :disabled="loading" @click="load(page)">刷新</el-button></header>
+      <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
+      <el-skeleton v-if="loading" :rows="6" animated />
+      <el-table scrollbar-always-on v-else :data="rows" row-key="id" stripe border empty-text="暂无数据">
+        <el-table-column prop="subAccount" label="子帐号" min-width="110"><template #default="{ row }">{{ row.subAccount || '--' }}</template></el-table-column>
+        <el-table-column prop="machineName" label="机器人" min-width="120"><template #default="{ row }">{{ row.machineName || '--' }}</template></el-table-column>
+        <el-table-column label="玩家" min-width="150"><template #default="{ row }">{{ player(row as UnsettledOrderItem) || '--' }}</template></el-table-column>
+        <el-table-column prop="issueNumber" label="期号" min-width="130" />
+        <el-table-column prop="command" label="指令" min-width="240" show-overflow-tooltip class-name="command" />
+        <el-table-column label="投注时间" min-width="180"><template #default="{ row }">{{ time(row.createdAt) }}</template></el-table-column>
+        <el-table-column label="报网状态" min-width="120"><template #default="{ row }"><el-tag :type="row.reportStatus === 'ACCEPTED' || row.reportStatus === 'SETTLED' ? 'success' : row.reportStatus === 'REJECTED' ? 'danger' : row.reportStatus === 'TIMEOUT' ? 'warning' : 'info'">{{ reportStatus(row.reportStatus) }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="110" fixed="right"><template #default="{ row }"><el-button type="danger" link :disabled="busyId === row.id" :loading="busyId === row.id" @click="remove(row as UnsettledOrderItem)">删除</el-button></template></el-table-column>
+      </el-table>
+      <footer v-if="total > pageSize" class="table-footer">
         <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
-        <button type="button" :disabled="page >= totalPages || loading" @click="load(page + 1)">下一页</button>
+        <el-pagination :current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" :disabled="loading" @current-change="load" />
       </footer>
     </section>
   </main>
 </template>
 
 <style scoped>
-.platform-admin-page{min-height:100vh;background:#eaf4fb;color:#1d1d1d}.content{padding:14px}.content header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.content h1{margin:0;font-size:24px}.content p{margin:4px 0 12px;color:#5f7280}.content header>button,.danger{padding:7px 12px;border:1px solid #7da9c1;background:#fff;cursor:pointer}.danger{border-color:#d65a4a;color:#b3261e}.danger:disabled,.content button:disabled{color:#98a1a8;cursor:not-allowed}.table-wrap{overflow:auto;background:#fff}.table-wrap table{width:100%;min-width:900px}table{border-collapse:collapse;background:#fff;font-size:13px}th{padding:9px;background:#40b2db;color:#fff}td{padding:8px;border-bottom:1px solid #d9e3e8;text-align:center}.command{color:#2458c6;font-weight:600}.report-reported{color:#16803a;font-weight:600}.report-failed{color:#d02b20;font-weight:600}.alert{padding:10px;background:#ffe1de}.feedback{padding:10px;background:#dff5e4;color:#166b2d}.empty{padding:30px;background:#fff;text-align:center}.content footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:12px 0}.content footer button{padding:6px 12px}
+.platform-admin-page { min-height: 100vh; background: #f4f6f9; color: #303133; }
+.content { display: grid; gap: 14px; padding: 18px; }
+.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-heading h1 { margin: 0; font-size: 22px; }
+.table-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 16px; padding: 12px 0; color: #606266; }
+.command { color: #2458c6; font-weight: 600; }
 </style>

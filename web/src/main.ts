@@ -1,20 +1,6 @@
 import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
-import PlatformAdminHome from './views/PlatformAdminHome.vue'
-import PlatformAdminLoginView from './views/PlatformAdminLoginView.vue'
-import PlatformAdminSubAccounts from './views/PlatformAdminSubAccounts.vue'
-import PlatformAdminMachines from './views/PlatformAdminMachines.vue'
-import PlatformAdminReports from './views/PlatformAdminReports.vue'
-import PlatformAdminDrawHistory from './views/PlatformAdminDrawHistory.vue'
-import PlatformAdminUnsettledOrders from './views/PlatformAdminUnsettledOrders.vue'
-import PlatformAdminOrderCorrections from './views/PlatformAdminOrderCorrections.vue'
-import PlatformAdminOnlinePlayers from './views/PlatformAdminOnlinePlayers.vue'
-import PlatformAdminSettings from './views/PlatformAdminSettings.vue'
-import PlatformAdminCenter from './views/PlatformAdminCenter.vue'
-import PlatformAdminReportNetworks from './views/PlatformAdminReportNetworks.vue'
-import PlatformAdminGames from './views/PlatformAdminGames.vue'
-import PlatformAdminPassword from './views/PlatformAdminPassword.vue'
 import ForbiddenView from './views/ForbiddenView.vue'
 import LoginView from './views/LoginView.vue'
 import NotFoundView from './views/NotFoundView.vue'
@@ -27,6 +13,7 @@ import { authEntryForRoute, loginPathForRoute, resolveRouteGuardDecision, type A
 import './styles.css'
 import './styles/display-draw-board.css'
 import './styles/admin-retro.css'
+import './styles/platform-admin-element.css'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -72,20 +59,20 @@ const router = createRouter({
     { path: '/hby019-demo/portal', component: Hby019SourcePage, meta: { title: 'AI校验密码' } },
     { path: '/hby019-demo/player.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },
     { path: '/hby019-demo/player-ui1.html', component: Hby019SourcePage, meta: { title: '汇博盈' } },
-    { path: '/platform-admin/login', component: PlatformAdminLoginView, meta: { title: 'XUPAN 超级管理后台' } },
-    { path: '/platform-admin', component: PlatformAdminHome, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_HOME_READ', title: 'XUPAN 超级管理后台' } },
-    { path: '/platform-admin/sub-accounts', component: PlatformAdminSubAccounts, meta: { requiresAuth: true, requiredPermission: 'SUB_ACCOUNT_MANAGE', title: '子账号' } },
-    { path: '/platform-admin/machines', component: PlatformAdminMachines, meta: { requiresAuth: true, requiredPermission: 'MACHINE_MANAGE', title: '机器管理' } },
-    { path: '/platform-admin/reports', component: PlatformAdminReports, meta: { requiresAuth: true, requiredPermission: 'REPORT_READ', title: '报表统计' } },
-    { path: '/platform-admin/draw-history', component: PlatformAdminDrawHistory, meta: { requiresAuth: true, requiredPermission: 'DRAW_HISTORY_READ', title: '开奖历史' } },
-    { path: '/platform-admin/unsettled-orders', component: PlatformAdminUnsettledOrders, meta: { requiresAuth: true, requiredPermission: 'UNSETTLED_ORDER_READ', title: '未结订单' } },
-    { path: '/platform-admin/order-corrections', component: PlatformAdminOrderCorrections, meta: { requiresAuth: true, requiredPermission: 'ORDER_CORRECTION_READ', title: '订单改单' } },
-    { path: '/platform-admin/online-players', component: PlatformAdminOnlinePlayers, meta: { requiresAuth: true, requiredPermission: 'ONLINE_PLAYER_READ', title: '在线玩家' } },
-    { path: '/platform-admin/settings', component: PlatformAdminSettings, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_SETTINGS_READ', title: '设置' } },
-    { path: '/platform-admin/center', component: PlatformAdminCenter, meta: { requiresAuth: true, requiredPermission: 'CENTER_AGENT_MANAGE', title: '中心上游' } },
-    { path: '/platform-admin/report-networks', component: PlatformAdminReportNetworks, meta: { requiresAuth: true, requiredPermission: 'REPORT_NETWORK_READ', title: '网盘设置' } },
-    { path: '/platform-admin/games', component: PlatformAdminGames, meta: { requiresAuth: true, requiredPermission: 'GAME_SETTINGS_READ', title: '游戏设置' } },
-    { path: '/platform-admin/password', component: PlatformAdminPassword, meta: { requiresAuth: true, requiredPermission: 'PLATFORM_PASSWORD_MANAGE', title: '修改密码' } },
+    { path: '/platform-admin/login', component: () => import('./views/PlatformAdminLoginView.vue'), meta: { title: 'XUPAN 超级管理后台' } },
+    { path: '/platform-admin', component: () => import('./views/PlatformAdminHome.vue'), meta: { requiresAuth: true, requiredPermission: 'PLATFORM_HOME_READ', title: 'XUPAN 超级管理后台' } },
+    { path: '/platform-admin/sub-accounts', component: () => import('./views/PlatformAdminSubAccounts.vue'), meta: { requiresAuth: true, requiredPermission: 'SUB_ACCOUNT_MANAGE', title: '子账号' } },
+    { path: '/platform-admin/machines', component: () => import('./views/PlatformAdminMachines.vue'), meta: { requiresAuth: true, requiredPermission: 'MACHINE_MANAGE', title: '机器管理' } },
+    { path: '/platform-admin/reports', component: () => import('./views/PlatformAdminReports.vue'), meta: { requiresAuth: true, requiredPermission: 'REPORT_READ', title: '报表统计' } },
+    { path: '/platform-admin/draw-history', component: () => import('./views/PlatformAdminDrawHistory.vue'), meta: { requiresAuth: true, requiredPermission: 'DRAW_HISTORY_READ', title: '开奖历史' } },
+    { path: '/platform-admin/unsettled-orders', component: () => import('./views/PlatformAdminUnsettledOrders.vue'), meta: { requiresAuth: true, requiredPermission: 'UNSETTLED_ORDER_READ', title: '未结订单' } },
+    { path: '/platform-admin/order-corrections', component: () => import('./views/PlatformAdminOrderCorrections.vue'), meta: { requiresAuth: true, requiredPermission: 'ORDER_CORRECTION_READ', title: '订单改单' } },
+    { path: '/platform-admin/online-players', component: () => import('./views/PlatformAdminOnlinePlayers.vue'), meta: { requiresAuth: true, requiredPermission: 'ONLINE_PLAYER_READ', title: '在线玩家' } },
+    { path: '/platform-admin/settings', component: () => import('./views/PlatformAdminSettings.vue'), meta: { requiresAuth: true, requiredPermission: 'PLATFORM_SETTINGS_READ', title: '设置' } },
+    { path: '/platform-admin/center', component: () => import('./views/PlatformAdminCenter.vue'), meta: { requiresAuth: true, requiredPermission: 'CENTER_AGENT_MANAGE', title: '中心上游' } },
+    { path: '/platform-admin/report-networks', component: () => import('./views/PlatformAdminReportNetworks.vue'), meta: { requiresAuth: true, requiredPermission: 'REPORT_NETWORK_READ', title: '网盘设置' } },
+    { path: '/platform-admin/games', component: () => import('./views/PlatformAdminGames.vue'), meta: { requiresAuth: true, requiredPermission: 'GAME_SETTINGS_READ', title: '游戏设置' } },
+    { path: '/platform-admin/password', component: () => import('./views/PlatformAdminPassword.vue'), meta: { requiresAuth: true, requiredPermission: 'PLATFORM_PASSWORD_MANAGE', title: '修改密码' } },
     { path: '/player-login', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/forbidden', component: ForbiddenView, meta: { title: 'AI模型房间管理' } },
@@ -125,8 +112,11 @@ function isAdminRoute(path: string): boolean {
 function setViewportForRoute(path: string, originalPath = '') {
   const effectivePath = path === '/404' && originalPath ? originalPath : path
   const isHbyDemo = effectivePath.startsWith('/hby019-demo')
+  const isPlatformAdmin = effectivePath.startsWith('/platform-admin')
   const isConsolePath = effectivePath.startsWith('/platform-admin') || effectivePath === '/console' || effectivePath.startsWith('/console/') || effectivePath === '/agent' || effectivePath.startsWith('/agent/')
-  document.body.classList.toggle('ops-console-body', isConsolePath)
+  document.body.classList.toggle('platform-admin-body', isPlatformAdmin)
+  const isLegacyPlatformPage = /^\/platform-admin\/(stash|agents|operations|users|robots)(\/|$)/.test(effectivePath)
+  document.body.classList.toggle('ops-console-body', isConsolePath && (!isPlatformAdmin || isLegacyPlatformPage))
   let viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]')
   if (isHbyDemo && ['/hby019-demo/console', '/hby019-demo/portal'].includes(effectivePath)) {
     viewport?.remove()
@@ -144,7 +134,8 @@ function setViewportForRoute(path: string, originalPath = '') {
   }
   viewport.setAttribute('content', isHbyDemo
     ? hbyContent[effectivePath] || 'width=device-width,initial-scale=1.0'
-    : isAdminRoute(effectivePath) ? 'width=1000, user-scalable=yes' : 'width=device-width, initial-scale=1.0')
+    : isPlatformAdmin ? 'width=device-width, initial-scale=1.0'
+      : isAdminRoute(effectivePath) ? 'width=1000, user-scalable=yes' : 'width=device-width, initial-scale=1.0')
 }
 
 router.afterEach(to => {
