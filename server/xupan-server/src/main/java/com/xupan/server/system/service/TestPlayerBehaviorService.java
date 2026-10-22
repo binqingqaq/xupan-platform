@@ -310,17 +310,13 @@ public class TestPlayerBehaviorService {
         if ("AUTO_UP".equals(action.actionType())) {
             operation = walletService.grant(operatorUserId, userId, amount, "托自动上分：" + name,
                     "AUTO-UP-" + actionId);
-            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-UP-WAIT-" + actionId,
-                    "@" + name + ", 上分" + money(amount) + ",待审批!", agentId, Instant.now());
-            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-UP-DONE-" + actionId,
+            chatMessageService.publishRobotNotice("main", action.issueNumber(), "BOT-AUTO-UP-DONE-" + actionId,
                     "@" + name + ", 成功上分" + money(amount) + ", 剩" + money(operation.wallet().balance()), agentId, Instant.now());
         } else {
             operation = walletService.adjust(operatorUserId, userId, amount.negate(), "托自动下分：" + name,
                     "AUTO-DOWN-" + actionId);
-            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-DOWN-WAIT-" + actionId,
-                    "@" + name + ", 下分" + money(amount) + ",待审批!, 剩" + money(operation.wallet().balance()), agentId, Instant.now());
-            chatMessageService.publishSystemMessage("main", action.issueNumber(), "BOT-AUTO-DOWN-DONE-" + actionId,
-                    "@" + name + ", 成功下分" + money(amount), agentId, Instant.now());
+            chatMessageService.publishRobotNotice("main", action.issueNumber(), "BOT-AUTO-DOWN-DONE-" + actionId,
+                    "@" + name + ", 成功下分" + money(amount) + ", 剩" + money(operation.wallet().balance()), agentId, Instant.now());
         }
         jdbc.update("UPDATE test_player_action SET status='SUCCEEDED', error_code=NULL, error_message=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?", actionId);
         return loadAction(actionId);

@@ -44,6 +44,10 @@ public class RobotRepository {
                 .stream().findFirst();
     }
 
+    public Optional<ChatRobot> findPrimaryRobot() {
+        return findByCode("issue-helper");
+    }
+
     public List<ChatRobot> findEnabledOrderByCode() {
         return jdbcTemplate.query(COLUMNS + " WHERE status = 'ENABLED' ORDER BY robot_code",
                 this::mapRobot);

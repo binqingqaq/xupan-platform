@@ -1,6 +1,7 @@
 package com.xupan.server.chat.web;
 
 import com.xupan.server.chat.domain.ChatMessage;
+import com.xupan.server.chat.domain.ChatSenderType;
 
 import java.time.Instant;
 
@@ -27,7 +28,8 @@ public record ChatMessageResponse(
     public static ChatMessageResponse from(ChatMessage message, String avatarKey) {
         return new ChatMessageResponse(message.id(), message.sequenceNo(), message.clientMessageId(),
                 message.messageType().name(), message.senderType().name(), message.senderId(),
-                message.senderName(), avatarKey, message.content(), message.payloadJson(), message.status().name(),
+                message.senderType() == ChatSenderType.ROBOT ? "机器人" : message.senderName(),
+                avatarKey, message.content(), message.payloadJson(), message.status().name(),
                 message.createdAt(), message.updatedAt());
     }
 

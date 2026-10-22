@@ -711,7 +711,7 @@ public class ChatMessageService {
                                            String payloadJson, ChatMessageVisibility visibility,
                                            Long agentId, Instant createdAt) {
         requirePositiveRobot(robotId);
-        String normalizedRobotName = requireRobotName(robotName);
+        String normalizedRobotName = "机器人";
         String normalizedRoomCode = requireRoomCode(roomCode);
         String normalizedIssueNumber = requireRobotText(issueNumber, "CHAT_ROBOT_ISSUE_INVALID",
                 "机器人期号无效", 64);
@@ -748,47 +748,15 @@ public class ChatMessageService {
         return message;
     }
 
-    /**
-     * 发布一条系统提示消息（{@code SYSTEM} 发送者），用于房间内的系统事件提示。
-     *
-     * <p>对应 BY220 的 {@code addMsg(...)}：例如失败退单时的"注单取消"提示
-     * （{@code common.php:1635}）。与机器人消息分开，避免把系统事件伪装成机器人发言。</p>
-     *
-     * @param idempotencyKey 幂等键，同一事件重复处理不会写入第二条
-     */
+    /** Publishes a machine-scoped operational notice under the sole chat robot identity. */
     @Transactional
-    public ChatMessage publishSystemMessage(String roomCode, String issueNumber, String idempotencyKey,
-                                           String content, long agentId, Instant createdAt) {
-        String normalizedRoomCode = requireRoomCode(roomCode);
-        String normalizedIssueNumber = requireRobotText(issueNumber, "CHAT_SYSTEM_ISSUE_INVALID",
-                "系统消息期号无效", 64);
-        String normalizedKey = requireRobotText(idempotencyKey, "CHAT_SYSTEM_IDEMPOTENCY_KEY_INVALID",
-                "系统消息幂等键无效", 128);
-        String normalizedContent = contentPolicy.normalize(content);
-        Instant now = createdAt == null ? Instant.now() : createdAt;
-        requireVisibility(ChatMessageVisibility.MACHINE, agentId);
-
-        Optional<ChatMessage> existing = messageRepository.findByIdempotencyKey(normalizedKey);
-        if (existing.isPresent()) {
-            ChatMessage prior = existing.get();
-            if (prior.senderType() != com.xupan.server.chat.domain.ChatSenderType.SYSTEM
-                    || prior.visibility() != ChatMessageVisibility.MACHINE
-                    || !Objects.equals(prior.agentId(), agentId)
-                    || !Objects.equals(prior.roomCode(), normalizedRoomCode)
-                    || !Objects.equals(prior.issueNumber(), normalizedIssueNumber)
-                    || !Objects.equals(prior.content(), normalizedContent)) {
-                throw BusinessException.conflict("CHAT_SYSTEM_IDEMPOTENCY_CONFLICT",
-                        "系统消息幂等键对应的消息参数不一致");
-            }
-            return prior;
-        }
-        ChatRoom room = requireRoomForUpdate(normalizedRoomCode);
-        long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
-        ChatMessage message = messageRepository.insertSystemMessage(room.id(), sequence, normalizedIssueNumber,
-                normalizedKey, normalizedContent, "{}", agentId, now);
-        outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), now);
-        eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
-        return message;
+    public ChatMessage publishRobotNotice(String roomCode, String issueNumber, String idempotencyKey,
+                                          String content, long agentId, Instant createdAt) {
+        ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
+                .orElseThrow(() -> new IllegalStateException("唯一聊天室机器人未配置"));
+        return publishRobotMessage(robot.id(), "机器人", roomCode, issueNumber, idempotencyKey,
+                content, "{}", ChatMessageVisibility.MACHINE, agentId,
+                createdAt == null ? Instant.now() : createdAt);
     }
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)

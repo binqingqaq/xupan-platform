@@ -28,4 +28,17 @@ class SpaControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(forwardedUrl("/index.html"));
     }
+
+    @Test
+    void hby019RoutesServeTheVueApplication() throws Exception {
+        mockMvc.perform(get("/hby019-demo/console"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+        mockMvc.perform(get("/hby019-demo/login"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+        mockMvc.perform(get("/hby019-demo/showdetails"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+    }
 }

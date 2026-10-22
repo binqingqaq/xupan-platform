@@ -9,7 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class SecurityConfigTest {
 
     @Test
-    void onlyAccountPanelDocumentAllowsSameOriginFraming() throws Exception {
+    void hby019SourceDocumentsAllowSameOriginFraming() throws Exception {
         var writer = SecurityConfig.frameOptionsWriter();
         var panelRequest = request("/hby019-demo/source/account-panel.html");
         var panelResponse = new MockHttpServletResponse();
@@ -18,12 +18,20 @@ class SecurityConfigTest {
 
         assertEquals("SAMEORIGIN", panelResponse.getHeader("X-Frame-Options"));
 
+        var consoleResponse = new MockHttpServletResponse();
+        writer.writeHeaders(request("/hby019-demo/source/console.html"), consoleResponse);
+        assertEquals("SAMEORIGIN", consoleResponse.getHeader("X-Frame-Options"));
+
+        var nestedAssetResponse = new MockHttpServletResponse();
+        writer.writeHeaders(request("/hby019-demo/source/static/xz/admin/main.css"), nestedAssetResponse);
+        assertEquals("SAMEORIGIN", nestedAssetResponse.getHeader("X-Frame-Options"));
+
         var pageResponse = new MockHttpServletResponse();
         writer.writeHeaders(request("/room"), pageResponse);
         assertEquals("DENY", pageResponse.getHeader("X-Frame-Options"));
 
         var nestedPathResponse = new MockHttpServletResponse();
-        writer.writeHeaders(request("/hby019-demo/source/account-panel.html/other"), nestedPathResponse);
+        writer.writeHeaders(request("/hby019-demo/sourceevil/account-panel.html"), nestedPathResponse);
         assertEquals("DENY", nestedPathResponse.getHeader("X-Frame-Options"));
     }
 

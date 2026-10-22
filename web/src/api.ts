@@ -498,6 +498,7 @@ function isPresetAvatarKey(avatarKey: string) {
 export const api = {
   avatarUrl: (avatarKey: string | null | undefined) => {
     if (!avatarKey) return ''
+    if (avatarKey === 'robot-default' || avatarKey === 'robot-default.png') return '/avatars/robot-default.png'
     return isPresetAvatarKey(avatarKey)
       ? `/avatars/presets/${encodeURIComponent(avatarKey)}`
       : `/api/media/avatars/${encodeURIComponent(avatarKey)}`

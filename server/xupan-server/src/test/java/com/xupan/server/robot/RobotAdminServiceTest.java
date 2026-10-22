@@ -83,66 +83,42 @@ class RobotAdminServiceTest {
     }
 
     @Test
-    void createsRobotWithDefaultEnabledStatusAndAuditsAction() {
+    void rejectsCreatingAnotherRobotAndAuditsFailure() {
         when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_WRITE")).thenReturn(true);
-        when(robotRepository.findByCode("notice_bot")).thenReturn(Optional.empty());
-        when(robotRepository.insert("notice_bot", "通知机器人", "robot-default",
-                RobotStatus.ENABLED, 30, 5)).thenReturn(11L);
-        ChatRobot robot = robot(11L, "notice_bot", "通知机器人", RobotStatus.ENABLED, 30, 5);
-        when(robotRepository.findById(11L)).thenReturn(Optional.of(robot));
-        stubDispatchStatistics(11L);
-        when(templateRepository.findAll(11L)).thenReturn(List.of());
-
-        RobotAdminService.RobotDetail result = service.createRobot(OPERATOR_ID, "notice_bot",
-                "通知机器人", "robot-default", 30, 5);
-
-        assertThat(result.robot()).isEqualTo(robot);
-        verify(robotRepository).insert("notice_bot", "通知机器人", "robot-default",
-                RobotStatus.ENABLED, 30, 5);
+        assertThatThrownBy(() -> service.createRobot(OPERATOR_ID, "notice_bot",
+                "通知机器人", "robot-default", 30, 5))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("ROBOT_SINGLETON_FIXED");
         verify(auditRepository).record(eq(OPERATOR_ID), eq("ROBOT_WRITE"), eq("POST"),
-                eq("/api/admin/robots"), eq(null), eq("SUCCESS"), eq(null),
-                eq("action=create"), eq(null), any());
+                eq("/api/admin/robots"), eq(null), eq("FAILURE"),
+                eq("ROBOT_SINGLETON_FIXED"), eq("action=create-rejected-singleton"), eq(null), any());
     }
 
     @Test
-    void updatesRobotNameAndSynchronizesHistoricalMessages() {
+    void rejectsChangingTheFixedRobotProfile() {
         when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_WRITE")).thenReturn(true);
-        ChatRobot previous = robot(11L, "notice_bot", "旧名称", RobotStatus.ENABLED, 30, 5);
-        ChatRobot updated = robot(11L, "notice_bot", "新名称", RobotStatus.ENABLED, 30, 5);
-        when(robotRepository.findById(11L)).thenReturn(Optional.of(previous), Optional.of(updated));
-        when(robotRepository.update(11L, "新名称", "robot-default", 30, 5)).thenReturn(1);
-        when(chatMessageRepository.updateRobotSenderName(11L, "新名称")).thenReturn(3);
-        stubDispatchStatistics(11L);
-        when(templateRepository.findAll(11L)).thenReturn(List.of());
-
-        RobotAdminService.RobotDetail result = service.updateRobot(OPERATOR_ID, 11L,
-                "新名称", "robot-default", 30, 5);
-
-        assertThat(result.robot()).isEqualTo(updated);
-        verify(chatMessageRepository).updateRobotSenderName(11L, "新名称");
-        verify(eventPublisher).publishEvent(any(ChatRobotUpdatedEvent.class));
+        when(robotRepository.findById(11L)).thenReturn(Optional.of(
+                robot(11L, "issue-helper", "机器人", RobotStatus.ENABLED, 100, 0)));
+        assertThatThrownBy(() -> service.updateRobot(OPERATOR_ID, 11L,
+                "新名称", "robot-default", 30, 5))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("ROBOT_PROFILE_FIXED");
     }
 
     @Test
-    void repairsHistoricalMessagesEvenWhenRobotNameIsAlreadyCurrent() {
+    void rejectsAvatarMutationForTheFixedRobot() {
         when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_WRITE")).thenReturn(true);
-        ChatRobot robot = robot(11L, "notice_bot", "机器人", RobotStatus.ENABLED, 30, 5);
-        when(robotRepository.findById(11L)).thenReturn(Optional.of(robot), Optional.of(robot));
-        when(robotRepository.update(11L, "机器人", "robot-default", 30, 5)).thenReturn(1);
-        when(chatMessageRepository.updateRobotSenderName(11L, "机器人")).thenReturn(7784);
-        stubDispatchStatistics(11L);
-        when(templateRepository.findAll(11L)).thenReturn(List.of());
-
-        service.updateRobot(OPERATOR_ID, 11L, "机器人", "robot-default", 30, 5);
-
-        verify(chatMessageRepository).updateRobotSenderName(11L, "机器人");
-        verify(eventPublisher).publishEvent(any(ChatRobotUpdatedEvent.class));
+        when(robotRepository.findById(11L)).thenReturn(Optional.of(
+                robot(11L, "issue-helper", "机器人", RobotStatus.ENABLED, 100, 0)));
+        assertThatThrownBy(() -> service.updateAvatar(OPERATOR_ID, 11L, "other.png"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("ROBOT_AVATAR_FIXED");
     }
 
     @Test
     void updatesTemplateByDisablingPreviousVersionAndUsingNextVersion() {
         when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_TEMPLATE_WRITE")).thenReturn(true);
-        ChatRobot robot = robot(11L, "notice_bot", "通知机器人", RobotStatus.ENABLED, 30, 5);
+        ChatRobot robot = robot(11L, "issue-helper", "机器人", RobotStatus.ENABLED, 100, 0);
         ChatRobotTemplate previous = template(4L, 11L, RobotEventType.ISSUE_STARTED, "旧模板", true, 3);
         ChatRobotTemplate current = template(5L, 11L, RobotEventType.ISSUE_STARTED, "新模板", true, 4);
         when(robotRepository.findById(11L)).thenReturn(Optional.of(robot));
@@ -168,7 +144,7 @@ class RobotAdminServiceTest {
     @Test
     void previewOnlyRendersCandidateAndDoesNotWriteTemplate() {
         when(permissionService.hasPermission(OPERATOR_ID, "ROBOT_TEMPLATE_WRITE")).thenReturn(true);
-        ChatRobot robot = robot(11L, "notice_bot", "通知机器人", RobotStatus.ENABLED, 30, 5);
+        ChatRobot robot = robot(11L, "issue-helper", "机器人", RobotStatus.ENABLED, 100, 0);
         when(robotRepository.findById(11L)).thenReturn(Optional.of(robot));
         when(templateRepository.findActive(11L, RobotEventType.DRAW_RESULT)).thenReturn(Optional.empty());
         when(templateRenderer.render(any(), any())).thenReturn("预览结果");

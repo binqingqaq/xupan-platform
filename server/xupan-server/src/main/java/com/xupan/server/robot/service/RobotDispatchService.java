@@ -123,24 +123,18 @@ public class RobotDispatchService {
     }
 
     private Boolean discover(RobotDispatchRepository.UnscheduledGameEvent event, Instant now) {
-        List<ChatRobot> allRobots = robotRepository.findAll();
-        List<ChatRobot> enabledRobots = allRobots.stream().filter(ChatRobot::isEnabled).toList();
-        Optional<ChatRobot> selected = selectionService.select(enabledRobots,
-                event.issueNumber(), event.eventType());
-        if (selected.isEmpty()) {
-            ChatRobot fallback = allRobots.stream().findFirst().orElse(null);
-            if (fallback == null) {
-                log.warn("机器人事件没有可记录的机器人，eventId={}", event.id());
-                return false;
-            }
+        ChatRobot robot = robotRepository.findPrimaryRobot().orElse(null);
+        if (robot == null) {
+            log.warn("唯一机器人配置缺失，eventId={}", event.id());
+            return false;
+        }
+        if (!robot.isEnabled()) {
             ChatRobotDispatch dispatch = dispatchRepository.insertPendingIfAbsent(event.id(),
-                    fallback.id(), event.issueNumber(), eventAdapter.eventType(event.eventType()),
+                    robot.id(), event.issueNumber(), eventAdapter.eventType(event.eventType()),
                     event.createdAt());
-            dispatchRepository.markSkipped(dispatch.id(), "NO_ENABLED_ROBOT", now);
+            dispatchRepository.markSkipped(dispatch.id(), "ROBOT_DISABLED", now);
             return true;
         }
-
-        ChatRobot robot = selected.get();
         if (now.isBefore(event.createdAt().plusSeconds(robot.delaySeconds()))) {
             return false;
         }

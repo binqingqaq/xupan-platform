@@ -82,14 +82,14 @@ class ChatRobotMessageServiceUnitTest {
         when(messageRepository.findByIdempotencyKey(KEY)).thenReturn(Optional.empty());
         when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
         when(roomRepository.allocateNextSequence(1L, 8L)).thenReturn(9L);
-        when(messageRepository.insertRobotMessage(1L, 9L, ROBOT_ID, "开奖助手", "3000000", KEY,
+        when(messageRepository.insertRobotMessage(1L, 9L, ROBOT_ID, "机器人", "3000000", KEY,
                 CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW)).thenReturn(message);
 
         ChatMessage result = service.publishRobotMessage(ROBOT_ID, "开奖助手", "main", "3000000",
                 KEY, CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW);
 
         assertThat(result).isEqualTo(message);
-        verify(messageRepository).insertRobotMessage(1L, 9L, ROBOT_ID, "开奖助手", "3000000", KEY,
+        verify(messageRepository).insertRobotMessage(1L, 9L, ROBOT_ID, "机器人", "3000000", KEY,
                 CONTENT, PAYLOAD, ChatMessageVisibility.PUBLIC, null, NOW);
         ArgumentCaptor<String> outboxPayload = ArgumentCaptor.forClass(String.class);
         verify(outboxRepository).insertMessageCreatedOutbox(eq(21L), outboxPayload.capture(), eq(NOW));
@@ -149,7 +149,7 @@ class ChatRobotMessageServiceUnitTest {
 
     private ChatMessage robotMessage(long id, long sequence) {
         return new ChatMessage(id, 1L, "main", sequence, null, KEY, "3000000",
-                ChatMessageType.ROBOT, ChatSenderType.ROBOT, ROBOT_ID, "开奖助手", CONTENT, PAYLOAD,
+                ChatMessageType.ROBOT, ChatSenderType.ROBOT, ROBOT_ID, "机器人", CONTENT, PAYLOAD,
                 ChatMessageStatus.ACTIVE, NOW, NOW);
     }
 }

@@ -71,6 +71,7 @@ const currentUser = ref<CurrentUserView | null>(null)
 const room = ref<ChatRoomView | null>(null)
 const chatMessages = ref<ChatMessage[]>([])
 const adminNotices = ref<ChatMessage[]>([])
+const failedChatAvatarKeys = ref(new Set<string>())
 const platformSettings = ref<PublicPlatformSettings | null>(null)
 const countdownVisible = ref(true)
 const pendingChatMessage = ref<PendingChatMessage | null>(null)
@@ -349,17 +350,15 @@ function formatMessageTime(createdAt: string) {
 function toRoomMessage(message: ChatMessage): RoomMessage {
   const type: MessageType = message.messageType === 'RESULT'
     ? 'result'
-    : message.senderType === 'ROBOT'
+    : message.senderType === 'ROBOT' || message.senderType === 'SYSTEM' || message.senderType === 'ADMIN'
       ? 'robot'
-      : message.senderType === 'SYSTEM' || message.senderType === 'ADMIN'
-        ? 'system'
-        : 'user'
+      : 'user'
   return {
     id: String(message.id),
     sequenceNo: message.sequenceNo,
     type,
-    name: message.senderName,
-    avatarKey: message.avatarKey,
+    name: type === 'robot' ? '机器人' : message.senderName,
+    avatarKey: type === 'robot' ? 'robot-default.png' : message.avatarKey,
     body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
     drawPayload: type === 'robot' && message.status === 'ACTIVE' ? parseRobotDrawPayload(message.payloadJson) : null,
     time: formatMessageTime(message.createdAt),
@@ -1121,6 +1120,26 @@ function isStoredAvatarKey(value: string | null | undefined): value is string {
   return Boolean(value && (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(jpg|png|gif|webp)$/i.test(value) || /^preset-\d{2}\.(jpg|png)$/i.test(value)))
 }
 
+function chatAvatarUrl(message: RoomMessage) {
+  const key = message.avatarKey
+  if (!key) return ''
+  if (message.type !== 'robot') {
+    return isStoredAvatarKey(key) && !failedChatAvatarKeys.value.has(key) ? api.avatarUrl(key) : ''
+  }
+  const resolvedKey = 'robot-default.png'
+  if (failedChatAvatarKeys.value.has(resolvedKey)) return ''
+  return api.avatarUrl(resolvedKey)
+}
+
+function markChatAvatarFailed(message: RoomMessage, event: Event) {
+  if (!message.avatarKey) return
+  const image = event.currentTarget as HTMLImageElement
+  const failedKey = image.getAttribute('src') === api.avatarUrl('robot-default.png')
+    ? 'robot-default.png'
+    : message.avatarKey
+  failedChatAvatarKeys.value = new Set([...failedChatAvatarKeys.value, failedKey])
+}
+
 function createChatClientMessageId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `web-${crypto.randomUUID()}`
   return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -1317,7 +1336,7 @@ onUnmounted(() => {
           <article class="reference-message" :class="messageClass(message)">
             <div class="reference-bubble" :class="{ 'has-robot-image': Boolean(message.drawPayload) }">
               <div class="reference-avatar" :class="{ 'is-robot': message.type === 'robot' }">
-              <img v-if="isStoredAvatarKey(message.avatarKey)" :src="api.avatarUrl(message.avatarKey)" alt="" />
+              <img v-if="chatAvatarUrl(message)" :src="chatAvatarUrl(message)" alt="" @error="markChatAvatarFailed(message, $event)" />
                 <span v-else>{{ avatarText(message.name) }}</span>
               </div>
               <h5 class="reference-name">{{ message.name }}</h5>

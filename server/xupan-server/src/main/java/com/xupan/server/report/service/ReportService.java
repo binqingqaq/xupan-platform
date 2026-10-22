@@ -625,7 +625,7 @@ public class ReportService {
         // BY220 失败退单会发一条"注单取消"房间提示（common.php:1635 addMsg）。
         // 反馈失败不能影响退款结果，因此单独兜住异常；幂等键保证重复处理不重复发消息。
         try {
-            chatMessageService.publishSystemMessage("main", bet.issueNumber(),
+            chatMessageService.publishRobotNotice("main", bet.issueNumber(),
                     "CHAT-REPORT-WITHDRAW-" + bet.betId(),
                     "@" + bet.betId() + " 注单取消（上报失败自动退单）", bet.agentId(), Instant.now());
         } catch (RuntimeException feedbackFailure) {

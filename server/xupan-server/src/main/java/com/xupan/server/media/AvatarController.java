@@ -73,9 +73,9 @@ public class AvatarController {
     public AvatarResponse updateRobot(Authentication authentication, @PathVariable long robotId,
                                       @RequestPart("file") MultipartFile file) {
         AuthenticatedUser operator = principal(authentication);
-        String key = storageService.store(file).avatarKey();
-        robotAdminService.updateAvatar(operator.getUserId(), robotId, key);
-        return AvatarResponse.of(key);
+        RobotAdminService.RobotDetail robot = robotAdminService.updateAvatar(
+                operator.getUserId(), robotId, "robot-default.png");
+        return AvatarResponse.of(robot.robot().avatarKey());
     }
 
     private static AuthenticatedUser principal(Authentication authentication) {

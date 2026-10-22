@@ -83,7 +83,7 @@ public class RobotAdminService {
         String path = "/api/admin/robots";
         requirePermission(operatorUserId, PERMISSION_READ, "GET", path, null);
         validatePage(page, pageSize);
-        List<ChatRobot> all = robotRepository.findAll();
+        List<ChatRobot> all = robotRepository.findPrimaryRobot().stream().toList();
         int from = Math.min((page - 1) * pageSize, all.size());
         int to = Math.min(from + pageSize, all.size());
         return new RobotPage(all.subList(from, to), page, pageSize, all.size());
@@ -95,26 +95,8 @@ public class RobotAdminService {
         String path = "/api/admin/robots";
         requirePermission(operatorUserId, PERMISSION_WRITE, "POST", path, null);
         return audited(operatorUserId, PERMISSION_WRITE, "POST", path, null,
-                "action=create", () -> {
-                    String code = normalizeRobotCode(robotCode);
-                    String name = normalizeText(displayName, "ROBOT_DISPLAY_NAME_INVALID",
-                            "机器人显示名称不能为空或过长", 32);
-                    String avatar = normalizeText(avatarKey, "ROBOT_AVATAR_INVALID",
-                            "机器人头像键不能为空或过长", 64);
-                    validateWeight(weight);
-                    validateDelay(delaySeconds);
-                    if (robotRepository.findByCode(code).isPresent()) {
-                        throw BusinessException.conflict("ROBOT_CODE_EXISTS", "机器人编码已存在");
-                    }
-                    try {
-                        long id = robotRepository.insert(code, name, avatar, RobotStatus.ENABLED,
-                                weight, delaySeconds);
-                        drawComponentRepository.insertDefaults(id);
-                        ChatRobot robot = requireRobot(id);
-                        return detail(robot);
-                    } catch (DataIntegrityViolationException exception) {
-                        throw BusinessException.conflict("ROBOT_CODE_EXISTS", "机器人编码已存在");
-                    }
+                "action=create-rejected-singleton", () -> {
+                    throw BusinessException.conflict("ROBOT_SINGLETON_FIXED", "聊天室只允许使用唯一固定机器人");
                 });
     }
 
@@ -131,23 +113,9 @@ public class RobotAdminService {
         String path = "/api/admin/robots/" + robotId;
         requirePermission(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId));
         return audited(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId),
-                "action=update", () -> {
-                    ChatRobot current = requireRobot(robotId);
-                    String name = normalizeText(displayName, "ROBOT_DISPLAY_NAME_INVALID",
-                            "机器人显示名称不能为空或过长", 32);
-                    String avatar = normalizeText(avatarKey, "ROBOT_AVATAR_INVALID",
-                            "机器人头像键不能为空或过长", 64);
-                    validateWeight(weight);
-                    validateDelay(delaySeconds);
-                    if (robotRepository.update(robotId, name, avatar, weight, delaySeconds) != 1) {
-                        throw BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在");
-                    }
-                    int synchronizedMessages = chatMessageRepository.updateRobotSenderName(robotId, name);
-                    if (!current.displayName().equals(name) || synchronizedMessages > 0) {
-                        eventPublisher.publishEvent(new ChatRobotUpdatedEvent(robotId, name,
-                                CHAT_ROOM_CODE));
-                    }
-                    return detail(requireRobot(robotId));
+                "action=profile-update-rejected-singleton", () -> {
+                    requireRobot(robotId);
+                    throw BusinessException.conflict("ROBOT_PROFILE_FIXED", "机器人名称、头像、权重和延时为固定配置");
                 });
     }
 
@@ -157,12 +125,8 @@ public class RobotAdminService {
         requirePermission(operatorUserId, PERMISSION_WRITE, "PATCH", path, Long.toString(robotId));
         return audited(operatorUserId, PERMISSION_WRITE, "PATCH", path, Long.toString(robotId),
                 "action=status", () -> {
-                    RobotStatus normalizedStatus = parseRobotStatus(status);
                     requireRobot(robotId);
-                    if (robotRepository.updateStatus(robotId, normalizedStatus) != 1) {
-                        throw BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在");
-                    }
-                    return detail(requireRobot(robotId));
+                    throw BusinessException.conflict("ROBOT_PROFILE_FIXED", "唯一机器人不能停用或切换状态");
                 });
     }
 
@@ -172,15 +136,8 @@ public class RobotAdminService {
         requirePermission(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId));
         return audited(operatorUserId, PERMISSION_WRITE, "PUT", path, Long.toString(robotId),
                 "action=avatar-update", () -> {
-                    ChatRobot robot = requireRobot(robotId);
-                    if (avatarKey == null || avatarKey.isBlank() || avatarKey.length() > 255) {
-                        throw BusinessException.badRequest("ROBOT_AVATAR_INVALID", "机器人头像键无效");
-                    }
-                    if (robotRepository.updateAvatarKey(robotId, avatarKey) != 1) {
-                        throw BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在");
-                    }
-                    return detail(robotRepository.findById(robotId).orElseThrow(() ->
-                            BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在")));
+                    requireRobot(robotId);
+                    throw BusinessException.conflict("ROBOT_AVATAR_FIXED", "机器人头像为固定绿色安卓头像");
                 });
     }
 
@@ -336,8 +293,12 @@ public class RobotAdminService {
         if (robotId <= 0) {
             throw BusinessException.badRequest("ROBOT_ID_INVALID", "机器人标识无效");
         }
-        return robotRepository.findById(robotId)
+        ChatRobot robot = robotRepository.findById(robotId)
                 .orElseThrow(() -> BusinessException.notFound("ROBOT_NOT_FOUND", "机器人不存在"));
+        if (!"issue-helper".equals(robot.robotCode())) {
+            throw BusinessException.notFound("ROBOT_NOT_FOUND", "仅唯一固定机器人可管理");
+        }
+        return robot;
     }
 
     private void requirePermission(long operatorUserId, String permission, String method,

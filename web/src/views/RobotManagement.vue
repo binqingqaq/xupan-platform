@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
-import { toInstantQueryValue, validateRobotDrawComponents, validateRobotDraft as validateRobotDraftInput } from '../robotAdmin'
+import { toInstantQueryValue, validateRobotDrawComponents } from '../robotAdmin'
 import type { CurrentUserView } from '../types'
 import type {
   DispatchPage,
@@ -13,7 +13,6 @@ import type {
   RobotDetail,
   RobotDispatchStatus,
   RobotEventType,
-  RobotStatus,
   RobotSummary,
   TemplatePreview,
   TemplateSummary,
@@ -27,7 +26,6 @@ const eventLabels: Record<RobotEventType, string> = {
   DRAW_RESULT: '开奖结果',
 }
 const dispatchStatuses: RobotDispatchStatus[] = ['PENDING', 'PROCESSING', 'FAILED', 'PUBLISHED', 'SKIPPED']
-const robotStatusLabels: Record<RobotStatus, string> = { ENABLED: '已启用', DISABLED: '已停用' }
 const dispatchStatusLabels: Record<RobotDispatchStatus, string> = {
   PENDING: '待处理',
   PROCESSING: '处理中',
@@ -42,14 +40,6 @@ const drawComponentLabels: Record<RobotDrawComponentType, string> = {
   WINNER_LIST: '获胜名单',
 }
 
-type RobotDraft = {
-  robotCode: string
-  displayName: string
-  avatarKey: string
-  weight: number
-  delaySeconds: number
-}
-
 type DispatchFilters = {
   issueNumber: string
   eventType: RobotEventType | ''
@@ -61,23 +51,17 @@ type DispatchFilters = {
 const router = useRouter()
 const currentUser = ref<CurrentUserView | null>(null)
 const robots = ref<RobotSummary[]>([])
-const page = ref(1)
-const pageSize = ref(20)
 const total = ref(0)
 const selectedRobotId = ref<number | null>(null)
 const selectedRobot = ref<RobotDetail | null>(null)
 const loading = ref(false)
 const detailLoading = ref(false)
 const dispatchLoading = ref(false)
-const saving = ref(false)
 const errorMessage = ref('')
 const detailError = ref('')
 const dispatchError = ref('')
 const feedback = ref('')
 const feedbackKind = ref<'success' | 'error'>('success')
-const createOpen = ref(false)
-const editingRobotId = ref<number | null>(null)
-const robotDraft = ref<RobotDraft>(emptyRobotDraft())
 const selectedEventType = ref<RobotEventType>('ISSUE_STARTED')
 const templateDraft = ref('')
 const templateSaving = ref(false)
@@ -99,14 +83,10 @@ const dispatchFilters = reactive<DispatchFilters>({
   from: '',
   to: '',
 })
-const avatarFile = ref<File | null>(null)
-const avatarUploading = ref(false)
 
 const canWrite = computed(() => currentUser.value?.permissions.includes('ROBOT_WRITE') === true)
 const canTemplateWrite = computed(() => currentUser.value?.permissions.includes('ROBOT_TEMPLATE_WRITE') === true)
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const dispatchPageCount = computed(() => Math.max(1, Math.ceil(dispatchTotal.value / dispatchPageSize.value)))
-const editing = computed(() => editingRobotId.value !== null)
 const selectedTemplate = computed<TemplateSummary | null>(() => {
   const candidates = (selectedRobot.value?.templates ?? [])
     .filter(template => template.eventType === selectedEventType.value)
@@ -116,17 +96,7 @@ const selectedTemplate = computed<TemplateSummary | null>(() => {
     })
   return candidates[0] ?? null
 })
-const draftErrors = computed(() => validateRobotDraft(robotDraft.value, editing.value))
 const drawComponentErrors = computed(() => validateRobotDrawComponents(drawComponents.value))
-
-function emptyRobotDraft(): RobotDraft {
-  return { robotCode: '', displayName: '', avatarKey: 'robot-default', weight: 100, delaySeconds: 0 }
-}
-
-function validateRobotDraft(draft: RobotDraft, isEditing = false): string[] {
-  const errors = validateRobotDraftInput(draft)
-  return isEditing ? errors.filter(error => !error.startsWith('机器人编码')) : errors
-}
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
   feedback.value = message
@@ -140,48 +110,12 @@ function dateTime(value?: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--'
 }
 
-function robotStatusClass(status: RobotStatus) {
-  return status === 'ENABLED' ? 'robot-status-enabled' : 'robot-status-disabled'
-}
-
 function dispatchStatusClass(status: RobotDispatchStatus) {
   return `robot-dispatch-${status.toLowerCase()}`
 }
 
 function dispatchStatusLabel(status: RobotDispatchStatus) {
   return dispatchStatusLabels[status] ?? status
-}
-
-function closeRobotModal() {
-  createOpen.value = false
-  editingRobotId.value = null
-  robotDraft.value = emptyRobotDraft()
-  avatarFile.value = null
-}
-
-function selectAvatar(event: Event) {
-  avatarFile.value = (event.target as HTMLInputElement).files?.[0] || null
-}
-
-function openCreate() {
-  if (!canWrite.value) return
-  editingRobotId.value = null
-  robotDraft.value = emptyRobotDraft()
-  createOpen.value = true
-}
-
-function openEdit() {
-  if (!canWrite.value || !selectedRobot.value) return
-  const robot = selectedRobot.value.robot
-  editingRobotId.value = robot.id
-  robotDraft.value = {
-    robotCode: robot.robotCode,
-    displayName: robot.displayName,
-    avatarKey: robot.avatarKey,
-    weight: robot.weight,
-    delaySeconds: robot.delaySeconds,
-  }
-  createOpen.value = true
 }
 
 async function loadRobotDetail(robotId: number) {
@@ -226,7 +160,7 @@ async function loadPage() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const result = await api.getAdminRobots(page.value, pageSize.value)
+    const result = await api.getAdminRobots(1, 1)
     robots.value = result.items
     total.value = result.total
     const nextId = result.items.some(robot => robot.id === selectedRobotId.value)
@@ -270,69 +204,6 @@ async function saveDrawComponents() {
 
 async function refresh() {
   await Promise.all([loadPage(), loadDispatches()])
-}
-
-function movePage(nextPage: number) {
-  if (nextPage < 1 || nextPage > pageCount.value || nextPage === page.value || loading.value) return
-  page.value = nextPage
-  void loadPage()
-}
-
-async function submitRobot() {
-  const errors = draftErrors.value
-  if (errors.length) {
-    showFeedback(errors[0], 'error')
-    return
-  }
-  saving.value = true
-  const wasEditing = editing.value
-  try {
-    const payload = {
-      displayName: robotDraft.value.displayName.trim(),
-      avatarKey: robotDraft.value.avatarKey.trim(),
-      weight: robotDraft.value.weight,
-      delaySeconds: robotDraft.value.delaySeconds,
-    }
-    let detail: RobotDetail
-    if (editingRobotId.value === null) {
-      detail = await api.createAdminRobot({ robotCode: robotDraft.value.robotCode.trim(), ...payload })
-    } else {
-      detail = await api.updateAdminRobot(editingRobotId.value, payload)
-    }
-    if (avatarFile.value) {
-      avatarUploading.value = true
-      await api.uploadAdminRobotAvatar(detail.robot.id, avatarFile.value)
-      detail = await api.getAdminRobot(detail.robot.id)
-    }
-    closeRobotModal()
-    selectedRobotId.value = detail.robot.id
-    await loadPage()
-    showFeedback(wasEditing ? '机器人配置已更新' : '机器人已创建')
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, editing.value ? '机器人配置保存失败' : '机器人创建失败'), 'error')
-  } finally {
-    avatarUploading.value = false
-    saving.value = false
-  }
-}
-
-async function changeStatus(robot: RobotSummary) {
-  if (!canWrite.value || saving.value) return
-  const nextStatus: RobotStatus = robot.status === 'ENABLED' ? 'DISABLED' : 'ENABLED'
-  if (nextStatus === 'DISABLED' && !window.confirm(`确定停用机器人“${robot.displayName}”吗？`)) return
-  saving.value = true
-  try {
-    const detail = await api.changeAdminRobotStatus(robot.id, nextStatus)
-    selectedRobotId.value = robot.id
-    selectedRobot.value = detail
-    syncTemplateDraft()
-    await loadPage()
-    showFeedback(`机器人已${nextStatus === 'ENABLED' ? '启用' : '停用'}`)
-  } catch (error) {
-    showFeedback(apiErrorMessage(error, '机器人状态更新失败'), 'error')
-  } finally {
-    saving.value = false
-  }
 }
 
 function selectEventType(eventType: RobotEventType) {
@@ -480,57 +351,44 @@ onMounted(async () => {
     <main class="admin-main">
       <section class="admin-summary robot-summary" aria-label="机器人管理概览">
         <div class="summary-item"><span>机器人总数</span><strong>{{ total }}</strong></div>
-        <div class="summary-item"><span>当前页</span><strong>{{ page }} / {{ pageCount }}</strong></div>
-        <div class="summary-item"><span>已启用</span><strong>{{ robots.filter(robot => robot.status === 'ENABLED').length }}</strong></div>
+        <div class="summary-item"><span>自动回复身份</span><strong>机器人</strong></div>
         <div class="summary-item"><span>当前失败投递</span><strong>{{ selectedRobot?.dispatchStatistics.failed ?? '--' }}</strong></div>
       </section>
 
       <section class="admin-section robot-list-section">
         <div class="section-title">
           <div><span class="eyebrow">ROBOT REGISTRY</span><h2>机器人列表</h2></div>
-          <button type="button" class="primary-button" :disabled="!canWrite || saving" @click="openCreate">新增机器人</button>
+          <span class="robot-fixed-note">唯一机器人 · 身份固定</span>
         </div>
-        <p v-if="!canWrite" class="permission-note">当前账号仅有查看权限，配置和重试操作已禁用。</p>
+        <p v-if="!canWrite" class="permission-note">当前账号仅有查看权限。</p>
         <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }}</p>
         <div v-if="loading && !robots.length" class="user-empty-state">正在加载机器人列表...</div>
-        <div v-else-if="!robots.length" class="user-empty-state">
-          <strong>暂无机器人</strong>
-          <span>服务端当前没有可管理的机器人配置。</span>
-          <button v-if="canWrite" type="button" class="secondary-button" @click="openCreate">创建第一个机器人</button>
-        </div>
+        <div v-else-if="!robots.length" class="user-empty-state"><strong>固定机器人配置缺失</strong><span>请检查数据库迁移状态。</span></div>
         <div v-else class="user-table-wrap robot-table-wrap">
           <table class="user-table robot-table">
-            <thead><tr><th>编码</th><th>展示名</th><th>头像标识</th><th>状态</th><th>权重</th><th>延时</th><th>更新时间</th><th>操作</th></tr></thead>
+            <thead><tr><th>机器人</th><th>唯一身份</th><th>固定头像</th><th>自动回复</th><th>当前失败投递</th></tr></thead>
             <tbody>
               <tr v-for="robot in robots" :key="robot.id" :class="{ 'is-selected': selectedRobotId === robot.id }">
-                <td><button type="button" class="robot-row-trigger" @click="loadRobotDetail(robot.id)">{{ robot.robotCode }}</button></td>
-                <td><strong>{{ robot.displayName }}</strong></td>
-                <td>{{ robot.avatarKey }}</td>
-                <td><span class="robot-status" :class="robotStatusClass(robot.status)">{{ robotStatusLabels[robot.status] }}</span></td>
-                <td>{{ robot.weight }}</td>
-                <td>{{ robot.delaySeconds }} 秒</td>
-                <td>{{ dateTime(robot.updatedAt) }}</td>
-                <td><div class="robot-row-actions"><button type="button" class="table-action" @click="loadRobotDetail(robot.id)">详情</button><button type="button" class="table-action" :disabled="!canWrite || saving" @click="changeStatus(robot)">{{ robot.status === 'ENABLED' ? '停用' : '启用' }}</button></div></td>
+                <td><div class="robot-identity"><img :src="api.avatarUrl('robot-default.png')" alt="" /><strong>机器人</strong></div></td>
+                <td>唯一固定</td>
+                <td>绿色安卓</td>
+                <td><span class="robot-status robot-status-enabled">已启用</span></td>
+                <td>{{ selectedRobot?.robot.id === robot.id ? selectedRobot.dispatchStatistics.failed : '--' }}</td>
               </tr>
             </tbody>
           </table>
         </div>
-        <footer v-if="total > 0" class="user-pagination">
-          <span>共 {{ total }} 条</span>
-          <div class="pagination-actions"><button type="button" class="secondary-button" :disabled="page <= 1 || loading" @click="movePage(page - 1)">上一页</button><span>第 {{ page }} / {{ pageCount }} 页</span><button type="button" class="secondary-button" :disabled="page >= pageCount || loading" @click="movePage(page + 1)">下一页</button></div>
-        </footer>
       </section>
 
       <section class="robot-detail-layout">
         <section class="admin-section robot-detail-section">
-          <div class="section-title"><div><span class="eyebrow">ROBOT DETAIL</span><h2>配置详情</h2></div><button v-if="selectedRobot" type="button" class="secondary-button" :disabled="!canWrite || saving" @click="openEdit">编辑配置</button></div>
+          <div class="section-title"><div><span class="eyebrow">ROBOT IDENTITY</span><h2>固定机器人</h2></div></div>
           <div v-if="detailLoading" class="user-empty-state robot-detail-state">正在加载机器人详情...</div>
           <p v-else-if="detailError" class="inline-error" role="alert">{{ detailError }}</p>
           <div v-else-if="!selectedRobot" class="user-empty-state robot-detail-state">选择一个机器人查看详情。</div>
           <template v-else>
-            <dl class="user-detail-grid robot-detail-grid"><div><dt>机器人编码</dt><dd>{{ selectedRobot.robot.robotCode }}</dd></div><div><dt>展示名</dt><dd>{{ selectedRobot.robot.displayName }}</dd></div><div><dt>头像标识</dt><dd>{{ selectedRobot.robot.avatarKey }}</dd></div><div><dt>状态</dt><dd><span class="robot-status" :class="robotStatusClass(selectedRobot.robot.status)">{{ robotStatusLabels[selectedRobot.robot.status] }}</span></dd></div><div><dt>权重</dt><dd>{{ selectedRobot.robot.weight }}</dd></div><div><dt>延时</dt><dd>{{ selectedRobot.robot.delaySeconds }} 秒</dd></div><div><dt>创建时间</dt><dd>{{ dateTime(selectedRobot.robot.createdAt) }}</dd></div><div><dt>更新时间</dt><dd>{{ dateTime(selectedRobot.robot.updatedAt) }}</dd></div></dl>
+            <dl class="user-detail-grid robot-detail-grid"><div><dt>名称</dt><dd>机器人</dd></div><div><dt>头像</dt><dd>绿色安卓（随应用打包）</dd></div><div><dt>身份</dt><dd>聊天室唯一机器人</dd></div><div><dt>状态</dt><dd>已启用</dd></div><div><dt>配置时间</dt><dd>{{ dateTime(selectedRobot.robot.createdAt) }}</dd></div><div><dt>最近更新</dt><dd>{{ dateTime(selectedRobot.robot.updatedAt) }}</dd></div></dl>
             <div class="robot-stat-grid" aria-label="投递统计"><div><span>待处理</span><strong>{{ selectedRobot.dispatchStatistics.pending }}</strong></div><div><span>处理中</span><strong>{{ selectedRobot.dispatchStatistics.processing }}</strong></div><div><span>失败</span><strong class="robot-stat-danger">{{ selectedRobot.dispatchStatistics.failed }}</strong></div><div><span>已发布</span><strong>{{ selectedRobot.dispatchStatistics.published }}</strong></div><div><span>已跳过</span><strong>{{ selectedRobot.dispatchStatistics.skipped }}</strong></div></div>
-            <div class="detail-actions"><button type="button" class="secondary-button" :disabled="!canWrite || saving" @click="changeStatus(selectedRobot.robot)">{{ selectedRobot.robot.status === 'ENABLED' ? '停用机器人' : '启用机器人' }}</button><span class="action-helper">状态变更由服务端权限和调度器共同控制。</span></div>
           </template>
         </section>
 
@@ -587,22 +445,6 @@ onMounted(async () => {
         <footer v-if="dispatchTotal > 0" class="user-pagination"><span>共 {{ dispatchTotal }} 条</span><div class="pagination-actions"><button type="button" class="secondary-button" :disabled="dispatchPage <= 1 || dispatchLoading" @click="moveDispatchPage(dispatchPage - 1)">上一页</button><span>第 {{ dispatchPage }} / {{ dispatchPageCount }} 页</span><button type="button" class="secondary-button" :disabled="dispatchPage >= dispatchPageCount || dispatchLoading" @click="moveDispatchPage(dispatchPage + 1)">下一页</button></div></footer>
       </section>
     </main>
-
-    <div v-if="createOpen" class="user-modal-layer" role="presentation" @click.self="closeRobotModal">
-      <section class="user-modal robot-modal" role="dialog" aria-modal="true" aria-labelledby="robot-form-title">
-        <header><div><span class="eyebrow">{{ editing ? 'EDIT ROBOT' : 'CREATE ROBOT' }}</span><h2 id="robot-form-title">{{ editing ? '编辑机器人' : '新增机器人' }}</h2></div><button type="button" class="modal-close" aria-label="关闭" @click="closeRobotModal">×</button></header>
-        <p class="modal-note">机器人只负责生成聊天室消息，不会产生下注、钱包或用户身份数据。</p>
-        <form class="user-form" @submit.prevent="submitRobot">
-          <label>机器人编码<input v-model="robotDraft.robotCode" autocomplete="off" maxlength="32" :readonly="editing" required /><small v-if="editing">编码创建后不可修改。</small></label>
-          <label>展示名<input v-model="robotDraft.displayName" maxlength="32" required /></label>
-          <label>头像标识（兼容字段）<input v-model="robotDraft.avatarKey" maxlength="64" required /></label>
-          <label>上传真实头像<input type="file" accept="image/jpeg,image/png,image/gif,image/webp" :disabled="saving || avatarUploading" @change="selectAvatar" /><small>支持 JPG、PNG、GIF、WebP，最大 5 MB；选择后随本次保存上传。</small></label>
-          <div class="robot-form-grid"><label>权重<input v-model.number="robotDraft.weight" type="number" min="1" max="100" step="1" required /></label><label>延时（秒）<input v-model.number="robotDraft.delaySeconds" type="number" min="0" max="300" step="1" required /></label></div>
-          <p v-if="draftErrors.length" class="inline-error" role="alert">{{ draftErrors.join('；') }}</p>
-          <div class="modal-actions"><button type="button" class="secondary-button" :disabled="saving" @click="closeRobotModal">取消</button><button type="submit" class="primary-button" :disabled="saving || !canWrite">{{ saving ? '保存中...' : editing ? '保存配置' : '创建机器人' }}</button></div>
-        </form>
-      </section>
-    </div>
 
     <p v-if="feedback" class="toast" :class="`toast-${feedbackKind}`" role="status" aria-live="polite">{{ feedback }}</p>
   </div>

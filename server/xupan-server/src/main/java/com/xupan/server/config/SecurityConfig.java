@@ -42,7 +42,7 @@ public class SecurityConfig {
                         .authenticationEntryPoint(exceptionHandler)
                         .accessDeniedHandler(exceptionHandler))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/console", "/console/**", "/agent", "/platform-admin", "/platform-admin/**", "/admin", "/admin/**",
+                        .requestMatchers("/", "/index.html", "/login", "/player-login", "/33", "/33/**", "/forbidden", "/room", "/console", "/console/**", "/hby019-demo/**", "/agent", "/platform-admin", "/platform-admin/**", "/admin", "/admin/**",
                                 "/display", "/display/", "/display/**", "/assets/**", "/avatars/**", "/favicon.ico").permitAll()
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/player-auth/exchange", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/media/avatars/**").permitAll()
@@ -147,7 +147,7 @@ public class SecurityConfig {
 
     static HeaderWriter frameOptionsWriter() {
         return (request, response) -> response.setHeader("X-Frame-Options",
-                "/hby019-demo/source/account-panel.html".equals(request.getServletPath())
+                request.getServletPath().startsWith("/hby019-demo/source/")
                         ? "SAMEORIGIN"
                         : "DENY");
     }
