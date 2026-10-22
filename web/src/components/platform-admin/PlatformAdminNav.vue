@@ -124,6 +124,7 @@ function navigateTo(path: string) {
 .platform-admin-nav { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--el-border-color-light); background: #fff; }
 .platform-admin-menu { min-width: 0; flex: 1; border-bottom: 0; }
 .platform-admin-menu :deep(.el-menu-item) { padding: 0 12px; font-size: 16px; }
+.platform-admin-menu :deep(.el-menu-item.is-active) { border-bottom: 3px solid #3A918A; }
 .platform-admin-account { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
 .platform-admin-welcome { display: inline-flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 15px; white-space: nowrap; }
 .platform-admin-logout { color: var(--el-color-danger); }
