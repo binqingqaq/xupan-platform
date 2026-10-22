@@ -33,8 +33,6 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/room' },
-    { path: '/display', redirect: '/display/mobile' },
-    { path: '/display/mobile', component: () => import('./views/DisplayDrawBoard.vue'), meta: { title: '开奖首页' } },
     { path: '/login', component: LoginView, meta: { title: 'AI模型房间管理' } },
     { path: '/hby019-demo', redirect: to => ({ path: '/hby019-demo/login', query: to.query, hash: to.hash }) },
     { path: '/hby019-demo/login', component: Hby019SourcePage, meta: { title: 'AI模型登录页' } },

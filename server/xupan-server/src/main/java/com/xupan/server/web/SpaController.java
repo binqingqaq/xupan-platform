@@ -25,8 +25,6 @@ public class SpaController {
             "/platform-admin/password", "/platform-admin/password/",
             "/platform-admin/login", "/platform-admin/login/",
             "/forbidden", "/forbidden/",
-            "/display", "/display/",
-            "/display/mobile", "/display/mobile/",
             "/room", "/room/",
             "/player-login", "/player-login/",
             "/console", "/console/",
@@ -46,6 +44,11 @@ public class SpaController {
     })
     public String forwardToFrontend() {
         return "forward:/index.html";
+    }
+
+    @GetMapping({"/display", "/display/", "/display/mobile", "/display/mobile/"})
+    public String forwardToMobileDisplayReplica() {
+        return "forward:/display/mobile-replica/index.html";
     }
 
     @GetMapping({"/33/{linkPath}", "/33/{linkPath}/"})
