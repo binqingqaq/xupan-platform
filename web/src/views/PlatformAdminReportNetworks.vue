@@ -133,7 +133,7 @@ onMounted(async () => {
 <style scoped>
 .content { display: grid; gap: 14px; padding: 18px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .page-heading p { margin: 4px 0 0; color: var(--el-text-color-secondary); }
 .heading-actions { display: flex; gap: 8px; }
 .page-alert { margin-bottom: 2px; }

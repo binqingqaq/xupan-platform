@@ -166,7 +166,7 @@ onMounted(() => { void load() })
 <style scoped>
 .content { padding: 18px; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .page-alert { margin-bottom: 12px; }
 .machines-table { width: 100%; }
 .actions { display: flex; align-items: center; gap: 4px; white-space: nowrap; }

@@ -185,7 +185,7 @@ onMounted(async () => {
 <style scoped>
 .content { display: grid; gap: 14px; padding: 18px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .heading-actions { display: flex; gap: 8px; }
 .page-alert { margin-bottom: 2px; }
 .games-table { width: 100%; }
@@ -195,7 +195,7 @@ onMounted(async () => {
 .form-grid :deep(.el-form-item.wide), .wide { grid-column: 1 / -1; }
 .full-width { width: 100%; }
 .odds-panel { padding: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; }
-.odds-panel h2 { margin: 0 0 12px; font-size: 15px; }
+.odds-panel h2 { margin: 0 0 12px; font-size: 18px; }
 .odds-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 12px; }
 .switch-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; }

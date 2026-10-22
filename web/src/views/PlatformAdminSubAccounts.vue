@@ -205,7 +205,7 @@ onMounted(() => { void load() })
 <style scoped>
 .platform-admin-content { padding: 18px; }
 .page-heading { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .page-alert { margin-bottom: 12px; }
 .accounts-table { width: 100%; }
 .actions { display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }

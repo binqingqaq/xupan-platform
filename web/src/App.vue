@@ -6,7 +6,7 @@ const route = useRoute()
 </script>
 
 <template>
-  <el-config-provider v-if="route.path.startsWith('/platform-admin')" :locale="zhCn" size="small">
+  <el-config-provider v-if="route.path.startsWith('/platform-admin')" :locale="zhCn" size="default">
     <RouterView />
   </el-config-provider>
   <RouterView v-else />

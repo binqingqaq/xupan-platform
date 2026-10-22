@@ -759,18 +759,18 @@ onMounted(async () => {
 <style scoped>
 .center-admin { width: min(1600px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 36px; }
 .center-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.center-header h1 { margin: 0; font-size: 24px; line-height: 1.3; }
-.center-header p { max-width: 1100px; margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.center-header h1 { margin: 0; font-size: 26px; line-height: 1.3; }
+.center-header p { max-width: 1100px; margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 14px; line-height: 1.55; }
 .center-messages { display: grid; gap: 8px; margin-bottom: 12px; }
 .center-messages p { margin: 8px 0; }
-.issued-token { display: block; margin: 8px 0; overflow-wrap: anywhere; font-size: 13px; }
+.issued-token { display: block; margin: 8px 0; overflow-wrap: anywhere; font-size: 14px; }
 .center-tabs { margin-bottom: 16px; }
 .center-tabs :deep(.el-tabs__content) { display: none; }
 .center-panel { min-width: 0; padding-bottom: 8px; }
-.center-panel > h2 { margin: 22px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-primary); font-size: 16px; line-height: 1.4; }
+.center-panel > h2 { margin: 22px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--el-border-color-lighter); color: var(--el-text-color-primary); font-size: 18px; line-height: 1.4; }
 .center-stats { margin-bottom: 18px; }
 .center-stats > .el-col { margin-bottom: 12px; }
-.center-hint { margin: 6px 0 12px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.55; }
+.center-hint { margin: 6px 0 12px; color: var(--el-text-color-secondary); font-size: 14px; line-height: 1.55; }
 .center-form { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 12px; margin: 0 0 14px; }
 .center-form .el-form-item { margin-right: 0; }
 .center-form .el-input,
@@ -780,7 +780,7 @@ onMounted(async () => {
 .center-data-block { margin-top: 16px; }
 .center-actions { display: flex; justify-content: flex-end; margin-bottom: 10px; }
 .center-table { width: 100%; font-variant-numeric: tabular-nums; }
-.center-table code { color: var(--el-color-primary); font-size: 12px; }
+.center-table code { color: var(--el-color-primary); font-size: 14px; }
 .center-table small { color: var(--el-text-color-secondary); }
 .center-settle-result { display: grid; gap: 12px; margin-top: 14px; }
 @media (max-width: 900px) {
@@ -788,7 +788,7 @@ onMounted(async () => {
 }
 @media (max-width: 560px) {
   .center-admin { width: calc(100% - 20px); padding-top: 12px; }
-  .center-header h1 { font-size: 21px; }
+  .center-header h1 { font-size: 24px; }
   .center-form .el-form-item,
   .center-form .el-input,
   .center-form .el-select,

@@ -181,11 +181,11 @@ onMounted(async () => {
 <style scoped>
 .content { display: grid; gap: 14px; padding: 18px; }
 .page-heading { margin: 0; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .page-alert { margin-bottom: 2px; }
 .settings-form { display: grid; gap: 4px; max-width: 900px; }
 .danger-zone { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--el-border-color); border-radius: 4px; background: var(--el-color-danger-light-9); }
-.danger-zone h2 { margin: 0; font-size: 16px; color: var(--el-color-danger); }
+.danger-zone h2 { margin: 0; font-size: 18px; color: var(--el-color-danger); }
 .inline-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
 .inline-row .el-form-item { margin: 0; }
 .inline-row span { max-width: 720px; color: var(--el-text-color-secondary); }

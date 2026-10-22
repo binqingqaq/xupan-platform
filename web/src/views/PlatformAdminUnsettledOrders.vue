@@ -102,7 +102,7 @@ onMounted(async () => {
 .platform-admin-page { min-height: 100vh; background: #f4f6f9; color: #303133; }
 .content { display: grid; gap: 14px; padding: 18px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .table-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 16px; padding: 12px 0; color: #606266; }
 .command { color: #2458c6; font-weight: 600; }
 </style>

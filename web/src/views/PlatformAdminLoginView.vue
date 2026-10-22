@@ -105,8 +105,8 @@ onMounted(async () => {
 .platform-admin-login-card :deep(.el-card__body) { display: grid; gap: 18px; padding: 28px; }
 .platform-admin-login-brand { display: flex; align-items: center; gap: 12px; }
 .platform-admin-login-brand span { display: grid; width: 36px; aspect-ratio: 1; place-items: center; border-radius: 4px; background: var(--el-color-primary); color: #fff; font-size: 18px; font-weight: 700; }
-.platform-admin-login-brand strong { font-size: 18px; }
-.platform-admin-login-subtitle { margin: -12px 0 0; color: var(--el-text-color-secondary); font-size: 13px; }
+.platform-admin-login-brand strong { font-size: 20px; }
+.platform-admin-login-subtitle { margin: -12px 0 0; color: var(--el-text-color-secondary); font-size: 15px; }
 .platform-admin-login-form { display: grid; gap: 8px; }
 .platform-admin-login-form > .el-button { width: 100%; margin-top: 6px; }
 @media (max-width: 480px) { .platform-admin-login-page { padding: 14px; } .platform-admin-login-card :deep(.el-card__body) { padding: 22px 18px; } }

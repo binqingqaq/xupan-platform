@@ -201,3 +201,10 @@
 - 服务验证：已通过 `scripts/重启本地后端后台.ps1` 重启本机 Spring Boot 服务。重启后 `/actuator/health` 与 `/platform-admin` 均返回 HTTP 200；构建后的入口引用新 JS/CSS 资源。
 - 浏览器已在现有管理员会话中加载 `/platform-admin`、`/platform-admin/center`、`/platform-admin/machines`、`/platform-admin/reports`、`/platform-admin/settings`；开奖首页数据、中心上游摘要、机器表格、报表筛选和设置表单均已呈现。
 - 阶段 7 本机验收完成；**剩余现场边界**：浏览器未切换子账号/机器账号完成真实路由权限矩阵；`/room`、`/console`、`/display`、`/hby019-demo` 的入口冒烟受到当前会话权限/路由行为限制，不等于这些入口的业务验收；键盘全流程未逐控件覆盖；全量 Vitest 有 31 项范围外失败。服务器与生产环境未验收。详见 [本机验收记录](../验收记录/2026-10-21-超级管理后台Element-Plus本机验收记录.md)。
+
+### 补充：后台字号可读性调整（2026-10-21）
+
+- Element Plus 后台全局控件尺寸从 `small` 恢复为标准 `default`；后台基础字号设为 16px，辅助文字不低于 13–14px，导航文字 15–16px，页面标题 26px，局部代码与中心提示同步放大。
+- 仅作用于 `/platform-admin` 的主题、弹窗与浮层；业务字段、页面结构和操作不变。
+- 类型检查通过；后台专项测试 56/56；Vite 构建成功，静态资源同步到 `target/classes` 并重启本机 8080 服务，健康 `UP`、入口和机器页 HTTP 200。
+- 本轮浏览器工具未获准读取页面，未生成新的视觉截图；尺寸挤压/换行效果仍需打开本机后台复核。

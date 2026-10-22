@@ -123,9 +123,9 @@ function navigateTo(path: string) {
 <style scoped>
 .platform-admin-nav { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--el-border-color-light); background: #fff; }
 .platform-admin-menu { min-width: 0; flex: 1; border-bottom: 0; }
-.platform-admin-menu :deep(.el-menu-item) { padding: 0 12px; font-size: 14px; }
+.platform-admin-menu :deep(.el-menu-item) { padding: 0 12px; font-size: 16px; }
 .platform-admin-account { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
-.platform-admin-welcome { display: inline-flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 13px; white-space: nowrap; }
+.platform-admin-welcome { display: inline-flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 15px; white-space: nowrap; }
 .platform-admin-logout { color: var(--el-color-danger); }
 .platform-admin-logout :deep(.el-icon) { margin-right: 4px; }
 @media (max-width: 900px) {

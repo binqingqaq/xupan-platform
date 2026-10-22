@@ -40,3 +40,10 @@
 ## 本机服务
 
 本机 Spring Boot 服务由 `scripts/重启本地后端后台.ps1` 启动并经健康与入口 HTTP 检查。该服务仅供本机验证，本轮没有部署或修改服务器。
+
+## 字号可读性增量调整（2026-10-21）
+
+- 后台 `el-config-provider` 从 `size="small"` 改为 `size="default"`；后台 Element Plus 基础字号调整为 16px、表格正文为 16px、导航为 15–16px、页面标题为 26px；中心上游提示、代码、开奖首页分区标题和登录副标题同步放大。浮层、弹窗设置对应字号变量，未更改页面字段、业务状态或 API。
+- `npm run typecheck` 通过；后台 14 个专项测试文件 56/56 通过；`npm run build` 成功（1,812 个模块）。首次构建遇到声明文件写入错误，未改代码后重跑成功。
+- 已运行 `mvnw resources:resources` 同步到 `target/classes` 并重启本机 8080 服务；`/actuator/health` 为 `UP`，`/platform-admin` 与 `/platform-admin/machines` 返回 HTTP 200；入口已引用新 CSS `/assets/index-C-FlFuoo.css`。
+- 浏览器工具策略拒绝本轮获取页面内容，因此没有新的浏览器截图或字号后布局目视结果。请刷新本机页面确认观感；若表格或窄屏导航显得拥挤，再按具体页面微调间距/字号。

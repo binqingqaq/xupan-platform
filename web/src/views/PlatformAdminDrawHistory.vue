@@ -146,7 +146,7 @@ onMounted(async () => {
 <style scoped>
 .platform-admin-page { min-height: 100vh; background: #f4f6f9; color: #303133; }
 .content { display: grid; gap: 14px; padding: 18px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .filters { padding: 14px 16px 0; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
 .supplement-form { border-color: #dcdfe6; }
 .ball { min-width: 28px; justify-content: center; }

@@ -3,6 +3,13 @@ body.platform-admin-body:not(.ops-console-body) {
 }
 
 .platform-admin-page {
+  --el-font-size-extra-large: 22px;
+  --el-font-size-large: 19px;
+  --el-font-size-medium: 17px;
+  --el-font-size-base: 16px;
+  --el-font-size-small: 14px;
+  --el-font-size-extra-small: 13px;
+  --el-font-weight-primary: 500;
   --el-color-primary: #287d78;
   --el-color-primary-light-3: #6aa6a2;
   --el-color-primary-light-5: #93bebc;
@@ -21,9 +28,12 @@ body.platform-admin-body:not(.ops-console-body) {
   min-height: 100vh;
   background: #f3f6f7;
   color: var(--el-text-color-primary);
+  font-size: 16px;
+  line-height: 1.55;
 }
 
 .platform-admin-page .el-table {
+  --el-table-font-size: 16px;
   --el-table-header-bg-color: #f1f5f5;
   --el-table-row-hover-bg-color: #f3f8f7;
   --el-table-border-color: #e2e8e9;
@@ -34,6 +44,22 @@ body.platform-admin-body:not(.ops-console-body) {
   color: #45565e;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.platform-admin-dialog-overlay,
+.platform-admin-body .el-overlay {
+  --el-font-size-extra-large: 22px;
+  --el-font-size-large: 19px;
+  --el-font-size-medium: 17px;
+  --el-font-size-base: 16px;
+  --el-font-size-small: 14px;
+  --el-font-size-extra-small: 13px;
+}
+
+.platform-admin-body .el-popper {
+  --el-font-size-base: 16px;
+  --el-font-size-small: 14px;
+  --el-font-size-extra-small: 13px;
 }
 
 .platform-admin-dialog-overlay .el-dialog {

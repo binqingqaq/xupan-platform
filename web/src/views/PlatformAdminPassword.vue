@@ -81,7 +81,7 @@ onMounted(() => { document.title = '修改密码'; void load() })
 
 <style scoped>
 .content { display: grid; gap: 14px; padding: 18px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .page-alert { margin-bottom: 2px; }
 .password-form { display: grid; gap: 4px; max-width: 520px; }
 .form-actions { display: flex; justify-content: flex-end; padding-top: 8px; }

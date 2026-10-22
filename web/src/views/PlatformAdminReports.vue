@@ -114,7 +114,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
 <style scoped>
 .platform-admin-page { min-height: 100vh; background: #f4f6f9; color: #303133; }
 .content { display: grid; gap: 16px; padding: 18px; }
-.page-heading h1 { margin: 0; font-size: 22px; }
+.page-heading h1 { margin: 0; font-size: 26px; }
 .filters { padding: 14px 16px 0; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
 .summary { row-gap: 14px; margin: 0 0 16px; padding: 16px; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
 .positive { color: #b42318; }
