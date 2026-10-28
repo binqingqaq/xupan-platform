@@ -18,15 +18,20 @@ const feedback = ref('')
 const formOpen = ref(false)
 const playersOpen = ref(false)
 const editingId = ref<number | null>(null)
+const editingConfigVersion = ref<number | null>(null)
+const formError = ref('')
 const currentUser = ref('超级管理员')
-const form = reactive<MachineInput>({ username: '', rawPassword: '', groupId: null, score: 0, expiresAt: null, boardOpen: true, robotManage: false, chaseEnabled: true, botCount: 0, closeSeconds: 0, cancelSeconds: 0, rebateRate: 0, oddsRate: 0, specialRebateRate: 0, specialOddsRate: 0, rebateMode: 'SINGLE', totalLimit: 0, positiveLimit: 0, angleLimit: 0, strictLimit: 0, tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0, addLimit: 0, playerMaxStake: 0, playerMinStake: 0, games: ['AU8'] })
+const form = reactive<MachineInput>({ username: '', rawPassword: '', groupId: null, score: 0, expiresAt: null, boardOpen: true, robotManage: false, configEditEnabled: true, chaseEnabled: true, botCount: 0, closeSeconds: 0, cancelSeconds: 0, rebateRate: 0, oddsRate: 0, specialRebateRate: 0, specialOddsRate: 0, rebateMode: 'SINGLE', totalLimit: 0, positiveLimit: 0, angleLimit: 0, strictLimit: 0, tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0, addLimit: 0, playerMaxStake: 0, playerMinStake: 0, games: ['AU8'] })
 const selectedGroupId = ref<string | number | null>(null)
 watch(selectedGroupId, value => { form.groupId = value === null || value === '' ? null : Number(value) })
 async function load() { loading.value = true; error.value = ''; try { const user = await api.me(); currentUser.value = user.displayName || user.username; machines.value = await api.listMachines(); subAccounts.value = user.permissions.includes('SUB_ACCOUNT_MANAGE') ? await api.listSubAccounts() : []; games.value = await api.getGameSettings() } catch (cause) { error.value = apiErrorMessage(cause, '机器管理加载失败') } finally { loading.value = false } }
-function resetForm() { Object.assign(form, { username: '', rawPassword: '', groupId: null, score: 0, expiresAt: null, boardOpen: true, robotManage: false, chaseEnabled: true, botCount: 0, closeSeconds: 0, cancelSeconds: 0, rebateRate: 0, oddsRate: 0, specialRebateRate: 0, specialOddsRate: 0, rebateMode: 'SINGLE', totalLimit: 0, positiveLimit: 0, angleLimit: 0, strictLimit: 0, tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0, addLimit: 0, playerMaxStake: 0, playerMinStake: 0, games: ['AU8'] }) }
-function openCreate() { editingId.value = null; resetForm(); selectedGroupId.value = null; formOpen.value = true }
+function resetForm() { Object.assign(form, { username: '', rawPassword: '', groupId: null, score: 0, expiresAt: null, boardOpen: true, robotManage: false, configEditEnabled: true, chaseEnabled: true, botCount: 0, closeSeconds: 0, cancelSeconds: 0, rebateRate: 0, oddsRate: 0, specialRebateRate: 0, specialOddsRate: 0, rebateMode: 'SINGLE', totalLimit: 0, positiveLimit: 0, angleLimit: 0, strictLimit: 0, tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0, addLimit: 0, playerMaxStake: 0, playerMinStake: 0, games: ['AU8'] }) }
+function openCreate() { editingId.value = null; editingConfigVersion.value = null; formError.value = ''; error.value = ''; resetForm(); selectedGroupId.value = null; formOpen.value = true }
 function openEdit(row: Machine) {
   editingId.value = row.id
+  editingConfigVersion.value = row.configVersion
+  formError.value = ''
+  error.value = ''
   Object.assign(form, {
     ...row,
     username: row.accountUsername,
@@ -41,7 +46,65 @@ function openEdit(row: Machine) {
   selectedGroupId.value = row.groupId
   formOpen.value = true
 }
-async function submit() { if (!form.username.trim()) return; busy.value = true; error.value = ''; try { const payload = { ...form, username: form.username.trim(), expiresAt: localDateTimeToInstant(form.expiresAt), rebateMode: form.rebateMode === 'DOUBLE' ? 'DOUBLE' : 'SINGLE' }; if (editingId.value) await api.updateMachine(editingId.value, payload); else await api.createMachine(payload); feedback.value = editingId.value ? '机器账号已更新' : '机器账号已创建'; formOpen.value = false; await load() } catch (cause) { error.value = apiErrorMessage(cause, '机器账号保存失败') } finally { busy.value = false } }
+const machineParameterFields = [
+  'rebateRate', 'oddsRate', 'specialRebateRate', 'specialOddsRate', 'totalLimit',
+  'positiveLimit', 'angleLimit', 'strictLimit', 'tongLimit', 'carLimit', 'specialLimit',
+  'oddEvenLimit', 'bigSmallLimit', 'fanLimit', 'addLimit', 'playerMaxStake', 'playerMinStake',
+] as const
+function validateMachineParameters(): string | null {
+  const labels: Record<(typeof machineParameterFields)[number], string> = {
+    rebateRate: '返水', oddsRate: '赔率', specialRebateRate: '特码返水', specialOddsRate: '特码赔率',
+    totalLimit: '单场总限额', positiveLimit: '正限额', angleLimit: '角限额', strictLimit: '念限额',
+    tongLimit: '通限额', carLimit: '车限额', specialLimit: '单码限额', oddEvenLimit: '单双限额',
+    bigSmallLimit: '大小限额', fanLimit: '番限额', addLimit: '加限额',
+    playerMaxStake: '玩家最高注额', playerMinStake: '玩家最小注额',
+  }
+  for (const field of machineParameterFields) {
+    const value = form[field]
+    if (!Number.isFinite(value) || value < 0) return `${labels[field]}必须是不小于 0 的数字`
+  }
+  if (form.playerMaxStake > 0 && form.playerMinStake > form.playerMaxStake) {
+    return '玩家最小注额不能大于玩家最高注额'
+  }
+  return null
+}
+async function submit() {
+  if (!form.username.trim()) return
+  formError.value = ''
+  if (editingId.value) {
+    const validationError = validateMachineParameters()
+    if (validationError) {
+      formError.value = validationError
+      return
+    }
+  }
+  busy.value = true
+  error.value = ''
+  try {
+    const payload = {
+      ...form,
+      username: form.username.trim(),
+      expiresAt: localDateTimeToInstant(form.expiresAt),
+      rebateMode: form.rebateMode === 'DOUBLE' ? 'DOUBLE' : 'SINGLE',
+    }
+    if (editingId.value) {
+      if (editingConfigVersion.value === null) throw new Error('机器配置版本缺失，请刷新列表后重试')
+      await api.updateMachine(editingId.value, editingConfigVersion.value, payload)
+    } else {
+      const createPayload: Record<string, unknown> = { ...payload }
+      for (const field of machineParameterFields) delete createPayload[field]
+      delete createPayload.rebateMode
+      await api.createMachine(createPayload as unknown as MachineInput)
+    }
+    feedback.value = editingId.value ? '机器账号已更新' : '机器账号已创建'
+    formOpen.value = false
+    await load()
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '机器账号保存失败')
+  } finally {
+    busy.value = false
+  }
+}
 async function toggle(row: Machine) { busy.value = true; try { await api.changeMachineStatus(row.id, row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'); await load() } catch (cause) { error.value = apiErrorMessage(cause, '机器状态更新失败') } finally { busy.value = false } }
 /**
  * 登录账号被锁（LOCKED）时显示「已锁定」。
@@ -116,6 +179,7 @@ onMounted(() => { void load() })
 
     <el-dialog v-model="formOpen" :title="editingId ? '编辑机器账号' : '添加机器账号'" width="min(960px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
       <el-form class="form-grid" label-position="top" @submit.prevent="submit">
+        <el-alert v-if="formError" :title="formError" type="error" show-icon :closable="false" class="span-all" />
         <el-form-item label="用户名" required><el-input v-model="form.username" :disabled="Boolean(editingId)" required /></el-form-item>
         <el-form-item label="密码" :required="!editingId"><el-input v-model="form.rawPassword" type="password" show-password :required="!editingId" placeholder="编辑时留空表示不修改" /></el-form-item>
         <el-form-item label="积分"><el-input-number v-model="form.score" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
@@ -125,26 +189,29 @@ onMounted(() => { void load() })
         <el-form-item label="托数量"><el-input-number v-model="form.botCount" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" /></el-form-item>
         <el-form-item label="封盘秒数"><el-input-number v-model="form.closeSeconds" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" /></el-form-item>
         <el-form-item label="取消秒数"><el-input-number v-model="form.cancelSeconds" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="返水(百分数)"><el-input-number v-model="form.rebateRate" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="返水口径"><el-select v-model="form.rebateMode" class="full-width"><el-option label="单边" value="SINGLE" /><el-option label="双边" value="DOUBLE" /></el-select></el-form-item>
-        <el-form-item label="赔率"><el-input-number v-model="form.oddsRate" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="特码返水(比率)"><el-input-number v-model="form.specialRebateRate" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="特码赔率"><el-input-number v-model="form.specialOddsRate" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="单场总限额"><el-input-number v-model="form.totalLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="正限额"><el-input-number v-model="form.positiveLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="角限额"><el-input-number v-model="form.angleLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="念限额"><el-input-number v-model="form.strictLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="通限额"><el-input-number v-model="form.tongLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="车限额"><el-input-number v-model="form.carLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="单码限额"><el-input-number v-model="form.specialLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="单双限额"><el-input-number v-model="form.oddEvenLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="大小限额"><el-input-number v-model="form.bigSmallLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="番限额"><el-input-number v-model="form.fanLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="加限额"><el-input-number v-model="form.addLimit" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="玩家最高注额"><el-input-number v-model="form.playerMaxStake" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
-        <el-form-item label="玩家最小注额"><el-input-number v-model="form.playerMinStake" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+        <template v-if="editingId">
+          <el-form-item label="返水(百分数)"><el-input-number v-model="form.rebateRate" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="返水口径"><el-select v-model="form.rebateMode" class="full-width"><el-option label="单边" value="SINGLE" /><el-option label="双边" value="DOUBLE" /></el-select></el-form-item>
+          <el-form-item label="赔率"><el-input-number v-model="form.oddsRate" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="特码返水(比率)"><el-input-number v-model="form.specialRebateRate" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="特码赔率"><el-input-number v-model="form.specialOddsRate" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="单场总限额"><el-input-number v-model="form.totalLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="正限额"><el-input-number v-model="form.positiveLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="角限额"><el-input-number v-model="form.angleLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="念限额"><el-input-number v-model="form.strictLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="通限额"><el-input-number v-model="form.tongLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="车限额"><el-input-number v-model="form.carLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="单码限额"><el-input-number v-model="form.specialLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="单双限额"><el-input-number v-model="form.oddEvenLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="大小限额"><el-input-number v-model="form.bigSmallLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="番限额"><el-input-number v-model="form.fanLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="加限额"><el-input-number v-model="form.addLimit" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="玩家最高注额"><el-input-number v-model="form.playerMaxStake" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+          <el-form-item label="玩家最小注额"><el-input-number v-model="form.playerMinStake" :min="0" :step="0.01" :precision="2" controls-position="right" class="full-width" /></el-form-item>
+        </template>
         <el-form-item label="开盘"><el-switch v-model="form.boardOpen" /></el-form-item>
         <el-form-item label="机器人权限"><el-switch v-model="form.robotManage" /></el-form-item>
+        <el-form-item label="代理配置修改"><el-switch v-model="form.configEditEnabled" /></el-form-item>
         <el-form-item label="开通追"><el-switch v-model="form.chaseEnabled" /></el-form-item>
         <div class="dialog-footer"><el-button @click="formOpen = false">取消</el-button><el-button type="primary" native-type="submit" :loading="busy">确认</el-button></div>
       </el-form>

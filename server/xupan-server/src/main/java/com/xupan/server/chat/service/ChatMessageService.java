@@ -34,6 +34,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -112,7 +113,12 @@ public class ChatMessageService {
         this.messageProperties = messageProperties;
         this.robotRepository = robotRepository;
         this.walletService = walletService;
-        this.transactionTemplate = transactionTemplate;
+        if (transactionTemplate == null) {
+            this.transactionTemplate = null;
+        } else {
+            this.transactionTemplate = new TransactionTemplate(transactionTemplate.getTransactionManager());
+            this.transactionTemplate.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+        }
     }
 
     @Autowired(required = false)
@@ -276,22 +282,21 @@ public class ChatMessageService {
             if (gameService == null) {
                 throw new IllegalStateException("下注服务未配置");
             }
-            List<DemoGameService.BetView> placedBets = new ArrayList<>(bets.size());
-            List<BetLimitExceededException> rejectedBets = new ArrayList<>();
-            for (int index = 0; index < bets.size(); index++) {
-                BetTextParser.ParsedBet bet = bets.get(index);
-                try {
-                    String idempotencyKey = bets.size() == 1
-                            ? "CHAT-" + clientId
-                            : "CHAT-" + clientId + "-" + (index + 1);
-                    placedBets.add(gameService.placeBet(userId, new PlaceBetRequest(
-                            bet.ballNumber(), bet.playType(), bet.parameters(), bet.stake(), idempotencyKey, gameCode)));
-                } catch (BetLimitExceededException rejection) {
-                    // Only the offending item is dropped; the remaining items keep their normal path.
-                    rejectedBets.add(rejection);
-                } catch (BusinessException exception) {
-                    throw new BetRejectedException(exception);
-                }
+            List<DemoGameService.BetInstruction> requests = bets.stream().map(bet -> new DemoGameService.BetInstruction(
+                    new PlaceBetRequest(bet.ballNumber(), bet.playType(), bet.parameters(), bet.stake(),
+                            "CHAT-" + clientId, gameCode),
+                    bet.quotaSelectionKey() == null
+                            ? com.xupan.server.game.domain.BetQuotaBucket.ruleKey(bet.playType(), bet.parameters())
+                            : bet.quotaSelectionKey())).toList();
+            List<DemoGameService.BetView> placedBets;
+            List<BetLimitExceededException> rejectedBets = List.of();
+            try {
+                placedBets = gameService.placeBetBatchInstructionsForUser(userId, requests, "CHAT-" + clientId);
+            } catch (BetLimitExceededException rejection) {
+                placedBets = List.of();
+                rejectedBets = List.of(rejection);
+            } catch (BusinessException exception) {
+                throw new BetRejectedException(exception);
             }
             long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
             if (placedBets.isEmpty()) {

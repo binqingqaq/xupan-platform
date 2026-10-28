@@ -1,7 +1,9 @@
 package com.xupan.server.game.service;
 
 import com.xupan.server.config.ScheduledTaskLock;
+import com.xupan.server.center.service.CenterSettlementService;
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
@@ -42,18 +44,21 @@ public class 自动轮期服务 {
     private final boolean automationEnabled;
     private final GameSettingsService gameSettingsService;
     private final ScheduledTaskLock taskLock;
+    private CenterSettlementService centerSettlementService;
 
     @Autowired
     public 自动轮期服务(GameDataRepository gameRepository,
                         GameIssueEventRepository eventRepository,
                         SettlementService settlementService,
                         VirtualWalletService walletService,
+                        CenterSettlementService centerSettlementService,
                         ApplicationEventPublisher eventPublisher,
                         GameSettingsService gameSettingsService,
                         ScheduledTaskLock taskLock,
                         @Value("${xupan.automation.enabled:true}") boolean automationEnabled) {
         this(gameRepository, eventRepository, settlementService, walletService,
                 eventPublisher, gameSettingsService, taskLock, Clock.systemUTC(), automationEnabled);
+        this.centerSettlementService = centerSettlementService;
     }
 
     自动轮期服务(GameDataRepository gameRepository,
@@ -110,6 +115,7 @@ public class 自动轮期服务 {
      * 或将来部署第二实例）时双跑会**重复开奖**，属错账级事故。这与"要不要扩容"无关。</p>
      */
     @Scheduled(fixedDelay = 1000)
+    @Transactional
     public void scheduledAdvance() {
         if (!automationEnabled) return;
         if (taskLock == null) {
@@ -147,18 +153,19 @@ public class 自动轮期服务 {
     public synchronized void advance(String gameCode, Instant now) {
         GameDataRepository.IssueRecord issue = ensureCurrentIssue(gameCode, now);
         if (issue.bettingEndsAt() == null || issue.drawEndsAt() == null) {
-            gameRepository.initializeSchedule(issue.issueNumber(), issue.startedAt() == null ? now : issue.startedAt());
+            gameRepository.initializeSchedule(gameCode, issue.issueNumber(),
+                    issue.startedAt() == null ? now : issue.startedAt());
             issue = gameRepository.findCurrentIssue(gameCode).orElseThrow();
         }
 
         if (BETTING.equals(issue.phase())) {
             if (!now.isBefore(issue.bettingEndsAt().minusSeconds(30))) {
-                eventRepository.appendOnce(issue.issueNumber(), "BETTING_WARNING",
+                eventRepository.appendOnce(gameCode, issue.issueNumber(), "BETTING_WARNING",
                         "离封盘还剩30秒！\n20秒以内下注容易失败退单!", now);
             }
             if (!now.isBefore(issue.bettingEndsAt())
-                    && gameRepository.transitionPhase(issue.issueNumber(), BETTING, DRAWING)) {
-                eventRepository.appendOnce(issue.issueNumber(), "BETTING_CLOSED",
+                    && gameRepository.transitionPhase(gameCode, issue.issueNumber(), BETTING, DRAWING)) {
+                eventRepository.appendOnce(gameCode, issue.issueNumber(), "BETTING_CLOSED",
                         issue.issueNumber() + "期停止", now);
                 issue = gameRepository.findCurrentIssue(gameCode).orElseThrow();
             }
@@ -179,24 +186,30 @@ public class 自动轮期服务 {
                         latest.settledAt() == null ? now : latest.settledAt());
             }
             GameDataRepository.IssueRecord created = gameRepository.findCurrentIssue(gameCode).orElseThrow();
-            eventRepository.appendOnce(created.issueNumber(), "ISSUE_STARTED",
+            eventRepository.appendOnce(gameCode, created.issueNumber(), "ISSUE_STARTED",
                     created.issueNumber() + "期开始", created.startedAt());
             return created;
         });
     }
 
     private void finalizeIssue(String gameCode, GameDataRepository.IssueRecord issue, Instant now) {
-        List<Integer> numbers = generateFinalNumbers();
-        if (!gameRepository.saveFinalResult(issue.issueNumber(), numbers, now)) {
+        List<Integer> existingNumbers = issue.numbers();
+        List<Integer> numbers = existingNumbers != null && existingNumbers.size() == 8
+                && existingNumbers.stream().allMatch(number -> number != null && number >= 1 && number <= 20)
+                ? existingNumbers : generateFinalNumbers();
+        if (!gameRepository.saveFinalResult(gameCode, issue.issueNumber(), numbers, now)) {
             return;
         }
 
         List<BallResult> results = numbers.stream().map(BallResult::fromNumber).toList();
-        gameRepository.findBetsByIssue(issue.issueNumber()).stream()
+        gameRepository.findBetsByIssue(gameCode, issue.issueNumber()).stream()
                 .filter(bet -> bet.settlementStatus() == SettlementStatus.PENDING)
                 .forEach(bet -> {
                     SettlementResult settlement = settlementService.settle(
                             bet.playType(), bet.parameters(), bet.stake(), bet.odds(),
+                            bet.playType() == PlayType.SPECIAL
+                                    ? gameRepository.findSpecialUnitStake(bet.id()) : bet.stake(),
+                            bet.machineOddsRate(),
                             results.get(bet.ballNumber() - 1));
                     if (gameRepository.settleBetOnce(bet.id(), settlement)) {
                         BigDecimal payout = payout(settlement);
@@ -213,13 +226,23 @@ public class 自动轮期服务 {
                     }
                 });
 
-        eventRepository.appendOnce(issue.issueNumber(), "DRAW_RESULT",
+        if (centerSettlementService != null) {
+            CenterSettlementService.SettlementSummary centerSummary = centerSettlementService.settleIssue(
+                    gameCode, issue.issueNumber(), results,
+                    numbers.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(",")),
+                    Integer.MAX_VALUE);
+            if (centerSummary.skippedCount() > 0) {
+                throw new IllegalStateException("存在无法按开奖结果结算的中心订单，自动开奖事务已回滚");
+            }
+        }
+
+        eventRepository.appendOnce(gameCode, issue.issueNumber(), "DRAW_RESULT",
                 resultMessage(issue.issueNumber(), numbers), now);
 
         String nextIssue = nextIssueNumber(gameCode, issue.issueNumber());
         if (gameRepository.findCurrentIssue(gameCode).isEmpty()) {
             gameRepository.saveBettingIssue(gameCode, nextIssue, issue.drawEndsAt());
-            eventRepository.appendOnce(nextIssue, "ISSUE_STARTED", nextIssue + "期开始", issue.drawEndsAt());
+            eventRepository.appendOnce(gameCode, nextIssue, "ISSUE_STARTED", nextIssue + "期开始", issue.drawEndsAt());
         }
     }
 

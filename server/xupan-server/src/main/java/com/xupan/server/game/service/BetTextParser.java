@@ -1,6 +1,7 @@
 package com.xupan.server.game.service;
 
 import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.domain.BetQuotaBucket;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -23,10 +24,10 @@ public final class BetTextParser {
     private static final String AMOUNT = "([0-9]{1,12}(?:\\.[0-9]{1,2})?)";
     private static final Pattern FAN = Pattern.compile("^([0-9]+)番/?" + AMOUNT + "$");
     private static final Pattern ANGLE = Pattern.compile("^([0-9]+)/?角/?" + AMOUNT + "$");
-    private static final Pattern CAR = Pattern.compile("^([1-4])车/?" + AMOUNT + "$");
-    private static final Pattern STRICT = Pattern.compile("^([0-9])(?:严|念)([0-9])/" + AMOUNT + "$");
+    private static final Pattern CAR = Pattern.compile("^([1-4])(?:车|推)/?" + AMOUNT + "$");
+    private static final Pattern STRICT = Pattern.compile("^([1-4])(?:(?:严|念)([1-4])|([1-4])(?:严|念))/?" + AMOUNT + "$");
     private static final Pattern ADD = Pattern.compile("^([0-9])加([0-9]{2})/" + AMOUNT + "$");
-    private static final Pattern POSITIVE = Pattern.compile("^([0-9])正/?" + AMOUNT + "$");
+    private static final Pattern POSITIVE = Pattern.compile("^([1-4])(?:正|堂)/?" + AMOUNT + "$");
     private static final Pattern TONG = Pattern.compile("^([0-9])通([0-9]{2})/" + AMOUNT + "$");
     private static final Pattern NONE_SHORT = Pattern.compile("^([1-4])无([1-4])/?" + AMOUNT + "$");
     private static final Pattern NONE = Pattern.compile("^([0-9]{2})无([1-4])/" + AMOUNT + "$");
@@ -91,11 +92,11 @@ public final class BetTextParser {
         Matcher car = CAR.matcher(source);
         if (car.matches()) {
             int excludedFan = Integer.parseInt(car.group(1));
-            List<Integer> coveredFans = java.util.stream.IntStream.rangeClosed(1, 4)
-                    .filter(value -> value != excludedFan)
-                    .boxed()
-                    .toList();
-            return accepted(source, ballNumber, PlayType.CAR, coveredFans, car.group(2));
+            List<Integer> coveredFans = carFans(excludedFan);
+            BigDecimal amount = parseAmount(car.group(2));
+            if (amount == null) return invalid("金额必须是大于 0 且最多两位小数的数字");
+            return accepted(source, ballNumber, PlayType.CAR, coveredFans, amount,
+                    BetQuotaBucket.carGroupKey(excludedFan));
         }
         result = parseWithAmount(source, STRICT, PlayType.STRICT, 2, true, ballNumber);
         if (result != null) {
@@ -111,6 +112,9 @@ public final class BetTextParser {
         }
         result = parseWithAmount(source, TONG, PlayType.TONG, 3, true, ballNumber);
         if (result != null) {
+            if (result.accepted() && result.bet().parameters().equals(List.of(3, 2, 1))) {
+                return invalid("3通21不在有效结算白名单中");
+            }
             return result;
         }
         result = parseWithAmount(source, NONE_SHORT, PlayType.NONE, 2, true, ballNumber);
@@ -140,7 +144,12 @@ public final class BetTextParser {
             if (numbers == null) {
                 return invalid("特玩法号码必须在 01 至 20 之间且不能重复");
             }
-            return accepted(source, ballNumber, PlayType.SPECIAL, numbers, special.group(2));
+            BigDecimal unitAmount = parseAmount(special.group(2));
+            if (unitAmount == null) {
+                return invalid("金额必须是大于 0 且最多两位小数的数字");
+            }
+            return accepted(source, ballNumber, PlayType.SPECIAL, numbers,
+                    unitAmount.multiply(BigDecimal.valueOf(numbers.size())));
         }
 
         Matcher shortForm = SHORT.matcher(source);
@@ -151,10 +160,26 @@ public final class BetTextParser {
             if (parameters == null || hasDuplicates(parameters)) {
                 return invalid("番值必须是 1 至 4 且不能重复");
             }
+            if (playType == PlayType.CAR) {
+                BigDecimal amount = parseAmount(shortForm.group(2));
+                if (amount == null) return invalid("金额必须是大于 0 且最多两位小数的数字");
+                String key = BetQuotaBucket.ruleKey(playType, parameters);
+                return accepted(source, ballNumber, playType, parameters, amount, key);
+            }
             return accepted(source, ballNumber, playType, parameters, shortForm.group(2));
         }
 
         return invalid("无法识别的下注格式");
+    }
+
+    private static List<Integer> carFans(int group) {
+        return switch (group) {
+            case 1 -> List.of(1, 2, 4);
+            case 2 -> List.of(1, 2, 3);
+            case 3 -> List.of(2, 3, 4);
+            case 4 -> List.of(1, 3, 4);
+            default -> throw new IllegalArgumentException("车组必须是 1 到 4 番");
+        };
     }
 
     /** Returns whether an unparsed message looks like an attempted bet. */
@@ -172,7 +197,8 @@ public final class BetTextParser {
 
         StringBuilder parameterText = new StringBuilder();
         for (int group = 1; group < matcher.groupCount(); group++) {
-            parameterText.append(matcher.group(group));
+            String value = matcher.group(group);
+            if (value != null) parameterText.append(value);
         }
         List<Integer> parameters = parseFanNumbers(parameterText.toString());
         if (parameters == null || parameters.size() != expectedParameterCount) {
@@ -218,8 +244,19 @@ public final class BetTextParser {
         if (amount == null) {
             return invalid("金额必须是大于 0 且最多两位小数的数字");
         }
+        return accepted(source, ballNumber, playType, parameters, amount);
+    }
+
+    private static ParseResult accepted(String source, int ballNumber, PlayType playType,
+                                        List<Integer> parameters, BigDecimal amount) {
+        return accepted(source, ballNumber, playType, parameters, amount, null);
+    }
+
+    private static ParseResult accepted(String source, int ballNumber, PlayType playType,
+                                        List<Integer> parameters, BigDecimal amount,
+                                        String quotaSelectionKey) {
         return new ParseResult(Status.ACCEPTED,
-                new ParsedBet(ballNumber, playType, parameters, amount, source), "");
+                new ParsedBet(ballNumber, playType, parameters, amount, source, quotaSelectionKey), "");
     }
 
     private static BigDecimal parseAmount(String text) {
@@ -272,7 +309,11 @@ public final class BetTextParser {
     }
 
     public record ParsedBet(int ballNumber, PlayType playType, List<Integer> parameters,
-                            BigDecimal stake, String sourceText) {
+                            BigDecimal stake, String sourceText, String quotaSelectionKey) {
+        public ParsedBet(int ballNumber, PlayType playType, List<Integer> parameters,
+                         BigDecimal stake, String sourceText) {
+            this(ballNumber, playType, parameters, stake, sourceText, null);
+        }
         public ParsedBet {
             if (ballNumber < 1 || ballNumber > 8) {
                 throw new IllegalArgumentException("text bets only target balls 1-8");

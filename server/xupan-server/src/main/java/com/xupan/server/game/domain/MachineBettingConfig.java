@@ -7,8 +7,7 @@ import java.math.BigDecimal;
  *
  * <p>对应 BY220 {@code x_robot} 的 {@code PeiLv}、{@code tePeilv}、{@code fengpan}、
  * {@code cancel}、{@code isOpen}、{@code ls}、{@code FanShui}、{@code teFanshui}。
- * 玩家没有归属机器时使用 {@link #DEFAULT}，其取值为 0/true，表示赔率回退全局配置、
- * 不额外提前封盘并保持取消能力。</p>
+ * 玩家没有归属机器时使用 {@link #DEFAULT}；机器赔率为0表示机器配置不可用，禁止全局静默回退。</p>
  *
  * @param oddsRate            普通玩法净赢百分数（BY220 PeiLv），0 表示未配置
  * @param specialOddsRate     特码含本金倍数（BY220 tePeilv），0 表示未配置
@@ -26,13 +25,24 @@ public record MachineBettingConfig(BigDecimal oddsRate,
                                    boolean boardOpen,
                                    String rebateMode,
                                    BigDecimal rebateRate,
-                                   BigDecimal specialRebateRate) {
+                                   BigDecimal specialRebateRate,
+                                   long machineId,
+                                   int version,
+                                   BettingLimits limits) {
 
     public static final String SINGLE = "SINGLE";
     public static final String DOUBLE = "DOUBLE";
 
     public static final MachineBettingConfig DEFAULT = new MachineBettingConfig(
-            BigDecimal.ZERO, BigDecimal.ZERO, 0, 0, true, SINGLE, BigDecimal.ZERO, BigDecimal.ZERO);
+            BigDecimal.ZERO, BigDecimal.ZERO, 0, 0, true, SINGLE, BigDecimal.ZERO, BigDecimal.ZERO,
+            0, 0, BettingLimits.UNLIMITED);
+
+    public MachineBettingConfig(BigDecimal oddsRate, BigDecimal specialOddsRate, int closeSeconds,
+                                int cancelSeconds, boolean boardOpen, String rebateMode,
+                                BigDecimal rebateRate, BigDecimal specialRebateRate) {
+        this(oddsRate, specialOddsRate, closeSeconds, cancelSeconds, boardOpen, rebateMode,
+                rebateRate, specialRebateRate, 0, 0, BettingLimits.UNLIMITED);
+    }
 
     public MachineBettingConfig {
         oddsRate = oddsRate == null ? BigDecimal.ZERO : oddsRate;
@@ -42,14 +52,15 @@ public record MachineBettingConfig(BigDecimal oddsRate,
         rebateMode = DOUBLE.equalsIgnoreCase(rebateMode) ? DOUBLE : SINGLE;
         rebateRate = rebateRate == null ? BigDecimal.ZERO : rebateRate;
         specialRebateRate = specialRebateRate == null ? BigDecimal.ZERO : specialRebateRate;
+        limits = limits == null ? BettingLimits.UNLIMITED : limits;
     }
 
-    /** 是否配置了普通玩法赔率；未配置时回退全局赔率。 */
+    /** 机器普通赔率必须为正数才能接单。 */
     public boolean hasConfiguredOdds() {
         return oddsRate.signum() > 0;
     }
 
-    /** 是否配置了特码赔率；未配置时回退全局赔率。 */
+    /** 机器特码赔率必须为正数才能接单。 */
     public boolean hasConfiguredSpecialOdds() {
         return specialOddsRate.signum() > 0;
     }
@@ -61,5 +72,36 @@ public record MachineBettingConfig(BigDecimal oddsRate,
 
     public boolean doubleRebate() {
         return DOUBLE.equals(rebateMode);
+    }
+
+    public record BettingLimits(BigDecimal total, BigDecimal positive, BigDecimal angle,
+                                BigDecimal strict, BigDecimal tong, BigDecimal car,
+                                BigDecimal special, BigDecimal oddEven, BigDecimal bigSmall,
+                                BigDecimal fan, BigDecimal add, BigDecimal playerMax,
+                                BigDecimal playerMin) {
+        public static final BettingLimits UNLIMITED = new BettingLimits(
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+
+        public BettingLimits {
+            total = amount(total);
+            positive = amount(positive);
+            angle = amount(angle);
+            strict = amount(strict);
+            tong = amount(tong);
+            car = amount(car);
+            special = amount(special);
+            oddEven = amount(oddEven);
+            bigSmall = amount(bigSmall);
+            fan = amount(fan);
+            add = amount(add);
+            playerMax = amount(playerMax);
+            playerMin = amount(playerMin);
+        }
+
+        private static BigDecimal amount(BigDecimal value) {
+            return value == null ? BigDecimal.ZERO : value;
+        }
     }
 }

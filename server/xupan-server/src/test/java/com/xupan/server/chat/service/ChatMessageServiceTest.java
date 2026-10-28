@@ -44,6 +44,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -136,33 +137,30 @@ class ChatMessageServiceTest {
     }
 
     @Test
-    void batchBetDropsOnlyLimitedItemsAndKeepsSuccessFeedback() {
+    void batchBetRejectsAllItemsWhenAnyInstructionExceedsLimit() {
         when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
         when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
         when(messageRepository.findByClientMessageId(1L, USER_ID, "bet-limit-1")).thenReturn(Optional.empty());
-        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class)))
-                .thenReturn(new DemoGameService.BetView("BET-1", "3000000", 1, PlayType.FAN,
-                        List.of(1), new java.math.BigDecimal("10.00"),
-                        new java.math.BigDecimal("3.850"), SettlementStatus.PENDING, null, null))
+        when(gameService.placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), anyString()))
                 .thenThrow(new BetLimitExceededException(PlayType.ANGLE, List.of(2, 3),
                         new java.math.BigDecimal("10.00"), "超过角限额1000，剩余可下0"));
         when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
         ChatMessage message = new ChatMessage(31L, 1L, "main", 1L, "bet-limit-1", null,
                 "3000000", ChatMessageType.USER_BET, ChatSenderType.USER, USER_ID,
                 "用户甲", "1番10,23角10", "{}", ChatMessageStatus.ACTIVE, NOW, NOW);
-        when(messageRepository.insertUserBetMessage(eq(1L), eq(1L), eq(USER_ID), eq("用户甲"),
-                eq("bet-limit-1"), eq("3000000"), eq("1番10,23角10"), anyString(), eq(44L), eq(NOW)))
+        when(messageRepository.insertUserMessage(eq(1L), eq(1L), eq(USER_ID), eq("用户甲"),
+                eq("bet-limit-1"), eq(44L), eq("1番10,23角10"), eq(NOW)))
                 .thenReturn(message);
 
         ChatMessage result = service.sendUserMessage(USER_ID, "main", "bet-limit-1", "1番10,23角10", NOW);
 
         assertThat(result.messageType()).isEqualTo(ChatMessageType.USER_BET);
-        verify(gameService, times(2)).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
+        verify(gameService).placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), eq("CHAT-bet-limit-1"));
         ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("3000000"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
                 eq(44L), eq(NOW));
-        assertThat(feedback.getValue()).isEqualTo("@用户甲  攻击成功，使用粮草10, 剩余粮草：990"
+        assertThat(feedback.getValue()).isEqualTo("@用户甲  下注未成功"
                 + "\n@用户甲  下注 23/10 已拒绝：超过角限额1000，剩余可下0");
     }
 
@@ -171,7 +169,7 @@ class ChatMessageServiceTest {
         when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
         when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
         when(messageRepository.findByClientMessageId(1L, USER_ID, "bet-limit-2")).thenReturn(Optional.empty());
-        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class)))
+        when(gameService.placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), anyString()))
                 .thenThrow(new BetLimitExceededException(PlayType.FAN, List.of(1),
                         new java.math.BigDecimal("100.00"), "超过番限额20，剩余可下20"));
         when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
@@ -182,7 +180,7 @@ class ChatMessageServiceTest {
         assertThat(service.sendUserMessage(USER_ID, "main", "bet-limit-2", "1番100", NOW))
                 .isEqualTo(message);
 
-        verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
+        verify(gameService).placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), eq("CHAT-bet-limit-2"));
         ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
                 eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
@@ -197,10 +195,10 @@ class ChatMessageServiceTest {
         when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
         when(messageRepository.findByClientMessageId(1L, USER_ID, "bet-1"))
                 .thenReturn(Optional.empty());
-        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class))).thenReturn(
+        when(gameService.placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), anyString())).thenReturn(List.of(
                 new DemoGameService.BetView("BET-1", "3000000", 1, PlayType.FAN,
                         List.of(1), new java.math.BigDecimal("10.00"),
-                        new java.math.BigDecimal("3.850"), SettlementStatus.PENDING, null, null));
+                        new java.math.BigDecimal("3.850"), SettlementStatus.PENDING, null, null)));
         when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
         ChatMessage message = new ChatMessage(11L, 1L, "main", 1L, "bet-1", null,
                 "3000000", ChatMessageType.USER_BET, ChatSenderType.USER, USER_ID,
@@ -213,7 +211,7 @@ class ChatMessageServiceTest {
 
         assertThat(result.messageType()).isEqualTo(ChatMessageType.USER_BET);
         assertThat(result.issueNumber()).isEqualTo("3000000");
-        verify(gameService).placeBet(eq(USER_ID), any(PlaceBetRequest.class));
+        verify(gameService).placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), eq("CHAT-bet-1"));
         ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
                 eq("3000000"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
@@ -276,7 +274,7 @@ class ChatMessageServiceTest {
         when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
         when(messageRepository.findByClientMessageId(1L, USER_ID, "insufficient-1"))
                 .thenReturn(Optional.empty());
-        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class))).thenThrow(
+        when(gameService.placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), anyString())).thenThrow(
                 BusinessException.conflict("WALLET_INSUFFICIENT_BALANCE", "本次钱包操作无法完成"));
         ChatMessage message = message(13L, 1L, "1番100");
         when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "insufficient-1",
@@ -296,7 +294,7 @@ class ChatMessageServiceTest {
     void drawingAndClosedBettingReturnTheConfirmedPhaseFeedback() {
         when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
         when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
-        when(gameService.placeBet(eq(USER_ID), any(PlaceBetRequest.class))).thenThrow(
+        when(gameService.placeBetBatchInstructionsForUser(eq(USER_ID), anyList(), anyString())).thenThrow(
                 BusinessException.conflict("GAME_BETTING_CLOSED", "下注无效：当前正在开奖，已停止下注"));
         when(messageRepository.findByClientMessageId(1L, USER_ID, "drawing-1"))
                 .thenReturn(Optional.empty());

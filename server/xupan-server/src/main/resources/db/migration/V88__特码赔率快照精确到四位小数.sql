@@ -1,0 +1,2 @@
+ALTER TABLE game_bet
+    MODIFY COLUMN odds_snapshot DECIMAL(10,4) NOT NULL;

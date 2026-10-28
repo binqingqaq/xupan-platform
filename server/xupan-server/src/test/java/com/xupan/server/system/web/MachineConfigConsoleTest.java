@@ -133,6 +133,67 @@ class MachineConfigConsoleTest {
         assertThat(effective.rebateMode()).isEqualTo("DOUBLE");
     }
 
+    @Test
+    void disabledMachineConfigPermissionIsReportedAndRejectsDirectWrites() throws Exception {
+        String token = login(MACHINE_A_USER, PASSWORD);
+        String adminToken = login(ADMIN, PASSWORD);
+        jdbc.update("UPDATE agent SET config_edit_enabled=FALSE WHERE id=?", machineAId);
+
+        mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configEditable").value(false));
+
+        mockMvc.perform(put("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(configBody(null, "95", "18", "5", "1", "DOUBLE", 100, 10, "2000")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("MACHINE_CONFIG_FORBIDDEN"));
+
+        MvcResult machineList = mockMvc.perform(get("/api/admin/machines")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk()).andReturn();
+        List<Boolean> editableValues = JsonPath.read(machineList.getResponse().getContentAsString(),
+                "$[?(@.id == " + machineAId + ")].configEditEnabled");
+        assertThat(editableValues).containsExactly(false);
+
+        assertThat(jdbc.queryForObject("SELECT odds_rate FROM agent WHERE id=?", BigDecimal.class, machineAId))
+                .isEqualByComparingTo("0");
+    }
+
+    @Test
+    void platformAdminControlsMachineConfigPermissionThroughMachineApi() throws Exception {
+        String adminToken = login(ADMIN, PASSWORD);
+        MvcResult initialList = mockMvc.perform(get("/api/admin/machines")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk()).andReturn();
+        List<Integer> versions = JsonPath.read(initialList.getResponse().getContentAsString(),
+                "$[?(@.id == " + machineAId + ")].configVersion");
+        int version = versions.getFirst();
+        List<Boolean> initiallyEditable = JsonPath.read(initialList.getResponse().getContentAsString(),
+                "$[?(@.id == " + machineAId + ")].configEditEnabled");
+        assertThat(initiallyEditable).containsExactly(true);
+
+        mockMvc.perform(put("/api/admin/machines/" + machineAId)
+                        .queryParam("expectedConfigVersion", String.valueOf(version))
+                        .header("Authorization", bearer(adminToken)).contentType("application/json")
+                        .content(platformMachineConfigBody("91", "19", "4", "0.75", "1500")
+                                .replace("\"robotManage\":false", "\"robotManage\":false,\"configEditEnabled\":false")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configEditEnabled").value(false));
+
+        MvcResult disabledList = mockMvc.perform(get("/api/admin/machines")
+                        .header("Authorization", bearer(adminToken)))
+                .andExpect(status().isOk()).andReturn();
+        List<Boolean> disabledValues = JsonPath.read(disabledList.getResponse().getContentAsString(),
+                "$[?(@.id == " + machineAId + ")].configEditEnabled");
+        assertThat(disabledValues).containsExactly(false);
+        String auditSummary = jdbc.queryForObject("""
+                SELECT request_summary FROM sys_operation_log
+                 WHERE request_path = ? ORDER BY id DESC LIMIT 1
+                """, String.class, "/api/admin/machines/" + machineAId);
+        assertThat(auditSummary).contains("configEditEnabled=false");
+    }
+
     /**
      * 阶段 3（严格对齐 BY220）：机器级配置属于**机器账号**（{@code /console}），
      * 超管不再能通过玩家运营接口读写任意机器的配置，一律 403。
@@ -163,6 +224,43 @@ class MachineConfigConsoleTest {
     }
 
     @Test
+    void platformAdminUpdateInvalidatesAStaleMachineConsoleSave() throws Exception {
+        String machineToken = login(MACHINE_A_USER, PASSWORD);
+        String adminToken = login(ADMIN, PASSWORD);
+        MvcResult machineSnapshot = mockMvc.perform(get("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(machineToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.machineId").value((int) machineAId))
+                .andReturn();
+        int staleVersion = ((Number) JsonPath.read(
+                machineSnapshot.getResponse().getContentAsString(), "$.configVersion")).intValue();
+        String staleMachineSave = configBody(null, "77", "16", "3", "0.25", "DOUBLE", 70, 6, "1200");
+
+        mockMvc.perform(put("/api/admin/machines/" + machineAId)
+                        .queryParam("expectedConfigVersion", String.valueOf(staleVersion))
+                        .header("Authorization", bearer(adminToken)).contentType("application/json")
+                        .content(platformMachineConfigBody("91", "19", "4", "0.75", "1500")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configVersion").value(staleVersion + 1))
+                .andExpect(jsonPath("$.oddsRate").value(91.0))
+                .andExpect(jsonPath("$.totalLimit").value(1500.0));
+
+        mockMvc.perform(put("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(machineToken)).contentType("application/json")
+                        .content(staleMachineSave))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MACHINE_CONFIG_VERSION_CONFLICT"));
+
+        mockMvc.perform(get("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(machineToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.configVersion").value(staleVersion + 1))
+                .andExpect(jsonPath("$.oddsRate").value(91.0))
+                .andExpect(jsonPath("$.specialOddsRate").value(19.0))
+                .andExpect(jsonPath("$.totalLimit").value(1500.0));
+    }
+
+    @Test
     void invalidValuesAreRejectedAsBadRequestAndNothingIsWritten() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
 
@@ -180,17 +278,42 @@ class MachineConfigConsoleTest {
 
         mockMvc.perform(put("/api/admin/player-desk/machine-config")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"boardOpen\":true,\"chaseEnabled\":false,\"botCount\":1,\"closeSeconds\":100,"
-                                + "\"cancelSeconds\":10,\"rebateRate\":5,\"oddsRate\":95,\"specialRebateRate\":1,"
-                                + "\"specialOddsRate\":18,\"rebateMode\":\"SINGLE\",\"totalLimit\":0,"
-                                + "\"positiveLimit\":0,\"angleLimit\":0,\"strictLimit\":0,\"tongLimit\":0,"
-                                + "\"carLimit\":0,\"specialLimit\":0,\"oddEvenLimit\":0,\"bigSmallLimit\":0,"
-                                + "\"fanLimit\":0,\"addLimit\":0,\"playerMinStake\":50,\"playerMaxStake\":10}"))
+                        .content(configBody(null, "95", "18", "5", "1", "SINGLE", 100, 10, "2000")
+                                .replace("\"playerMinStake\":10,\"playerMaxStake\":100000",
+                                        "\"playerMinStake\":50,\"playerMaxStake\":10")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MACHINE_STAKE_RANGE_INVALID"));
 
         assertThat(oddsRateOf(machineAId)).isEqualByComparingTo("0.0000");
         assertThat(closeSecondsOf(machineAId)).isZero();
+    }
+
+    @Test
+    void staleMachineConfigVersionIsRejectedWithoutOverwritingTheFirstSave() throws Exception {
+        String token = login(MACHINE_A_USER, PASSWORD);
+        String firstSnapshot = configBody(null, "91", "17", "4", "0.5", "SINGLE", 90, 8, "1800");
+        String staleSnapshot = configBody(null, "77", "16", "3", "0.25", "DOUBLE", 70, 6, "1200");
+
+        mockMvc.perform(put("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(firstSnapshot))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.oddsRate").value(91.0000))
+                .andExpect(jsonPath("$.totalLimit").value(1800.00));
+
+        mockMvc.perform(put("/api/admin/player-desk/machine-config")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(staleSnapshot))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MACHINE_CONFIG_VERSION_CONFLICT"));
+
+        mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.oddsRate").value(91.0000))
+                .andExpect(jsonPath("$.specialOddsRate").value(17.0000))
+                .andExpect(jsonPath("$.rebateMode").value("SINGLE"))
+                .andExpect(jsonPath("$.totalLimit").value(1800.00))
+                .andExpect(jsonPath("$.closeSeconds").value(90));
     }
 
     @Test
@@ -209,19 +332,34 @@ class MachineConfigConsoleTest {
                 .andExpect(jsonPath("$.machineCode").value(MACHINE_A_CODE));
     }
 
-    private static String configBody(Long machineId, String oddsRate, String specialOddsRate, String rebateRate,
+    private String configBody(Long machineId, String oddsRate, String specialOddsRate, String rebateRate,
                                      String specialRebateRate, String rebateMode, int closeSeconds, int cancelSeconds,
                                      String totalLimit) {
         String machineField = machineId == null ? "" : "\"machineId\":" + machineId + ",";
+        long targetMachineId = machineId == null ? machineAId : machineId;
+        Integer expectedVersion = jdbc.queryForObject(
+                "SELECT betting_config_version FROM agent WHERE id = ?", Integer.class, targetMachineId);
         return "{" + machineField
-                + "\"boardOpen\":true,\"chaseEnabled\":false,\"botCount\":1,"
+                + "\"boardOpen\":true,\"chaseEnabled\":false,\"countdownVisible\":true,\"botCount\":1,"
                 + "\"closeSeconds\":" + closeSeconds + ",\"cancelSeconds\":" + cancelSeconds + ","
                 + "\"rebateRate\":" + rebateRate + ",\"oddsRate\":" + oddsRate + ","
                 + "\"specialRebateRate\":" + specialRebateRate + ",\"specialOddsRate\":" + specialOddsRate + ","
-                + "\"rebateMode\":\"" + rebateMode + "\","
+                + "\"rebateMode\":\"" + rebateMode + "\",\"expectedVersion\":" + expectedVersion + ","
                 + "\"totalLimit\":" + totalLimit + ",\"positiveLimit\":0,\"angleLimit\":0,\"strictLimit\":0,"
                 + "\"tongLimit\":0,\"carLimit\":0,\"specialLimit\":0,\"oddEvenLimit\":0,\"bigSmallLimit\":0,"
                 + "\"fanLimit\":0,\"addLimit\":0,\"playerMinStake\":10,\"playerMaxStake\":100000}";
+    }
+
+    private String platformMachineConfigBody(String oddsRate, String specialOddsRate, String rebateRate,
+                                             String specialRebateRate, String totalLimit) {
+        return "{\"username\":\"" + MACHINE_A_USER + "\",\"groupId\":null,\"score\":0,"
+                + "\"expiresAt\":null,\"boardOpen\":true,\"robotManage\":false,\"chaseEnabled\":false,"
+                + "\"botCount\":0,\"closeSeconds\":80,\"cancelSeconds\":9,\"rebateRate\":" + rebateRate
+                + ",\"oddsRate\":" + oddsRate + ",\"specialRebateRate\":" + specialRebateRate
+                + ",\"specialOddsRate\":" + specialOddsRate + ",\"rebateMode\":\"SINGLE\",\"totalLimit\":"
+                + totalLimit + ",\"positiveLimit\":0,\"angleLimit\":0,\"strictLimit\":0,\"tongLimit\":0,"
+                + "\"carLimit\":0,\"specialLimit\":0,\"oddEvenLimit\":0,\"bigSmallLimit\":0,"
+                + "\"fanLimit\":0,\"addLimit\":0,\"playerMaxStake\":100000,\"playerMinStake\":10}";
     }
 
     private long createPlayerUnderMachineA(String token) throws Exception {

@@ -1,5 +1,6 @@
 import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ElMessageBox } from 'element-plus'
 import PlatformAdminCenter from './views/PlatformAdminCenter.vue'
 import { api } from './api'
 
@@ -7,17 +8,24 @@ import { api } from './api'
  * 中心上游管理页（阶段 B）。
  *
  * 关注三件事：六块数据的取数、额度三层分别展示（不是合成一个余额）、
- * 以及一次性 Token 的展示语义（原则 9：原文只在创建时出现一次）。
+ * 以及一次性中心账号密码的展示语义。
  */
 
 vi.mock('./api', () => ({
   api: {
+    listAgentGroups: vi.fn(),
     listCenterAgents: vi.fn(),
+    listCenterUpstreamAccounts: vi.fn(),
+    createCenterUpstreamAccount: vi.fn(),
+    changeCenterUpstreamAccountStatus: vi.fn(),
+    renewCenterUpstreamAccount: vi.fn(),
+    resetCenterUpstreamAccountPassword: vi.fn(),
+    deleteCenterUpstreamAccount: vi.fn(),
+    centerAccountSessions: vi.fn(),
     listCenterOrders: vi.fn(),
     centerOrderSummary: vi.fn(),
     centerReconciliation: vi.fn(),
     centerAgentLedger: vi.fn(),
-    createCenterAgent: vi.fn(),
     changeCenterAgentStatus: vi.fn(),
     grantCenterAgent: vi.fn(),
     setCenterAgentCreditLimit: vi.fn(),
@@ -47,7 +55,6 @@ const agent = {
   agentCode: 'CENTER_A',
   agentName: '中心代理A',
   upstreamAccount: 'up_center_a',
-  tokenPrefix: 'ctr_abcd',
   status: 'ACTIVE',
   creditLimit: 50000,
   availableBalance: 9000,
@@ -61,6 +68,27 @@ const agent = {
   createdAt: '2026-10-02T00:00:00Z',
   updatedAt: '2026-10-02T00:00:00Z',
 }
+
+const centerAccount = {
+  accountId: 41,
+  groupId: 31,
+  groupName: '代理子账号A',
+  username: 'center_agent_a',
+  status: 'ACTIVE',
+  expiresAt: '2099-02-01T00:00:00Z',
+  availableBalance: 8200,
+  frozenBalance: 300,
+  openStake: 120,
+  lastLoginAt: '2026-10-24T12:30:00Z',
+  online: true,
+  onlineMachineCount: 2,
+}
+
+const agentGroups = [
+  { id: 31, code: 'sub_a', displayName: '代理子账号A', status: 'ACTIVE', createdAt: '', updatedAt: '' },
+  { id: 32, code: 'sub_b', displayName: '代理子账号B', status: 'ACTIVE', createdAt: '', updatedAt: '' },
+  { id: 33, code: 'sub_disabled', displayName: '已停用子账号', status: 'DISABLED', createdAt: '', updatedAt: '' },
+]
 
 const order = {
   id: 11,
@@ -87,7 +115,15 @@ const order = {
 
 const reconciliation = {
   counts: { localTotal: 3, centerTotal: 3, localUnresolved: 0, centerUnresolved: 0, activeCenterAgents: 1 },
+  financial: {
+    reservedOrders: 0, reservedRiskAmount: 0, centerFrozenAmount: 0, machineFrozenAmount: 0,
+    reservationMismatchCount: 0, settledOrders: 0, settledAmount: 0, oneSidedSettlementCount: 0,
+    settlementLedgerNetAmount: 0, settlementLedgerExpectedNetAmount: 0, settlementLedgerMismatchCount: 0,
+    refundedOrders: 0, refundedRiskAmount: 0, refundDispositionAmount: 0, refundMismatchCount: 0,
+    cancelledOrders: 0, cancelledRiskAmount: 0, cancelDispositionAmount: 0, cancelMismatchCount: 0,
+  },
   differenceCount: 0,
+  financialIssueCount: 0,
   balanced: true,
   differences: [],
   missingInCenterCount: 0,
@@ -125,13 +161,16 @@ function clickTab(host: HTMLElement, label: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.mocked(api.listAgentGroups).mockResolvedValue(agentGroups as never)
   vi.mocked(api.listCenterAgents).mockResolvedValue([agent] as never)
+  vi.mocked(api.listCenterUpstreamAccounts).mockResolvedValue([centerAccount] as never)
   vi.mocked(api.listCenterOrders).mockResolvedValue({ items: [order], page: 1, pageSize: 20, total: 1 } as never)
   vi.mocked(api.centerOrderSummary).mockResolvedValue([{ status: 'SETTLED', total: 1, amount: 100 }] as never)
   vi.mocked(api.centerReconciliation).mockResolvedValue(reconciliation as never)
   vi.mocked(api.centerAgentLedger).mockResolvedValue({
-    items: [], page: 1, pageSize: 30, total: 0, balanced: true,
+    items: [], page: 1, pageSize: 20, total: 0, balanced: true,
   } as never)
+  vi.mocked(api.centerAccountSessions).mockResolvedValue([] as never)
   vi.mocked(api.centerRiskHitSummary).mockResolvedValue([] as never)
   vi.mocked(api.centerAgentRiskHits).mockResolvedValue([] as never)
   vi.mocked(api.centerOrderDispositions).mockResolvedValue([] as never)
@@ -141,6 +180,7 @@ beforeEach(() => {
 
 afterEach(() => {
   while (mounted.length) mounted.pop()?.unmount()
+  vi.restoreAllMocks()
 })
 
 describe('中心上游管理页', () => {
@@ -175,6 +215,48 @@ describe('中心上游管理页', () => {
     expect(text).toContain('已结算')
     expect(text).toContain('代理赢')
     expect(text).toContain('285.00')
+  })
+
+  it('filters center orders by visible identifiers and paginates results', async () => {
+    vi.mocked(api.listCenterOrders).mockResolvedValue({ items: [order], page: 1, pageSize: 20, total: 41 } as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '实时订单')
+    await settle()
+
+    const form = host.querySelector('.order-filter-form') as HTMLElement
+    const setField = (label: string, value: string) => {
+      const item = Array.from(form.querySelectorAll<HTMLElement>('.el-form-item'))
+        .find(candidate => candidate.textContent?.includes(label))
+      const input = item?.querySelector('input') as HTMLInputElement | null
+      if (!input) throw new Error(`找不到订单筛选字段：${label}`)
+      setValue(input, value)
+    }
+    setField('机器 ID', '77')
+    setField('本地注单号', '202')
+    setField('中心订单号', 'BET-202')
+    setField('游戏', 'AU8')
+    setField('期号', '39999801')
+    await settle()
+    Array.from(form.querySelectorAll('button')).find(item => item.textContent?.trim() === '查询')?.click()
+    await settle()
+
+    expect(api.listCenterOrders).toHaveBeenLastCalledWith(expect.objectContaining({
+      machineId: 77,
+      localBetId: 202,
+      centerOrderNo: 'BET-202',
+      gameCode: 'AU8',
+      issueNumber: '39999801',
+      page: 1,
+      pageSize: 20,
+    }))
+    expect(host.textContent ?? '').toContain('代理子账号')
+    expect(host.textContent ?? '').toContain('中心账号')
+
+    const next = host.querySelector<HTMLButtonElement>('.el-pagination .btn-next')
+    next?.click()
+    await settle()
+    expect(api.listCenterOrders).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, machineId: 77 }))
   })
 
   it('shows risk exposure as frozen plus unsettled', async () => {
@@ -218,37 +300,251 @@ describe('中心上游管理页', () => {
     expect(text).toContain('90.00')
   })
 
-  it('shows the issued token only once after creating a center agent', async () => {
-    vi.mocked(api.createCenterAgent).mockResolvedValue({ agent, token: 'ctr_secret_once' } as never)
+  it('queries reconciliation by center account and issue number', async () => {
+    vi.mocked(api.listCenterUpstreamAccounts).mockResolvedValue([] as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '对账')
+    await settle()
+
+    const filterForm = host.querySelector('.center-form')
+    const accountInput = filterForm?.querySelector('.el-select input') as HTMLInputElement | null
+    accountInput?.click()
+    await settle()
+    const option = Array.from(document.querySelectorAll('.el-select-dropdown__item'))
+      .find(item => item.textContent?.includes('CENTER_A')) as HTMLElement | undefined
+    option?.click()
+    await settle()
+
+    const issueItem = Array.from(filterForm?.querySelectorAll('.el-form-item') ?? [])
+      .find(item => item.textContent?.includes('期号'))
+    const issueInput = issueItem?.querySelector('input') as HTMLInputElement | null
+    if (!issueInput) throw new Error('找不到对账期号筛选字段')
+    setValue(issueInput, '39999801')
+    await settle()
+    Array.from(filterForm?.querySelectorAll('button') ?? [])
+      .find(item => item.textContent?.trim() === '查询')?.click()
+    await settle()
+
+    expect(api.centerReconciliation).toHaveBeenLastCalledWith({
+      centerAgentId: agent.id,
+      issueNumber: '39999801',
+      limit: 50,
+    })
+  })
+
+  it('creates an account bound to an active subaccount and shows its password once', async () => {
+    vi.mocked(api.createCenterUpstreamAccount).mockResolvedValue({
+      account: { ...centerAccount, accountId: 42, groupId: 32, groupName: '代理子账号B', username: 'center_agent_b' },
+    } as never)
     const host = mountPage()
     await settle()
 
-    clickTab(host, '代理管理')
+    clickTab(host, '中心账号')
     await settle()
-    const newButton = Array.from(host.querySelectorAll('button'))
-      .find(item => item.textContent?.includes('新建中心代理')) as HTMLButtonElement
-    newButton.click()
+    expect(host.textContent ?? '').toContain('2 台')
+    expect(host.textContent ?? '').toContain('8200.00')
+    expect(host.textContent ?? '').toContain('300.00')
+    expect(host.textContent ?? '').toContain('120.00')
+    expect(host.textContent ?? '').not.toContain('新建中心代理')
+
+    const openButton = Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.includes('分配中心账号')) as HTMLButtonElement
+    openButton.click()
     await settle()
 
-    const inputs = Array.from(host.querySelectorAll('.center-form input')) as HTMLInputElement[]
-    setValue(inputs[0], 'CENTER_B')
-    setValue(inputs[1], '中心代理B')
-    setValue(inputs[2], 'up_center_b')
+    const groupSelect = host.querySelector('.account-form .el-select__wrapper') as HTMLElement
+    groupSelect.click()
+    await settle()
+    const groupOption = Array.from(document.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
+      .find(item => item.textContent?.includes('代理子账号B'))
+    expect(groupOption).toBeDefined()
+    groupOption!.click()
     await settle()
 
-    const createButton = Array.from(host.querySelectorAll('.center-form button'))
-      .find(item => item.textContent?.trim() === '创建') as HTMLButtonElement
+    const inputFor = (label: string) => {
+      const item = Array.from(host.querySelectorAll<HTMLElement>('.account-form .el-form-item'))
+        .find(formItem => formItem.textContent?.includes(label))
+      const input = item?.querySelector('input')
+      if (!input) throw new Error(`找不到字段：${label}`)
+      return input as HTMLInputElement
+    }
+    setValue(inputFor('中心账号名'), 'center_agent_b')
+    setValue(inputFor('初始密码'), 'initial-secret-123')
+    await settle()
+
+    const createButton = Array.from(host.querySelectorAll('.account-form button'))
+      .find(item => item.textContent?.trim() === '创建账号') as HTMLButtonElement
     createButton.click()
     await settle()
 
-    expect(host.textContent ?? '').toContain('ctr_secret_once')
-    expect(host.textContent ?? '').toContain('只显示这一次')
+    expect(api.createCenterUpstreamAccount).toHaveBeenCalledWith(expect.objectContaining({
+      groupId: 32,
+      username: 'center_agent_b',
+      password: 'initial-secret-123',
+      initialQuota: 0,
+      expiresAt: expect.any(String),
+    }))
+    expect(document.body.textContent ?? '').toContain('initial-secret-123')
+    expect(document.body.textContent ?? '').toContain('只在本次操作后展示一次')
 
-    const dismiss = Array.from(host.querySelectorAll('.center-messages button'))
-      .find(item => item.textContent?.trim() === '我已保存') as HTMLButtonElement
+    const dismiss = Array.from(document.body.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '已安全记录') as HTMLButtonElement
     dismiss.click()
+    await new Promise(resolve => setTimeout(resolve, 350))
+    expect(document.body.textContent ?? '').not.toContain('initial-secret-123')
+  })
+
+  it('supports account status, renewal, password reset and account deletion', async () => {
+    vi.mocked(api.changeCenterUpstreamAccountStatus).mockResolvedValue({ ...centerAccount, status: 'DISABLED' } as never)
+    vi.mocked(api.renewCenterUpstreamAccount).mockResolvedValue(centerAccount as never)
+    vi.mocked(api.resetCenterUpstreamAccountPassword).mockResolvedValue(centerAccount as never)
+    const host = mountPage()
     await settle()
-    expect(host.textContent ?? '').not.toContain('ctr_secret_once')
+    clickTab(host, '中心账号')
+    await settle()
+
+    const button = (label: string) => Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === label) as HTMLButtonElement
+    button('停用').click()
+    await settle()
+    let form = Array.from(host.querySelectorAll<HTMLElement>('.account-action-form'))
+      .find(item => item.textContent?.includes('中心账号状态') || item.textContent?.includes('停用：'))
+    expect(form).toBeDefined()
+    let reasonInput = form?.querySelector('input') as HTMLInputElement
+    setValue(reasonInput, '安全策略停用')
+    await settle()
+    Array.from(form?.querySelectorAll('button') ?? []).find(item => item.textContent?.trim() === '确认')?.click()
+    await settle()
+    expect(api.changeCenterUpstreamAccountStatus).toHaveBeenCalledWith(41, 'DISABLED', '安全策略停用')
+
+    button('续期').click()
+    await settle()
+    form = Array.from(host.querySelectorAll<HTMLElement>('.account-action-form'))
+      .find(item => item.textContent?.includes('续期：'))
+    const renewalReason = Array.from(form?.querySelectorAll<HTMLInputElement>('input') ?? [])
+      .find(input => input.closest('.el-form-item')?.textContent?.includes('续期原因'))
+    setValue(renewalReason as HTMLInputElement, '代理续期申请')
+    await settle()
+    button('确认续期').click()
+    await settle()
+    expect(api.renewCenterUpstreamAccount).toHaveBeenCalledWith(41, expect.any(String), '代理续期申请')
+
+    button('重置密码').click()
+    await settle()
+    const resetInput = host.querySelector('.account-action-form input[type="password"]') as HTMLInputElement
+    setValue(resetInput, 'reset-secret-456')
+    const resetForm = resetInput.closest('.account-action-form') as HTMLElement
+    const passwordResetReasonInput = Array.from(resetForm.querySelectorAll<HTMLInputElement>('input'))
+      .find(input => input.type !== 'password') as HTMLInputElement
+    setValue(passwordResetReasonInput, '定期凭据轮换')
+    await settle()
+    button('确认重置').click()
+    await settle()
+    expect(api.resetCenterUpstreamAccountPassword).toHaveBeenCalledWith(41, 'reset-secret-456', '定期凭据轮换')
+    expect(document.body.textContent ?? '').toContain('reset-secret-456')
+    expect(Array.from(host.querySelectorAll('button')).some(item => item.textContent?.trim() === '删除')).toBe(true)
+  })
+
+  it('confirms deletion scope and submits the administrator reason', async () => {
+    const prompt = vi.spyOn(ElMessageBox, 'prompt')
+      .mockResolvedValue({ value: '中心账号停止使用', action: 'confirm' } as never)
+    vi.mocked(api.deleteCenterUpstreamAccount).mockResolvedValue(undefined as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '中心账号')
+    await settle()
+
+    Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '删除')?.click()
+    await settle()
+
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringContaining('机器积分及机器账务流水保持原值'),
+      expect.stringContaining(centerAccount.username),
+      expect.objectContaining({ confirmButtonText: '永久删除' }),
+    )
+    expect(api.deleteCenterUpstreamAccount).toHaveBeenCalledWith(41, '中心账号停止使用')
+    expect(host.textContent ?? '').toContain('机器积分未调整')
+  })
+
+  it('shows each machine center session with state, login, expiry and revoke reason', async () => {
+    vi.mocked(api.centerAccountSessions).mockResolvedValue([{
+      machineId: 71, machineCode: 'M71', machineName: '会话机器', machineStatus: 'ACTIVE',
+      sessionStatus: 'REVOKED', authenticatedAt: '2026-10-25T08:00:00Z',
+      expiresAt: '2026-10-25T16:00:00Z', revokedAt: '2026-10-25T09:00:00Z',
+      revokeReason: 'PASSWORD_RESET',
+    }] as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '中心账号')
+    await settle()
+    const sessionButton = Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '机器会话') as HTMLButtonElement
+    sessionButton.click()
+    await settle()
+
+    expect(api.centerAccountSessions).toHaveBeenCalledWith(centerAccount.accountId)
+    expect(host.textContent ?? '').toContain('M71')
+    expect(host.textContent ?? '').toContain('已撤销')
+    expect(host.textContent ?? '').toContain('PASSWORD_RESET')
+    expect(host.textContent ?? '').toContain('2026-10-25 08:00:00')
+  })
+
+  it('loads center ledger pages and preserves the backend total', async () => {
+    vi.mocked(api.centerAgentLedger).mockResolvedValue({
+      items: [], page: 1, pageSize: 20, total: 45, balanced: true,
+    } as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '中心账号')
+    await settle()
+    const ledgerButton = Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '流水') as HTMLButtonElement
+    ledgerButton.click()
+    await settle()
+
+    expect(api.centerAgentLedger).toHaveBeenCalledWith(41, { page: 1, pageSize: 20 })
+    expect(host.textContent ?? '').toContain('共 45 笔')
+    host.querySelector<HTMLButtonElement>('.center-list-pagination .btn-next')?.click()
+    await settle()
+    expect(api.centerAgentLedger).toHaveBeenLastCalledWith(41, { page: 2, pageSize: 20 })
+  })
+
+  it('keeps assigned center accounts out of the legacy list and supports audited quota grants', async () => {
+    vi.mocked(api.listCenterAgents).mockResolvedValue([
+      { ...agent, id: centerAccount.accountId, agentCode: centerAccount.username },
+    ] as never)
+    vi.mocked(api.grantCenterAgent).mockResolvedValue(agent as never)
+    const host = mountPage()
+    await settle()
+    clickTab(host, '中心账号')
+    await settle()
+
+    const addQuota = Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '追加额度') as HTMLButtonElement
+    addQuota.click()
+    await settle()
+    const form = host.querySelector('.account-action-form') as HTMLElement
+    const amountInput = form.querySelector('input[type="number"]') as HTMLInputElement
+    const reasonInput = form.querySelector('input:not([type="number"])') as HTMLInputElement
+    setValue(amountInput, '250.50')
+    setValue(reasonInput, '首期额度补充')
+    await settle()
+    const confirm = Array.from(form.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '确认追加') as HTMLButtonElement
+    confirm.click()
+    await settle()
+
+    expect(api.grantCenterAgent).toHaveBeenCalledWith(centerAccount.accountId, expect.objectContaining({
+      amount: 250.5,
+      reason: '首期额度补充',
+      idempotencyKey: expect.stringContaining(`center-quota-${centerAccount.accountId}-`),
+    }))
+
+    clickTab(host, '代理管理')
+    await settle()
+    expect(host.textContent ?? '').not.toContain(centerAccount.username)
   })
 
   // -----------------------------------------------------------------

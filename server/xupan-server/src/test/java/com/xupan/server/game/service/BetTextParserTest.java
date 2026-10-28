@@ -10,12 +10,33 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BetTextParserTest {
 
     @Test
+    void mapsCarPushAliasesToBy220GroupsWithoutChangingSettlementParameters() {
+        int[][] groups = {{1, 2, 4}, {1, 2, 3}, {2, 3, 4}, {1, 3, 4}};
+        for (int group = 1; group <= 4; group++) {
+            var car = BetTextParser.parse(group + "车100").bet();
+            var push = BetTextParser.parse(group + "推100").bet();
+            org.assertj.core.api.Assertions.assertThat(car.quotaSelectionKey()).isEqualTo(push.quotaSelectionKey());
+            org.assertj.core.api.Assertions.assertThat(car.parameters()).hasSize(3);
+            for (int first : groups[group - 1]) {
+                for (int second : groups[group - 1]) {
+                    for (int third : groups[group - 1]) {
+                        if (first == second || second == third || first == third) continue;
+                        var combination = BetTextParser.parse("" + first + second + third + "/100").bet();
+                        org.assertj.core.api.Assertions.assertThat(combination.quotaSelectionKey())
+                                .isEqualTo(car.quotaSelectionKey());
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void parsesAllConfirmedFormatsAndAlwaysTargetsBallOne() {
         assertBet("1番100", PlayType.FAN, List.of(1), "100.00");
         assertBet("12角100", PlayType.ANGLE, List.of(1, 2), "100.00");
         assertBet("124/100", PlayType.CAR, List.of(1, 2, 4), "100.00");
-        assertBet("1车100", PlayType.CAR, List.of(2, 3, 4), "100.00");
-        assertBet("3车151", PlayType.CAR, List.of(1, 2, 4), "151.00");
+        assertBet("1车100", PlayType.CAR, List.of(1, 2, 4), "100.00");
+        assertBet("3车151", PlayType.CAR, List.of(2, 3, 4), "151.00");
         assertBet("1严2/100", PlayType.STRICT, List.of(1, 2), "100.00");
         assertBet("1念2/100", PlayType.STRICT, List.of(1, 2), "100.00");
         assertBet("1加23/100", PlayType.ADD, List.of(1, 2, 3), "100.00");
@@ -28,7 +49,7 @@ class BetTextParserTest {
         assertBet("大100", PlayType.BIG_SMALL, List.of(1), "100.00");
         assertBet("小100", PlayType.BIG_SMALL, List.of(2), "100.00");
         assertBet("01特100", PlayType.SPECIAL, List.of(1), "100.00");
-        assertBet("02/03/04特100", PlayType.SPECIAL, List.of(2, 3, 4), "100.00");
+        assertBet("02/03/04特100", PlayType.SPECIAL, List.of(2, 3, 4), "300.00");
     }
 
     @Test

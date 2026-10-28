@@ -15,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
@@ -194,7 +195,7 @@ class PlatformAdminResourceControllerTest {
         long machineId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
 
         // 不传 games（等价于前端只改其它字段）：必须保留原有彩种
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(base + ",\"username\":\"platform_test_games_machine\",\"displayName\":\"改名后的机器\"}"))
                 .andExpect(status().isOk())
@@ -217,7 +218,7 @@ class PlatformAdminResourceControllerTest {
         assertThat(machineLedgerCount(machineId)).as("积分未变不应写流水").isEqualTo(1L);
 
         // 把积分改成 800 → 追加一条 MACHINE_ADJUST，变动前后可验算
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(base.replace("\"score\":500", "\"score\":800")
                                 + ",\"username\":\"platform_test_games_machine\"}"))
@@ -229,318 +230,105 @@ class PlatformAdminResourceControllerTest {
         assertThat(machineLedgerAmount(machineId)).isEqualByComparingTo("300.00");
 
         // 显式传空列表表示"清空彩种"，此时才真的清空
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(base + ",\"username\":\"platform_test_games_machine\",\"games\":[]}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.games").isEmpty());
     }
 
-    /**
-     * 回归：子账号飞单账号（BY220 {@code x_admin.feidanname}）必须能回显。
-     *
-     * <p>以前 {@code SubAccountResponse} 不含 {@code reportUsername}，前端 openEdit 固定置空，
-     * 导致"编辑子账号"会把已保存的飞单账号清掉（静默丢数据）。</p>
-     */
     @Test
-    void keepsSubAccountReportUsernameWhenUpdating() throws Exception {
+    void rejectsStaleMachineEditAndPreservesTheFirstConfigurationSave() throws Exception {
         String token = login(ADMIN, PASSWORD);
-        MvcResult created = mockMvc.perform(post("/api/admin/sub-accounts")
+        MvcResult created = mockMvc.perform(post("/api/admin/machines")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_report_sub","rawPassword":"SubReportPassword1",
-                                 "score":1000,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"feidan-user","reportNetworkCode":"K28","reportRouteCode":"A"}
-                                """))
+                        .content(machineCreateBody("platform_test_version_machine", "版本竞争机器", null, "0")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportUsername").value("feidan-user"))
+                .andExpect(jsonPath("$.configVersion").isNumber())
                 .andReturn();
-        long subId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
+        long machineId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
+        int staleVersion = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.configVersion")).intValue();
+        String base = "{\"username\":\"platform_test_version_machine\",\"groupId\":null,\"score\":0,"
+                + "\"boardOpen\":true,\"robotManage\":false,\"chaseEnabled\":false,\"botCount\":0,"
+                + "\"closeSeconds\":10,\"cancelSeconds\":5,\"rebateRate\":0,\"oddsRate\":1.95,"
+                + "\"specialRebateRate\":0,\"specialOddsRate\":18,\"totalLimit\":10000,"
+                + "\"positiveLimit\":1000,\"angleLimit\":1000,\"strictLimit\":1000,\"tongLimit\":1000,"
+                + "\"carLimit\":1000,\"specialLimit\":1000,\"oddEvenLimit\":1000,\"bigSmallLimit\":1000,"
+                + "\"fanLimit\":1000,\"addLimit\":1000,\"playerMaxStake\":500,\"playerMinStake\":10,"
+                + "\"games\":[\"AU8\"]}";
 
-        // 列表必须返回该字段，否则前端无法回显
-        mockMvc.perform(get("/api/admin/sub-accounts").header("Authorization", bearer(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportUsername").value("feidan-user"));
-
-        // 未改动飞单账号的更新：值必须保留
-        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
+        mockMvc.perform(put("/api/admin/machines/" + machineId)
+                        .queryParam("expectedConfigVersion", String.valueOf(staleVersion))
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_report_sub_renamed","rawPassword":"",
-                                 "score":1000,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"feidan-user","reportNetworkCode":"K28","reportRouteCode":"A"}
-                                """))
+                        .content(base.replace("\"oddsRate\":1.95", "\"oddsRate\":7.77")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value("platform_test_report_sub_renamed"))
-                .andExpect(jsonPath("$.reportUsername").value("feidan-user"))
-                .andExpect(jsonPath("$.displayName").doesNotExist());
-        assertThat(jdbcTemplate.queryForObject("SELECT display_name FROM agent_group WHERE id=?", String.class, subId))
-                .isEqualTo("platform_test_report_sub_renamed");
-        assertThat(jdbcTemplate.queryForObject("SELECT u.display_name FROM sys_user u JOIN agent_group g ON g.sys_user_id=u.id WHERE g.id=?", String.class, subId))
-                .isEqualTo("platform_test_report_sub_renamed");
+                .andExpect(jsonPath("$.configVersion").value(staleVersion + 1))
+                .andExpect(jsonPath("$.oddsRate").value(7.77));
+
+        mockMvc.perform(put("/api/admin/machines/" + machineId)
+                        .queryParam("expectedConfigVersion", String.valueOf(staleVersion))
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(base.replace("\"oddsRate\":1.95", "\"oddsRate\":8.88")
+                                .replace("\"totalLimit\":10000", "\"totalLimit\":12000")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MACHINE_CONFIG_VERSION_CONFLICT"));
+
+        assertThat(jdbcTemplate.queryForObject("SELECT odds_rate FROM agent WHERE id=?", java.math.BigDecimal.class, machineId))
+                .isEqualByComparingTo("7.7700");
+        assertThat(jdbcTemplate.queryForObject("SELECT total_limit FROM agent WHERE id=?", java.math.BigDecimal.class, machineId))
+                .isEqualByComparingTo("10000.00");
     }
 
-    /**
-     * V73：子账号「统一飞单」的报网类型（{@code agent_group.report_type}）。
-     *
-     * <p>BY220 里机器的报网类型（{@code x_robot.flyers_type}）由所选网盘的 {@code code} 决定
-     * （{@code rbt/controller/Index.php:745}），而网盘表 {@code x_rbwp} 没有类型列
-     * （{@code admin/controller/Index.php:42-98}）；本项目把「网盘编码」与「报网类型」拆成两列，
-     * 因此在子账号侧显式保存统一飞单的类型。这个用例固定住：新建/更新能落库并在响应里读回，
-     * 大小写归一，空串落 NULL，非法取值 → 400 {@code SUB_ACCOUNT_REPORT_TYPE_INVALID} 且不落库。</p>
-     */
     @Test
-    void persistsSubAccountUnifiedReportTypeAndRejectsInvalidValue() throws Exception {
+    void subAccountEndpointsOmitLegacyReportConfiguration() throws Exception {
         String token = login(ADMIN, PASSWORD);
         MvcResult created = mockMvc.perform(post("/api/admin/sub-accounts")
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("""
-                                {"username":"platform_test_report_type_sub","rawPassword":"SubReportType1",
-                                 "displayName":"报网类型子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"report-type-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":"k28"}
+                                {"username":"platform_test_subaccount_report_removed","rawPassword":"SubAccountPassword1",
+                                 "score":1000,"subAccountManage":false,"machineManage":true,
+                                 "unifiedReportEnabled":true,"reportUsername":"legacy-user",
+                                 "reportNetworkCode":"K28","reportType":"K28"}
                                 """))
                 .andExpect(status().isOk())
-                // 小写入参归一为大写，与机器端 REPORT_TYPES / ck_agent_group_report_type 一致
-                .andExpect(jsonPath("$.reportType").value("K28"))
+                .andExpect(jsonPath("$.subAccountManage").value(false))
+                .andExpect(jsonPath("$.machineManage").value(true))
+                .andExpect(jsonPath("$.reportUsername").doesNotExist())
+                .andExpect(jsonPath("$.reportType").doesNotExist())
+                .andExpect(jsonPath("$.reportUrl").doesNotExist())
+                .andExpect(jsonPath("$.reportOnline").doesNotExist())
                 .andReturn();
         long subId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_type FROM agent_group WHERE id = ?", String.class, subId)).isEqualTo("K28");
 
-        // 列表必须返回该字段，否则前端编辑无法回显
         mockMvc.perform(get("/api/admin/sub-accounts").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportType").value("K28"));
+                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportUsername").doesNotExist())
+                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportNetworkCode").doesNotExist());
 
-        // 更新（整表单覆盖语义）：改成 WNS 并在响应里读回
         mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("""
-                                {"username":"platform_test_report_type_sub","rawPassword":"",
-                                 "displayName":"报网类型子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"report-type-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":"WNS"}
+                                {"username":"platform_test_subaccount_report_removed_renamed","rawPassword":"",
+                                 "score":1000,"subAccountManage":true,"machineManage":false,
+                                 "unifiedReportEnabled":true,"reportUsername":"legacy-user",
+                                 "reportNetworkCode":"K28","reportUrl":"https://old.invalid"}
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportType").value("WNS"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_type FROM agent_group WHERE id = ?", String.class, subId)).isEqualTo("WNS");
+                .andExpect(jsonPath("$.username").value("platform_test_subaccount_report_removed_renamed"))
+                .andExpect(jsonPath("$.subAccountManage").value(true))
+                .andExpect(jsonPath("$.reportNetworkCode").doesNotExist());
 
-        // 空串 = 显式清空为"未设置"（NULL），不是取值 NONE
-        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_report_type_sub","rawPassword":"",
-                                 "displayName":"报网类型子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"report-type-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":""}
-                                """))
-                .andExpect(status().isOk());
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM agent_group WHERE id = ? AND report_type IS NULL", Long.class, subId))
-                .isEqualTo(1L);
-
-        // 非法取值 → 400，且原值不被改动
-        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_report_type_sub","rawPassword":"",
-                                 "displayName":"报网类型子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"report-type-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":"BOGUS"}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("SUB_ACCOUNT_REPORT_TYPE_INVALID"))
-                .andExpect(jsonPath("$.message").value("报网类型无效"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM agent_group WHERE id = ? AND report_type IS NULL", Long.class, subId))
-                .isEqualTo(1L);
-
-        // 新建时非法取值同样 400，且不建行
-        mockMvc.perform(post("/api/admin/sub-accounts")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_report_type_bad","rawPassword":"SubReportType2",
-                                 "displayName":"非法报网类型子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,"reportType":"QQ"}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("SUB_ACCOUNT_REPORT_TYPE_INVALID"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM agent_group WHERE username = 'platform_test_report_type_bad'", Long.class))
-                .isZero();
-    }
-
-    /**
-     * V74：子账号「统一飞单上游状态」四个字段（BY220 {@code x_admin.feidanurl / feidanonline /
-     * feidanmoney / feidanbetting}）。
-     *
-     * <p><b>BY220 依据</b>：{@code admin/view/sub/list.html:59-61} 子账号列表的「网盘状态 / 网盘余额 /
-     * 网盘下注」三列；{@code admin/controller/Users.php:162} 的在线/离线文案；
-     * {@code Users.php:147-149} 读取时"统一飞单配置不完整 → {@code feidanonline} 强制 0"的副作用；
-     * {@code console/Websocket.php:307-318} 上游读数写回（成功 → 在线 + 余额 + 未结算下注）。</p>
-     *
-     * <p>本用例固定住：①{@code reportUrl} 可新建/更新并在响应读回（空串落 {@code NULL}）；
-     * ②超长 {@code reportUrl} → 400 {@code SUB_ACCOUNT_REPORT_URL_INVALID}「上游地址无效」且不落库；
-     * ③{@code reportOnline}/{@code reportBalance}/{@code reportStake} 是上游读数，**不接受表单直接设定**；
-     * ④列表读取按 BY220 读取副作用归一化（配置不完整强制 false、配置完整保留 true）并返回读数。
-     * 全部为本地数据，不发起任何外部请求。</p>
-     */
-    @Test
-    void persistsSubAccountReportUrlAndNormalizesUnifiedReportUpstreamState() throws Exception {
-        String token = login(ADMIN, PASSWORD);
-        MvcResult created = mockMvc.perform(post("/api/admin/sub-accounts")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_upstream_sub","rawPassword":"SubUpstream1",
-                                 "displayName":"上游状态子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"upstream-user","reportPassword":"UpstreamSecret1",
-                                 "reportNetworkCode":"K28","reportRouteCode":"A","reportType":"K28",
-                                 "reportUrl":"https://upstream.example.invalid/api",
-                                 "reportOnline":true,"reportBalance":999.99,"reportStake":888.88}
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportUrl").value("https://upstream.example.invalid/api"))
-                // 上游读数字段固定初始值：表单里传了也必须被忽略（BY220 子账号表单没有这三个字段）
-                .andExpect(jsonPath("$.reportOnline").value(false))
-                .andExpect(jsonPath("$.reportBalance").value(0.00))
-                .andExpect(jsonPath("$.reportStake").value(0.00))
-                .andReturn();
-        long subId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.id")).longValue();
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_url FROM agent_group WHERE id = ?", String.class, subId))
-                .isEqualTo("https://upstream.example.invalid/api");
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_online FROM agent_group WHERE id = ?", Boolean.class, subId)).isFalse();
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_balance FROM agent_group WHERE id = ?", java.math.BigDecimal.class, subId))
-                .isEqualByComparingTo("0.00");
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_stake FROM agent_group WHERE id = ?", java.math.BigDecimal.class, subId))
-                .isEqualByComparingTo("0.00");
-
-        // 更新（整表单覆盖语义）：上游地址改写并在响应读回
-        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_upstream_sub","rawPassword":"",
-                                 "displayName":"上游状态子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"upstream-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":"K28",
-                                 "reportUrl":"https://upstream2.example.invalid/api2"}
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportUrl").value("https://upstream2.example.invalid/api2"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_url FROM agent_group WHERE id = ?", String.class, subId))
-                .isEqualTo("https://upstream2.example.invalid/api2");
-
-        // 空串 = 显式清空为"未设置"（NULL），与机器端 report_url 同语义
-        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_upstream_sub","rawPassword":"",
-                                 "displayName":"上游状态子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"upstream-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":"K28","reportUrl":""}
-                                """))
-                .andExpect(status().isOk());
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM agent_group WHERE id = ? AND report_url IS NULL", Long.class, subId))
-                .isEqualTo(1L);
-
-        // 超长上游地址（> 512）→ 400 SUB_ACCOUNT_REPORT_URL_INVALID「上游地址无效」，且不落库
-        String tooLongUrl = "https://upstream.example.invalid/" + "a".repeat(500);
-        mockMvc.perform(put("/api/admin/sub-accounts/" + subId)
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_upstream_sub","rawPassword":"",
-                                 "displayName":"上游状态子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":true,
-                                 "reportUsername":"upstream-user","reportNetworkCode":"K28",
-                                 "reportRouteCode":"A","reportType":"K28","reportUrl":"%s"}
-                                """.formatted(tooLongUrl)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("SUB_ACCOUNT_REPORT_URL_INVALID"))
-                .andExpect(jsonPath("$.message").value("上游地址无效"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM agent_group WHERE id = ? AND report_url IS NULL", Long.class, subId))
-                .isEqualTo(1L);
-        mockMvc.perform(post("/api/admin/sub-accounts")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("""
-                                {"username":"platform_test_upstream_bad","rawPassword":"SubUpstream2",
-                                 "displayName":"超长上游地址子账号","score":0,"subAccountManage":false,
-                                 "machineManage":false,"unifiedReportEnabled":false,"reportUrl":"%s"}
-                                """.formatted(tooLongUrl)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("SUB_ACCOUNT_REPORT_URL_INVALID"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM agent_group WHERE username = 'platform_test_upstream_bad'", Long.class))
-                .isZero();
-
-        // 配置完整（已开启统一飞单 + 飞单账号 + 飞单密码密文 + 网盘编码）+ 上游置在线
-        // → 列表读取必须保留 true，并返回最近一次登录读到的余额/下注读数
-        jdbcTemplate.update("""
-                UPDATE agent_group SET report_online = TRUE, report_balance = 12.34, report_stake = 56.78
-                 WHERE id = ?
-                """, subId);
-        MvcResult listed = mockMvc.perform(get("/api/admin/sub-accounts").header("Authorization", bearer(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportOnline").value(true))
-                .andReturn();
-        assertThat(firstDecimal(listed, "$[?(@.id == " + subId + ")].reportBalance"))
-                .isEqualByComparingTo("12.34");
-        assertThat(firstDecimal(listed, "$[?(@.id == " + subId + ")].reportStake"))
-                .isEqualByComparingTo("56.78");
-
-        // BY220 Users.php:147-149：飞单账号为空 = 配置不完整 → 读取时强制离线（余额/下注保留）
-        jdbcTemplate.update(
-                "UPDATE agent_group SET report_username = NULL, report_online = TRUE WHERE id = ?", subId);
-        assertSubAccountReportOnlineAfterList(token, subId, false);
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_balance FROM agent_group WHERE id = ?", java.math.BigDecimal.class, subId))
-                .isEqualByComparingTo("12.34");
-
-        // 未开启统一飞单（BY220 feidan != 1）同样是不完整
-        jdbcTemplate.update("""
-                UPDATE agent_group SET unified_report_enabled = FALSE, report_username = 'upstream-user',
-                                      report_online = TRUE
-                 WHERE id = ?
-                """, subId);
-        assertSubAccountReportOnlineAfterList(token, subId, false);
-
-        // 飞单密码密文为空同样是不完整
-        jdbcTemplate.update("""
-                UPDATE agent_group SET unified_report_enabled = TRUE, report_password_ciphertext = NULL,
-                                      report_online = TRUE
-                 WHERE id = ?
-                """, subId);
-        assertSubAccountReportOnlineAfterList(token, subId, false);
-
-        // 网盘编码为空同样是不完整
-        jdbcTemplate.update("""
-                UPDATE agent_group SET report_password_ciphertext = 'local-test-ciphertext',
-                                      report_network_code = NULL, report_online = TRUE
-                 WHERE id = ?
-                """, subId);
-        assertSubAccountReportOnlineAfterList(token, subId, false);
-
-        // 配置补全并再次置在线 → 不再被归一化掉
-        jdbcTemplate.update("""
-                UPDATE agent_group SET report_network_code = 'K28', report_online = TRUE WHERE id = ?
-                """, subId);
-        assertSubAccountReportOnlineAfterList(token, subId, true);
+        assertThat(jdbcTemplate.queryForObject("SELECT report_username FROM agent_group WHERE id = ?",
+                String.class, subId)).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT report_url FROM agent_group WHERE id = ?",
+                String.class, subId)).isNull();
+        assertThat(jdbcTemplate.queryForObject("SELECT unified_report_enabled FROM agent_group WHERE id = ?",
+                Boolean.class, subId)).isFalse();
+        assertThat(jdbcTemplate.queryForObject("SELECT display_name FROM agent_group WHERE id = ?",
+                String.class, subId)).isEqualTo("platform_test_subaccount_report_removed_renamed");
+        assertThat(jdbcTemplate.queryForObject("SELECT u.display_name FROM sys_user u JOIN agent_group g "
+                        + "ON g.sys_user_id = u.id WHERE g.id = ?", String.class, subId))
+                .isEqualTo("platform_test_subaccount_report_removed_renamed");
     }
 
     @Test
@@ -560,9 +348,11 @@ class PlatformAdminResourceControllerTest {
                 INSERT INTO game_issue
                     (issue_number, status, phase, number_1, number_2, number_3, number_4,
                      number_5, number_6, number_7, number_8, issue_started_at, opened_at,
-                     closed_at, settled_at)
+                     closed_at, settled_at, draw_result_version, draw_confirmed_at, draw_confirmed_by)
                 VALUES ('39999946', 'CLOSED', 'SETTLED', 1, 2, 3, 4, 5, 6, 7, 18,
-                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        1, CURRENT_TIMESTAMP,
+                        (SELECT id FROM sys_user WHERE username = 'platform-admin-test-admin'))
                 """);
         long betId = insertAndReturnId("""
                 INSERT INTO game_bet
@@ -614,6 +404,124 @@ class PlatformAdminResourceControllerTest {
                  WHERE permission_code = 'DRAW_HISTORY_FORCE_SETTLE' AND resource_id = '39999946'
                 """, Long.class)).isEqualTo(2);
     }
+
+    @Test
+    void confirmsDrawDraftSettlesBothLayersAndAllowsSafeRetry() throws Exception {
+        long playerUserId = userRepository.insert("platform-admin-test-confirm-player", "开奖确认测试玩家",
+                passwordPolicy.encode(PASSWORD), "ACTIVE");
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account
+                    (user_code, display_name, balance, status, sys_user_id, agent_id,
+                     identity_type, player_kind, member_code)
+                VALUES ('PLATFORM_TEST_CONFIRM_PLAYER', '开奖确认测试玩家', 100.00, 'ACTIVE', ?, 1,
+                        'REAL', 'NORMAL', 'V-DRAW-CONFIRM-001')
+                """, playerUserId);
+        long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue (issue_number, status, phase, issue_started_at)
+                VALUES ('39999999', 'CLOSED', 'DRAWING', CURRENT_TIMESTAMP - INTERVAL '10' MINUTE)
+                """);
+        long betId = insertAndReturnId("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot)
+                VALUES (?, 'PLATFORM_TEST_DRAW_CONFIRM_BET', 'platform-test-draw-confirm',
+                        '39999999', 1, 'FAN', '1', 10.00, 3.850)
+                """, accountId);
+        String token = login(ADMIN, PASSWORD);
+
+        mockMvc.perform(put("/api/admin/draw-history/AU8/39999999/draft")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultVersion").value(1));
+        mockMvc.perform(post("/api/admin/draw-history/AU8/39999999/confirm")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultVersion").value(2))
+                .andExpect(jsonPath("$.localOrders").value(1))
+                .andExpect(jsonPath("$.centerOrders").value(0));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId)).isEqualTo("WIN");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT balance FROM demo_user_account WHERE id = ?", java.math.BigDecimal.class, accountId))
+                .isEqualByComparingTo("138.50");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_issue_event
+                 WHERE game_code = 'AU8' AND issue_number = '39999999' AND event_type = 'DRAW_RESULT'
+                """, Long.class)).isEqualTo(1);
+
+        mockMvc.perform(post("/api/admin/draw-history/AU8/39999999/confirm")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resultVersion").value(2))
+                .andExpect(jsonPath("$.localOrders").value(0));
+        mockMvc.perform(put("/api/admin/draw-history/AU8/39999999/draft")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"numbers\":[2,2,3,4,5,6,7,18]}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DRAW_RESULT_LOCKED"));
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger
+                 WHERE related_bet_id = ? AND operation_type = 'SETTLEMENT_CREDIT'
+                """, Long.class, betId)).isEqualTo(1);
+    }
+
+    @Test
+    void forceSettlementPaysWinningSpecialSelectionAtItsUnitStake() throws Exception {
+        long playerUserId = userRepository.insert("platform-admin-test-special-draw-player", "特码强制结算玩家",
+                passwordPolicy.encode(PASSWORD), "ACTIVE");
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account
+                    (user_code, display_name, balance, status, sys_user_id, agent_id,
+                     identity_type, player_kind, member_code)
+                VALUES ('PLATFORM_TEST_SPECIAL_DRAW_PLAYER', '特码强制结算玩家', 0.00, 'ACTIVE', ?, 1,
+                        'REAL', 'NORMAL', 'V-DRAW-SPECIAL-001')
+                """, playerUserId);
+        long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (issue_number, status, phase, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, issue_started_at, opened_at,
+                     closed_at, settled_at, draw_result_version, draw_confirmed_at, draw_confirmed_by)
+                VALUES ('39999947', 'CLOSED', 'SETTLED', 1, 2, 3, 4, 5, 6, 7, 18,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        1, CURRENT_TIMESTAMP,
+                        (SELECT id FROM sys_user WHERE username = 'platform-admin-test-admin'))
+                """);
+        long betId = insertAndReturnId("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot)
+                VALUES (?, 'PLATFORM_TEST_SPECIAL_DRAW_BET', 'platform-test-special-draw',
+                        '39999947', 1, 'SPECIAL', '1,2', 200.00, 18.00)
+                """, accountId);
+        jdbcTemplate.update("""
+                INSERT INTO game_bet_selection
+                    (bet_id, selection_no, selection_key, quota_bucket, number_value, unit_stake)
+                VALUES (?, 1, '1特', 'SPECIAL_NUMBER', 1, 100.00),
+                       (?, 2, '2特', 'SPECIAL_NUMBER', 2, 100.00)
+                """, betId, betId);
+
+        String token = login(ADMIN, PASSWORD);
+        mockMvc.perform(post("/api/admin/draw-history/39999947/force-settle")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.orders").value(1));
+
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId)).isEqualTo("WIN");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT net_profit FROM game_bet WHERE id = ?", java.math.BigDecimal.class, betId))
+                .isEqualByComparingTo("1600.00");
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT balance FROM demo_user_account WHERE id = ?", java.math.BigDecimal.class, accountId))
+                .isEqualByComparingTo("1800.00");
+    }
+
     @Test
     void supplementsMissingDrawIssueAndSettlesPendingBet() throws Exception {
         long playerUserId = userRepository.insert("platform-admin-test-supplement-player", "补期测试玩家",
@@ -737,17 +645,17 @@ class PlatformAdminResourceControllerTest {
                 // 双边流水：番 10.00 + 车 300/3=100.00 + 通 200/2=100.00
                 .andExpect(jsonPath("$.machines[0].totalDoubleFlow").value(210.00))
                 .andExpect(jsonPath("$.machines[0].totalProfit").value(218.50))
-                // 单边返水：番 28.50×1% = 0.29，车 95.00×1% = 0.95，通 95.00×1% = 0.95
-                .andExpect(jsonPath("$.machines[0].totalFanShui").value(2.19))
+                // BY220先将1.5/100按两位小数截断为0.01，再乘番净赢28.50，结果为0.28。
+                .andExpect(jsonPath("$.machines[0].totalFanShui").value(2.18))
                 // 双边返水：番 10×1% = 0.10，车 100×1% = 1.00，通 100×1% = 1.00
                 .andExpect(jsonPath("$.machines[0].rebateDouble").value(2.10))
                 .andExpect(jsonPath("$.totalDoubleFlow").value(210.00))
-                .andExpect(jsonPath("$.totalFanShui").value(2.19))
+                .andExpect(jsonPath("$.totalFanShui").value(2.18))
                 .andExpect(jsonPath("$.totalRebateDouble").value(2.10))
                 // 默认单边口径：生效返水取单边返水
                 .andExpect(jsonPath("$.machines[0].rebateMode").value("SINGLE"))
-                .andExpect(jsonPath("$.machines[0].effectiveRebate").value(2.19))
-                .andExpect(jsonPath("$.totalEffectiveRebate").value(2.19));
+                .andExpect(jsonPath("$.machines[0].effectiveRebate").value(2.18))
+                .andExpect(jsonPath("$.totalEffectiveRebate").value(2.18));
     }
 
     @Test
@@ -765,7 +673,7 @@ class PlatformAdminResourceControllerTest {
                         .param("day", "2026-10-02").param("subAccountId", Long.toString(fixture.groupId())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.machines[0].rebateMode").value("DOUBLE"))
-                .andExpect(jsonPath("$.machines[0].totalFanShui").value(0.29))
+                .andExpect(jsonPath("$.machines[0].totalFanShui").value(0.28))
                 .andExpect(jsonPath("$.machines[0].rebateDouble").value(0.10))
                 .andExpect(jsonPath("$.machines[0].effectiveRebate").value(0.10))
                 .andExpect(jsonPath("$.totalEffectiveRebate").value(0.10));
@@ -1229,6 +1137,34 @@ class PlatformAdminResourceControllerTest {
                    AND request_path = '/api/admin/settings/clear-data'
                    AND operator_user_id = ?
                 """, Long.class, adminUserId)).isEqualTo(1);
+    }
+
+    @Test
+    @Transactional
+    void clearDataCannotDeleteConfirmedDrawHistory() throws Exception {
+        long adminId = jdbcTemplate.queryForObject(
+                "SELECT id FROM sys_user WHERE username = ?", Long.class, ADMIN);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, opened_at, created_at,
+                     draw_result_version, draw_confirmed_at, draw_confirmed_by)
+                VALUES ('AU8', 'CLEAR-CONFIRMED-ISSUE', 'CLOSED', 'SETTLED', 1, 2, 3, 4,
+                        5, 6, 7, 8, '2026-01-01 00:00:00', '2026-01-01 00:00:00',
+                        1, '2026-01-01 00:00:00', ?)
+                """, adminId);
+        String token = login(ADMIN, PASSWORD);
+
+        mockMvc.perform(post("/api/admin/settings/clear-data")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"time\":\"2026-07-01T00:00:00Z\",\"confirm\":\"CONFIRM_CLEAR\",\"preview\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CLEAR_DATA_CONFIRMED_DRAWS_EXIST"));
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_issue
+                 WHERE game_code = 'AU8' AND issue_number = 'CLEAR-CONFIRMED-ISSUE'
+                """, Long.class)).isEqualTo(1L);
     }
 
     @Test
@@ -1932,7 +1868,7 @@ class PlatformAdminResourceControllerTest {
         assertThat(machineScore(machineId)).isEqualByComparingTo("300.00");
 
         // ② 池不够就拒绝，且不产生任何余额变动
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(machineUpdateBody(9999, subId)))
                 .andExpect(status().isConflict())
@@ -1941,7 +1877,7 @@ class PlatformAdminResourceControllerTest {
         assertThat(machineScore(machineId)).isEqualByComparingTo("300.00");
 
         // ③ 机器调低：差额 200 退回池
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(machineUpdateBody(100, subId)))
                 .andExpect(status().isOk());
@@ -1949,7 +1885,7 @@ class PlatformAdminResourceControllerTest {
         assertThat(machineScore(machineId)).isEqualByComparingTo("100.00");
 
         // ④ 机器改挂到无子账号（超管直连机器）：现有积分退回原池，机器按目标值直接设定
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(machineUpdateBody(100, null)))
                 .andExpect(status().isOk());
@@ -2001,7 +1937,7 @@ class PlatformAdminResourceControllerTest {
                 .as("池变动后余额必须是两位小数").isEqualTo("999.99");
 
         // ② 机器改到 0.11：差额 0.10 继续从池划出
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(machineUpdateBody("0.11", subId)))
                 .andExpect(status().isOk())
@@ -2041,7 +1977,7 @@ class PlatformAdminResourceControllerTest {
         long groupLedgerBefore = groupLedgerCount(subId);
 
         // ① 机器目标值 0.001 → 400（不再是 500）
-        mockMvc.perform(put("/api/admin/machines/" + machineId)
+        mockMvc.perform(machinePut(machineId)
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content(machineUpdateBody("0.001", subId)))
                 .andExpect(status().isBadRequest())
@@ -2312,32 +2248,10 @@ class PlatformAdminResourceControllerTest {
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("""
                                 {"username":"platform_test_score_readonly","displayName":"只读积分子账号",
-                                 "up":25,"subAccountManage":false,"machineManage":false,
-                                 "unifiedReportEnabled":false}
+                                 "up":25,"subAccountManage":false,"machineManage":false}
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.score").value(125));
-    }
-
-    /**
-     * 触发一次子账号列表读取，断言该子账号归一化后的上游在线状态（V74 {@code agent_group.report_online}）。
-     *
-     * <p>BY220 {@code Users.php:147-149} 的"配置不完整强制离线"是**读取时**的副作用，
-     * 所以断言必须走一次列表读取（同时核对响应值与落库值）。</p>
-     */
-    private void assertSubAccountReportOnlineAfterList(String token, long subId, boolean expected) throws Exception {
-        mockMvc.perform(get("/api/admin/sub-accounts").header("Authorization", bearer(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == " + subId + ")].reportOnline").value(expected));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT report_online FROM agent_group WHERE id = ?", Boolean.class, subId)).isEqualTo(expected);
-    }
-
-    /** 取列表响应里过滤后的第一个数值字段（JsonPath 过滤结果固定是数组）。 */
-    private java.math.BigDecimal firstDecimal(MvcResult result, String path) throws Exception {
-        List<Object> values = JsonPath.read(result.getResponse().getContentAsString(), path);
-        assertThat(values).hasSize(1);
-        return new java.math.BigDecimal(values.get(0).toString());
     }
 
     private String login(String username, String password) throws Exception {
@@ -2351,7 +2265,15 @@ class PlatformAdminResourceControllerTest {
         return "Bearer " + token;
     }
 
+    private MockHttpServletRequestBuilder machinePut(long machineId) {
+        Integer version = jdbcTemplate.queryForObject(
+                "SELECT betting_config_version FROM agent WHERE id=?", Integer.class, machineId);
+        return put("/api/admin/machines/" + machineId)
+                .queryParam("expectedConfigVersion", String.valueOf(version));
+    }
+
     private void clean() {
+        jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number = 'CLEAR-CONFIRMED-ISSUE'");
         jdbcTemplate.update("DELETE FROM report_network WHERE network_code LIKE 'platform_test_%'");
         jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'PLATFORM_TEST_%')");
         jdbcTemplate.update("UPDATE game_route_odds SET special_odds = 0, big_small_odds = 0 WHERE game_id = 1");
@@ -2390,6 +2312,9 @@ class PlatformAdminResourceControllerTest {
         cleanupByUsers("DELETE FROM game_bet WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN %s)");
         jdbcTemplate.update("DELETE FROM game_bet WHERE issue_number LIKE '399999%'");
+        jdbcTemplate.update("DELETE FROM chat_robot_dispatch WHERE game_event_id IN "
+                + "(SELECT id FROM game_issue_event WHERE issue_number LIKE '399999%')");
+        jdbcTemplate.update("DELETE FROM game_issue_event WHERE issue_number LIKE '399999%'");
         jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number LIKE '399999%'");
         jdbcTemplate.update("DELETE FROM game_definition WHERE game_code LIKE 'PLATFORM_TEST_%'");
         jdbcTemplate.update("DELETE FROM agent_game WHERE agent_id IN "
@@ -2401,7 +2326,8 @@ class PlatformAdminResourceControllerTest {
         jdbcTemplate.update("DELETE FROM agent_group WHERE username LIKE 'platform_test_%'");
         cleanupByUsers("DELETE FROM auth_session WHERE user_id IN %s");
         cleanupByUsers("DELETE FROM sys_user_role WHERE user_id IN %s");
-        cleanupByUsers("DELETE FROM sys_user WHERE id IN %s");
+        jdbcTemplate.update("DELETE FROM sys_user WHERE username LIKE 'platform-admin-test-%' "
+                + "OR username LIKE 'platform_test_%'");
     }
 
     private String machineLedgerType(long agentId) {

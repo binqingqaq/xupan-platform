@@ -45,6 +45,13 @@ public class VirtualWalletService {
         return walletOrNotFound(walletRepository.findByUserId(authenticatedUserId));
     }
 
+    /** Acquires the player account row lock before quota reads in a bet placement transaction. */
+    @Transactional
+    public VirtualWallet lockForBet(long authenticatedUserId) {
+        requireActiveUser(authenticatedUserId);
+        return walletOrNotFound(walletRepository.findByUserIdForUpdate(authenticatedUserId));
+    }
+
     @Transactional(readOnly = true)
     public VirtualWallet getForAdmin(long targetUserId) {
         requireActiveUser(targetUserId);
@@ -156,6 +163,20 @@ public class VirtualWalletService {
         BigDecimal normalizedAmount = positiveAmount(amount);
         WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendCancellationRefund(
                 targetUserId, betId, accountId, requiredText(issueNumber, "期号不能为空", 64), normalizedAmount));
+        return resultFor(targetUserId, ledger);
+    }
+
+    /** Manual refund after a center cancellation/refund; uses its own durable idempotency key. */
+    @Transactional
+    public WalletOperationResult refundForCenterDisposition(long operatorUserId, long targetUserId,
+                                                             long betId, long accountId, String issueNumber,
+                                                             BigDecimal amount, String reason) {
+        requireActiveUser(operatorUserId);
+        BigDecimal normalizedAmount = positiveAmount(amount);
+        String normalizedReason = requiredText(reason, "处理原因不能为空", 255);
+        WalletLedgerEntry ledger = walletOperation(() -> walletRepository.appendCenterDispositionRefund(
+                operatorUserId, targetUserId, betId, accountId, requiredText(issueNumber, "期号不能为空", 64),
+                normalizedAmount, normalizedReason));
         return resultFor(targetUserId, ledger);
     }
 

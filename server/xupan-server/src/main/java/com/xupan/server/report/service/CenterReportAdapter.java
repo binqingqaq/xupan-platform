@@ -5,11 +5,11 @@ import com.xupan.server.report.domain.ReportOutcome;
 import org.springframework.stereotype.Component;
 
 /**
- * 中心上游适配器（{@code report_type = CENTER}）。
+ * 中心账号报网适配器。
  *
  * <p>这一层**不直接访问网络**：它把"订单要报给中心"转换成一个内部的入站服务调用
  * （{@link com.xupan.server.center.service.CenterOrderService}），由中心侧完成
- * Token 归属、校验、额度冻结与建档。</p>
+ * 中心账号归属校验、额度处理与建档。机器身份来自有效的机器级中心账号会话。</p>
  *
  * <p>为什么不用 HTTP 自调用：中心与本地在**同一个应用、同一个库**里，
  * 走 HTTP 会引入一个自己打自己的假分布式边界（超时、重试、部分失败都要额外处理），
@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class CenterReportAdapter implements ReportAdapter {
 
-    /** 适配器编码，与 {@code agent.report_type = CENTER} 对应。 */
+    /** 内部订单尝试的适配器编码。 */
     public static final String CODE = "CENTER";
 
     private final CenterOrderGateway gateway;
@@ -43,9 +43,18 @@ public class CenterReportAdapter implements ReportAdapter {
             throw new IllegalArgumentException("报网提交参数不能为空");
         }
         if (!command.online()) {
-            return ReportOutcome.REJECTED;
+            return ReportOutcome.NOT_SENT;
         }
         return gateway.submit(command.machineId(), command.betId(), command.issueNumber(),
+                command.playType(), command.parameters(), command.stake(), command.odds());
+    }
+
+    /** Replays an in-flight order with its persisted center account identity. */
+    public ReportOutcome recover(ReportCommand command, long centerAgentId) {
+        if (command == null) {
+            throw new IllegalArgumentException("报网提交参数不能为空");
+        }
+        return gateway.recover(centerAgentId, command.machineId(), command.betId(), command.issueNumber(),
                 command.playType(), command.parameters(), command.stake(), command.odds());
     }
 }

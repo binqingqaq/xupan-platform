@@ -237,13 +237,13 @@ const machineOnlyNotice = computed(() => {
 
 const displayDisabled = computed(() => savingDisplay.value || machineSaving.value
   || configLevel.value === 'UNAVAILABLE'
-  || (configLevel.value === 'MACHINE' && machineConfig.value === null))
+  || (configLevel.value === 'MACHINE' && (machineConfig.value === null || machineConfig.value.configEditable === false)))
 
 const rebateModeDisabled = computed(() => displayDisabled.value || configLevel.value !== 'MACHINE')
 
 const limitsDisabled = computed(() => savingLimits.value
   || configLevel.value === 'UNAVAILABLE'
-  || (configLevel.value === 'MACHINE' && machineConfig.value === null))
+  || (configLevel.value === 'MACHINE' && (machineConfig.value === null || machineConfig.value.configEditable === false)))
 
 function activeOddsDraft(): { oddsRate: string; specialOddsRate: string; specialRebateRate: string } {
   return configLevel.value === 'MACHINE'
@@ -510,7 +510,7 @@ onMounted(() => {
       @blur="commitDisplay"
     />
     <span class="game-control-label">限额：</span>
-    <button
+      <button v-if="machineConfig?.configEditable !== false"
       class="game-control-limit-button"
       type="button"
       aria-haspopup="dialog"
@@ -558,6 +558,7 @@ onMounted(() => {
       <option value="DOUBLE">双边</option>
     </select>
     <span v-if="machineOnlyNotice" class="game-control-hint">{{ machineOnlyNotice }}</span>
+    <span v-else-if="machineConfig?.configEditable === false" class="game-control-hint">超级管理员已关闭本机配置修改权限</span>
     <span v-if="notice" class="game-control-notice" role="status">{{ notice }}</span>
     <span v-if="error" class="game-control-error" role="alert">{{ error }}</span>
   </section>

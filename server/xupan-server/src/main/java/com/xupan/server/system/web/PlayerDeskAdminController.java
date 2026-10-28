@@ -24,7 +24,9 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotNull;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -87,24 +89,25 @@ import java.util.List;
         return ReportConfigResponse.from(reportService.config(user(auth), machineId));
     }
 
-    /** 保存报网类型/账号/密码/上游地址/网盘/盘口/自动上报/失败退单；密码只在非空时覆盖。 */
+    /** 保存机器级自动上报与失败自动退单开关。 */
     @PutMapping("/report")
     public ReportConfigResponse updateReport(Authentication auth, @RequestBody ReportConfigRequest request) {
         return ReportConfigResponse.from(reportService.saveConfig(user(auth), request.machineId(), request.toUpdate()));
     }
 
-    /** 本地模拟登录（不发任何外部请求）：置在线并记录登录时间。 */
+    /** 机器账号凭中心账号密码建立本机独立会话；机器身份取自已认证主体。 */
     @PostMapping("/report/login")
     public ReportConfigResponse reportLogin(Authentication auth,
-                                            @RequestBody(required = false) ReportMachineRequest request) {
-        return ReportConfigResponse.from(reportService.login(user(auth), request == null ? null : request.machineId()));
+                                            @Valid @RequestBody ReportLoginRequest request,
+                                            HttpServletRequest servletRequest) {
+        return ReportConfigResponse.from(reportService.login(user(auth), request.username(), request.password(),
+                servletRequest.getRemoteAddr()));
     }
 
-    /** 退出报网：置离线。 */
+    /** 撤销当前机器自己的中心账号会话。 */
     @PostMapping("/report/logout")
-    public ReportConfigResponse reportLogout(Authentication auth,
-                                             @RequestBody(required = false) ReportMachineRequest request) {
-        return ReportConfigResponse.from(reportService.logout(user(auth), request == null ? null : request.machineId()));
+    public ReportConfigResponse reportLogout(Authentication auth, HttpServletRequest servletRequest) {
+        return ReportConfigResponse.from(reportService.logout(user(auth), servletRequest.getRemoteAddr()));
     }
 
     /** 按 {@code report_status}（可空=全部）列出本机器范围内的注单。 */
@@ -135,8 +138,16 @@ import java.util.List;
     /** 重报单笔注单（BY220 {@code reFeidan}）：只允许未报/失败/超时，且注单属于本机器。 */
     @PostMapping("/report/orders/{betId}/resubmit")
     public ReportResubmit resubmitReportOrder(Authentication auth, @PathVariable long betId,
-                                              @RequestBody(required = false) ReportMachineRequest request) {
+                                              @RequestBody(required = false) ReportResubmitRequest request) {
         return ReportResubmit.from(reportService.resubmit(user(auth), request == null ? null : request.machineId(), betId));
+    }
+
+    /** Records the machine-scoped local-bet conclusion for a confirmed center cancellation/refund. */
+    @PostMapping("/report/orders/{betId}/local-disposition")
+    public ReportLocalDisposition reportLocalDisposition(Authentication auth, @PathVariable long betId,
+                                                         @Valid @RequestBody ReportLocalDispositionRequest request) {
+        return ReportLocalDisposition.from(reportService.disposeLocalBet(user(auth), request.machineId(), betId,
+                request.decision(), request.reason()));
     }
 
     @GetMapping("/summary")
@@ -438,12 +449,13 @@ import java.util.List;
                                        BigDecimal strictLimit, BigDecimal tongLimit, BigDecimal carLimit,
                                        BigDecimal specialLimit, BigDecimal oddEvenLimit, BigDecimal bigSmallLimit,
                                        BigDecimal fanLimit, BigDecimal addLimit, BigDecimal playerMinStake,
-                                       BigDecimal playerMaxStake) {
+                                       BigDecimal playerMaxStake, Integer expectedVersion) {
         PlayerDeskAdminService.MachineConfigUpdate toUpdate() {
             return new PlayerDeskAdminService.MachineConfigUpdate(boardOpen, chaseEnabled, botCount, closeSeconds,
                     cancelSeconds, countdownVisible, rebateRate, oddsRate, specialRebateRate, specialOddsRate, rebateMode,
                     totalLimit, positiveLimit, angleLimit, strictLimit, tongLimit, carLimit, specialLimit,
-                    oddEvenLimit, bigSmallLimit, fanLimit, addLimit, playerMinStake, playerMaxStake);
+                    oddEvenLimit, bigSmallLimit, fanLimit, addLimit, playerMinStake, playerMaxStake,
+                    expectedVersion);
         }
     }
 
@@ -497,35 +509,28 @@ import java.util.List;
     public record MessageOutcome(ChatMessage message, boolean replayed, String feedback, Object bet) {
         static MessageOutcome from(ChatMessageService.ChatMessageSendOutcome x) { return new MessageOutcome(x.message(), x.deduplicated(), null, null); }
     }
-    /** 报网配置请求体；{@code null} 字段表示保持原值，{@code reportPassword} 只在非空时覆盖。 */
-    public record ReportConfigRequest(Long machineId, String reportType, Boolean reportAuto, Boolean reportWithdraw,
-                                      String reportUsername, String reportPassword, String reportUrl,
-                                      String reportNetworkCode, String reportRouteCode) {
+    /** 报网控制请求体；未传的开关保持原值。 */
+    public record ReportConfigRequest(Long machineId, Boolean reportAuto, Boolean reportWithdraw) {
         ReportService.ReportConfigUpdate toUpdate() {
-            return new ReportService.ReportConfigUpdate(reportType, reportAuto, reportWithdraw, reportUsername,
-                    reportPassword, reportUrl, reportNetworkCode, reportRouteCode);
+            return new ReportService.ReportConfigUpdate(reportAuto, reportWithdraw);
         }
     }
-    /** 只带机器选择的报网请求体（登录/退出/重报）。 */
-    public record ReportMachineRequest(Long machineId) {}
-    /**
-     * 报网配置响应；只含 {@code hasPassword} 布尔，绝不含密码明文或密文。
-     *
-     * <p>{@code inheritedFromGroup} 表示本次读到的飞单账号/网盘/盘口是否来自子账号"统一飞单"
-     * （BY220 {@code x_admin.feidan*}）的只读回退：机器自身没有飞单账号、子账号已开启统一飞单
-     * 且配好账号时才为 {@code true}；此时账号与密码仍只存在子账号行，未被复制到机器行。</p>
-     */
-    public record ReportConfigResponse(long machineId, String reportType, boolean reportAuto, boolean reportOnline,
-                                       boolean reportWithdraw, String reportUsername, boolean hasPassword,
-                                       String reportUrl, String reportNetworkCode, String reportRouteCode,
-                                       BigDecimal reportBalance, BigDecimal reportStake, Instant reportLastLoginAt,
-                                       long timeoutOrderCount, long unreportedCount, long failedOrderCount,
-                                       boolean inheritedFromGroup) {
+    public record ReportLoginRequest(@NotBlank String username, @NotBlank String password) {}
+
+    public record ReportResubmitRequest(Long machineId) {}
+    public record ReportLocalDispositionRequest(Long machineId, @NotBlank @Size(max = 32) String decision,
+                                                @NotBlank @Size(max = 255) String reason) {}
+    /** 机器报网状态和共享中心账号额度摘要；不包含密码或其他机器的订单详情。 */
+    public record ReportConfigResponse(long machineId, boolean reportAuto, boolean reportOnline,
+                                       boolean reportWithdraw, String centerAccountUsername,
+                                       Instant centerAccountExpiresAt, BigDecimal centerAvailableBalance,
+                                       BigDecimal centerFrozenBalance, BigDecimal centerOpenStake,
+                                       long timeoutOrderCount, long unreportedCount, long failedOrderCount) {
         static ReportConfigResponse from(ReportService.ReportConfigView x) {
-            return new ReportConfigResponse(x.machineId(), x.reportType(), x.reportAuto(), x.reportOnline(),
-                    x.reportWithdraw(), x.reportUsername(), x.hasPassword(), x.reportUrl(), x.reportNetworkCode(),
-                    x.reportRouteCode(), x.reportBalance(), x.reportStake(), x.reportLastLoginAt(),
-                    x.timeoutOrderCount(), x.unreportedCount(), x.failedOrderCount(), x.inheritedFromGroup());
+            return new ReportConfigResponse(x.machineId(), x.reportAuto(), x.reportOnline(),
+                    x.reportWithdraw(), x.centerAccountUsername(), x.centerAccountExpiresAt(),
+                    x.centerAvailableBalance(), x.centerFrozenBalance(), x.centerOpenStake(),
+                    x.timeoutOrderCount(), x.unreportedCount(), x.failedOrderCount());
         }
     }
     /** 报网订单分页响应。 */
@@ -561,17 +566,29 @@ import java.util.List;
     public record ReportOrder(long betId, String betCode, long accountId, String memberCode, String displayName,
                               String issueNumber, int ballNumber, String playType, String parametersText,
                               BigDecimal stake, BigDecimal odds, String settlementStatus, String reportStatus,
-                              Instant createdAt) {
+                              String responseCode, String responseMessage, String localCenterOutcome,
+                              String localDisposition, String localDispositionReason,
+                              Long localDispositionOperatorId, Instant localDispositionAt, Instant createdAt) {
         static ReportOrder from(com.xupan.server.report.repository.ReportUpstreamOrderRepository.OrderRow x) {
             return new ReportOrder(x.betId(), x.betCode(), x.accountId(), x.memberCode(), x.displayName(),
                     x.issueNumber(), x.ballNumber(), x.playType(), x.parametersText(), x.stake(), x.odds(),
-                    x.settlementStatus(), x.reportStatus(), x.createdAt());
+                    x.settlementStatus(), x.reportStatus(), x.responseCode(), x.responseMessage(),
+                    x.localCenterOutcome(), x.localDisposition(), x.localDispositionReason(),
+                    x.localDispositionOperatorId(), x.localDispositionAt(), x.createdAt());
         }
     }
     /** 重报结果：本次回写的上报状态 + 最新配置快照。 */
     public record ReportResubmit(long betId, String reportStatus, ReportConfigResponse config) {
         static ReportResubmit from(ReportService.ResubmitResult x) {
             return new ReportResubmit(x.betId(), x.reportStatus(), ReportConfigResponse.from(x.config()));
+        }
+    }
+    public record ReportLocalDisposition(long betId, String centerOutcome, String decision, String reason,
+                                         String settlementStatus, BigDecimal refundedAmount,
+                                         long operatorUserId, Instant decidedAt, boolean replayed) {
+        static ReportLocalDisposition from(ReportService.LocalDispositionResult x) {
+            return new ReportLocalDisposition(x.betId(), x.centerOutcome(), x.decision(), x.reason(),
+                    x.settlementStatus(), x.refundedAmount(), x.operatorUserId(), x.decidedAt(), x.replayed());
         }
     }
 }

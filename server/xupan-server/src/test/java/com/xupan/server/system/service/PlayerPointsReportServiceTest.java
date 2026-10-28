@@ -128,6 +128,40 @@ class PlayerPointsReportServiceTest {
     }
 
     @Test
+    void reportUsesSpecialSelectionUnitStakeAndKeepsRSeparateFromPlayerF() {
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
+        Instant createdAt = Instant.parse("2026-09-21T10:00:00Z");
+        PlayerPointsReportRepository.PlayerAccount player = new PlayerPointsReportRepository.PlayerAccount(
+                7L, 70L, 9L, "SINGLE", "v1001", "P-001", "玩家", "NORMAL", money("0"), money("1800"));
+        PlayerPointsReportRepository.BetEvent bet = new PlayerPointsReportRepository.BetEvent(
+                1L, 70L, "B-SPECIAL", "20260921", 1, "SPECIAL", "1,2", money("200"), money("18"),
+                money("1.50"), money("0.01"), money("100"), "WIN", money("1600"), "特码组合中奖",
+                createdAt, createdAt);
+        when(repository.findPlayers(eq("NORMAL"), any(Instant.class), any(Instant.class), any()))
+                .thenReturn(List.of(player));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            Consumer<PlayerPointsReportRepository.BetEvent> consumer = invocation.getArgument(4);
+            consumer.accept(bet);
+            return null;
+        }).when(repository).forEachBetEvent(eq("NORMAL"), any(Instant.class), any(Instant.class), any(), any());
+        when(repository.findBetEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(500), any()))
+                .thenReturn(List.of(bet));
+        when(repository.findLedgerTotals(eq("NORMAL"), any(Instant.class), any(Instant.class), any()))
+                .thenReturn(List.of());
+        when(repository.findLedgerEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(500), any()))
+                .thenReturn(List.of());
+        when(repository.findActionEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(500), any()))
+                .thenReturn(List.of());
+
+        PlayerPointsReportService.Report report = new PlayerPointsReportService(repository, scopeService)
+                .report("NORMAL", "2026-09-21", 500, 7L);
+
+        assertThat(report.summary().singleFlow()).isEqualByComparingTo("1800.00");
+        assertThat(report.summary().singleRebate()).isEqualByComparingTo("1.00");
+        assertThat(report.summary().doubleRebate()).isEqualByComparingTo("18.00");
+    }
+
+    @Test
     void invalidKindAndLimitAreRejectedBeforeRepositoryAccess() {
         when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
         PlayerPointsReportService service = new PlayerPointsReportService(repository, scopeService);

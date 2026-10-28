@@ -4,6 +4,7 @@ export interface QuickBetOption {
   key: string
   code: string
   playType: PlayType
+  quoteKey: 'BASE' | 'FAN' | 'STRICT' | 'CAR' | 'NONE_PAIR' | 'NONE_TRIPLE' | 'TONG' | 'SPECIAL'
   separator: '' | '/'
   section: 'top' | 'lower'
   tone?: 'fan-1' | 'fan-2' | 'fan-3' | 'fan-4' | 'neutral'
@@ -12,6 +13,16 @@ export interface QuickBetOption {
     columnEnd: number
     row: number
   }
+}
+
+function quoteKey(playType: PlayType, code: string): QuickBetOption['quoteKey'] {
+  if (playType === 'SPECIAL') return 'SPECIAL'
+  if (playType === 'FAN') return 'FAN'
+  if (playType === 'STRICT') return 'STRICT'
+  if (playType === 'CAR') return 'CAR'
+  if (playType === 'TONG') return 'TONG'
+  if (playType === 'NONE') return /^\d{2}无/.test(code) ? 'NONE_TRIPLE' : 'NONE_PAIR'
+  return 'BASE'
 }
 
 export const DEFAULT_QUICK_BET_AMOUNTS = [50, 100, 200, 500, 1000]
@@ -29,6 +40,7 @@ const top = (
   key,
   code,
   playType,
+  quoteKey: quoteKey(playType, code),
   separator,
   section: 'top',
   tone,
@@ -45,6 +57,7 @@ const lower = (
   key,
   code,
   playType,
+  quoteKey: quoteKey(playType, code),
   separator,
   section: 'lower',
   tone,
@@ -114,6 +127,10 @@ export const QUICK_BET_OPTIONS: QuickBetOption[] = [
 
 export const QUICK_BET_TOP_OPTIONS = QUICK_BET_OPTIONS.filter(option => option.section === 'top')
 export const QUICK_BET_LOWER_OPTIONS = QUICK_BET_OPTIONS.filter(option => option.section === 'lower')
+
+export function quickBetOptionOdds(option: QuickBetOption, displayOdds: Record<string, string>): string {
+  return displayOdds[option.quoteKey] ?? '--'
+}
 
 export function composeQuickBetMessage(selectedKeys: string[], amount: string): string {
   const normalizedAmount = amount.trim()

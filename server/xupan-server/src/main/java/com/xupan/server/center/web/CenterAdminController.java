@@ -9,8 +9,8 @@ import com.xupan.server.center.repository.ReconciliationDispositionRepository;
 import com.xupan.server.center.service.CenterAgentService;
 import com.xupan.server.center.service.CenterOrderService;
 import com.xupan.server.center.service.CenterReconciliationService;
-import com.xupan.server.center.service.CenterSettlementService;
 import com.xupan.server.center.service.ReconciliationDispositionService;
+import com.xupan.server.platformadmin.service.PlatformDrawHistoryService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.security.core.Authentication;
@@ -26,6 +26,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * 中心上游管理接口（超管面）。
@@ -41,20 +43,25 @@ import java.util.List;
 public class CenterAdminController {
 
     private static final int MAX_PAGE_SIZE = 100;
+    private static final Set<String> ORDER_STATUSES = Set.of(
+            "PENDING", "ACCEPTED", "REJECTED", "TIMEOUT", "SETTLED", "CANCELLED", "REFUNDED");
 
     private final CenterAgentService service;
     private final CenterOrderService orderService;
-    private final CenterSettlementService settlementService;
+    private final CenterOrderRepository orderRepository;
+    private final PlatformDrawHistoryService drawHistoryService;
     private final CenterReconciliationService reconciliationService;
     private final PermissionService permissionService;
 
     public CenterAdminController(CenterAgentService service, CenterOrderService orderService,
-                                 CenterSettlementService settlementService,
+                                 CenterOrderRepository orderRepository,
+                                 PlatformDrawHistoryService drawHistoryService,
                                  CenterReconciliationService reconciliationService,
                                  PermissionService permissionService) {
         this.service = service;
         this.orderService = orderService;
-        this.settlementService = settlementService;
+        this.orderRepository = orderRepository;
+        this.drawHistoryService = drawHistoryService;
         this.reconciliationService = reconciliationService;
         this.permissionService = permissionService;
     }
@@ -234,7 +241,15 @@ public class CenterAdminController {
     @GetMapping("/orders")
     public CenterOrderPage orders(Authentication authentication,
                                   @RequestParam(required = false) Long centerAgentId,
+                                  @RequestParam(required = false) Long groupId,
+                                  @RequestParam(required = false) Long machineId,
+                                  @RequestParam(required = false) Long localBetId,
+                                  @RequestParam(required = false) String centerOrderNo,
+                                  @RequestParam(required = false) String gameCode,
+                                  @RequestParam(required = false) String issueNumber,
                                   @RequestParam(required = false) String status,
+                                  @RequestParam(required = false) Instant createdFrom,
+                                  @RequestParam(required = false) Instant createdTo,
                                   @RequestParam(defaultValue = "1") int page,
                                   @RequestParam(defaultValue = "20") int pageSize) {
         requireOrderReader(authentication);
@@ -242,17 +257,33 @@ public class CenterAdminController {
             throw com.xupan.server.web.BusinessException.badRequest(
                     "CENTER_ORDER_QUERY_INVALID", "分页参数必须为 1 到 100");
         }
-        return new CenterOrderPage(orderService.list(centerAgentId, status, page, pageSize).stream()
+        if (invalidId(centerAgentId) || invalidId(groupId) || invalidId(machineId) || invalidId(localBetId)
+                || (createdFrom != null && createdTo != null && createdFrom.isAfter(createdTo))) {
+            throw com.xupan.server.web.BusinessException.badRequest(
+                    "CENTER_ORDER_QUERY_INVALID", "订单筛选参数无效");
+        }
+        String normalizedStatus = status == null || status.isBlank() ? null : status.trim().toUpperCase(Locale.ROOT);
+        if (normalizedStatus != null && !ORDER_STATUSES.contains(normalizedStatus)) {
+            throw com.xupan.server.web.BusinessException.badRequest(
+                    "CENTER_ORDER_QUERY_INVALID", "订单状态无效");
+        }
+        CenterOrderRepository.OrderFilter filter = new CenterOrderRepository.OrderFilter(centerAgentId, groupId,
+                machineId, localBetId, blankToNull(centerOrderNo), blankToNull(gameCode),
+                blankToNull(issueNumber), normalizedStatus, createdFrom, createdTo);
+        return new CenterOrderPage(orderRepository.searchOrders(filter, page, pageSize).stream()
                 .map(CenterOrderView::from).toList(), page, pageSize,
-                orderService.count(centerAgentId, status));
+                orderRepository.countOrders(filter));
     }
 
-    /**
-     * 第二层结算：按开奖结果结算某游戏某期全部已接受的中心订单（中心赔代理 / 从代理收）。
-     *
-     * <p>对应《代理报网盘口与结算业务规则说明》§10：玩家赢 → 本地赔玩家、中心再赔代理；
-     * 玩家输 → 本地收玩家、中心再从代理收。幂等：只处理 ACCEPTED，结算后置为 SETTLED。</p>
-     */
+    private static boolean invalidId(Long id) {
+        return id != null && id <= 0;
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /** 补齐开奖确认后尚未完成的本地与中心订单结算。 */
     @PostMapping("/settlements")
     public CenterSettlementResponse settle(Authentication authentication,
                                            @Valid @RequestBody CenterSettlementRequest request) {
@@ -261,12 +292,10 @@ public class CenterAdminController {
             throw com.xupan.server.web.BusinessException.forbidden("CENTER_AGENT_FORBIDDEN",
                     "没有中心上游管理权限");
         }
-        com.xupan.server.game.domain.BallResult result = new com.xupan.server.game.domain.BallResult(
-                request.number(), request.fan(), request.parity(), request.size());
-        CenterSettlementService.SettlementSummary summary = settlementService.settleIssue(
-                request.gameCode(), request.issueNumber(), result, request.drawNumbers(),
-                request.limit() == null ? 500 : request.limit());
-        return CenterSettlementResponse.from(summary);
+        PlatformDrawHistoryService.SettlementSummary summary = drawHistoryService.forceSettleIssue(
+                request.gameCode(), request.issueNumber(), operator);
+        return new CenterSettlementResponse(request.gameCode(), request.issueNumber(),
+                summary.histories(), summary.orders(), summary.message());
     }
 
     /**
@@ -277,15 +306,19 @@ public class CenterAdminController {
     @GetMapping("/reconciliation")
     public ReconciliationResponse reconciliation(Authentication authentication,
                                                  @RequestParam(required = false) Long machineId,
+                                                 @RequestParam(required = false) Long centerAgentId,
+                                                 @RequestParam(required = false) String issueNumber,
                                                  @RequestParam(defaultValue = "50") int limit) {
         requireOrderReader(authentication);
-        if (limit < 1 || limit > 500) {
+        if (limit < 1 || limit > 500 || (machineId != null && machineId <= 0)
+                || (centerAgentId != null && centerAgentId <= 0)
+                || (issueNumber != null && issueNumber.trim().length() > 32)) {
             throw com.xupan.server.web.BusinessException.badRequest(
-                    "CENTER_RECONCILIATION_QUERY_INVALID", "limit 必须为 1 到 500");
+                    "CENTER_RECONCILIATION_QUERY_INVALID", "机器/中心账号必须为正数，期号不超过 32 字符，limit 必须为 1 到 500");
         }
-        CenterReconciliationService.Report report = reconciliationService.reconcile(machineId, limit);
-        return ReconciliationResponse.from(report, reconciliationService.countInconsistentCenterBuckets(),
-                reconciliationService.countInconsistentAgentBuckets());
+        CenterReconciliationService.Report report = reconciliationService.reconcile(
+                machineId, centerAgentId, issueNumber, limit);
+        return ReconciliationResponse.from(report);
     }
 
     /** 中心订单按状态的汇总（中心总览）。 */
@@ -354,7 +387,9 @@ public class CenterAdminController {
     public record CenterAgentStatusRequest(@NotBlank String status) {
     }
 
-    public record CenterGrantRequest(BigDecimal amount, String reason, @NotBlank String idempotencyKey) {
+    public record CenterGrantRequest(BigDecimal amount,
+                                     @NotBlank @jakarta.validation.constraints.Size(max = 255) String reason,
+                                     @NotBlank String idempotencyKey) {
     }
 
     public record CenterCreditLimitRequest(BigDecimal creditLimit, @NotBlank String idempotencyKey) {
@@ -486,55 +521,32 @@ public class CenterAdminController {
         }
     }
 
-    /**
-     * 第二层结算请求。
-     *
-     * <p>开奖字段用包装类型而不是 {@code int} + {@code @NotBlank}：
-     * 缺字段时应该由业务层给出可读错误（"开奖结果不完整"），
-     * 而不是被 Bean Validation 提前拦成一个笼统的 {@code REQUEST_INVALID}。</p>
-     */
-    public record CenterSettlementRequest(@NotBlank String gameCode, @NotBlank String issueNumber,
-                                          Integer number, Integer fan, String parity, String size,
-                                          String drawNumbers, Integer limit) {
+    public record CenterSettlementRequest(@NotBlank String gameCode, @NotBlank String issueNumber) {
     }
 
-    /** 一期第二层结算结果。 */
-    public record CenterSettlementResponse(String gameCode, String issueNumber, int settledCount,
-                                           int skippedCount, BigDecimal agentWinTotal,
-                                           BigDecimal agentLoseTotal, List<SettledOrderView> orders) {
-        static CenterSettlementResponse from(CenterSettlementService.SettlementSummary summary) {
-            return new CenterSettlementResponse(summary.gameCode(), summary.issueNumber(),
-                    summary.settledCount(), summary.skippedCount(), summary.agentWinTotal(),
-                    summary.agentLoseTotal(), summary.orders().stream().map(SettledOrderView::from).toList());
-        }
-    }
-
-    public record SettledOrderView(long orderId, long centerAgentId, String agentOrderNo,
-                                   String settleResult, BigDecimal settleAmount, BigDecimal stake,
-                                   String label) {
-        static SettledOrderView from(CenterSettlementService.SettledOrder order) {
-            return new SettledOrderView(order.orderId(), order.centerAgentId(), order.agentOrderNo(),
-                    order.settleResult(), order.settleAmount(), order.stake(), order.label());
-        }
+    public record CenterSettlementResponse(String gameCode, String issueNumber, long histories,
+                                            long orders, String message) {
     }
 
     /** 对账结果。 */
-    public record ReconciliationResponse(ReconciliationCounts counts, int differenceCount, boolean balanced,
+    public record ReconciliationResponse(ReconciliationCounts counts,
+                                         ReconciliationFinancialSummary financial,
+                                         int differenceCount, long financialIssueCount, boolean balanced,
                                          List<ReconciliationDifference> differences,
                                          int missingInCenterCount, int missingInLocalCount,
                                          int statusMismatchCount, int amountMismatchCount,
                                          long inconsistentCenterBuckets, long inconsistentAgentBuckets) {
-        static ReconciliationResponse from(CenterReconciliationService.Report report,
-                                           long inconsistentCenterBuckets, long inconsistentAgentBuckets) {
+        static ReconciliationResponse from(CenterReconciliationService.Report report) {
             return new ReconciliationResponse(
                     new ReconciliationCounts(report.counts().localTotal(), report.counts().centerTotal(),
                             report.counts().localUnresolved(), report.counts().centerUnresolved(),
                             report.counts().activeCenterAgents()),
-                    report.differenceCount(), report.balanced(),
+                    ReconciliationFinancialSummary.from(report.financial()),
+                    report.differenceCount(), report.financialIssueCount(), report.balanced(),
                     report.differences().stream().map(ReconciliationDifference::from).toList(),
                     report.missingInCenterCount(), report.missingInLocalCount(),
                     report.statusMismatchCount(), report.amountMismatchCount(),
-                    inconsistentCenterBuckets, inconsistentAgentBuckets);
+                    report.inconsistentCenterBuckets(), report.inconsistentAgentBuckets());
         }
     }
 
@@ -543,11 +555,34 @@ public class CenterAdminController {
     }
 
     public record ReconciliationDifference(String type, long betId, String localStatus, String centerStatus,
-                                           BigDecimal localAmount, BigDecimal centerAmount) {
+                                           BigDecimal localAmount, BigDecimal centerAmount,
+                                           Long centerAgentId, String issueNumber) {
         static ReconciliationDifference from(CenterReconciliationService.Difference difference) {
             return new ReconciliationDifference(difference.type(), difference.betId(),
                     difference.localStatus(), difference.centerStatus(), difference.localAmount(),
-                    difference.centerAmount());
+                    difference.centerAmount(), difference.centerAgentId(), difference.issueNumber());
+        }
+    }
+
+    public record ReconciliationFinancialSummary(long reservedOrders, BigDecimal reservedRiskAmount,
+                                                  BigDecimal centerFrozenAmount, BigDecimal machineFrozenAmount,
+                                                  long reservationMismatchCount, long settledOrders,
+                                                  BigDecimal settledAmount, long oneSidedSettlementCount,
+                                                  BigDecimal settlementLedgerNetAmount,
+                                                  BigDecimal settlementLedgerExpectedNetAmount,
+                                                  long settlementLedgerMismatchCount, long refundedOrders,
+                                                  BigDecimal refundedRiskAmount, BigDecimal refundDispositionAmount,
+                                                  long refundMismatchCount, long cancelledOrders,
+                                                  BigDecimal cancelledRiskAmount, BigDecimal cancelDispositionAmount,
+                                                  long cancelMismatchCount) {
+        static ReconciliationFinancialSummary from(CenterReconciliationService.FinancialSummary summary) {
+            return new ReconciliationFinancialSummary(summary.reservedOrders(), summary.reservedRiskAmount(),
+                    summary.centerFrozenAmount(), summary.machineFrozenAmount(), summary.reservationMismatchCount(),
+                    summary.settledOrders(), summary.settledAmount(), summary.oneSidedSettlementCount(),
+                    summary.settlementLedgerNetAmount(), summary.settlementLedgerExpectedNetAmount(),
+                    summary.settlementLedgerMismatchCount(), summary.refundedOrders(), summary.refundedRiskAmount(),
+                    summary.refundDispositionAmount(), summary.refundMismatchCount(), summary.cancelledOrders(),
+                    summary.cancelledRiskAmount(), summary.cancelDispositionAmount(), summary.cancelMismatchCount());
         }
     }
 

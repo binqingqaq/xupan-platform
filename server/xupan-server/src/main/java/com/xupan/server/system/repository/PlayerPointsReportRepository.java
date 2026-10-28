@@ -75,12 +75,14 @@ public class PlayerPointsReportRepository {
         return jdbc.query("""
                 SELECT x.id, x.account_id, x.bet_code, x.issue_number, x.ball_number, x.play_type,
                        x.parameters_text, x.stake, x.odds_snapshot, x.rebate_rate_snapshot,
-                       x.special_rebate_rate_snapshot, x.settlement_status,
+                       x.special_rebate_rate_snapshot, x.selection_unit_stake, x.settlement_status,
                        x.net_profit, x.explanation, x.created_at, x.settled_at
                   FROM (
                         SELECT b.id, b.user_id AS account_id, b.bet_code, b.issue_number, b.ball_number,
                                b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
                                b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
+                               (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
+                                   AS selection_unit_stake,
                                b.settlement_status, b.net_profit, b.explanation,
                                b.created_at, b.settled_at,
                                ROW_NUMBER() OVER (
@@ -104,7 +106,8 @@ public class PlayerPointsReportRepository {
                 rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
                 rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
                 money(rs.getBigDecimal("odds_snapshot")), money(rs.getBigDecimal("rebate_rate_snapshot")),
-                money(rs.getBigDecimal("special_rebate_rate_snapshot")), rs.getString("settlement_status"),
+                money(rs.getBigDecimal("special_rebate_rate_snapshot")),
+                nullableMoney(rs.getBigDecimal("selection_unit_stake")), rs.getString("settlement_status"),
                 money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at"))),
                 args.toArray());
@@ -118,6 +121,8 @@ public class PlayerPointsReportRepository {
                 SELECT b.id, b.user_id AS account_id, b.bet_code, b.issue_number, b.ball_number,
                        b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
                        b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
+                       (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
+                           AS selection_unit_stake,
                        b.settlement_status, b.net_profit, b.explanation, b.created_at, b.settled_at
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
@@ -247,12 +252,17 @@ public class PlayerPointsReportRepository {
         return value == null ? BigDecimal.ZERO.setScale(2) : value.setScale(2);
     }
 
+    private static BigDecimal nullableMoney(BigDecimal value) {
+        return value == null ? null : money(value);
+    }
+
     private static BetEvent mapBetEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new BetEvent(rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
                 rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
                 rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
                 money(rs.getBigDecimal("odds_snapshot")), money(rs.getBigDecimal("rebate_rate_snapshot")),
-                money(rs.getBigDecimal("special_rebate_rate_snapshot")), rs.getString("settlement_status"),
+                money(rs.getBigDecimal("special_rebate_rate_snapshot")),
+                nullableMoney(rs.getBigDecimal("selection_unit_stake")), rs.getString("settlement_status"),
                 money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at")));
     }
@@ -265,8 +275,17 @@ public class PlayerPointsReportRepository {
     public record BetEvent(long id, long accountId, String betCode, String issueNumber, int ballNumber,
                            String playType, String parametersText, BigDecimal stake, BigDecimal odds,
                            BigDecimal rebateRate, BigDecimal specialRebateRate,
-                           String settlementStatus, BigDecimal netProfit, String explanation,
-                           Instant createdAt, Instant settledAt) {}
+                           BigDecimal selectionUnitStake, String settlementStatus,
+                           BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {
+        public BetEvent(long id, long accountId, String betCode, String issueNumber, int ballNumber,
+                        String playType, String parametersText, BigDecimal stake, BigDecimal odds,
+                        BigDecimal rebateRate, BigDecimal specialRebateRate, String settlementStatus,
+                        BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {
+            this(id, accountId, betCode, issueNumber, ballNumber, playType, parametersText, stake, odds,
+                    rebateRate, specialRebateRate, null, settlementStatus, netProfit, explanation,
+                    createdAt, settledAt);
+        }
+    }
 
     public record LedgerEvent(long id, long accountId, String operationType, BigDecimal amount,
                               BigDecimal balanceBefore, BigDecimal balanceAfter, Long operatorUserId,

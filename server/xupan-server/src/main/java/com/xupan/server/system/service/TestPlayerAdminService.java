@@ -14,6 +14,7 @@ import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -156,7 +157,7 @@ public class TestPlayerAdminService {
         return view(requirePlayer(userCode));
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public DemoGameService.BetView placeBet(String userCode, PlaceBetRequest request,
                                              long operatorUserId) {
         requireAdmin(operatorUserId);

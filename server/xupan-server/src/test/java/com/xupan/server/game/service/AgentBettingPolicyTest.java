@@ -33,7 +33,7 @@ class AgentBettingPolicyTest {
         assertThat(policy.weight(PlayType.FAN)).isEqualByComparingTo("3");
         assertThat(policy.weight(PlayType.STRICT)).isEqualByComparingTo("2");
         assertThat(policy.weight(PlayType.TONG)).isEqualByComparingTo("0.5");
-        assertThat(policy.weight(PlayType.CAR)).isEqualByComparingTo("0.333333");
+        assertThat(policy.weight(PlayType.CAR)).isEqualByComparingTo("0.333333333333");
         assertThat(policy.weight(PlayType.ANGLE)).isEqualByComparingTo("1");
         assertThat(policy.weight(PlayType.NONE)).isEqualByComparingTo("1");
         assertThat(policy.weight(PlayType.ODD_EVEN)).isEqualByComparingTo("1");
@@ -51,21 +51,58 @@ class AgentBettingPolicyTest {
         assertThat(policy.effectiveOdds(PlayType.STRICT, new BigDecimal("2.500"), machine))
                 .isEqualByComparingTo("2.900");
         assertThat(policy.effectiveOdds(PlayType.CAR, new BigDecimal("1.200"), machine))
-                .isEqualByComparingTo("1.317");
+                .isEqualByComparingTo("1.316");
         assertThat(policy.effectiveOdds(PlayType.TONG, new BigDecimal("1.200"), machine))
                 .isEqualByComparingTo("1.475");
+        assertThat(policy.effectiveOdds(PlayType.NONE, null, machine, List.of(1, 2, 3)))
+                .isEqualByComparingTo("1.475");
+        assertThat(policy.effectiveOdds(PlayType.NONE, null, machine, List.of(1, 2)))
+                .isEqualByComparingTo("1.950");
         assertThat(policy.effectiveOdds(PlayType.SPECIAL, new BigDecimal("17.000"), machine))
                 .isEqualByComparingTo("18.000");
     }
 
     @Test
-    void unconfiguredMachineFallsBackToGlobalOdds() {
+    void displayOddsUseMachineRatesAndBy220CellSpecificPrecision() {
+        MachineBettingConfig machine = machine(95, 18, 0, 10, true);
+
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.BASE, machine))
+                .isEqualByComparingTo("1.950");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.FAN, machine))
+                .isEqualByComparingTo("3.850");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.STRICT, machine))
+                .isEqualByComparingTo("2.900");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.CAR, machine))
+                .isEqualByComparingTo("1.316");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.NONE_PAIR, machine))
+                .isEqualByComparingTo("1.950");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.NONE_TRIPLE, machine))
+                .isEqualByComparingTo("1.475");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.TONG, machine))
+                .isEqualByComparingTo("1.475");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.SPECIAL, machine).toPlainString())
+                .isEqualTo("18.0000");
+        assertThat(policy.weight(PlayType.CAR)).isEqualByComparingTo("0.333333333333");
+    }
+
+    @Test
+    void preservesFourDecimalSpecialOddsConfiguredForTheMachine() {
+        MachineBettingConfig machine = new MachineBettingConfig(new BigDecimal("95"),
+                new BigDecimal("18.1234"), 0, 10, true, "SINGLE", new BigDecimal("5"), new BigDecimal("1"));
+
+        assertThat(policy.effectiveOdds(PlayType.SPECIAL, null, machine)).isEqualByComparingTo("18.1234");
+        assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.SPECIAL, machine))
+                .isEqualByComparingTo("18.1234");
+    }
+
+    @Test
+    void unconfiguredMachineNeverFallsBackToGlobalOdds() {
         MachineBettingConfig machine = machine(0, 0, 0, 10, true);
 
-        assertThat(policy.effectiveOdds(PlayType.FAN, new BigDecimal("3.500"), machine))
-                .isEqualByComparingTo("3.500");
-        assertThat(policy.effectiveOdds(PlayType.SPECIAL, new BigDecimal("17.000"), machine))
-                .isEqualByComparingTo("17.000");
+        assertThatThrownBy(() -> policy.effectiveOdds(PlayType.FAN, new BigDecimal("3.500"), machine))
+                .isInstanceOf(IllegalStateException.class).hasMessage("MACHINE_ODDS_UNAVAILABLE");
+        assertThatThrownBy(() -> policy.effectiveOdds(PlayType.SPECIAL, new BigDecimal("17.000"), machine))
+                .isInstanceOf(IllegalStateException.class).hasMessage("MACHINE_SPECIAL_ODDS_UNAVAILABLE");
     }
 
     @Test
@@ -73,8 +110,8 @@ class AgentBettingPolicyTest {
         MachineBettingConfig machine = machine(0, 0, 0, 10, true);
 
         assertThatThrownBy(() -> policy.effectiveOdds(PlayType.FAN, null, machine))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("玩法赔率不存在");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("MACHINE_ODDS_UNAVAILABLE");
     }
 
     @Test

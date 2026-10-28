@@ -41,6 +41,10 @@ public class AgentLedgerService {
     public static final String TYPE_MACHINE_ALLOCATE = "MACHINE_ALLOCATE";
     /** 机器 → 子账号：机器积分退回子账号资金池（机器 OUT / 子账号 IN）。 */
     public static final String TYPE_MACHINE_RETURN = "MACHINE_RETURN";
+    /** 中心单接受时由报单机器补足最大净赔付风险。 */
+    public static final String TYPE_CENTER_RISK_RESERVE = "CENTER_RISK_RESERVE";
+    /** 中心单结算、退款或撤销时退回未消耗的机器风险冻结。 */
+    public static final String TYPE_CENTER_RISK_RELEASE = "CENTER_RISK_RELEASE";
     /**
      * 删除玩家时把其**删除时余额**退回机器池（机器 IN）。
      *
@@ -73,6 +77,37 @@ public class AgentLedgerService {
 
     public AgentLedgerService(AgentLedgerRepository ledger) {
         this.ledger = ledger;
+    }
+
+    /** 按固定锁顺序在中心账号之后锁机器积分行，即使本单不需机器补足也调用。 */
+    @Transactional
+    public BigDecimal lockMachineScore(long agentId) {
+        return ledger.lockAgentScore(agentId)
+                .orElseThrow(() -> BusinessException.notFound("MACHINE_NOT_FOUND", "机器账号不存在"));
+    }
+
+    /** 冻结机器承担的中心净赔付风险；每张中心单最多写一条追加流水。 */
+    @Transactional
+    public BigDecimal reserveCenterRisk(long agentId, BigDecimal amount, long centerOrderId) {
+        BigDecimal value = MoneyAmounts.rounded(amount == null ? BigDecimal.ZERO : amount);
+        if (value.signum() <= 0) {
+            return lockMachineScore(agentId);
+        }
+        return changeMachineScore(agentId, value.negate(), TYPE_CENTER_RISK_RESERVE,
+                "补足中心订单最大净赔付风险", "CENTER_ORDER", Long.toString(centerOrderId), null,
+                "CENTER-RISK-RESERVE-" + centerOrderId, "报单机器积分不足以补足中心风险");
+    }
+
+    /** 退回中心单未消耗的机器风险冻结；幂等键与中心订单和释放事件绑定。 */
+    @Transactional
+    public BigDecimal releaseCenterRisk(long agentId, BigDecimal amount, long centerOrderId) {
+        BigDecimal value = MoneyAmounts.rounded(amount == null ? BigDecimal.ZERO : amount);
+        if (value.signum() <= 0) {
+            return lockMachineScore(agentId);
+        }
+        return changeMachineScore(agentId, value, TYPE_CENTER_RISK_RELEASE,
+                "释放中心订单未消耗的机器风险冻结", "CENTER_ORDER", Long.toString(centerOrderId), null,
+                "CENTER-RISK-RELEASE-" + centerOrderId);
     }
 
     /**

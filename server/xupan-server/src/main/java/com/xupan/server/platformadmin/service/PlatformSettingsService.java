@@ -122,6 +122,26 @@ public class PlatformSettingsService {
         Instant cutoff = parseCutoff(time);
         Timestamp timestamp = Timestamp.from(cutoff);
         ClearDataCounts counts = clearDataCounts(cutoff);
+        Long linkedCenterOrders = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM center_order c
+                  JOIN game_issue i ON i.game_code = c.game_code AND i.issue_number = c.issue_number
+                 WHERE COALESCE(i.opened_at, i.created_at) < ?
+                """, Long.class, timestamp);
+        if (linkedCenterOrders != null && linkedCenterOrders > 0) {
+            throw BusinessException.conflict("CLEAR_DATA_CENTER_ORDERS_EXIST",
+                    "清理范围内存在中心订单关联期号，请先处理中心订单历史");
+        }
+        List<Boolean> lockedDrawStates = jdbc.query("""
+                SELECT draw_confirmed_at IS NOT NULL AS confirmed
+                  FROM game_issue
+                 WHERE COALESCE(opened_at, created_at) < ?
+                   FOR UPDATE
+                """, (rs, rowNum) -> rs.getBoolean("confirmed"), timestamp);
+        if (lockedDrawStates.contains(Boolean.TRUE)) {
+            throw BusinessException.conflict("CLEAR_DATA_CONFIRMED_DRAWS_EXIST",
+                    "清理范围内存在已确认开奖结果，不能删除开奖历史");
+        }
         long deleted = 0;
 
         deleted += jdbc.update("""

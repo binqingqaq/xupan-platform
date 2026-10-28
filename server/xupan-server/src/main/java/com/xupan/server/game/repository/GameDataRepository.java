@@ -4,6 +4,7 @@ import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.service.SettlementResult;
+import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -48,23 +49,35 @@ public class GameDataRepository {
                        updated_at = CURRENT_TIMESTAMP,
                        closed_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE closed_at END,
                        settled_at = CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE settled_at END
-                 WHERE game_code = ? AND issue_number = ?
+                 WHERE game_code = ? AND issue_number = ? AND draw_confirmed_at IS NULL
                 """, status, values.get(0), values.get(1), values.get(2), values.get(3),
                 values.get(4), values.get(5), values.get(6), values.get(7), status, status, status,
                 gameCode, issueNumber);
         if (updated == 0) {
-            jdbcTemplate.update("""
-                    INSERT INTO game_issue
-                        (game_code, issue_number, status, number_1, number_2, number_3, number_4,
-                         number_5, number_6, number_7, number_8, phase, opened_at, issue_started_at,
-                         closed_at, settled_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                            CASE WHEN ? = 'OPEN' THEN 'BETTING' ELSE 'SETTLED' END,
-                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-                            CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END,
-                            CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END)
-                    """, gameCode, issueNumber, status, values.get(0), values.get(1), values.get(2), values.get(3),
-                    values.get(4), values.get(5), values.get(6), values.get(7), status, status, status);
+            Long existing = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM game_issue WHERE game_code = ? AND issue_number = ?
+                    """, Long.class, gameCode, issueNumber);
+            Long confirmed = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM game_issue
+                     WHERE game_code = ? AND issue_number = ? AND draw_confirmed_at IS NOT NULL
+                    """, Long.class, gameCode, issueNumber);
+            if (confirmed != null && confirmed > 0) {
+                throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
+            }
+            if (existing == null || existing == 0) {
+                jdbcTemplate.update("""
+                        INSERT INTO game_issue
+                            (game_code, issue_number, status, number_1, number_2, number_3, number_4,
+                             number_5, number_6, number_7, number_8, phase, opened_at, issue_started_at,
+                             closed_at, settled_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                CASE WHEN ? = 'OPEN' THEN 'BETTING' ELSE 'SETTLED' END,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                                CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END,
+                                CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END)
+                        """, gameCode, issueNumber, status, values.get(0), values.get(1), values.get(2), values.get(3),
+                        values.get(4), values.get(5), values.get(6), values.get(7), status, status, status);
+            }
         }
     }
 
@@ -91,6 +104,10 @@ public class GameDataRepository {
     }
 
     public void initializeSchedule(String issueNumber, Instant startedAt) {
+        initializeSchedule(DEFAULT_GAME_CODE, issueNumber, startedAt);
+    }
+
+    public void initializeSchedule(String gameCode, String issueNumber, Instant startedAt) {
         jdbcTemplate.update("""
                 UPDATE game_issue
                    SET phase = COALESCE(phase, 'BETTING'),
@@ -98,22 +115,31 @@ public class GameDataRepository {
                        betting_ends_at = COALESCE(betting_ends_at, ?),
                        draw_ends_at = COALESCE(draw_ends_at, ?),
                        updated_at = CURRENT_TIMESTAMP
-                 WHERE issue_number = ?
+                 WHERE game_code = ? AND issue_number = ?
                 """, timestamp(startedAt), timestamp(startedAt.plusSeconds(180)),
-                timestamp(startedAt.plusSeconds(300)), issueNumber);
+                timestamp(startedAt.plusSeconds(300)), gameCode, issueNumber);
     }
 
     public boolean transitionPhase(String issueNumber, String expectedPhase, String nextPhase) {
+        return transitionPhase(DEFAULT_GAME_CODE, issueNumber, expectedPhase, nextPhase);
+    }
+
+    public boolean transitionPhase(String gameCode, String issueNumber,
+                                   String expectedPhase, String nextPhase) {
         return jdbcTemplate.update("""
                 UPDATE game_issue
                    SET phase = ?, status = CASE WHEN ? = 'BETTING' THEN 'OPEN' ELSE 'CLOSED' END,
                        closed_at = CASE WHEN ? IN ('DRAWING', 'SETTLED') THEN COALESCE(closed_at, CURRENT_TIMESTAMP) ELSE closed_at END,
                        updated_at = CURRENT_TIMESTAMP
-                 WHERE issue_number = ? AND phase = ?
-                """, nextPhase, nextPhase, nextPhase, issueNumber, expectedPhase) == 1;
+                 WHERE game_code = ? AND issue_number = ? AND phase = ?
+                """, nextPhase, nextPhase, nextPhase, gameCode, issueNumber, expectedPhase) == 1;
     }
 
     public boolean saveFinalResult(String issueNumber, List<Integer> numbers, Instant settledAt) {
+        return saveFinalResult(DEFAULT_GAME_CODE, issueNumber, numbers, settledAt);
+    }
+
+    public boolean saveFinalResult(String gameCode, String issueNumber, List<Integer> numbers, Instant settledAt) {
         if (numbers == null || numbers.size() != 8) {
             throw new IllegalArgumentException("期号结果必须包含 8 个号码");
         }
@@ -122,11 +148,45 @@ public class GameDataRepository {
                    SET phase = 'SETTLED', status = 'CLOSED',
                        number_1 = ?, number_2 = ?, number_3 = ?, number_4 = ?,
                        number_5 = ?, number_6 = ?, number_7 = ?, number_8 = ?,
-                       closed_at = COALESCE(closed_at, ?), settled_at = ?, updated_at = CURRENT_TIMESTAMP
-                 WHERE issue_number = ? AND phase = 'DRAWING'
+                       closed_at = COALESCE(closed_at, ?), settled_at = ?,
+                       draw_result_version = draw_result_version + 1,
+                       draw_confirmed_at = ?, draw_confirmed_by = NULL, updated_at = CURRENT_TIMESTAMP
+                 WHERE game_code = ? AND issue_number = ? AND phase = 'DRAWING' AND draw_confirmed_at IS NULL
+                   AND (number_1 IS NULL OR number_1 = ?) AND (number_2 IS NULL OR number_2 = ?)
+                   AND (number_3 IS NULL OR number_3 = ?) AND (number_4 IS NULL OR number_4 = ?)
+                   AND (number_5 IS NULL OR number_5 = ?) AND (number_6 IS NULL OR number_6 = ?)
+                   AND (number_7 IS NULL OR number_7 = ?) AND (number_8 IS NULL OR number_8 = ?)
                 """, numbers.get(0), numbers.get(1), numbers.get(2), numbers.get(3),
                 numbers.get(4), numbers.get(5), numbers.get(6), numbers.get(7),
-                timestamp(settledAt), timestamp(settledAt), issueNumber) == 1;
+                timestamp(settledAt), timestamp(settledAt), timestamp(settledAt), gameCode, issueNumber,
+                numbers.get(0), numbers.get(1), numbers.get(2), numbers.get(3),
+                numbers.get(4), numbers.get(5), numbers.get(6), numbers.get(7)) == 1;
+    }
+
+    public boolean saveConfirmedResult(String gameCode, String issueNumber, List<Integer> numbers,
+                                       Instant confirmedAt, Long confirmedBy) {
+        if (numbers == null || numbers.size() != 8
+                || numbers.stream().anyMatch(number -> number == null || number < 1 || number > 20)) {
+            throw new IllegalArgumentException("期号结果必须包含 8 个 1 到 20 的号码");
+        }
+        return jdbcTemplate.update("""
+                UPDATE game_issue
+                   SET status='CLOSED', phase='SETTLED',
+                       number_1=?, number_2=?, number_3=?, number_4=?,
+                       number_5=?, number_6=?, number_7=?, number_8=?,
+                       closed_at=COALESCE(closed_at, ?), settled_at=?,
+                       draw_result_version=draw_result_version + 1,
+                       draw_confirmed_at=?, draw_confirmed_by=?, updated_at=CURRENT_TIMESTAMP
+                 WHERE game_code=? AND issue_number=? AND phase='DRAWING' AND draw_confirmed_at IS NULL
+                   AND (number_1 IS NULL OR number_1 = ?) AND (number_2 IS NULL OR number_2 = ?)
+                   AND (number_3 IS NULL OR number_3 = ?) AND (number_4 IS NULL OR number_4 = ?)
+                   AND (number_5 IS NULL OR number_5 = ?) AND (number_6 IS NULL OR number_6 = ?)
+                   AND (number_7 IS NULL OR number_7 = ?) AND (number_8 IS NULL OR number_8 = ?)
+                """, numbers.get(0), numbers.get(1), numbers.get(2), numbers.get(3),
+                numbers.get(4), numbers.get(5), numbers.get(6), numbers.get(7),
+                timestamp(confirmedAt), timestamp(confirmedAt), timestamp(confirmedAt), confirmedBy,
+                gameCode, issueNumber, numbers.get(0), numbers.get(1), numbers.get(2), numbers.get(3),
+                numbers.get(4), numbers.get(5), numbers.get(6), numbers.get(7)) == 1;
     }
 
     public Optional<IssueRecord> findCurrentIssue() {
@@ -142,6 +202,19 @@ public class GameDataRepository {
                  WHERE game_code = ? AND phase IN ('BETTING', 'DRAWING')
                  ORDER BY id DESC
                  LIMIT 1
+                """, gameCode);
+    }
+
+    public Optional<IssueRecord> findCurrentIssueForUpdate(String gameCode) {
+        return findIssue("""
+                SELECT issue_number, status, phase, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
+                  FROM game_issue
+                 WHERE game_code = ? AND phase IN ('BETTING', 'DRAWING')
+                 ORDER BY id DESC
+                 LIMIT 1
+                 FOR UPDATE
                 """, gameCode);
     }
 
@@ -314,9 +387,17 @@ public class GameDataRepository {
         return count != null && count > 0;
     }
 
+    public boolean isSpecialBettingEnabled(String gameCode) {
+        Boolean enabled = jdbcTemplate.query("""
+                SELECT special_enabled FROM game_definition
+                 WHERE game_code = ? AND status = 'ACTIVE' AND deleted_at IS NULL
+                """, rs -> rs.next() && rs.getBoolean(1), gameCode);
+        return Boolean.TRUE.equals(enabled);
+    }
+
     public BettingRates findBettingRatesByAccountId(long accountId) {
         List<BettingRates> rows = jdbcTemplate.query("""
-                SELECT COALESCE(a.rebate_rate, 0) rebate_rate,
+                SELECT COALESCE(d.rebate_rate, 0) rebate_rate,
                        COALESCE(a.special_rebate_rate, 0) special_rebate_rate
                   FROM demo_user_account d
                   LEFT JOIN agent a ON a.id = d.agent_id
@@ -327,7 +408,7 @@ public class GameDataRepository {
     }
 
     /**
-     * 读取玩家所属机器的 BY220 配置（赔率、特码赔率、封盘、取消、开盘、返水口径）。
+     * 读取玩家所属机器的 BY220 配置快照和 13 项限额。
      * 玩家没有归属机器时返回 {@link MachineBettingConfig#DEFAULT}，行为与配置前一致。
      */
     public MachineBettingConfig findMachineBettingConfig(long accountId) {
@@ -339,7 +420,22 @@ public class GameDataRepository {
                        COALESCE(a.board_open, TRUE) board_open,
                        COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
                        COALESCE(a.rebate_rate, 0) rebate_rate,
-                       COALESCE(a.special_rebate_rate, 0) special_rebate_rate
+                       COALESCE(a.special_rebate_rate, 0) special_rebate_rate,
+                       COALESCE(a.betting_config_version, 1) config_version,
+                       a.id machine_id,
+                       COALESCE(a.total_limit, 0) total_limit,
+                       COALESCE(a.positive_limit, 0) positive_limit,
+                       COALESCE(a.angle_limit, 0) angle_limit,
+                       COALESCE(a.strict_limit, 0) strict_limit,
+                       COALESCE(a.tong_limit, 0) tong_limit,
+                       COALESCE(a.car_limit, 0) car_limit,
+                       COALESCE(a.special_limit, 0) special_limit,
+                       COALESCE(a.odd_even_limit, 0) odd_even_limit,
+                       COALESCE(a.big_small_limit, 0) big_small_limit,
+                       COALESCE(a.fan_limit, 0) fan_limit,
+                       COALESCE(a.add_limit, 0) add_limit,
+                       COALESCE(a.player_max_stake, 0) player_max_stake,
+                       COALESCE(a.player_min_stake, 0) player_min_stake
                   FROM demo_user_account d
                   LEFT JOIN agent a ON a.id = d.agent_id
                  WHERE d.id = ?
@@ -347,7 +443,15 @@ public class GameDataRepository {
                 rs.getBigDecimal("odds_rate"), rs.getBigDecimal("special_odds_rate"),
                 rs.getInt("close_seconds"), rs.getInt("cancel_seconds"), rs.getBoolean("board_open"),
                 rs.getString("rebate_mode"), rs.getBigDecimal("rebate_rate"),
-                rs.getBigDecimal("special_rebate_rate")), accountId);
+                rs.getBigDecimal("special_rebate_rate"), rs.getLong("machine_id"),
+                rs.getInt("config_version"), new MachineBettingConfig.BettingLimits(
+                        rs.getBigDecimal("total_limit"), rs.getBigDecimal("positive_limit"),
+                        rs.getBigDecimal("angle_limit"), rs.getBigDecimal("strict_limit"),
+                        rs.getBigDecimal("tong_limit"), rs.getBigDecimal("car_limit"),
+                        rs.getBigDecimal("special_limit"), rs.getBigDecimal("odd_even_limit"),
+                        rs.getBigDecimal("big_small_limit"), rs.getBigDecimal("fan_limit"),
+                        rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"),
+                        rs.getBigDecimal("player_min_stake"))), accountId);
         return rows.isEmpty() ? MachineBettingConfig.DEFAULT : rows.get(0);
     }
 
@@ -364,6 +468,50 @@ public class GameDataRepository {
                  WHERE id = ? AND settlement_status = 'PENDING' AND settled_at IS NULL
                 """, betId) == 1;
     }
+
+    public long createBetBatch(long accountId, long machineId, String gameCode, String issueNumber,
+                               String idempotencyKey, String requestDigest, BigDecimal totalStake,
+                               int configVersion) {
+        jdbcTemplate.update("""
+                INSERT INTO game_bet_batch
+                    (account_id, machine_id, game_code, issue_number, idempotency_key,
+                     request_digest, total_stake, machine_config_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, accountId, machineId, gameCode, issueNumber, idempotencyKey,
+                requestDigest, totalStake, configVersion);
+        Long id = jdbcTemplate.queryForObject("""
+                SELECT id FROM game_bet_batch WHERE account_id = ? AND idempotency_key = ?
+                """, Long.class, accountId, idempotencyKey);
+        if (id == null) throw new IllegalStateException("下注批次保存后未找到主键");
+        return id;
+    }
+
+    public Optional<BetBatchRecord> findBetBatch(long accountId, String idempotencyKey) {
+        return jdbcTemplate.query("""
+                SELECT id, account_id, machine_id, game_code, issue_number, request_digest,
+                       total_stake, machine_config_version
+                  FROM game_bet_batch WHERE account_id = ? AND idempotency_key = ?
+                """, (rs, rowNum) -> new BetBatchRecord(rs.getLong("id"), rs.getLong("account_id"),
+                rs.getLong("machine_id"), rs.getString("game_code"), rs.getString("issue_number"),
+                rs.getString("request_digest"), rs.getBigDecimal("total_stake"),
+                rs.getInt("machine_config_version")), accountId, idempotencyKey).stream().findFirst();
+    }
+
+    public List<BetRecord> findBetsByBatchId(long batchId) {
+        return jdbcTemplate.query("""
+                SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type,
+                       parameters_text, stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
+                  FROM game_bet WHERE batch_id = ? ORDER BY instruction_no, id
+                """, GameDataRepository::mapBetRecord, batchId);
+    }
+
+    public BigDecimal findSpecialUnitStake(long betId) {
+        return jdbcTemplate.query("""
+                SELECT unit_stake FROM game_bet_selection
+                 WHERE bet_id = ? ORDER BY selection_no LIMIT 1
+                """, rs -> rs.next() ? rs.getBigDecimal(1) : null, betId);
+    }
+
     public long saveBetWithOddsSnapshot(long accountId, String betCode, String idempotencyKey,
                                         String issueNumber, int ballNumber,
                                         PlayType playType, List<Integer> parameters,
@@ -378,17 +526,48 @@ public class GameDataRepository {
                                         PlayType playType, List<Integer> parameters,
                                         BigDecimal stake, BigDecimal odds, BigDecimal rebateRate,
                                         BigDecimal specialRebateRate) {
+        return saveBetWithOddsSnapshot(gameCode, accountId, betCode, idempotencyKey, issueNumber,
+                ballNumber, playType, parameters, stake, odds, rebateRate, specialRebateRate,
+                0, 0, null, null, null, null, stake, null, null);
+    }
+
+    public long saveBetWithOddsSnapshot(String gameCode, long accountId, String betCode, String idempotencyKey,
+                                        String issueNumber, int ballNumber,
+                                        PlayType playType, List<Integer> parameters,
+                                        BigDecimal stake, BigDecimal odds, BigDecimal rebateRate,
+                                        BigDecimal specialRebateRate, long machineId, int configVersion,
+                                        BigDecimal machineOddsRate, BigDecimal machineSpecialOddsRate,
+                                        String quotaBucket, String selectionKey, BigDecimal unitStake) {
+        return saveBetWithOddsSnapshot(gameCode, accountId, betCode, idempotencyKey, issueNumber,
+                ballNumber, playType, parameters, stake, odds, rebateRate, specialRebateRate,
+                machineId, configVersion, machineOddsRate, machineSpecialOddsRate,
+                quotaBucket, selectionKey, unitStake, null, null);
+    }
+
+    public long saveBetWithOddsSnapshot(String gameCode, long accountId, String betCode, String idempotencyKey,
+                                        String issueNumber, int ballNumber, PlayType playType,
+                                        List<Integer> parameters, BigDecimal stake, BigDecimal odds,
+                                        BigDecimal rebateRate, BigDecimal specialRebateRate, long machineId,
+                                        int configVersion, BigDecimal machineOddsRate,
+                                        BigDecimal machineSpecialOddsRate, String quotaBucket,
+                                        String selectionKey, BigDecimal unitStake, Long batchId,
+                                        Integer instructionNo) {
         if (gameCode == null || gameCode.isBlank()) throw new IllegalArgumentException("彩种键名不能为空");
         requireBallNumber(ballNumber);
         String parameterText = parameters == null ? "" : parameters.stream()
                 .map(String::valueOf).collect(Collectors.joining(","));
+        String playerKind = jdbcTemplate.queryForObject(
+                "SELECT player_kind FROM demo_user_account WHERE id = ?", String.class, accountId);
         jdbcTemplate.update(connection -> {
             PreparedStatement statement = connection.prepareStatement("""
                     INSERT INTO game_bet
                         (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                          play_type, parameters_text, stake, odds_snapshot, rebate_rate_snapshot,
-                         special_rebate_rate_snapshot)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         special_rebate_rate_snapshot, machine_id_snapshot,
+                         machine_config_version_snapshot, machine_odds_rate_snapshot,
+                         special_odds_rate_snapshot, quota_bucket, selection_key, batch_id, instruction_no,
+                         player_kind_snapshot)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """);
             statement.setString(1, gameCode);
             statement.setLong(2, accountId);
@@ -402,11 +581,32 @@ public class GameDataRepository {
             statement.setBigDecimal(10, odds);
             statement.setBigDecimal(11, rebateRate == null ? BigDecimal.ZERO : rebateRate);
             statement.setBigDecimal(12, specialRebateRate == null ? BigDecimal.ZERO : specialRebateRate);
+            statement.setObject(13, machineId > 0 ? machineId : null);
+            statement.setInt(14, configVersion);
+            statement.setBigDecimal(15, machineOddsRate);
+            statement.setBigDecimal(16, machineSpecialOddsRate);
+            statement.setString(17, quotaBucket);
+            statement.setString(18, selectionKey);
+            statement.setObject(19, batchId);
+            statement.setObject(20, instructionNo);
+            statement.setString(21, playerKind);
             return statement;
         });
         Long id = jdbcTemplate.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
         if (id == null) {
             throw new IllegalStateException("保存注单后未找到主键");
+        }
+        if (playType == PlayType.SPECIAL && parameters != null && !parameters.isEmpty()) {
+            BigDecimal perNumber = unitStake == null ? stake.divide(BigDecimal.valueOf(parameters.size()),
+                    2, java.math.RoundingMode.UNNECESSARY) : unitStake;
+            for (int index = 0; index < parameters.size(); index++) {
+                jdbcTemplate.update("""
+                        INSERT INTO game_bet_selection
+                            (bet_id, selection_no, selection_key, quota_bucket, number_value, unit_stake)
+                        VALUES (?, ?, ?, 'SPECIAL_NUMBER', ?, ?)
+                        """, id, index + 1, selectionKey + ":" + parameters.get(index),
+                        parameters.get(index), perNumber);
+            }
         }
         return id;
     }
@@ -427,11 +627,15 @@ public class GameDataRepository {
     }
 
     public List<BetRecord> findBetsByIssue(String issueNumber) {
+        return findBetsByIssue(DEFAULT_GAME_CODE, issueNumber);
+    }
+
+    public List<BetRecord> findBetsByIssue(String gameCode, String issueNumber) {
         return jdbcTemplate.query("""
                 SELECT id, user_id, bet_code, request_idempotency_key, issue_number, ball_number, play_type, parameters_text,
-                       stake, odds_snapshot, settlement_status, net_profit, explanation, created_at
+                       stake, odds_snapshot, machine_odds_rate_snapshot, settlement_status, net_profit, explanation, created_at
                   FROM game_bet
-                 WHERE issue_number = ?
+                 WHERE game_code = ? AND issue_number = ?
                  ORDER BY id
                 """, (rs, rowNum) -> new BetRecord(
                 rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"),
@@ -440,7 +644,8 @@ public class GameDataRepository {
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
                  rs.getBigDecimal("net_profit"), rs.getString("explanation"),
-                 rs.getTimestamp("created_at").toInstant()), issueNumber);
+                 rs.getTimestamp("created_at").toInstant(), rs.getBigDecimal("machine_odds_rate_snapshot")),
+                gameCode, issueNumber);
     }
 
     public List<BetUsage> findBetUsageByIssue(long accountId, String issueNumber) {
@@ -457,6 +662,56 @@ public class GameDataRepository {
                 """, (rs, rowNum) -> new BetUsage(
                 PlayType.valueOf(rs.getString("play_type")),
                 rs.getBigDecimal("stake")), accountId, issueNumber.trim());
+    }
+
+    public long countUnclassifiedQuotaBets(long accountId, String gameCode, String issueNumber) {
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_bet b
+                 WHERE b.user_id = ? AND b.game_code = ? AND b.issue_number = ?
+                   AND b.settlement_status <> 'CANCELED'
+                   AND COALESCE(b.player_kind_snapshot, 'NORMAL') <> 'BOT'
+                   AND (b.machine_id_snapshot IS NULL OR b.quota_bucket IS NULL OR b.selection_key IS NULL
+                        OR (b.quota_bucket = 'SPECIAL_NUMBER' AND NOT EXISTS (
+                            SELECT 1 FROM game_bet_selection s WHERE s.bet_id = b.id
+                        )))
+                """, Long.class, accountId, gameCode, issueNumber);
+        return count == null ? 0 : count;
+    }
+
+    public BigDecimal findIssueStakeTotal(long accountId, long machineId, String gameCode, String issueNumber) {
+        return jdbcTemplate.queryForObject("""
+                SELECT COALESCE(SUM(stake), 0) FROM game_bet
+                 WHERE user_id = ? AND machine_id_snapshot = ? AND game_code = ? AND issue_number = ?
+                   AND settlement_status <> 'CANCELED'
+                   AND COALESCE(player_kind_snapshot, 'NORMAL') <> 'BOT'
+                """, BigDecimal.class, accountId, machineId, gameCode, issueNumber);
+    }
+
+    public List<QuotaUsage> findQuotaUsageByIssue(long accountId, long machineId, String gameCode, String issueNumber) {
+        if (accountId <= 0 || machineId <= 0 || gameCode == null || gameCode.isBlank()
+                || issueNumber == null || issueNumber.isBlank()) {
+            throw new IllegalArgumentException("下注额度查询参数无效");
+        }
+        return jdbcTemplate.query("""
+                SELECT quota_bucket, selection_key, NULL number_value, SUM(stake) stake
+                  FROM game_bet
+                 WHERE user_id = ? AND machine_id_snapshot = ? AND game_code = ? AND issue_number = ?
+                   AND settlement_status <> 'CANCELED'
+                   AND COALESCE(player_kind_snapshot, 'NORMAL') <> 'BOT'
+                   AND quota_bucket IS NOT NULL AND quota_bucket <> 'SPECIAL_NUMBER'
+                 GROUP BY quota_bucket, selection_key
+                UNION ALL
+                SELECT 'SPECIAL_NUMBER' quota_bucket, s.selection_key, s.number_value, SUM(s.unit_stake) stake
+                  FROM game_bet_selection s
+                  JOIN game_bet b ON b.id = s.bet_id
+                 WHERE b.user_id = ? AND b.machine_id_snapshot = ? AND b.game_code = ? AND b.issue_number = ?
+                   AND b.settlement_status <> 'CANCELED'
+                   AND COALESCE(b.player_kind_snapshot, 'NORMAL') <> 'BOT'
+                   AND s.quota_bucket = 'SPECIAL_NUMBER'
+                 GROUP BY s.selection_key, s.number_value
+                """, (rs, rowNum) -> new QuotaUsage(rs.getString("quota_bucket"), rs.getString("selection_key"),
+                rs.getObject("number_value", Integer.class), rs.getBigDecimal("stake")),
+                accountId, machineId, gameCode, issueNumber.trim(), accountId, machineId, gameCode, issueNumber.trim());
     }
 
     public List<BetUsage> findBetUsageByIssueExcludingBet(long accountId, String issueNumber, long excludedBetId) {
@@ -718,6 +973,16 @@ public class GameDataRepository {
                 instant(rs, "draw_ends_at"), instant(rs, "settled_at")), limit);
     }
 
+    private static BetRecord mapBetRecord(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
+        return new BetRecord(rs.getLong("id"), rs.getLong("user_id"), rs.getString("bet_code"),
+                rs.getString("request_idempotency_key"), rs.getString("issue_number"),
+                rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
+                parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
+                rs.getBigDecimal("odds_snapshot"), SettlementStatus.valueOf(rs.getString("settlement_status")),
+                rs.getBigDecimal("net_profit"), rs.getString("explanation"),
+                rs.getTimestamp("created_at").toInstant());
+    }
+
     private static List<Integer> parseParameters(String value) {
         if (value == null || value.isBlank()) {
             return List.of();
@@ -745,7 +1010,15 @@ public class GameDataRepository {
                             String issueNumber, int ballNumber,
                             PlayType playType, List<Integer> parameters, BigDecimal stake,
                             BigDecimal odds, SettlementStatus settlementStatus,
-                             BigDecimal netProfit, String explanation, Instant createdAt) {
+                            BigDecimal netProfit, String explanation, Instant createdAt,
+                            BigDecimal machineOddsRate) {
+        public BetRecord(long id, long accountId, String betCode, String requestIdempotencyKey,
+                         String issueNumber, int ballNumber, PlayType playType, List<Integer> parameters,
+                         BigDecimal stake, BigDecimal odds, SettlementStatus settlementStatus,
+                         BigDecimal netProfit, String explanation, Instant createdAt) {
+            this(id, accountId, betCode, requestIdempotencyKey, issueNumber, ballNumber, playType, parameters,
+                    stake, odds, settlementStatus, netProfit, explanation, createdAt, null);
+        }
     }
 
     public record BetAuditRecord(long id, String displayName, PlayType playType,
@@ -757,6 +1030,14 @@ public class GameDataRepository {
     }
 
     public record BetUsage(PlayType playType, BigDecimal stake) {
+    }
+
+    public record BetBatchRecord(long id, long accountId, long machineId, String gameCode,
+                                 String issueNumber, String requestDigest, BigDecimal totalStake,
+                                 int machineConfigVersion) {
+    }
+
+    public record QuotaUsage(String quotaBucket, String selectionKey, Integer numberValue, BigDecimal stake) {
     }
 
     public record BetDayStatistics(BigDecimal turnover, BigDecimal netProfit) {

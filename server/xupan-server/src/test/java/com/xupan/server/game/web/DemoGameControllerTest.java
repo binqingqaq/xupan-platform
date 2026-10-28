@@ -52,6 +52,7 @@ class DemoGameControllerTest {
 
     private String accessToken;
     private long testUserId;
+    private long machineId;
 
     @BeforeEach
     void cleanDatabase() throws Exception {
@@ -62,6 +63,9 @@ class DemoGameControllerTest {
         jdbcTemplate.update("DELETE FROM sys_operation_log");
         jdbcTemplate.update("DELETE FROM demo_balance_ledger");
         jdbcTemplate.update("DELETE FROM game_bet");
+        jdbcTemplate.update("DELETE FROM game_bet_batch WHERE account_id IN "
+                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username IN (?, ?)))", TEST_USERNAME, SECOND_USERNAME);
         jdbcTemplate.update("DELETE FROM game_issue WHERE game_code LIKE 'MULTI_%'");
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
         jdbcTemplate.update("DELETE FROM game_issue_event WHERE game_code LIKE 'MULTI_%'");
@@ -70,6 +74,7 @@ class DemoGameControllerTest {
         jdbcTemplate.update("DELETE FROM game_issue_event");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?))", TEST_USERNAME, SECOND_USERNAME);
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code = 'GAME-TEST-MACHINE'");
         jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?))", TEST_USERNAME, SECOND_USERNAME);
         jdbcTemplate.update("DELETE FROM sys_user WHERE username IN (?, ?)", TEST_USERNAME, SECOND_USERNAME);
@@ -79,6 +84,22 @@ class DemoGameControllerTest {
         walletService.ensureWalletForUser(testUserId, "游戏回归管理员");
         walletService.grant(testUserId, testUserId, new java.math.BigDecimal("1000.00"),
                 "游戏回归测试初始化", "GAME-TEST-SETUP");
+        jdbcTemplate.update("""
+                INSERT INTO agent (agent_code, display_name, account_user_id, system_owned, status, bot_count)
+                VALUES ('GAME-TEST-MACHINE', '游戏回归测试机器', ?, FALSE, 'ACTIVE', 0)
+                """, testUserId);
+        machineId = jdbcTemplate.queryForObject(
+                "SELECT id FROM agent WHERE agent_code = 'GAME-TEST-MACHINE'", Long.class);
+        jdbcTemplate.update("UPDATE demo_user_account SET agent_id = ? WHERE sys_user_id = ?", machineId, testUserId);
+        jdbcTemplate.update("""
+                UPDATE agent
+                   SET odds_rate = 95, special_odds_rate = 18, board_open = TRUE,
+                       total_limit = 20000, positive_limit = 20000, angle_limit = 20000,
+                       strict_limit = 20000, tong_limit = 20000, car_limit = 20000,
+                       special_limit = 20000, odd_even_limit = 20000, big_small_limit = 20000,
+                       fan_limit = 20000, add_limit = 20000, player_min_stake = 1, player_max_stake = 5001
+                 WHERE id = ?
+                """, machineId);
         accessToken = login();
         jdbcTemplate.update("DELETE FROM game_odds");
         jdbcTemplate.update("DELETE FROM game_issue");
@@ -142,7 +163,11 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.gameCode").value("AU8"))
                 .andExpect(jsonPath("$.issueNumber").value("3000000"));
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT game_code FROM game_bet WHERE request_idempotency_key = 'MULTI-BET-001'", String.class))
+                """
+                        SELECT b.game_code FROM game_bet b
+                        JOIN game_bet_batch batch ON batch.id = b.batch_id
+                        WHERE batch.idempotency_key = 'SINGLE-MULTI-BET-001'
+                        """, String.class))
                 .isEqualTo("MULTI_TEST");
     }
 
@@ -172,9 +197,11 @@ class DemoGameControllerTest {
                         .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":15.00,\"idempotencyKey\":\"BET-REQUEST-001\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.settlementStatus").value("PENDING"));
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM game_bet WHERE request_idempotency_key = 'BET-REQUEST-001'", Integer.class))
-                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_bet b
+                JOIN game_bet_batch batch ON batch.id = b.batch_id
+                WHERE batch.idempotency_key = 'SINGLE-BET-REQUEST-001'
+                """, Integer.class)).isEqualTo(1);
 
         Long accountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, testUserId);
@@ -256,6 +283,8 @@ class DemoGameControllerTest {
                 passwordPolicyService.encode(SECOND_PASSWORD), "ACTIVE");
         userRepository.assignRole(secondUserId, "USER");
         walletService.ensureWalletForUser(secondUserId, "第二游戏用户");
+        jdbcTemplate.update("UPDATE demo_user_account SET agent_id = ? WHERE sys_user_id = ?",
+                machineId, secondUserId);
         walletService.grant(testUserId, secondUserId, new java.math.BigDecimal("1000.00"),
                 "双用户结算测试初始化", "GAME-TEST-SECOND-SETUP");
         String secondAccessToken = login(SECOND_USERNAME, SECOND_PASSWORD);
@@ -343,8 +372,9 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.status").value("CLOSED"));
 
         assertThat(jdbcTemplate.queryForObject("""
-                SELECT settlement_status FROM game_bet
-                 WHERE request_idempotency_key = 'BET-SELECTED-BALL-2'
+                SELECT b.settlement_status FROM game_bet b
+                JOIN game_bet_batch batch ON batch.id = b.batch_id
+                WHERE batch.idempotency_key = 'SINGLE-BET-SELECTED-BALL-2'
                 """, String.class)).isEqualTo("WIN");
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT balance FROM demo_user_account WHERE sys_user_id = ?
@@ -454,9 +484,11 @@ class DemoGameControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("WALLET_IDEMPOTENCY_CONFLICT"));
 
-        assertThat(jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM game_bet WHERE request_idempotency_key = 'BET-CONFLICT-001'", Integer.class))
-                .isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM game_bet b
+                JOIN game_bet_batch batch ON batch.id = b.batch_id
+                WHERE batch.idempotency_key = 'SINGLE-BET-CONFLICT-001'
+                """, Integer.class)).isEqualTo(1);
     }
 
     @Test

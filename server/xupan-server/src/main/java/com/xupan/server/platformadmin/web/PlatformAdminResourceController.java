@@ -92,8 +92,11 @@ public class PlatformAdminResourceController {
     }
 
     @PutMapping("/machines/{id}")
-    public MachineResponse updateMachine(Authentication authentication, @PathVariable long id, @Valid @RequestBody MachineRequest request) {
-        return MachineResponse.from(service.updateMachine(id, request.toInput(), operator(authentication).getUserId()));
+    public MachineResponse updateMachine(Authentication authentication, @PathVariable long id,
+                                         @RequestParam long expectedConfigVersion,
+                                         @Valid @RequestBody MachineRequest request) {
+        return MachineResponse.from(service.updateMachine(id, request.toInput(), expectedConfigVersion,
+                operator(authentication).getUserId()));
     }
 
     @DeleteMapping("/machines/{id}")
@@ -125,39 +128,20 @@ public class PlatformAdminResourceController {
      * <p>{@code username} 支持逗号分隔批量建号（BY220 {@code Users.php} 的 {@code explode(',')}）；
      * {@code score} 可空：新建时省略按 0，编辑时省略表示不改动积分；
      * {@code up}/{@code down} 是 BY220 编辑表单的「上分/下分」（相对增减，不能同时提交）；
-     * {@code online} 是 BY220 的在线/下线开关（可空，省略表示不切换）；
-     * {@code reportPassword} 是 BY220 {@code x_admin.feidanpwd} 的明文入参（可空，省略表示不改动已存密文），
-     * 只在服务端加密后落库，任何响应都不回显；
-     * {@code reportType} 是统一飞单的报网类型（V73 {@code agent_group.report_type}，可空：
-     * BY220 里机器的 {@code flyers_type} 由所选网盘的 {@code code} 决定，
-     * 本项目把它与"网盘编码"拆成两列后显式保存），空串落 {@code NULL} 表示"未设置"，
-     * 非空必须在 {@code REPORT_TYPE_OPTIONS} 的允许集合内，否则 400 {@code SUB_ACCOUNT_REPORT_TYPE_INVALID}；
-     * {@code reportUrl} 是上游地址（V74 {@code agent_group.report_url}，BY220 {@code x_admin.feidanurl}），
-     * 空串落 {@code NULL}，长度 &gt; 512 → 400 {@code SUB_ACCOUNT_REPORT_URL_INVALID}，
-     * **只保存不请求**（与机器端 {@code report_url} 同语义）。</p>
-     *
-     * <p>BY220 {@code x_admin} 的 {@code feidanonline}（网盘状态）/ {@code feidanmoney}（网盘余额）/
-     * {@code feidanbetting}（网盘下注）是**上游读数**，{@code sub/form.html} 里没有这三个字段，
-     * 所以本请求模型刻意不暴露它们（服务层的入参占位固定传 {@code null}，见
-     * {@link PlatformAdminService.SubAccountInput}）。</p>
+     * {@code online} 是 BY220 的在线/下线开关（可空，省略表示不切换）。</p>
      */
     public record SubAccountRequest(@NotBlank String username, String rawPassword,
                                     BigDecimal score, Instant expiresAt, boolean subAccountManage,
-                                    boolean machineManage, boolean unifiedReportEnabled, String reportUsername,
-                                    String reportNetworkCode, String reportRouteCode, String reportType,
-                                    String reportUrl,
-                                    BigDecimal up, BigDecimal down, Boolean online, String reportPassword) {
+                                    boolean machineManage, BigDecimal up, BigDecimal down, Boolean online) {
         PlatformAdminService.SubAccountInput toInput() {
-            // reportOnline / reportBalance / reportStake 固定不传：它们是上游状态，只能由
-            // 报网登录/退出与列表读取归一化维护（BY220 子账号表单也没有这三个字段）。
             return new PlatformAdminService.SubAccountInput(username, rawPassword, score, expiresAt,
-                    subAccountManage, machineManage, unifiedReportEnabled, reportUsername, reportNetworkCode,
-                    reportRouteCode, reportType, reportUrl, null, null, null, up, down, online, reportPassword);
+                    subAccountManage, machineManage, up, down, online);
         }
     }
 
     public record MachineRequest(@NotBlank String username, String rawPassword, Long groupId,
                                  BigDecimal score, Instant expiresAt, boolean boardOpen, boolean robotManage,
+                                 Boolean configEditEnabled,
                                  boolean chaseEnabled, int botCount, int closeSeconds, int cancelSeconds,
                                  BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
                                  BigDecimal specialOddsRate, BigDecimal totalLimit, BigDecimal positiveLimit,
@@ -171,7 +155,8 @@ public class PlatformAdminResourceController {
                     expiresAt, boardOpen, robotManage, chaseEnabled, botCount, closeSeconds, cancelSeconds,
                     rebateRate, oddsRate, specialRebateRate, specialOddsRate, totalLimit, positiveLimit,
                     angleLimit, strictLimit, tongLimit, carLimit, specialLimit, oddEvenLimit, bigSmallLimit,
-                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode);
+                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode,
+                    configEditEnabled == null || configEditEnabled);
         }
     }
 
@@ -183,37 +168,16 @@ public class PlatformAdminResourceController {
      * <p>{@code status} 是 BY220 口径的正常/停用；{@code accountStatus} 是登录账号的真实状态，
      * 值为 {@code LOCKED} 时前端显示「已锁定」并提供「解锁」（解锁走 {@code PATCH .../status ACTIVE}）。
      * {@code online}/{@code logtime} 是 BY220 {@code x_admin.online}/{@code x_admin.logtime}
-     * （在线状态与最近登录时间，不参与登录校验）。
-     * {@code hasReportPassword} 只表示"是否已设置飞单密码"（BY220 {@code x_admin.feidanpwd}），
-     * **不返回密文也不返回明文**。
-     * {@code reportType} 是统一飞单的报网类型（V73 {@code agent_group.report_type}，对应 BY220 机器
-     * {@code x_robot.flyers_type} 的来源）；{@code null} 表示子账号未设置。
-     * {@code reportUrl}/{@code reportOnline}/{@code reportBalance}/{@code reportStake} 是 V74 的
-     * 「统一飞单上游状态」，对应 BY220 {@code x_admin.feidanurl / feidanonline / feidanmoney /
-     * feidanbetting}（子账号列表「网盘状态 / 网盘余额 / 网盘下注」三列，
-     * {@code admin/view/sub/list.html:59-61}、{@code Users.php:162}）：
-     * {@code reportOnline} 由"继承该子账号统一飞单的机器报网登录/退出"维护，
-     * {@code reportBalance}/{@code reportStake} 是最近一次成功登录读到的上游余额/未结算下注
-     * （本地模拟取自那台机器的 {@code agent.report_balance}/{@code agent.report_stake}，不发起任何请求），
-     * 三者都只是只读读数，**不接受表单设定**；列表读取还会按 BY220 {@code Users.php:147-149}
-     * 对"统一飞单配置不完整"的子账号强制归一化为离线。</p>
+     * （在线状态与最近登录时间，不参与登录校验）。</p>
      */
     public record SubAccountResponse(long id, String code, String username, BigDecimal score,
                                      Instant expiresAt, String status, String accountStatus, boolean subAccountManage,
-                                     boolean machineManage, boolean unifiedReportEnabled,
-                                     String reportUsername, String reportNetworkCode, String reportRouteCode,
-                                     String reportType,
-                                     String reportUrl, boolean reportOnline, BigDecimal reportBalance,
-                                     BigDecimal reportStake,
-                                     long machineCount, Instant createdAt,
-                                     boolean online, Instant logtime, boolean hasReportPassword) {
+                                     boolean machineManage, long machineCount, Instant createdAt,
+                                     boolean online, Instant logtime) {
         static SubAccountResponse from(PlatformAdminService.SubAccountRow row) {
             return new SubAccountResponse(row.id(), row.groupCode(), row.username(), row.score(),
                     row.expiresAt(), row.status(), row.accountStatus(), row.subAccountManage(), row.machineManage(),
-                    row.unifiedReportEnabled(), row.reportUsername(), row.reportNetworkCode(), row.reportRouteCode(),
-                    row.reportType(), row.reportUrl(), row.reportOnline(), row.reportBalance(), row.reportStake(),
-                    row.machineCount(), row.createdAt(), row.online(), row.logtime(),
-                    row.hasReportPassword());
+                    row.machineCount(), row.createdAt(), row.online(), row.logtime());
         }
     }
 
@@ -225,7 +189,8 @@ public class PlatformAdminResourceController {
      */
     public record MachineResponse(long id, String code, String accountUsername, long accountUserId,
                                   Long groupId, String groupUsername, BigDecimal score, Instant expiresAt,
-                                  String status, String accountStatus, boolean boardOpen, boolean robotManage,
+                                  String status, String accountStatus, int configVersion,
+                                  boolean boardOpen, boolean robotManage, boolean configEditEnabled,
                                   boolean chaseEnabled,
                                   int requestedBotCount, int closeSeconds, int cancelSeconds,
                                   BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
@@ -238,7 +203,7 @@ public class PlatformAdminResourceController {
         static MachineResponse from(PlatformAdminService.MachineRow row) {
             return new MachineResponse(row.id(), row.code(), row.accountUsername(),
                     row.accountUserId(), row.groupId(), row.groupUsername(), row.score(), row.expiresAt(),
-                    row.status(), row.accountStatus(), row.boardOpen(), row.robotManage(), row.chaseEnabled(),
+                    row.status(), row.accountStatus(), row.configVersion(), row.boardOpen(), row.robotManage(), row.configEditEnabled(), row.chaseEnabled(),
                     row.requestedBotCount(),
                     row.closeSeconds(), row.cancelSeconds(), row.rebateRate(), row.oddsRate(),
                     row.specialRebateRate(), row.specialOddsRate(), row.totalLimit(), row.positiveLimit(),

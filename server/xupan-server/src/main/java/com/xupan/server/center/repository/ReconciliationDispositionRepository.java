@@ -86,14 +86,21 @@ public class ReconciliationDispositionRepository {
      * <p>对账时用：已处置的差异仍会出现在结果里（事实不能被隐藏），
      * 但会带上 {@code disposed=true}，让运营一眼看出"这条我看过了"。</p>
      */
-    public boolean isEffectivelyDisposed(String differenceType, long betId) {
+    public boolean isEffectivelyDisposed(String differenceType, long betId, Long centerAgentId) {
         Long count = jdbc.queryForObject("""
                 SELECT COUNT(*) FROM center_reconciliation_disposition
                  WHERE difference_type = ? AND bet_id = ?
+                   AND ((? IS NULL AND center_agent_id IS NULL)
+                        OR (? IS NOT NULL AND (center_agent_id IS NULL OR center_agent_id = ?)))
                    AND revoked_at IS NULL
                    AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-                """, Long.class, differenceType, betId);
+                """, Long.class, differenceType, betId, centerAgentId, centerAgentId, centerAgentId);
         return count != null && count > 0;
+    }
+
+    /** 兼容未区分中心账号的历史调用点。 */
+    public boolean isEffectivelyDisposed(String differenceType, long betId) {
+        return isEffectivelyDisposed(differenceType, betId, null);
     }
 
     /** 某笔注单的全部处置历史（含已撤销、已过期——审计要看得全）。 */

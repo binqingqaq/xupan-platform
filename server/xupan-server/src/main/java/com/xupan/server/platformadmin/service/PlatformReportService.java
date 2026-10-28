@@ -140,7 +140,9 @@ public class PlatformReportService {
                 SELECT COALESCE(a.agent_id, b.agent_id_snapshot) AS agent_id, b.play_type, b.parameters_text,
                        b.stake, b.odds_snapshot,
                        b.net_profit, b.settlement_status, b.rebate_rate_snapshot,
-                       b.special_rebate_rate_snapshot
+                       b.special_rebate_rate_snapshot,
+                       (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
+                           AS selection_unit_stake
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id=b.user_id
                   JOIN agent ag ON ag.id=COALESCE(a.agent_id, b.agent_id_snapshot)
@@ -153,15 +155,20 @@ public class PlatformReportService {
         Map<Long, BetFlowMetricsCalculator.Metrics> result = new HashMap<>();
         jdbc.query(sql.toString(), rs -> {
             long machineId = rs.getLong("agent_id");
+            com.xupan.server.game.domain.PlayType playType =
+                    com.xupan.server.game.domain.PlayType.valueOf(rs.getString("play_type"));
+            BigDecimal stake = rs.getBigDecimal("stake");
+            BigDecimal unitStake = playType == com.xupan.server.game.domain.PlayType.SPECIAL
+                    ? rs.getBigDecimal("selection_unit_stake") : stake;
             BetFlowMetricsCalculator.Metrics current = result.getOrDefault(
                     machineId, BetFlowMetricsCalculator.Metrics.ZERO);
             result.put(machineId, current.plus(BetFlowMetricsCalculator.calculate(
-                    com.xupan.server.game.domain.PlayType.valueOf(rs.getString("play_type")),
+                    playType,
                     rs.getString("parameters_text"),
-                    rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"),
+                    stake, rs.getBigDecimal("odds_snapshot"),
                     rs.getBigDecimal("net_profit"), rs.getString("settlement_status"),
                     rs.getBigDecimal("rebate_rate_snapshot"),
-                    rs.getBigDecimal("special_rebate_rate_snapshot"))));
+                    rs.getBigDecimal("special_rebate_rate_snapshot"), unitStake)));
         }, args.toArray());
         return result;
     }

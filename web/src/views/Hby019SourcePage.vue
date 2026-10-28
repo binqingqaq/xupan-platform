@@ -81,6 +81,7 @@ async function resolvePlayerUserId(wxid: unknown) {
 
 function betReportState(status: string) {
   switch (status) {
+    case 'NOT_SENT': return { code: 0, label: '未发送' }
     case 'ACCEPTED': return { code: 2, label: '已报' }
     case 'REJECTED': return { code: 3, label: '驳回' }
     case 'TIMEOUT': return { code: 3, label: '超时' }

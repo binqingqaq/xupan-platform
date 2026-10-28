@@ -75,6 +75,7 @@ const failedChatAvatarKeys = ref(new Set<string>())
 const platformSettings = ref<PublicPlatformSettings | null>(null)
 const countdownVisible = ref(true)
 const pendingChatMessage = ref<PendingChatMessage | null>(null)
+const pendingQuickBetClientMessageId = ref<string | null>(null)
 const chatUnread = ref(0)
 const chatAwayFromBottom = ref(false)
 const chatLoading = ref(false)
@@ -214,12 +215,6 @@ const chatConnectionLabel = computed(() => {
     default: return ''
   }
 })
-
-const oddsByType = computed(() => new Map((current.value?.odds ?? []).map((item) => [item.playType, item.odds])))
-
-function oddsFor(playType: PlayType) {
-  return (oddsByType.value.get(playType) ?? 0).toFixed(2)
-}
 
 const historyRows = computed(() => toHistoryRows(current.value?.history ?? []))
 const currentBets = computed(() => current.value?.bets ?? [])
@@ -641,7 +636,18 @@ function connectChatSocket() {
       const ackedPending = pendingChatMessage.value?.clientMessageId === event.clientMessageId
         ? pendingChatMessage.value
         : null
-      if (ackedPending) pendingChatMessage.value = null
+      if (pendingQuickBetClientMessageId.value === event.clientMessageId) {
+        if (event.message.messageType === 'USER_BET') {
+          pendingChatMessage.value = null
+          completeQuickBetSubmission(event.clientMessageId)
+        } else {
+          if (ackedPending) pendingChatMessage.value = { ...ackedPending, status: 'failed' }
+          pendingQuickBetClientMessageId.value = null
+          showFeedback('下注未成功，请查看聊天室中的拒绝原因', 'error')
+        }
+      } else if (ackedPending) {
+        pendingChatMessage.value = null
+      }
       if (event.message.messageType === 'USER_BET' || ackedPending?.refreshAccount) {
         void refreshAccountAfterBetSubmission()
       }
@@ -1032,7 +1038,15 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
   try {
     const sent = await api.sendChatMessage(ROOM_CODE, { clientMessageId, content: body, gameCode: selectedGameCode.value })
     mergeChatMessages([sent])
-    pendingChatMessage.value = null
+    const quickBetSubmission = pendingQuickBetClientMessageId.value === clientMessageId
+    if (quickBetSubmission && sent.messageType !== 'USER_BET') {
+      pendingChatMessage.value = { clientMessageId, body, refreshAccount: shouldRefreshAccount, status: 'failed' }
+      pendingQuickBetClientMessageId.value = null
+      showFeedback('下注未成功，请查看聊天室中的拒绝原因', 'error')
+    } else {
+      pendingChatMessage.value = null
+      if (quickBetSubmission) completeQuickBetSubmission(clientMessageId)
+    }
     if (shouldRefreshAccount) void refreshAccountAfterBetSubmission()
     void refreshChatMessagesAfterSubmission()
     if (isNearChatBottom()) {
@@ -1060,11 +1074,17 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
 }
 
 async function submitQuickBet(message: string) {
-  const sent = await sendPlainTextMessage(withSelectedBallPrefix(message))
-  if (sent) {
-    closeQuickBet()
-    showFeedback('快速下注已提交')
-  }
+  if (pendingChatMessage.value) return
+  const clientMessageId = createChatClientMessageId()
+  pendingQuickBetClientMessageId.value = clientMessageId
+  await sendPlainTextMessage(withSelectedBallPrefix(message), clientMessageId)
+}
+
+function completeQuickBetSubmission(clientMessageId: string) {
+  if (pendingQuickBetClientMessageId.value !== clientMessageId) return
+  pendingQuickBetClientMessageId.value = null
+  closeQuickBet()
+  showFeedback('快速下注已受理')
 }
 
 function withSelectedBallPrefix(message: string) {
@@ -1249,8 +1269,11 @@ onUnmounted(() => {
       :issue-number="current?.issueNumber || '--'"
       :pending-count="quickPendingCount"
       :settled-count="quickSettledCount"
-      :odds="oddsByType"
+      :display-odds="current?.displayOdds ?? []"
+      :special-enabled="current?.specialEnabled ?? false"
       :quick-amounts="settingAmounts"
+      :submitting="pendingChatMessage?.status === 'sending'"
+      :blocked="Boolean(pendingChatMessage)"
       :initial-scroll-top="quickBetScrollTop"
       @close="closeQuickBet"
       @settings="openSettings"

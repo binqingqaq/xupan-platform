@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BY220 番摊快捷下注面板预览</title>
+  <style>
+    :root { color-scheme: light; font-family: "Microsoft YaHei", Arial, sans-serif; color: #333; background: #f4f5f7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    .topbar { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 18px; background: #fff; border-bottom: 1px solid #d9d9d9; }
+    .topbar strong { color: #1688c9; font-size: 14px; }
+    .topbar span { color: #d3544b; font-size: 14px; font-weight: 700; }
+    main { max-width: 1500px; margin: 0 auto; padding-bottom: 24px; }
+    .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 15px 18px 9px; }
+    .section-title h1, .section-title h2 { margin: 0; font-size: 17px; font-weight: 700; }
+    .section-title p { margin: 0; color: #777; font-size: 12px; }
+    .controls { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 10px 18px; background: #fff; border-block: 1px solid #dedede; }
+    .controls label { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+    .controls input { width: 90px; height: 32px; padding: 4px 8px; border: 1px solid #1688ff; border-radius: 4px; font: inherit; }
+    .controls small { color: #777; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #fff; }
+    .tile { min-height: 114px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; border-right: 1px solid #dedede; border-bottom: 1px solid #dedede; cursor: default; user-select: none; }
+    .tile:nth-child(4n) { border-right: 0; }
+    .tile .name { font-size: clamp(19px, 2.2vw, 30px); font-weight: 700; line-height: 1.2; }
+    .tile .odds { color: #c75a52; font-size: clamp(17px, 1.8vw, 25px); font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .tile.special { background: #fff; }
+    .tile.special .name { font-size: clamp(17px, 1.9vw, 25px); }
+    .source-note { margin: 15px 18px 0; padding: 10px 12px; background: #fff; border-left: 3px solid #1688c9; color: #555; font-size: 12px; line-height: 1.65; }
+    @media (max-width: 700px) {
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .tile:nth-child(4n) { border-right: 1px solid #dedede; }
+      .tile:nth-child(3n) { border-right: 0; }
+      .tile { min-height: 94px; }
+      .section-title { align-items: flex-start; flex-direction: column; }
+    }
+    @media (max-width: 420px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .tile:nth-child(3n) { border-right: 1px solid #dedede; }
+      .tile:nth-child(2n) { border-right: 0; }
+      .topbar { padding-inline: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <strong>期号：3012337　余额：1831.00</strong>
+    <span>快捷</span>
+  </header>
+  <main>
+    <div class="section-title">
+      <h1>BY220 番摊快捷下注面板</h1>
+      <p>按 BY220 玩家页 `.showKj` 的玩法顺序与赔率函数整理</p>
+    </div>
+    <section class="controls" aria-label="赔率示例参数">
+      <label>PeiLv <input id="peiLv" type="number" value="95" step="1" min="0"></label>
+      <label>tePeilv <input id="tePeilv" type="number" value="18" step="0.01" min="0"></label>
+      <small>普通赔率：1 + (PeiLv / 100 × 玩法系数)，保留 3 位；特码直接显示 tePeilv，保留 2 位。</small>
+    </section>
+    <section aria-labelledby="common-title">
+      <div class="section-title"><h2 id="common-title">快捷格</h2><p>对应源码 bearing-grid</p></div>
+      <div class="grid" id="common"></div>
+    </section>
+    <section aria-labelledby="plays-title">
+      <div class="section-title"><h2 id="plays-title">其他玩法</h2><p>对应源码 button-grid；同一玩法类别的选项按源码倍率分别展示</p></div>
+      <div class="grid" id="plays"></div>
+    </section>
+    <section aria-labelledby="special-title" id="special-section">
+      <div class="section-title"><h2 id="special-title">特码</h2><p>源码中由 `$game.hasTe` 控制显示</p></div>
+      <div class="grid" id="special"></div>
+    </section>
+    <p class="source-note">这是静态展示预览，不会提交下注。示例参数为 PeiLv=95、tePeilv=18；18 仅用于演示独立特码赔率，不由 PeiLv 推导，也不表示当前机器的实际配置。BY220 源码中普通玩法按具体选项传入系数，车使用 0.333，特码按 tePeilv 直接展示。</p>
+  </main>
+  <script>
+    const common = [
+      ['34角', 1], ['3念4', 2], ['3念1', 2], ['3念2', 2],
+      ['23角', 1], ['2念3', 2], ['2念4', 2], ['2念1', 2],
+      ['12角', 1], ['1念2', 2], ['1念3', 2], ['1念4', 2],
+      ['14角', 1], ['4念1', 2], ['4念2', 2], ['4念3', 2],
+      ['1番', 3], ['2番', 3], ['3番', 3], ['4番', 3], ['单', 1], ['双', 1]
+    ];
+    const plays = [
+      ['1番', 3], ['2番', 3], ['3番', 3], ['4番', 3],
+      ['单', 1], ['双', 1], ['大', 1], ['小', 1],
+      ['1正', 1], ['2正', 1], ['3正', 1], ['4正', 1],
+      ['1车', 0.333], ['2车', 0.333], ['3车', 0.333], ['4车', 0.333],
+      ['2无3', 1], ['1无4', 1], ['2无1', 1], ['1无2', 1],
+      ['4无3', 1], ['3无4', 1], ['4无1', 1], ['3无2', 1],
+      ['12无3', 0.5], ['12无4', 0.5], ['23无1', 0.5], ['13无2', 0.5],
+      ['14无3', 0.5], ['23无4', 0.5], ['24无1', 0.5], ['14无2', 0.5],
+      ['24无3', 0.5], ['13无4', 0.5], ['34无1', 0.5], ['34无2', 0.5]
+    ];
+    const specials = Array.from({ length: 20 }, (_, index) => [String(index + 1).padStart(2, '0') + '特']);
+    const peiInput = document.getElementById('peiLv');
+    const teInput = document.getElementById('tePeilv');
+
+    function render(targetId, items, isSpecial = false) {
+      const target = document.getElementById(targetId);
+      target.replaceChildren(...items.map(([name, factor]) => {
+        const tile = document.createElement('div');
+        tile.className = isSpecial ? 'tile special' : 'tile';
+        const label = document.createElement('div');
+        label.className = 'name';
+        label.textContent = name;
+        const odds = document.createElement('div');
+        odds.className = 'odds';
+        odds.textContent = isSpecial
+          ? (Number(teInput.value) || 0).toFixed(2)
+          : (1 + (Number(peiInput.value) || 0) / 100 * factor).toFixed(3);
+        tile.append(label, odds);
+        return tile;
+      }));
+    }
+
+    function update() {
+      render('common', common);
+      render('plays', plays);
+      render('special', specials, true);
+    }
+
+    peiInput.addEventListener('input', update);
+    teInput.addEventListener('input', update);
+    update();
+  </script>
+</body>
+</html>

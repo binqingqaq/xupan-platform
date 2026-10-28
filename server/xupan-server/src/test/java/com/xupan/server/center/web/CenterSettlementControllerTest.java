@@ -2,6 +2,8 @@ package com.xupan.server.center.web;
 
 import com.jayway.jsonpath.JsonPath;
 import com.xupan.server.auth.repository.UserRepository;
+import com.xupan.server.center.service.CenterOrderService;
+import com.xupan.server.center.service.CenterUpstreamAccountService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,8 +18,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -48,34 +48,37 @@ class CenterSettlementControllerTest {
     @Autowired
     private UserRepository userRepository;
 
-    private final List<Long> createdCenterAgentIds = new ArrayList<>();
+    @Autowired
+    private CenterUpstreamAccountService centerAccountService;
+
+    @Autowired
+    private CenterOrderService centerOrderService;
+
     private long centerAgentId;
-    private String agentToken;
+    private long machineId;
+    private long adminUserId;
+    private int betSequence;
     private String adminToken;
 
     @BeforeEach
     void setUp() throws Exception {
-        createdCenterAgentIds.clear();
         clean();
-        long adminId = userRepository.insert(ADMIN, "结算管理员",
+        betSequence = 0;
+        adminUserId = userRepository.insert(ADMIN, "结算管理员",
                 new BCryptPasswordEncoder().encode(PASSWORD), "ACTIVE");
-        userRepository.assignRole(adminId, "ADMIN");
+        userRepository.assignRole(adminUserId, "ADMIN");
         adminToken = login(ADMIN, PASSWORD);
 
-        MvcResult created = mockMvc.perform(post("/api/admin/center/agents")
-                        .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"agentCode\":\"CENTER_SETTLE_A\",\"agentName\":\"结算测试代理\","
-                                + "\"upstreamAccount\":\"center_settle_up_a\",\"creditLimit\":50000}"))
-                .andExpect(status().isOk()).andReturn();
-        String body = created.getResponse().getContentAsString();
-        centerAgentId = ((Number) JsonPath.read(body, "$.agent.id")).longValue();
-        agentToken = JsonPath.read(body, "$.token");
-        createdCenterAgentIds.add(centerAgentId);
-
-        mockMvc.perform(post("/api/admin/center/agents/" + centerAgentId + "/grants")
-                        .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"amount\":10000,\"reason\":\"结算测试额度\",\"idempotencyKey\":\"settle-grant-1\"}"))
-                .andExpect(status().isOk());
+        jdbc.update("INSERT INTO agent_group (group_code, display_name, status, created_by) "
+                + "VALUES ('CENTER_SETTLE_GROUP', '结算测试子账号', 'ACTIVE', ?)", adminUserId);
+        Long groupId = jdbc.queryForObject("SELECT id FROM agent_group WHERE group_code = 'CENTER_SETTLE_GROUP'",
+                Long.class);
+        centerAgentId = centerAccountService.createAccount(groupId, "center_settle_up_a", PASSWORD,
+                new BigDecimal("10000.00"), null, adminUserId).account().accountId();
+        jdbc.update("INSERT INTO agent (agent_code, display_name, group_id, account_user_id, system_owned, status) "
+                        + "VALUES ('CENTER_SETTLE_MACHINE', '结算测试机器', ?, ?, FALSE, 'ACTIVE')",
+                groupId, adminUserId);
+        machineId = jdbc.queryForObject("SELECT id FROM agent WHERE agent_code = 'CENTER_SETTLE_MACHINE'", Long.class);
     }
 
     @AfterEach
@@ -94,21 +97,18 @@ class CenterSettlementControllerTest {
 
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999101", 1)))
+                        .content(settlement("39999101")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(1))
-                .andExpect(jsonPath("$.skippedCount").value(0))
-                .andExpect(jsonPath("$.agentWinTotal").value(285.0))
-                .andExpect(jsonPath("$.orders[0].settleResult").value("AGENT_WIN"))
-                .andExpect(jsonPath("$.orders[0].settleAmount").value(285.0));
+                .andExpect(jsonPath("$.histories").value(1))
+                .andExpect(jsonPath("$.orders").value(1));
 
-        // 三层：接单时 10000→9900 可用、100 冻结；结算后冻结 0、未结算 0、可用 9900+285=10185
-        assertBalance("10185.00", "0.00", "0.00");
+        // 最大净赔付 285 在接单时已冻结；中奖后风险被消耗，可用额度不再重复扣款。
+        assertBalance("9715.00", "0.00", "0.00");
         assertThat(orderStatus("SETTLE-WIN-1")).isEqualTo("SETTLED");
         assertThat(jdbc.queryForObject("""
                 SELECT settle_result FROM center_order WHERE agent_order_no = 'SETTLE-WIN-1'
                 """, String.class)).isEqualTo("AGENT_WIN");
-        assertThat(orderDrawNumbers("SETTLE-WIN-1")).isEqualTo("1,2,3");
+        assertThat(orderDrawNumbers("SETTLE-WIN-1")).isEqualTo("1,2,3,4,5,6,7,8");
     }
 
     /**
@@ -120,30 +120,28 @@ class CenterSettlementControllerTest {
 
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999102", 1)))
+                        .content(settlement("39999102")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(1))
-                .andExpect(jsonPath("$.agentLoseTotal").value(100.0))
-                .andExpect(jsonPath("$.orders[0].settleResult").value("AGENT_LOSE"));
+                .andExpect(jsonPath("$.orders").value(1));
 
-        // 代理投的是番 2、开的番 1 → 输。本金在接单时已从可用划走，输掉只是未结算里的本金归中心，
-        // 可用**不再变动**（再扣一次就是把同一笔本金扣两遍）。
-        assertBalance("9900.00", "0.00", "0.00");
+        // 代理输时释放未消耗的风险冻结，并把本金计入中心可用额度。
+        assertBalance("10100.00", "0.00", "0.00");
     }
 
     /** 平局/流局：本金原额退回可用额度（代理不赚不亏）。 */
     @Test
     void voidSettlementReturnsStakeToAvailable() throws Exception {
         // STRICT 玩法：参数 1,2；开奖番 2 → DRAW
+        ensureConfirmedIssue("39999103", 2);
         acceptOrder("SETTLE-VOID-1", "STRICT", "3.850", "100", "39999103", "1,2");
 
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999103", 2)))
+                        .content(settlement("39999103")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(1))
-                .andExpect(jsonPath("$.orders[0].settleResult").value("VOID"))
-                .andExpect(jsonPath("$.orders[0].settleAmount").value(100.0));
+                .andExpect(jsonPath("$.orders").value(1));
+        assertThat(jdbc.queryForObject("SELECT settle_result FROM center_order WHERE agent_order_no = 'SETTLE-VOID-1'",
+                String.class)).isEqualTo("VOID");
 
         assertBalance("10000.00", "0.00", "0.00");
     }
@@ -155,36 +153,50 @@ class CenterSettlementControllerTest {
 
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999104", 1)))
+                        .content(settlement("39999104")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(1));
-        assertBalance("10185.00", "0.00", "0.00");
+                .andExpect(jsonPath("$.orders").value(1));
+        assertBalance("9715.00", "0.00", "0.00");
 
         // 再结算一次：已 SETTLED 不再是 ACCEPTED，因此一处也不处理
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999104", 1)))
+                        .content(settlement("39999104")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(0))
-                .andExpect(jsonPath("$.agentWinTotal").value(0.0));
-        assertBalance("10185.00", "0.00", "0.00");
+                .andExpect(jsonPath("$.orders").value(0));
+        assertBalance("9715.00", "0.00", "0.00");
     }
 
-    /** 无参数（params= 缺失）的订单无法结算，跳过而不是静默赔钱。 */
     @Test
-    void unparsableOrderIsSkippedNotSettled() throws Exception {
-        acceptOrder("SETTLE-SKIP-1", "FAN", "3.850", "100", "39999105", null);
+    void settlementCannotUseAnUnconfirmedOrRequestSuppliedResult() throws Exception {
+        insertDraftIssue("39999108");
+        acceptOrder("SETTLE-DRAFT-1", "FAN", "3.850", "100", "39999108", "1");
 
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999105", 1)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(0))
-                .andExpect(jsonPath("$.skippedCount").value(1));
+                        .content("{\"gameCode\":\"AU8\",\"issueNumber\":\"39999108\","
+                                + "\"number\":2,\"fan\":2,\"drawNumbers\":\"2,2,2\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DRAW_RESULT_NOT_CONFIRMED"));
 
-        // 额度不动，订单仍为 ACCEPTED，等待人工处理
-        assertBalance("9900.00", "100.00", "0.00");
-        assertThat(orderStatus("SETTLE-SKIP-1")).isEqualTo("ACCEPTED");
+        assertThat(orderStatus("SETTLE-DRAFT-1")).isEqualTo("ACCEPTED");
+    }
+
+    /** 无法计算最大风险敞口的本地注单在中心接单时即被拒绝。 */
+    @Test
+    void unparsableLocalBetIsRejectedBeforeItCanBeSettled() {
+        String orderNo = "SETTLE-SKIP-1";
+        String issueNumber = "39999105";
+        ensureConfirmedIssue(issueNumber, 1);
+        long localBetId = insertLocalBet(orderNo, "FAN", "3.850", "100", issueNumber, null);
+
+        CenterOrderService.Accepted rejected = centerOrderService.accept(centerAgentId, orderNo, localBetId, machineId,
+                "AU8", issueNumber, "FAN", "", new BigDecimal("3.850"), new BigDecimal("100"));
+
+        assertThat(rejected.status()).isEqualTo("REJECTED");
+        assertThat(rejected.rejectCode()).isEqualTo("CENTER_RISK_SNAPSHOT_INVALID");
+        assertBalance("10000.00", "0.00", "0.00");
+        assertThat(orderStatus(orderNo)).isEqualTo("REJECTED");
     }
 
     /** 结算后账本与三层一致，且每一层都能靠自己的流水验算。 */
@@ -193,7 +205,7 @@ class CenterSettlementControllerTest {
         acceptOrder("SETTLE-LEDGER-1", "FAN", "3.850", "100", "39999106", "1");
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999106", 1)))
+                        .content(settlement("39999106")))
                 .andExpect(status().isOk());
 
         mockMvc.perform(get("/api/admin/center/agents/" + centerAgentId + "/ledger")
@@ -224,39 +236,79 @@ class CenterSettlementControllerTest {
     void settlesMultipleOrdersOfSameIssueTogether() throws Exception {
         acceptOrder("SETTLE-MULTI-1", "FAN", "3.850", "100", "39999107", "1");
         acceptOrder("SETTLE-MULTI-2", "FAN", "3.850", "50", "39999107", "2");
-        assertBalance("9850.00", "150.00", "0.00");
+        assertBalance("9572.50", "427.50", "0.00");
 
         mockMvc.perform(post("/api/admin/center/agents/settlements")
                         .header("Authorization", bearerOf(adminToken)).contentType(MediaType.APPLICATION_JSON)
-                        .content(settlement("39999107", 1)))
+                        .content(settlement("39999107")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.settledCount").value(2))
-                // 第一笔赢 285，第二笔输 50
-                .andExpect(jsonPath("$.agentWinTotal").value(285.0))
-                .andExpect(jsonPath("$.agentLoseTotal").value(50.0));
+                .andExpect(jsonPath("$.orders").value(2));
 
-        // 可用 = 9850 + 285 = 10135：接单时两笔本金共 150 已离开可用；
-        // 赢的那笔中心赔出净额 285 回到可用；输的那笔本金归中心，不再回到可用。
-        assertBalance("10135.00", "0.00", "0.00");
+        // 第一笔中奖消耗 285 冻结风险，第二笔输单释放 142.50 并把本金 50 计入中心余额。
+        assertBalance("9765.00", "0.00", "0.00");
+    }
+
+    @Test
+    void legacyHttpOrderEndpointIsDenied() throws Exception {
+        mockMvc.perform(post("/api/center/orders").header("Authorization", bearerOf(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
     }
 
     private void acceptOrder(String orderNo, String playType, String odds, String amount, String issueNumber,
                              String params) throws Exception {
+        ensureConfirmedIssue(issueNumber, 1);
         String playText = params == null ? "" : "params=" + params;
-        mockMvc.perform(post("/api/center/orders").header("Authorization", bearerOf(agentToken))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"agentOrderNo\":\"" + orderNo + "\",\"gameCode\":\"K28\","
-                                + "\"issueNumber\":\"" + issueNumber + "\",\"playType\":\"" + playType + "\","
-                                + "\"playText\":\"" + playText + "\",\"odds\":" + odds
-                                + ",\"amount\":" + amount + "}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("ACCEPTED"));
+        long localBetId = insertLocalBet(orderNo, playType, odds, amount, issueNumber, params);
+        CenterOrderService.Accepted accepted = centerOrderService.accept(centerAgentId, orderNo, localBetId, machineId,
+                "AU8", issueNumber, playType, playText, new BigDecimal(odds), new BigDecimal(amount));
+        assertThat(accepted.status()).isEqualTo("ACCEPTED");
+        jdbc.update("UPDATE center_order SET ball_number = 1 WHERE agent_order_no = ?", orderNo);
     }
 
-    private String settlement(String issueNumber, int fan) {
-        return "{\"gameCode\":\"K28\",\"issueNumber\":\"" + issueNumber + "\","
-                + "\"number\":" + fan + ",\"fan\":" + fan + ",\"parity\":\"ODD\",\"size\":\"SMALL\","
-                + "\"drawNumbers\":\"1,2,3\"}";
+    private long insertLocalBet(String orderNo, String playType, String odds, String amount, String issueNumber,
+                                String params) {
+        String betCode = "CENTER_SETTLE_BET_" + (++betSequence);
+        jdbc.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, machine_id_snapshot, agent_id_snapshot)
+                VALUES ('AU8', NULL, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+                """, betCode, betCode, issueNumber, playType, params == null ? "" : params,
+                new BigDecimal(amount), new BigDecimal(odds), machineId, machineId);
+        return jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
+    }
+
+    private void ensureConfirmedIssue(String issueNumber, int firstBall) {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number=?",
+                Long.class, issueNumber);
+        if (count != null && count > 0) {
+            return;
+        }
+        jdbc.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, issue_started_at, opened_at, closed_at,
+                     settled_at, draw_result_version, draw_confirmed_at, draw_confirmed_by)
+                VALUES ('AU8', ?, 'CLOSED', 'SETTLED', ?, 2, 3, 4, 5, 6, 7, 8,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        1, CURRENT_TIMESTAMP, ?)
+                """, issueNumber, firstBall, adminUserId);
+    }
+
+    private void insertDraftIssue(String issueNumber) {
+        jdbc.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, issue_started_at, draw_result_version)
+                VALUES ('AU8', ?, 'CLOSED', 'DRAWING', 1, 2, 3, 4, 5, 6, 7, 8,
+                        CURRENT_TIMESTAMP, 1)
+                """, issueNumber);
+    }
+
+    private String settlement(String issueNumber) {
+        return "{\"gameCode\":\"AU8\",\"issueNumber\":\"" + issueNumber + "\"}";
     }
 
     private void assertBalance(String available, String frozen, String unsettled) {
@@ -293,11 +345,26 @@ class CenterSettlementControllerTest {
     }
 
     private void clean() {
+        jdbc.update("DELETE FROM center_order_disposition WHERE center_order_id IN "
+                + "(SELECT id FROM center_order WHERE center_agent_id IN "
+                + "(SELECT id FROM center_agent WHERE agent_code = 'center_settle_up_a'))");
+        jdbc.update("DELETE FROM center_machine_session WHERE center_agent_id IN "
+                + "(SELECT id FROM center_agent WHERE agent_code = 'center_settle_up_a')");
         jdbc.update("DELETE FROM center_order WHERE center_agent_id IN "
-                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'CENTER_SETTLE_%')");
+                + "(SELECT id FROM center_agent WHERE agent_code = 'center_settle_up_a')");
+        jdbc.update("DELETE FROM game_bet WHERE machine_id_snapshot IN "
+                + "(SELECT id FROM agent WHERE agent_code = 'CENTER_SETTLE_MACHINE')");
+        jdbc.update("DELETE FROM chat_robot_dispatch WHERE game_event_id IN "
+                + "(SELECT id FROM game_issue_event WHERE issue_number LIKE '399991%')");
+        jdbc.update("DELETE FROM game_issue_event WHERE issue_number LIKE '399991%'");
+        jdbc.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number LIKE '399991%'");
         jdbc.update("DELETE FROM center_agent_ledger WHERE center_agent_id IN "
-                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'CENTER_SETTLE_%')");
-        jdbc.update("DELETE FROM center_agent WHERE agent_code LIKE 'CENTER_SETTLE_%'");
+                + "(SELECT id FROM center_agent WHERE agent_code = 'center_settle_up_a')");
+        jdbc.update("DELETE FROM center_agent WHERE agent_code = 'center_settle_up_a'");
+        jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = 'CENTER_SETTLE_MACHINE')");
+        jdbc.update("DELETE FROM agent WHERE agent_code = 'CENTER_SETTLE_MACHINE'");
+        jdbc.update("DELETE FROM agent_group WHERE group_code = 'CENTER_SETTLE_GROUP'");
         jdbc.update("DELETE FROM sys_login_log WHERE user_id IN (SELECT id FROM sys_user WHERE username = ?)", ADMIN);
         jdbc.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", ADMIN);

@@ -32,6 +32,12 @@ public final class BotBetTextGenerator {
             "1无2", "1无3", "1无4", "2无1", "2无3", "2无4", "3无1", "3无2", "3无4", "4无1", "4无2", "4无3",
             "12无3", "12无4", "13无2", "13无4", "14无2", "14无3", "23无1", "23无4", "24无1", "24无3", "34无1", "34无2"
     };
+    private static final String[] BY220_TONG = {
+            "1通23", "1通24", "1通34", "1通32", "1通42", "1通43",
+            "2通13", "2通14", "2通34", "2通31", "2通41", "2通43",
+            "3通12", "3通14", "3通24", "3通41", "3通42",
+            "4通12", "4通13", "4通23", "4通21", "4通31", "4通32"
+    };
 
     private BotBetTextGenerator() {
     }
@@ -66,7 +72,7 @@ public final class BotBetTextGenerator {
         if (pick < 9) return "小" + amountText(amount);
         pick -= 9;
         if (pick < 40) return format(PlayType.ADD, randomParameters(PlayType.ADD), amount);
-        return format(PlayType.TONG, randomParameters(PlayType.TONG), amount);
+        return BY220_TONG[RANDOM.nextInt(BY220_TONG.length)] + "/" + amountText(amount);
     }
 
     private static String formatNone(BigDecimal amount) {
@@ -81,7 +87,8 @@ public final class BotBetTextGenerator {
         return switch (playType) {
             case FAN, POSITIVE, CAR -> List.of(1 + RANDOM.nextInt(4));
             case ANGLE, STRICT, NONE -> distinctFans(2);
-            case ADD, TONG -> distinctFans(3);
+            case ADD -> distinctFans(3);
+            case TONG -> randomTongParameters();
             case ODD_EVEN -> List.of(1 + RANDOM.nextInt(2));
             case BIG_SMALL -> List.of(1 + RANDOM.nextInt(2));
             case SPECIAL -> List.of(1 + RANDOM.nextInt(20));
@@ -113,5 +120,13 @@ public final class BotBetTextGenerator {
             picked.add(pool.remove(RANDOM.nextInt(pool.size())));
         }
         return List.copyOf(picked);
+    }
+
+    private static List<Integer> randomTongParameters() {
+        List<Integer> parameters;
+        do {
+            parameters = distinctFans(3);
+        } while (parameters.equals(List.of(3, 2, 1)));
+        return parameters;
     }
 }

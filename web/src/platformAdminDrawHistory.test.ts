@@ -11,6 +11,8 @@ vi.mock('./api', () => ({
     listDrawHistory: vi.fn(),
     listDrawHistoryBets: vi.fn(),
     forceSettleDrawIssue: vi.fn(),
+    updateDrawDraft: vi.fn(),
+    confirmDrawResult: vi.fn(),
     forceSettleAllDrawHistory: vi.fn(),
     supplementDrawHistory: vi.fn(),
     getGameCatalog: vi.fn(),
@@ -36,7 +38,8 @@ beforeEach(() => {
       gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999946',
       balls: [1, 2, 3, 4, 5, 6, 7, 18], phase: 'SETTLED',
       openedAt: '2026-10-02T01:00:00Z', settledAt: '2026-10-02T01:01:00Z',
-      betCount: 1, pendingBetCount: 1,
+      drawConfirmedAt: '2026-10-02T01:01:00Z', drawResultVersion: 1,
+      betCount: 1, pendingBetCount: 1, pendingCenterOrderCount: 0,
     }],
     page: 1, pageSize: 30, total: 1,
   })
@@ -72,7 +75,7 @@ describe('platform admin draw history', () => {
     app.mount(container)
     await settleOperations()
 
-    for (const label of ['强制结算全部', '强制结算', '补期']) {
+    for (const label of ['强制结算全部', '补齐结算', '补期并确认']) {
       const button = operationButton(label, container)
       expect(button.disabled).toBe(true)
       button.click()
@@ -94,13 +97,13 @@ describe('platform admin draw history', () => {
     operationButton('强制结算全部', container).click()
     await settleOperations()
     expect(api.forceSettleAllDrawHistory).toHaveBeenCalledExactlyOnceWith({ confirm: 'FORCE_SETTLE_ALL', preview: true })
-    operationButton('强制结算', container).click()
+    operationButton('补齐结算', container).click()
     await settleOperations()
     expect(api.forceSettleDrawIssue).not.toHaveBeenCalled()
 
     await fillOperationField('补期期号', '39999948', container)
     await fillOperationField('开奖号码', '1,2,3,4,5,6,7,18', container)
-    operationButton('补期', container).click()
+    operationButton('补期并确认', container).click()
     await settleOperations()
     expect(api.supplementDrawHistory).not.toHaveBeenCalled()
     expect(ElMessageBox.confirm).toHaveBeenCalledTimes(3)
@@ -116,7 +119,7 @@ describe('platform admin draw history', () => {
     app.mount(container)
     await settleOperations()
 
-    expect(container.textContent).toContain('未结算')
+    expect(container.textContent).toContain('本地 1 / 中心 0')
     expect(container.textContent).toContain('强制结算全部')
     const allButton = operationButton('强制结算全部', container)
     expect(allButton?.disabled).toBe(false)
@@ -132,14 +135,14 @@ describe('platform admin draw history', () => {
     })
     expect(container.textContent).toContain('已强制结算 1 期')
 
-    operationButton('强制结算', container).click()
+    operationButton('补齐结算', container).click()
     await nextTick()
     await new Promise(resolve => setTimeout(resolve, 0))
-    expect(api.forceSettleDrawIssue).toHaveBeenCalledWith('39999946')
+    expect(api.forceSettleDrawIssue).toHaveBeenCalledWith('AU8', '39999946')
 
     await fillOperationField('补期期号', '39999948', container)
     await fillOperationField('开奖号码', '1,2,3,4,5,6,7,18', container)
-    operationButton('补期', container).click()
+    operationButton('补期并确认', container).click()
     await settleOperations()
     expect(api.supplementDrawHistory).toHaveBeenCalledWith(expect.objectContaining({
       gameCode: 'AU8', issueNumber: '39999948', numbers: [1, 2, 3, 4, 5, 6, 7, 18],

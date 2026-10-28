@@ -477,7 +477,7 @@ class PlayerPhysicalDeleteTest {
     private void insertBehavior(long accountId) {
         jdbc.update("""
                 INSERT INTO test_player_behavior(account_id, run_mode, enabled, stake_min, stake_max)
-                VALUES (?, 'AUTOMATIC', TRUE, 2, 10.00, 100.00)
+                VALUES (?, 'AUTOMATIC', TRUE, 2, 100.00)
                 """, accountId);
     }
 

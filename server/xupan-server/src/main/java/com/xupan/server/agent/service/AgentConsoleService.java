@@ -81,6 +81,7 @@ public class AgentConsoleService {
         if (agentRepository.assignPlayerToAgent(userId, agent.id()) != 1) {
             throw BusinessException.conflict("AGENT_PLAYER_ASSIGN_FAILED", "玩家归属代理失败");
         }
+        copyMachineRebateRate(userId, agent.id());
         ensureOwnedByAgent(agent.id(), userId);
         playerLinkAuthenticationService.issueForAgent(userId, accountUserId);
         return requirePlayer(agent.id(), userId);
@@ -100,9 +101,11 @@ public class AgentConsoleService {
         long userId = view.player().userId();
         jdbc.update("""
                 UPDATE demo_user_account
-                   SET player_kind='BOT', agent_id=?, updated_at=CURRENT_TIMESTAMP
+                   SET player_kind='BOT', agent_id=?,
+                       rebate_rate=(SELECT rebate_rate FROM agent WHERE id=?),
+                       updated_at=CURRENT_TIMESTAMP
                  WHERE sys_user_id=?
-                """, agent.id(), userId);
+                """, agent.id(), agent.id(), userId);
         jdbc.update("""
                 UPDATE sys_user SET auth_mode='BOT_SERVICE', updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
@@ -111,6 +114,15 @@ public class AgentConsoleService {
         ensureOwnedByAgent(agent.id(), userId);
         playerLinkAuthenticationService.issueForAgent(userId, accountUserId);
         return requirePlayer(agent.id(), userId);
+    }
+
+    private void copyMachineRebateRate(long userId, long agentId) {
+        jdbc.update("""
+                UPDATE demo_user_account
+                   SET rebate_rate=(SELECT rebate_rate FROM agent WHERE id=?),
+                       updated_at=CURRENT_TIMESTAMP
+                 WHERE sys_user_id=? AND agent_id=?
+                """, agentId, userId, agentId);
     }
 
     /**
@@ -312,17 +324,25 @@ public class AgentConsoleService {
         BetFlowMetricsCalculator.Metrics[] total = {BetFlowMetricsCalculator.Metrics.ZERO};
         jdbc.query("""
                 SELECT b.play_type, b.parameters_text, b.stake, b.odds_snapshot, b.net_profit,
-                       b.settlement_status, b.rebate_rate_snapshot, b.special_rebate_rate_snapshot
+                       b.settlement_status, b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
+                       (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
+                           AS selection_unit_stake
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
                  WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND b.game_code = 'AU8'
                    AND b.created_at >= ? AND b.created_at < ?
                    AND b.settlement_status IN ('WIN', 'LOSE', 'DRAW')
-                """, (org.springframework.jdbc.core.RowCallbackHandler) rs -> total[0] = total[0].plus(BetFlowMetricsCalculator.calculate(
-                PlayType.valueOf(rs.getString("play_type")), rs.getString("parameters_text"),
-                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"),
-                rs.getBigDecimal("net_profit"), rs.getString("settlement_status"),
-                rs.getBigDecimal("rebate_rate_snapshot"), rs.getBigDecimal("special_rebate_rate_snapshot"))),
+                """, (org.springframework.jdbc.core.RowCallbackHandler) rs -> {
+            PlayType playType = PlayType.valueOf(rs.getString("play_type"));
+            BigDecimal stake = rs.getBigDecimal("stake");
+            BigDecimal unitStake = playType == PlayType.SPECIAL
+                    ? rs.getBigDecimal("selection_unit_stake") : stake;
+            total[0] = total[0].plus(BetFlowMetricsCalculator.calculate(
+                    playType, rs.getString("parameters_text"), stake, rs.getBigDecimal("odds_snapshot"),
+                    rs.getBigDecimal("net_profit"), rs.getString("settlement_status"),
+                    rs.getBigDecimal("rebate_rate_snapshot"), rs.getBigDecimal("special_rebate_rate_snapshot"),
+                    unitStake));
+        },
                 agentId, Timestamp.from(from), Timestamp.from(to));
         return total[0];
     }

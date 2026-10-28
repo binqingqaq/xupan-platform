@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
-  QUICK_BET_LOWER_OPTIONS,
-  QUICK_BET_TOP_OPTIONS,
+  QUICK_BET_OPTIONS,
   appendQuickAmountDigit,
   backspaceQuickAmount,
   composeQuickBetMessage,
+  quickBetOptionOdds,
 } from '../quickBet'
-import type { PlayType } from '../types'
 import type { QuickBetOption } from '../quickBet'
+import type { DisplayOddsView } from '../types'
 
 const props = defineProps<{
   issueNumber: string
   pendingCount: number
   settledCount: number
-  odds: Map<PlayType, number>
+  displayOdds: DisplayOddsView[]
+  specialEnabled: boolean
   quickAmounts: string[]
+  submitting?: boolean
+  blocked?: boolean
   initialScrollTop?: number
 }>()
 
@@ -34,6 +37,19 @@ const scrollElement = ref<HTMLElement | null>(null)
 const numberKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0']
 
 const quickAmounts = computed(() => props.quickAmounts.slice(0, 5))
+const displayOdds = computed(() => Object.fromEntries(props.displayOdds.map(item => [item.ruleKey, item.displayValue])))
+const topOptions = computed(() => QUICK_BET_OPTIONS.filter(option => option.section === 'top'))
+const lowerOptions = computed(() => QUICK_BET_OPTIONS.filter(option => option.section === 'lower'
+  && (props.specialEnabled || option.playType !== 'SPECIAL')))
+const selectedSpecialCount = computed(() => selectedKeys.value.filter(key => key.startsWith('special-')).length)
+const specialStakeTotal = computed(() => {
+  const unitStake = Number(amount.value)
+  return Number.isFinite(unitStake) && unitStake > 0 ? unitStake * selectedSpecialCount.value : 0
+})
+
+watch(() => props.specialEnabled, enabled => {
+  if (!enabled) selectedKeys.value = selectedKeys.value.filter(key => !key.startsWith('special-'))
+})
 
 function toggleOption(option: QuickBetOption) {
   const index = selectedKeys.value.indexOf(option.key)
@@ -53,10 +69,8 @@ function topStyle(option: QuickBetOption) {
   }
 }
 
-function formatOdds(playType: PlayType) {
-  const odds = props.odds.get(playType)
-  if (odds === undefined || !Number.isFinite(odds) || odds <= 0) return '--'
-  return playType === 'SPECIAL' ? odds.toFixed(2) : odds.toFixed(3)
+function formatOdds(option: QuickBetOption) {
+  return quickBetOptionOdds(option, displayOdds.value)
 }
 
 function appendDigit(digit: string) {
@@ -94,7 +108,6 @@ function submit() {
     return
   }
   emit('submit', message)
-  selectedKeys.value = []
   error.value = ''
 }
 
@@ -110,7 +123,7 @@ onMounted(() => {
     <div ref="scrollElement" class="quick-bet-scroll" @scroll="handleScroll">
       <div class="quick-top-grid" aria-label="主赔率区">
         <button
-          v-for="option in QUICK_BET_TOP_OPTIONS"
+          v-for="option in topOptions"
           :key="option.key"
           type="button"
           class="quick-option"
@@ -120,13 +133,13 @@ onMounted(() => {
           @click="toggleOption(option)"
         >
           <strong>{{ option.code }}</strong>
-          <b>{{ formatOdds(option.playType) }}</b>
+          <b>{{ formatOdds(option) }}</b>
         </button>
       </div>
 
       <div class="quick-lower-grid" aria-label="其他赔率区">
         <button
-          v-for="option in QUICK_BET_LOWER_OPTIONS"
+          v-for="option in lowerOptions"
           :key="option.key"
           type="button"
           class="quick-option quick-option-lower"
@@ -135,7 +148,7 @@ onMounted(() => {
           @click="toggleOption(option)"
         >
           <strong>{{ option.code }}</strong>
-          <b>{{ formatOdds(option.playType) }}</b>
+          <b>{{ formatOdds(option) }}</b>
         </button>
       </div>
     </div>
@@ -154,12 +167,17 @@ onMounted(() => {
           v-model="amount"
           class="quick-bet-amount"
           inputmode="decimal"
-          aria-label="快速下注金额"
-          placeholder="输入金额"
+          aria-label="每个选中格的下注金额"
+          placeholder="每格金额"
         />
-        <button class="quick-bet-submit" type="button" @click="submit">快速下注</button>
+        <button class="quick-bet-submit" type="button" :disabled="submitting || blocked" @click="submit">
+          {{ submitting ? '提交中...' : blocked ? '先处理待重试消息' : '快速下注' }}
+        </button>
         <button class="quick-bet-reset" type="button" @click="clearSelection">重置</button>
       </div>
+      <p v-if="selectedSpecialCount" class="quick-bet-special-hint">
+        特码按单号金额计算：{{ selectedSpecialCount }} 个号码，共 {{ specialStakeTotal.toFixed(2) }} 积分
+      </p>
       <div class="quick-bet-number-row">
         <button v-for="digit in numberKeys" :key="digit" type="button" @click="appendDigit(digit)">{{ digit }}</button>
       </div>
@@ -183,7 +201,7 @@ onMounted(() => {
 
 .quick-bet-scroll {
   position: absolute;
-  inset: 0 0 170px;
+  inset: 0 0 188px;
   overflow-x: hidden;
   overflow-y: auto;
   background: #dfdfdf;
@@ -273,7 +291,7 @@ onMounted(() => {
   bottom: 0;
   left: 0;
   z-index: 2;
-  height: 170px;
+  height: 188px;
   background: #1577c7;
   color: #fff;
 }
@@ -318,6 +336,14 @@ onMounted(() => {
 }
 
 .quick-bet-controls { margin-top: 5px; }
+
+.quick-bet-special-hint {
+  margin: 4px 10px 0;
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+}
 
 .quick-bet-controls > button,
 .quick-bet-amount {

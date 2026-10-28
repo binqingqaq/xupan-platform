@@ -17,6 +17,7 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -66,51 +67,33 @@ class CenterAdminControllerTest {
     }
 
     @Test
-    void createsCenterAgentWithThreeSeparateBalanceBuckets() throws Exception {
+    void createsGroupBoundCenterAccountWithInitialAvailableBalance() throws Exception {
         String token = login(ADMIN, PASSWORD);
+        long id = createCenterAccount(token, "A", "center_up_a", 10000);
 
-        MvcResult created = mockMvc.perform(post("/api/admin/center/agents")
-                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"agentCode\":\"CENTER_TEST_A\",\"agentName\":\"中心测试代理A\","
-                                + "\"upstreamAccount\":\"center_up_a\",\"creditLimit\":10000}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.agent.agentCode").value("CENTER_TEST_A"))
-                .andExpect(jsonPath("$.agent.status").value("ACTIVE"))
-                .andExpect(jsonPath("$.agent.creditLimit").value(10000.0))
-                // 原则 1：三层是三个不同字段，创建时三者互相独立
-                .andExpect(jsonPath("$.agent.availableBalance").value(0.0))
-                .andExpect(jsonPath("$.agent.frozenBalance").value(0.0))
-                .andExpect(jsonPath("$.agent.upstreamUnsettled").value(0.0))
-                // 原则 9：只在创建时返回一次 Token 原文，并给出可展示前缀
-                .andExpect(jsonPath("$.token").isNotEmpty())
-                .andExpect(jsonPath("$.agent.tokenPrefix").isNotEmpty())
-                .andReturn();
-        String createdBody = created.getResponse().getContentAsString();
-        long id = ((Number) JsonPath.read(createdBody, "$.agent.id")).longValue();
-        createdCenterAgentIds.add(id);
-        String rawToken = JsonPath.read(createdBody, "$.token");
-        assertThat(rawToken).startsWith("ctr_");
-
-        // 原则 9：库里只有哈希，绝无原文
-        String storedHash = jdbc.queryForObject(
-                "SELECT token_hash FROM center_agent WHERE id = ?", String.class, id);
-        assertThat(storedHash).isNotEqualTo(rawToken);
-        assertThat(storedHash).hasSize(64).matches("[0-9a-f]{64}");
-        assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM center_agent WHERE token_hash = ?", Long.class, rawToken))
-                .as("Token 原文不得入库").isZero();
-
-        // 列表不再返回 Token 原文
         mockMvc.perform(get("/api/admin/center/agents").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[?(@.id == " + id + ")].token").doesNotExist());
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].agentCode")
+                        .value(org.hamcrest.Matchers.contains("center_up_a")))
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].availableBalance")
+                        .value(org.hamcrest.Matchers.contains(10000.0)))
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].frozenBalance")
+                        .value(org.hamcrest.Matchers.contains(0.0)))
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].upstreamUnsettled")
+                        .value(org.hamcrest.Matchers.contains(0.0)));
+        assertThat(jdbc.queryForObject("SELECT password_hash FROM center_agent WHERE id = ?",
+                String.class, id)).isNotEqualTo(PASSWORD);
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM center_agent_ledger
+                 WHERE center_agent_id = ? AND bucket = 'AVAILABLE' AND entry_type = 'OPENING_BALANCE'
+                """, Long.class, id)).isEqualTo(1L);
 
         // 充值走可用额度，其它两层不受影响
         mockMvc.perform(post("/api/admin/center/agents/" + id + "/grants")
                         .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"amount\":500,\"reason\":\"初始额度\",\"idempotencyKey\":\"center-grant-1\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.availableBalance").value(500.0))
+                .andExpect(jsonPath("$.availableBalance").value(10500.0))
                 .andExpect(jsonPath("$.frozenBalance").value(0.0))
                 .andExpect(jsonPath("$.upstreamUnsettled").value(0.0));
 
@@ -119,8 +102,8 @@ class CenterAdminControllerTest {
                         .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"amount\":500,\"reason\":\"初始额度\",\"idempotencyKey\":\"center-grant-1\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.availableBalance").value(500.0));
-        // 创建时写了一条 CREDIT_LIMIT 流水，充值只应写一条 CREDIT_GRANT；重放不再写
+                .andExpect(jsonPath("$.availableBalance").value(10500.0));
+        // 初始额度与充值分别留有流水；相同幂等键的充值只追加一次。
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM center_agent_ledger
                  WHERE center_agent_id = ? AND entry_type = 'CREDIT_GRANT'
@@ -128,20 +111,39 @@ class CenterAdminControllerTest {
         assertThat(jdbc.queryForObject("""
                 SELECT COUNT(*) FROM center_agent_ledger WHERE center_agent_id = ?
                 """, Long.class, id)).isEqualTo(2L);
+        assertThat(jdbc.queryForObject("SELECT reason FROM center_agent_ledger WHERE idempotency_key = ?",
+                String.class, "center-grant-1")).isEqualTo("初始额度");
+        assertThat(jdbc.queryForObject("SELECT balance_before FROM center_agent_ledger WHERE idempotency_key = ?",
+                java.math.BigDecimal.class, "center-grant-1")).isEqualByComparingTo("10000.00");
+        assertThat(jdbc.queryForObject("SELECT balance_after FROM center_agent_ledger WHERE idempotency_key = ?",
+                java.math.BigDecimal.class, "center-grant-1")).isEqualByComparingTo("10500.00");
+
+        mockMvc.perform(post("/api/admin/center/agents")
+                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("AUTH_PERMISSION_DENIED"));
     }
 
     @Test
     void rejectsSharingUpstreamAccountAcrossCenterAgents() throws Exception {
         String token = login(ADMIN, PASSWORD);
-        long first = createCenterAgent(token, "CENTER_TEST_B", "center_up_b", 5000);
+        long first = createCenterAccount(token, "B", "center_up_b", 5000);
 
-        // 原则 8：同一上游账号不得被两个中心代理共用
-        mockMvc.perform(post("/api/admin/center/agents")
+        mockMvc.perform(post("/api/admin/center/accounts")
                         .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"agentCode\":\"CENTER_TEST_C\",\"agentName\":\"中心测试代理C\","
-                                + "\"upstreamAccount\":\"center_up_b\",\"creditLimit\":1000}"))
+                        .content("{\"groupId\":" + groupId("B") + ",\"username\":\"center_up_b2\","
+                                + "\"password\":\"" + PASSWORD + "\",\"initialQuota\":1000}"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("CENTER_UPSTREAM_ACCOUNT_TAKEN"));
+                .andExpect(jsonPath("$.code").value("CENTER_ACCOUNT_GROUP_TAKEN"));
+
+        long otherGroupId = createGroup("C");
+        mockMvc.perform(post("/api/admin/center/accounts")
+                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"groupId\":" + otherGroupId + ",\"username\":\"center_up_b\","
+                                + "\"password\":\"" + PASSWORD + "\",\"initialQuota\":1000}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CENTER_ACCOUNT_USERNAME_TAKEN"));
 
         assertThat(first).isPositive();
     }
@@ -155,7 +157,7 @@ class CenterAdminControllerTest {
     @Test
     void ledgerRecordsEveryBucketChangeAndStaysVerifiable() throws Exception {
         String token = login(ADMIN, PASSWORD);
-        long id = createCenterAgent(token, "CENTER_TEST_D", "center_up_d", 10000);
+        long id = createCenterAccount(token, "D", "center_up_d", 0);
         mockMvc.perform(post("/api/admin/center/agents/" + id + "/grants")
                         .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"amount\":1000,\"reason\":\"初始额度\",\"idempotencyKey\":\"ledger-grant-1\"}"))
@@ -215,7 +217,7 @@ class CenterAdminControllerTest {
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.balanced").value(true))
-                .andExpect(jsonPath("$.total").value(8));
+                .andExpect(jsonPath("$.total").value(7));
 
         // 每一层的最新流水都应等于该层当前值（账本可独立验算）
         assertThat(jdbc.queryForObject("""
@@ -249,7 +251,7 @@ class CenterAdminControllerTest {
     @Test
     void ledgerQueryValidatesPagingAndAgentExistence() throws Exception {
         String token = login(ADMIN, PASSWORD);
-        long id = createCenterAgent(token, "CENTER_TEST_E", "center_up_e", 100);
+        long id = createCenterAccount(token, "E", "center_up_e", 0);
 
         mockMvc.perform(get("/api/admin/center/agents/" + id + "/ledger").param("pageSize", "1000")
                         .header("Authorization", bearer(token)))
@@ -260,6 +262,55 @@ class CenterAdminControllerTest {
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("CENTER_AGENT_NOT_FOUND"));
+    }
+
+    @Test
+    void filtersCenterOrdersAcrossAccountGroupMachineOrderGameIssueStatusAndTimeWithPaging() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+        long accountId = createCenterAccount(token, "FILTER", "center_up_filter", 1000);
+        long groupId = jdbc.queryForObject("SELECT agent_group_id FROM center_agent WHERE id = ?", Long.class, accountId);
+        insertOrder(accountId, "FILTER-202-1", 202L, 77L, "AU8", "39999801", "REJECTED");
+        insertOrder(accountId, "FILTER-202-2", 202L, 77L, "AU8", "39999801", "REJECTED");
+        insertOrder(accountId, "FILTER-203", 203L, 77L, "AU8", "39999802", "ACCEPTED");
+
+        Instant from = Instant.now().minusSeconds(60);
+        Instant to = Instant.now().plusSeconds(60);
+        mockMvc.perform(get("/api/admin/center/agents/orders")
+                        .param("centerAgentId", Long.toString(accountId))
+                        .param("groupId", Long.toString(groupId))
+                        .param("machineId", "77")
+                        .param("localBetId", "202")
+                        .param("centerOrderNo", "FILTER-202")
+                        .param("gameCode", "AU8")
+                        .param("issueNumber", "39999801")
+                        .param("status", "REJECTED")
+                        .param("createdFrom", from.toString())
+                        .param("createdTo", to.toString())
+                        .param("page", "2").param("pageSize", "1")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.page").value(2))
+                .andExpect(jsonPath("$.pageSize").value(1))
+                .andExpect(jsonPath("$.items.length()").value(1))
+                .andExpect(jsonPath("$.items[0].localBetId").value(202))
+                .andExpect(jsonPath("$.items[0].status").value("REJECTED"));
+
+        mockMvc.perform(get("/api/admin/center/agents/orders")
+                        .param("createdFrom", to.toString()).param("createdTo", from.toString())
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("CENTER_ORDER_QUERY_INVALID"));
+    }
+
+    private void insertOrder(long accountId, String orderNo, long localBetId, long machineId,
+                             String gameCode, String issueNumber, String status) {
+        jdbc.update("""
+                INSERT INTO center_order
+                    (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code, issue_number,
+                     play_type, play_text, odds, amount, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'FAN', 'filter test', 3.8500, 10.00, ?)
+                """, accountId, orderNo, localBetId, machineId, gameCode, issueNumber, status);
     }
 
     /** 没有 CENTER_AGENT_MANAGE 的普通用户不得管理中心代理。 */
@@ -290,18 +341,34 @@ class CenterAdminControllerTest {
                 .andExpect(status().isOk());
     }
 
-    private long createCenterAgent(String token, String code, String upstreamAccount, int creditLimit)
+    private long createCenterAccount(String token, String groupSuffix, String username, int initialQuota)
             throws Exception {
-        MvcResult result = mockMvc.perform(post("/api/admin/center/agents")
+        long groupId = createGroup(groupSuffix);
+        MvcResult result = mockMvc.perform(post("/api/admin/center/accounts")
                         .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"agentCode\":\"" + code + "\",\"agentName\":\"" + code + "名称\","
-                                + "\"upstreamAccount\":\"" + upstreamAccount + "\","
-                                + "\"creditLimit\":" + creditLimit + "}"))
+                        .content("{\"groupId\":" + groupId + ",\"username\":\"" + username + "\","
+                                + "\"password\":\"" + PASSWORD + "\","
+                                + "\"initialQuota\":" + initialQuota + "}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        long id = ((Number) JsonPath.read(result.getResponse().getContentAsString(), "$.agent.id")).longValue();
+        long id = ((Number) JsonPath.read(result.getResponse().getContentAsString(), "$.account.accountId"))
+                .longValue();
         createdCenterAgentIds.add(id);
         return id;
+    }
+
+    private long createGroup(String suffix) {
+        String code = "CENTER_TEST_GROUP_" + suffix;
+        jdbc.update("INSERT INTO agent_group (group_code, display_name, status, created_by) "
+                        + "VALUES (?, ?, 'ACTIVE', ?)", code, code, adminId);
+        Long id = jdbc.queryForObject("SELECT id FROM agent_group WHERE group_code = ?", Long.class, code);
+        if (id == null) throw new IllegalStateException("创建测试渠道组后未取得 ID");
+        return id;
+    }
+
+    private long groupId(String suffix) {
+        return jdbc.queryForObject("SELECT id FROM agent_group WHERE group_code = ?", Long.class,
+                "CENTER_TEST_GROUP_" + suffix);
     }
 
     private String login(String username, String password) throws Exception {
@@ -316,10 +383,17 @@ class CenterAdminControllerTest {
     }
 
     private void clean() {
+        jdbc.update("DELETE FROM center_order_disposition WHERE center_order_id IN "
+                + "(SELECT id FROM center_order WHERE center_agent_id IN "
+                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'center_up_%'))");
+        jdbc.update("DELETE FROM center_order WHERE center_agent_id IN "
+                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'center_up_%')");
+        jdbc.update("DELETE FROM center_machine_session WHERE center_agent_id IN "
+                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'center_up_%')");
         jdbc.update("DELETE FROM center_agent_ledger WHERE center_agent_id IN "
-                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'CENTER_TEST_%')");
-        jdbc.update("UPDATE agent SET center_agent_id = NULL WHERE center_agent_id IS NOT NULL");
-        jdbc.update("DELETE FROM center_agent WHERE agent_code LIKE 'CENTER_TEST_%'");
+                + "(SELECT id FROM center_agent WHERE agent_code LIKE 'center_up_%')");
+        jdbc.update("DELETE FROM center_agent WHERE agent_code LIKE 'center_up_%'");
+        jdbc.update("DELETE FROM agent_group WHERE group_code LIKE 'CENTER_TEST_GROUP_%'");
         jdbc.update("DELETE FROM sys_login_log WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, 'center-plain-user'))", ADMIN);
         jdbc.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "

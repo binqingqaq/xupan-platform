@@ -1,7 +1,12 @@
 package com.xupan.server.center.service;
 
+import com.xupan.server.agent.service.AgentLedgerService;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
+import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.service.SettlementResult;
+import com.xupan.server.game.service.SettlementService;
 import com.xupan.server.web.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,18 +65,23 @@ public class CenterOrderService {
     private final CenterOrderRepository orderRepository;
     private final CenterAgentService agentService;
     private final CenterTokenService tokenService;
+    private final AgentLedgerService agentLedgerService;
+    private final SettlementService settlementService;
     /** 异常行为识别的滚动窗口与命中阈值（P1-C1）。窗口为 0 或阈值 <= 0 时关闭该规则。 */
     private final Duration behaviorWindow;
     private final int behaviorHitThreshold;
 
     public CenterOrderService(CenterAgentRepository agentRepository, CenterOrderRepository orderRepository,
                               CenterAgentService agentService, CenterTokenService tokenService,
+                              AgentLedgerService agentLedgerService, SettlementService settlementService,
                               @Value("${xupan.center.risk.behavior-window:10m}") Duration behaviorWindow,
                               @Value("${xupan.center.risk.behavior-hit-threshold:30}") int behaviorHitThreshold) {
         this.agentRepository = agentRepository;
         this.orderRepository = orderRepository;
         this.agentService = agentService;
         this.tokenService = tokenService;
+        this.agentLedgerService = agentLedgerService;
+        this.settlementService = settlementService;
         this.behaviorWindow = behaviorWindow == null || behaviorWindow.isNegative() ? Duration.ZERO : behaviorWindow;
         this.behaviorHitThreshold = behaviorHitThreshold;
     }
@@ -118,61 +128,152 @@ public class CenterOrderService {
                     row.frozenAmount());
         }
 
+        if (localBetId == null || localAgentId == null || localBetId <= 0 || localAgentId <= 0) {
+            throw BusinessException.badRequest("CENTER_LOCAL_BET_REQUIRED", "中心接单必须关联本地注单和报单机器");
+        }
+        CenterOrderRepository.LocalBetSnapshot bet = orderRepository
+                .findLocalBetSnapshot(centerAgentId, localBetId, localAgentId)
+                .orElseThrow(() -> BusinessException.badRequest("CENTER_LOCAL_BET_INVALID",
+                        "本地注单不存在，或注单机器不属于该中心账号的子账号"));
+        if (!"PENDING".equals(bet.settlementStatus())) {
+            throw BusinessException.conflict("CENTER_LOCAL_BET_NOT_PENDING", "只有未结算的本地注单可以上报");
+        }
+
+        // 所有可变请求字段都以已落库注单为准，避免浏览器/调用方提交赔率、金额或玩法覆盖投注事实。
+        gameCode = bet.gameCode();
+        issueNumber = bet.issueNumber();
+        playType = bet.playType();
+        playText = bet.parametersText() == null || bet.parametersText().isBlank()
+                ? "" : "params=" + bet.parametersText().trim();
+        odds = bet.odds();
+        amount = bet.stake();
+
         // 代理已停用：这是"确认未受理"，必须在中心留下一条拒绝单。
         // 只抛异常会让代理侧只看到 REJECTED 却在中心查不到任何记录，
         // 事后无法解释这笔订单为什么没被受理（对账时表现为"本地有、中心无"）。
         if (!"ACTIVE".equals(agent.status())) {
-            long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
-                    issueNumber, playType, playText, odds, amount, "REJECTED", "CENTER_AGENT_DISABLED",
-                    rejectReason("CENTER_AGENT_DISABLED"), BigDecimal.ZERO, null);
+            long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, "CENTER_AGENT_DISABLED",
+                    BigDecimal.ZERO);
             return new Accepted(id, "REJECTED", "CENTER_AGENT_DISABLED",
                     rejectReason("CENTER_AGENT_DISABLED"), false, BigDecimal.ZERO);
         }
 
         String rejectCode = validate(agent, gameCode, issueNumber, playType, odds, amount);
         if (rejectCode != null) {
-            long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
-                    issueNumber, playType, playText, odds, amount, "REJECTED", rejectCode,
-                    rejectReason(rejectCode), BigDecimal.ZERO, null);
+            long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, rejectCode, BigDecimal.ZERO);
             recordRiskHit(agent, rejectCode, gameCode, issueNumber, agentOrderNo, amount);
             return new Accepted(id, "REJECTED", rejectCode, rejectReason(rejectCode), false, BigDecimal.ZERO);
         }
 
         BigDecimal normalizedAmount = amount.setScale(2, RoundingMode.HALF_UP);
-        // 原则 1：可用额度不足即拒绝，不做"透支"——透支会让余额与敞口脱钩
-        if (agent.availableBalance().compareTo(normalizedAmount) < 0) {
-            long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
-                    issueNumber, playType, playText, odds, amount, "REJECTED", "CENTER_AVAILABLE_INSUFFICIENT",
-                    rejectReason("CENTER_AVAILABLE_INSUFFICIENT"), BigDecimal.ZERO, null);
-            recordRiskHit(agent, "CENTER_AVAILABLE_INSUFFICIENT", gameCode, issueNumber, agentOrderNo, amount);
-            return new Accepted(id, "REJECTED", "CENTER_AVAILABLE_INSUFFICIENT",
-                    rejectReason("CENTER_AVAILABLE_INSUFFICIENT"), false, BigDecimal.ZERO);
+        BigDecimal riskAmount;
+        try {
+            riskAmount = maximumNetPayout(playType, playText, normalizedAmount, odds,
+                    bet.machineOddsRateSnapshot());
+        } catch (IllegalArgumentException invalidSnapshot) {
+            String code = "CENTER_RISK_SNAPSHOT_INVALID";
+            long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, code, BigDecimal.ZERO);
+            recordRiskHit(agent, code, gameCode, issueNumber, agentOrderNo, normalizedAmount);
+            return new Accepted(id, "REJECTED", code, rejectReason(code), false, BigDecimal.ZERO);
+        }
+
+        BigDecimal exposureLimit = agent.maxIssueExposure() != null
+                ? agent.maxIssueExposure() : MAX_ISSUE_EXPOSURE;
+        BigDecimal exposure = orderRepository.acceptedExposure(agent.id(), gameCode, issueNumber.trim());
+        if (exposure.add(riskAmount).compareTo(exposureLimit) > 0) {
+            String code = "CENTER_ISSUE_EXPOSURE_EXCEEDED";
+            long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, code, riskAmount);
+            recordRiskHit(agent, code, gameCode, issueNumber, agentOrderNo, riskAmount);
+            return new Accepted(id, "REJECTED", code, rejectReason(code), false, BigDecimal.ZERO);
         }
 
         // 异常行为识别（P1-C1）：短时高频试探。放在最后一道，避免对正常单产生额外查询开销。
         String behaviorCode = detectAbnormalBehavior(agent, agentOrderNo);
         if (behaviorCode != null) {
-            long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
-                    issueNumber, playType, playText, odds, amount, "REJECTED", behaviorCode,
-                    rejectReason(behaviorCode), BigDecimal.ZERO, null);
-            recordRiskHit(agent, behaviorCode, gameCode, issueNumber, agentOrderNo, amount);
+            long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, behaviorCode, riskAmount);
+            recordRiskHit(agent, behaviorCode, gameCode, issueNumber, agentOrderNo, riskAmount);
             return new Accepted(id, "REJECTED", behaviorCode, rejectReason(behaviorCode), false, BigDecimal.ZERO);
         }
 
+        // 锁顺序固定为 center_agent -> agent。中心额度先承担风险，缺口只由当前报单机器补足。
+        BigDecimal machineBalance = agentLedgerService.lockMachineScore(bet.machineId());
+        BigDecimal centerFunded = agent.availableBalance().min(riskAmount).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal machineFunded = riskAmount.subtract(centerFunded).setScale(2, RoundingMode.HALF_UP);
+        if (machineBalance.compareTo(machineFunded) < 0) {
+            String code = "CENTER_RISK_CAPACITY_INSUFFICIENT";
+            long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, code, riskAmount);
+            recordRiskHit(agent, code, gameCode, issueNumber, agentOrderNo, riskAmount);
+            return new Accepted(id, "REJECTED", code, rejectReason(code), false, BigDecimal.ZERO);
+        }
+
         Instant now = Instant.now();
-        long id = orderRepository.insert(centerAgentId, agentOrderNo, localBetId, localAgentId, gameCode,
-                issueNumber, playType, playText, odds, normalizedAmount, "ACCEPTED", null, null,
-                normalizedAmount, now);
-        // 接单即占额度：可用 → 冻结，两层各写一条流水
-        agentService.moveInternal(centerAgentId, CenterAgentService.BUCKET_AVAILABLE,
-                CenterAgentService.TYPE_BET_FREEZE, "OUT", normalizedAmount,
-                "接单冻结：期号 " + issueNumber, "CENTER_ORDER", Long.toString(id),
-                "CENTER-FREEZE-OUT-" + id, null);
-        agentService.moveInternal(centerAgentId, CenterAgentService.BUCKET_FROZEN,
-                CenterAgentService.TYPE_BET_FREEZE, "IN", normalizedAmount,
-                "接单冻结：期号 " + issueNumber, "CENTER_ORDER", Long.toString(id),
-                "CENTER-FREEZE-IN-" + id, null);
-        return new Accepted(id, "ACCEPTED", null, null, false, normalizedAmount);
+        long id = orderRepository.insert(centerAgentId, agentOrderNo, bet.betId(), bet.machineId(),
+                bet.gameCode(), bet.issueNumber(), bet.ballNumber(), playType, playText,
+                odds, normalizedAmount, riskAmount, 1, centerFunded, machineFunded,
+                bet.machineOddsRateSnapshot(), "ACCEPTED", null, null, now);
+        if (centerFunded.signum() > 0) {
+            agentService.moveInternal(centerAgentId, CenterAgentService.BUCKET_AVAILABLE,
+                    CenterAgentService.TYPE_BET_FREEZE, "OUT", centerFunded,
+                    "中心风险冻结：期号 " + issueNumber, "CENTER_ORDER", Long.toString(id),
+                    "CENTER-FREEZE-OUT-" + id, null);
+            agentService.moveInternal(centerAgentId, CenterAgentService.BUCKET_FROZEN,
+                    CenterAgentService.TYPE_BET_FREEZE, "IN", centerFunded,
+                    "中心风险冻结：期号 " + issueNumber, "CENTER_ORDER", Long.toString(id),
+                    "CENTER-FREEZE-IN-" + id, null);
+        }
+        agentLedgerService.reserveCenterRisk(bet.machineId(), machineFunded, id);
+        return new Accepted(id, "ACCEPTED", null, null, false, centerFunded);
+    }
+
+    private long insertRejected(long centerAgentId, String agentOrderNo,
+                                CenterOrderRepository.LocalBetSnapshot bet, String playText,
+                                String rejectCode, BigDecimal riskAmount) {
+        return orderRepository.insert(centerAgentId, agentOrderNo, bet.betId(), bet.machineId(), bet.gameCode(),
+                bet.issueNumber(), bet.ballNumber(), bet.playType(), playText, bet.odds(), bet.stake(),
+                riskAmount, 1, BigDecimal.ZERO.setScale(2), BigDecimal.ZERO.setScale(2),
+                bet.machineOddsRateSnapshot(), "REJECTED", rejectCode, rejectReason(rejectCode), null);
+    }
+
+    private BigDecimal maximumNetPayout(String playTypeName, String playText,
+                                        BigDecimal stake, BigDecimal odds,
+                                        BigDecimal machineOddsRateSnapshot) {
+        PlayType playType = PlayType.valueOf(playTypeName.trim().toUpperCase(java.util.Locale.ROOT));
+        List<Integer> parameters = CenterSettlementService.parseParameters(playText);
+        BigDecimal maximum = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal normalizedOdds = CenterSettlementService.normalizeOdds(odds);
+        for (int number = 1; number <= 20; number++) {
+            SettlementResult outcome = settlementService.settle(playType, parameters, stake, normalizedOdds,
+                    null, machineOddsRateSnapshot, BallResult.fromNumber(number));
+            if (outcome.netProfit().compareTo(maximum) > 0) {
+                maximum = outcome.netProfit();
+            }
+        }
+        return maximum.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal riskForConfirmation(CenterOrderRepository.OrderRow order) {
+        if (order.riskPolicyVersion() == 1) {
+            return nz(order.riskAmount());
+        }
+        if (order.localBetId() == null || order.ballNumber() == null
+                || order.ballNumber() < 1 || order.ballNumber() > 8
+                || order.playType() == null || order.playText() == null
+                || order.amount() == null || order.odds() == null
+                || ("CAR".equalsIgnoreCase(order.playType()) && order.machineOddsRateSnapshot() == null)) {
+            throw BusinessException.conflict("CENTER_RISK_SNAPSHOT_REQUIRED",
+                    "该历史订单的风险快照不完整，需先完成人工核对");
+        }
+        try {
+            return maximumNetPayout(order.playType(), order.playText(), order.amount(), order.odds(),
+                    order.machineOddsRateSnapshot());
+        } catch (IllegalArgumentException invalidSnapshot) {
+            throw BusinessException.conflict("CENTER_RISK_SNAPSHOT_REQUIRED",
+                    "该历史订单无法按当前玩法规则还原最大风险，需先完成人工核对");
+        }
+    }
+
+    private static BigDecimal nz(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO.setScale(2) : value;
     }
 
     /**
@@ -213,11 +314,7 @@ public class CenterOrderService {
         Optional<CenterOrderRepository.DispositionRow> existing =
                 orderRepository.findDispositionByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
-            CenterOrderRepository.DispositionRow row = existing.get();
-            CenterOrderRepository.OrderRow order = orderRepository.findById(row.centerOrderId())
-                    .orElseThrow(() -> BusinessException.notFound("CENTER_ORDER_NOT_FOUND", "中心订单不存在"));
-            return new DispositionResult(row.centerOrderId(), order.status(), row.action(),
-                    row.amount(), order.settleAmount(), true);
+            return replayDisposition(centerOrderId, existing.get());
         }
 
         CenterOrderRepository.OrderRow order = orderRepository.findById(centerOrderId)
@@ -243,24 +340,42 @@ public class CenterOrderService {
             throw BusinessException.conflict("CENTER_DISPOSITION_STATUS_INVALID",
                     "只有待处理或超时的订单才能确认受理，当前状态：" + from);
         }
-        agentRepository.lockById(order.centerAgentId());
-        int updated = orderRepository.updateStatus(order.id(), "ACCEPTED", List.of("TIMEOUT", "PENDING"));
+        CenterAgentRepository.AgentRow locked = agentRepository.lockById(order.centerAgentId())
+                .orElseThrow(() -> BusinessException.notFound("CENTER_AGENT_NOT_FOUND", "中心账号不存在"));
+        if (order.localAgentId() == null) {
+            throw BusinessException.conflict("CENTER_MACHINE_RESERVATION_INVALID", "待确认订单缺少报单机器");
+        }
+        BigDecimal riskAmount = riskForConfirmation(order);
+        BigDecimal machineBalance = agentLedgerService.lockMachineScore(order.localAgentId());
+        BigDecimal centerFunded = locked.availableBalance().min(riskAmount).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal machineFunded = riskAmount.subtract(centerFunded).setScale(2, RoundingMode.HALF_UP);
+        if (machineBalance.compareTo(machineFunded) < 0) {
+            throw BusinessException.conflict("CENTER_RISK_CAPACITY_INSUFFICIENT",
+                    "中心可用额度和当前机器积分合计不足以覆盖最大净赔付风险");
+        }
+        int updated = orderRepository.acceptWithRiskReservation(order.id(), riskAmount,
+                centerFunded, machineFunded);
         if (updated == 0) {
+            DispositionResult duplicate = replayConcurrentDisposition(order.id(), idempotencyKey);
+            if (duplicate != null) {
+                return duplicate;
+            }
             throw BusinessException.conflict("CENTER_DISPOSITION_CONFLICT", "订单状态已变化，请刷新后重试");
         }
         orderRepository.insertDisposition(order.id(), "CONFIRM_ACCEPTED", from, "ACCEPTED",
                 BigDecimal.ZERO.setScale(2), reason, idempotencyKey, operatorUserId);
-        // 确认受理意味着这笔本来没有占用额度的订单现在要占用：可用 → 冻结。
-        BigDecimal amount = order.amount();
-        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
-                CenterAgentService.TYPE_BET_FREEZE, "OUT", amount,
-                "人工确认受理：订单 " + order.id(), "CENTER_ORDER", Long.toString(order.id()),
-                "CENTER-CONFIRM-FREEZE-OUT-" + order.id(), operatorUserId);
-        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
-                CenterAgentService.TYPE_BET_FREEZE, "IN", amount,
-                "人工确认受理：订单 " + order.id(), "CENTER_ORDER", Long.toString(order.id()),
-                "CENTER-CONFIRM-FREEZE-IN-" + order.id(), operatorUserId);
-        return new DispositionResult(order.id(), "ACCEPTED", "CONFIRM_ACCEPTED", amount, null, false);
+        if (centerFunded.signum() > 0) {
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
+                    CenterAgentService.TYPE_BET_FREEZE, "OUT", centerFunded,
+                    "人工确认受理：订单 " + order.id(), "CENTER_ORDER", Long.toString(order.id()),
+                    "CENTER-CONFIRM-FREEZE-OUT-" + order.id(), operatorUserId);
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
+                    CenterAgentService.TYPE_BET_FREEZE, "IN", centerFunded,
+                    "人工确认受理：订单 " + order.id(), "CENTER_ORDER", Long.toString(order.id()),
+                    "CENTER-CONFIRM-FREEZE-IN-" + order.id(), operatorUserId);
+        }
+        agentLedgerService.reserveCenterRisk(order.localAgentId(), machineFunded, order.id());
+        return new DispositionResult(order.id(), "ACCEPTED", "CONFIRM_ACCEPTED", riskAmount, null, false);
     }
 
     /** 查证后确认未受理：TIMEOUT/PENDING → REJECTED。未占用过额度，因此**不退款**。 */
@@ -272,6 +387,10 @@ public class CenterOrderService {
         }
         int updated = orderRepository.updateStatus(order.id(), "REJECTED", List.of("TIMEOUT", "PENDING"));
         if (updated == 0) {
+            DispositionResult duplicate = replayConcurrentDisposition(order.id(), idempotencyKey);
+            if (duplicate != null) {
+                return duplicate;
+            }
             throw BusinessException.conflict("CENTER_DISPOSITION_CONFLICT", "订单状态已变化，请刷新后重试");
         }
         orderRepository.insertDisposition(order.id(), "CONFIRM_FAILED", from, "REJECTED",
@@ -288,27 +407,58 @@ public class CenterOrderService {
             throw BusinessException.conflict("CENTER_DISPOSITION_STATUS_INVALID",
                     "只有已受理的订单才能" + ("REFUND".equals(action) ? "退款" : "撤单") + "，当前状态：" + from);
         }
-        agentRepository.lockById(order.centerAgentId());
+        agentRepository.lockById(order.centerAgentId())
+                .orElseThrow(() -> BusinessException.notFound("CENTER_AGENT_NOT_FOUND", "中心账号不存在"));
+        if (order.localAgentId() != null) {
+            agentLedgerService.lockMachineScore(order.localAgentId());
+        } else if (nz(order.machineFundedAmount()).signum() > 0) {
+            throw BusinessException.conflict("CENTER_MACHINE_RESERVATION_INVALID", "中心订单缺少风险补足机器");
+        }
         int updated = orderRepository.updateStatus(order.id(), toStatus, List.of("ACCEPTED"));
         if (updated == 0) {
+            DispositionResult duplicate = replayConcurrentDisposition(order.id(), idempotencyKey);
+            if (duplicate != null) {
+                return duplicate;
+            }
             throw BusinessException.conflict("CENTER_DISPOSITION_CONFLICT", "订单状态已变化，请刷新后重试");
         }
-        BigDecimal amount = order.frozenAmount();
+        BigDecimal amount = nz(order.riskAmount());
         orderRepository.insertDisposition(order.id(), action, from, toStatus, amount, reason,
                 idempotencyKey, operatorUserId);
-        if (amount.signum() > 0) {
+        BigDecimal centerFunded = nz(order.frozenAmount());
+        if (centerFunded.signum() > 0) {
             agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
-                    CenterAgentService.TYPE_BET_UNFREEZE, "OUT", amount,
+                    CenterAgentService.TYPE_BET_UNFREEZE, "OUT", centerFunded,
                     ("REFUND".equals(action) ? "订单退款：" : "订单撤单：") + order.id(),
                     "CENTER_ORDER", Long.toString(order.id()),
                     "CENTER-" + action + "-OUT-" + order.id(), operatorUserId);
             agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
-                    CenterAgentService.TYPE_BET_UNFREEZE, "IN", amount,
+                    CenterAgentService.TYPE_BET_UNFREEZE, "IN", centerFunded,
                     ("REFUND".equals(action) ? "订单退款：" : "订单撤单：") + order.id(),
                     "CENTER_ORDER", Long.toString(order.id()),
                     "CENTER-" + action + "-IN-" + order.id(), operatorUserId);
         }
+        if (order.localAgentId() != null && nz(order.machineFundedAmount()).signum() > 0) {
+            agentLedgerService.releaseCenterRisk(order.localAgentId(), order.machineFundedAmount(), order.id());
+        }
         return new DispositionResult(order.id(), toStatus, action, amount, order.settleAmount(), false);
+    }
+
+    private DispositionResult replayConcurrentDisposition(long centerOrderId, String idempotencyKey) {
+        return orderRepository.findDispositionByIdempotencyKeyForUpdate(idempotencyKey)
+                .map(row -> replayDisposition(centerOrderId, row)).orElse(null);
+    }
+
+    private DispositionResult replayDisposition(long requestedOrderId,
+                                                CenterOrderRepository.DispositionRow row) {
+        if (row.centerOrderId() != requestedOrderId) {
+            throw BusinessException.conflict("CENTER_DISPOSITION_KEY_CONFLICT",
+                    "该处置幂等键已用于其他中心订单");
+        }
+        CenterOrderRepository.OrderRow order = orderRepository.findById(row.centerOrderId())
+                .orElseThrow(() -> BusinessException.notFound("CENTER_ORDER_NOT_FOUND", "中心订单不存在"));
+        return new DispositionResult(row.centerOrderId(), order.status(), row.action(),
+                row.amount(), order.settleAmount(), true);
     }
 
     /** 某笔中心订单的处置历史。 */
@@ -335,15 +485,27 @@ public class CenterOrderService {
         if (!"ACCEPTED".equals(order.status())) {
             return false;
         }
-        agentRepository.lockById(order.centerAgentId());
-        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
-                CenterAgentService.TYPE_BET_UNFREEZE, "OUT", order.frozenAmount(),
-                reason == null ? "撤回冻结" : reason, "CENTER_ORDER", Long.toString(centerOrderId),
-                "CENTER-UNFREEZE-OUT-" + centerOrderId, null);
-        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
-                CenterAgentService.TYPE_BET_UNFREEZE, "IN", order.frozenAmount(),
-                reason == null ? "撤回冻结" : reason, "CENTER_ORDER", Long.toString(centerOrderId),
-                "CENTER-UNFREEZE-IN-" + centerOrderId, null);
+        agentRepository.lockById(order.centerAgentId())
+                .orElseThrow(() -> BusinessException.notFound("CENTER_AGENT_NOT_FOUND", "中心账号不存在"));
+        if (order.localAgentId() != null) {
+            agentLedgerService.lockMachineScore(order.localAgentId());
+        } else if (nz(order.machineFundedAmount()).signum() > 0) {
+            throw BusinessException.conflict("CENTER_MACHINE_RESERVATION_INVALID", "中心订单缺少风险补足机器");
+        }
+        BigDecimal centerFunded = nz(order.frozenAmount());
+        if (centerFunded.signum() > 0) {
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
+                    CenterAgentService.TYPE_BET_UNFREEZE, "OUT", centerFunded,
+                    reason == null ? "撤回冻结" : reason, "CENTER_ORDER", Long.toString(centerOrderId),
+                    "CENTER-UNFREEZE-OUT-" + centerOrderId, null);
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
+                    CenterAgentService.TYPE_BET_UNFREEZE, "IN", centerFunded,
+                    reason == null ? "撤回冻结" : reason, "CENTER_ORDER", Long.toString(centerOrderId),
+                    "CENTER-UNFREEZE-IN-" + centerOrderId, null);
+        }
+        if (order.localAgentId() != null && nz(order.machineFundedAmount()).signum() > 0) {
+            agentLedgerService.releaseCenterRisk(order.localAgentId(), order.machineFundedAmount(), order.id());
+        }
         return orderRepository.updateStatus(centerOrderId, "CANCELLED", List.of("ACCEPTED")) == 1;
     }
 
@@ -390,14 +552,8 @@ public class CenterOrderService {
         if (normalizedAmount.compareTo(singleLimit) > 0) {
             return "CENTER_AMOUNT_LIMIT_EXCEEDED";
         }
-        if (odds == null || odds.signum() <= 0) {
+        if (odds == null || odds.compareTo(BigDecimal.ONE) < 0) {
             return "CENTER_ODDS_INVALID";
-        }
-        BigDecimal exposureLimit =
-                agent.maxIssueExposure() != null ? agent.maxIssueExposure() : MAX_ISSUE_EXPOSURE;
-        BigDecimal exposure = orderRepository.acceptedExposure(agent.id(), gameCode, issueNumber.trim());
-        if (exposure.add(normalizedAmount).compareTo(exposureLimit) > 0) {
-            return "CENTER_ISSUE_EXPOSURE_EXCEEDED";
         }
         return null;
     }
@@ -436,7 +592,7 @@ public class CenterOrderService {
         String category = switch (ruleCode) {
             case "CENTER_AMOUNT_LIMIT_EXCEEDED", "CENTER_AMOUNT_INVALID" -> "LIMIT";
             case "CENTER_ISSUE_EXPOSURE_EXCEEDED" -> "EXPOSURE";
-            case "CENTER_AVAILABLE_INSUFFICIENT" -> "ACCOUNT";
+            case "CENTER_AVAILABLE_INSUFFICIENT", "CENTER_RISK_CAPACITY_INSUFFICIENT" -> "ACCOUNT";
             case "CENTER_BEHAVIOR_RATE_ANOMALY" -> "BEHAVIOR";
             default -> "LIMIT";
         };
@@ -446,6 +602,7 @@ public class CenterOrderService {
             case "CENTER_ISSUE_EXPOSURE_EXCEEDED" ->
                     agent.maxIssueExposure() != null ? agent.maxIssueExposure() : MAX_ISSUE_EXPOSURE;
             case "CENTER_AVAILABLE_INSUFFICIENT" -> agent.availableBalance();
+            case "CENTER_RISK_CAPACITY_INSUFFICIENT" -> null;
             default -> null;
         };
         agentRepository.recordRiskHit(agent.id(), ruleCode, category, amount, threshold,
@@ -462,6 +619,9 @@ public class CenterOrderService {
             case "CENTER_ODDS_INVALID" -> "赔率必须大于零";
             case "CENTER_ISSUE_EXPOSURE_EXCEEDED" -> "该期敞口超过中心上限";
             case "CENTER_AVAILABLE_INSUFFICIENT" -> "中心可用额度不足";
+            case "CENTER_RISK_CAPACITY_INSUFFICIENT" -> "中心可用额度和当前机器积分合计不足以覆盖最大净赔付风险";
+            case "CENTER_RISK_SNAPSHOT_INVALID" -> "本地注单结算快照无法计算最大净赔付风险";
+            case "CENTER_LOCAL_BET_REQUIRED" -> "中心接单必须关联本地注单和报单机器";
             case "CENTER_BEHAVIOR_RATE_ANOMALY" -> "短时高频被拒，已触发异常行为风控";
             case "CENTER_AGENT_DISABLED" -> "中心代理已停用";
             default -> code;

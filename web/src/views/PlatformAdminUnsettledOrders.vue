@@ -60,6 +60,7 @@ function time(value: string) {
 }
 
 function reportStatus(value: UnsettledOrderItem['reportStatus']) {
+  if (value === 'NOT_SENT') return '未发送'
   if (value === 'ACCEPTED' || value === 'SETTLED') return '已飞单'
   if (value === 'REJECTED') return '失败'
   if (value === 'TIMEOUT') return '超时'

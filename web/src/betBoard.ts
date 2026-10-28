@@ -27,6 +27,7 @@ export function betBoardFanClass(fan: number) {
  * 并保留"已撤单/已退款/已结算"给中心上游第二层结算使用。
  */
 export function betBoardReportStatusLabel(reportStatus: string | null | undefined) {
+  if (reportStatus === 'NOT_SENT') return '未发送'
   if (reportStatus === 'ACCEPTED' || reportStatus === 'SETTLED') return '已报'
   if (reportStatus === 'REJECTED') return '失败'
   if (reportStatus === 'TIMEOUT') return '超时'
@@ -38,11 +39,11 @@ export function betBoardReportStatusLabel(reportStatus: string | null | undefine
 /**
  * 该注单是否可以重新飞单。
  *
- * 对应 BY220 `admin_list.html:1975-1992`：只有点 `.status0`（未报）与 `.status3`（失败/超时）才触发
+ * 对应 BY220 `admin_list.html:1975-1992`：未发送、未报与失败/超时状态可触发
  * `index/reFeidan` 重新飞单；已报的注单不可重报。
  */
 export function betBoardCanResubmit(reportStatus: string | null | undefined) {
-  return reportStatus === 'PENDING' || reportStatus === 'REJECTED'
+  return reportStatus === 'PENDING' || reportStatus === 'NOT_SENT' || reportStatus === 'REJECTED'
     || reportStatus === 'TIMEOUT' || reportStatus === null || reportStatus === undefined
 }
 

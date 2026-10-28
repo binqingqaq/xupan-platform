@@ -43,7 +43,8 @@ const showCountdown = ref(true)
 const level = computed(() => machineConsole?.level ?? 'UNAVAILABLE')
 const machineConfig = computed(() => machineConsole?.config ?? null)
 const machineOnly = computed(() => level.value !== 'MACHINE' || machineConfig.value === null)
-const disabled = computed(() => machineOnly.value || saving.value || Boolean(machineConsole?.saving))
+const disabled = computed(() => machineOnly.value || machineConfig.value?.configEditable === false
+  || saving.value || Boolean(machineConsole?.saving))
 const hintText = computed(() => {
   if (level.value === 'GLOBAL') return MACHINE_ONLY_FIELD_HINT
   if (level.value === 'UNAVAILABLE') return MACHINE_CONFIG_UNAVAILABLE_HINT

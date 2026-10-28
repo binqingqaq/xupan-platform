@@ -53,12 +53,18 @@ import type {
   ReportConfigUpdateRequest,
   ReportConfigView,
   ReportOrderPage,
+  ReportLocalDispositionRequest,
+  ReportLocalDispositionResult,
   ReportResubmitResult,
   ReportStatus,
   QuickBetPreference,
   MobileDisplayHomeResponse,
   CenterAgent,
-  CenterAgentCreated,
+  CenterUpstreamAccount,
+  CenterUpstreamAccountStatus,
+  CenterMachineSession,
+  CreatedCenterUpstreamAccount,
+  CreateCenterUpstreamAccountRequest,
   CenterAgentLedgerPage,
   CenterOrderPage,
   CenterOrderSummary,
@@ -118,6 +124,8 @@ import type {
   UnsettledOrderCancellation,
   UnsettledOrderPage,
   DrawHistoryPage,
+  DrawHistoryDraftResult,
+  DrawHistoryConfirmationResult,
   DrawHistorySettlementResult,
   DrawHistorySupplementResult,
   ProfitReport,
@@ -334,6 +342,13 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'DRAW_HISTORY_CONFIRM_REQUIRED') return '缺少强制结算确认参数'
   if (error.code === 'DRAW_HISTORY_FORCE_CONFLICT') return '注单已被其他操作结算，请刷新后重试'
   if (error.code === 'DRAW_HISTORY_QUERY_INVALID') return '开奖历史查询参数不合法'
+  if (error.code === 'DRAW_RESULT_LOCKED') return '开奖结果已确认，不能再修改'
+  if (error.code === 'DRAW_RESULT_NOT_READY') return '当前期还未进入开奖阶段'
+  if (error.code === 'DRAW_RESULT_NOT_CONFIRMED') return '开奖结果尚未确认，不能结算'
+  if (error.code === 'DRAW_RESULT_CONFIRM_CONFLICT') return '开奖结果或草稿已被其他操作修改'
+  if (error.code === 'DRAW_HISTORY_GAME_REQUIRED') return '请指定彩种后再操作该期'
+  if (error.code === 'DRAW_HISTORY_DRAFT_INCOMPLETE') return '请先录入完整的 8 个开奖号码'
+  if (error.code === 'CENTER_ORDER_SETTLEMENT_INCOMPLETE') return '中心订单未能全部结算，本次开奖已回滚'
   if (error.code === 'USER_USERNAME_EXISTS') return '登录名已存在，请换一个登录名'
   if (error.code === 'USER_NOT_FOUND') return '用户不存在，请刷新列表后重试'
   if (error.code === 'USER_STATUS_INVALID') return '用户状态不合法'
@@ -630,7 +645,7 @@ export const api = {
   changeSubAccountStatus: (id: number, status: 'ACTIVE' | 'DISABLED') => request<void>(`/api/admin/sub-accounts/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   listMachines: () => request<Machine[]>('/api/admin/machines'),
   createMachine: (payload: MachineInput) => request<Machine>('/api/admin/machines', { method: 'POST', body: JSON.stringify(payload) }),
-  updateMachine: (id: number, payload: MachineInput) => request<Machine>(`/api/admin/machines/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  updateMachine: (id: number, expectedConfigVersion: number, payload: MachineInput) => request<Machine>(`/api/admin/machines/${id}?expectedConfigVersion=${expectedConfigVersion}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteMachine: (id: number) => request<void>(`/api/admin/machines/${id}`, { method: 'DELETE' }),
   changeMachineStatus: (id: number, status: 'ACTIVE' | 'DISABLED') => request<void>(`/api/admin/machines/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   listMachinePlayers: (id: number) => request<MachinePlayer[]>(`/api/admin/machines/${id}/players`),
@@ -642,9 +657,19 @@ export const api = {
     search.set('pageSize', String(params.pageSize || 30))
     return request<DrawHistoryPage>(`/api/admin/draw-history?${search.toString()}`)
   },
-  listDrawHistoryBets: (issueNumber: string) => request<DrawHistoryBet[]>(`/api/admin/draw-history/${encodeURIComponent(issueNumber)}/bets`),
-  forceSettleDrawIssue: (issueNumber: string) =>
-    request<DrawHistorySettlementResult>(`/api/admin/draw-history/${encodeURIComponent(issueNumber)}/force-settle`, { method: 'POST' }),
+  listDrawHistoryBets: (gameCode: string, issueNumber: string) => request<DrawHistoryBet[]>(
+    `/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/bets`,
+  ),
+  forceSettleDrawIssue: (gameCode: string, issueNumber: string) =>
+    request<DrawHistorySettlementResult>(`/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/force-settle`, { method: 'POST' }),
+  updateDrawDraft: (gameCode: string, issueNumber: string, numbers: number[]) =>
+    request<DrawHistoryDraftResult>(`/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/draft`, {
+      method: 'PUT', body: JSON.stringify({ numbers }),
+    }),
+  confirmDrawResult: (gameCode: string, issueNumber: string) =>
+    request<DrawHistoryConfirmationResult>(`/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/confirm`, {
+      method: 'POST',
+    }),
   supplementDrawHistory: (payload: { gameCode: string; issueNumber: string; numbers: number[]; openedAt: string | null }) =>
     request<DrawHistorySupplementResult>('/api/admin/draw-history/supplement', { method: 'POST', body: JSON.stringify(payload) }),
   forceSettleAllDrawHistory: (payload: { confirm: string; preview: boolean }) =>
@@ -656,15 +681,36 @@ export const api = {
     return request<UnsettledOrderPage>(`/api/admin/unsettled-orders?${search.toString()}`)
   },
   // ---- 中心上游（阶段 B）----
+  listCenterUpstreamAccounts: () => request<CenterUpstreamAccount[]>('/api/admin/center/accounts'),
+  createCenterUpstreamAccount: (body: CreateCenterUpstreamAccountRequest) =>
+    request<CreatedCenterUpstreamAccount>('/api/admin/center/accounts', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+  changeCenterUpstreamAccountStatus: (id: number, status: Exclude<CenterUpstreamAccountStatus, 'EXPIRED'>, reason: string) =>
+    request<CenterUpstreamAccount>(`/api/admin/center/accounts/${id}/status`, {
+      method: 'PATCH', body: JSON.stringify({ status, reason }),
+    }),
+  renewCenterUpstreamAccount: (id: number, expiresAt: string, reason: string) =>
+    request<CenterUpstreamAccount>(`/api/admin/center/accounts/${id}/expiry`, {
+      method: 'PATCH', body: JSON.stringify({ expiresAt, reason }),
+    }),
+  resetCenterUpstreamAccountPassword: (id: number, newPassword: string, reason: string) =>
+    request<CenterUpstreamAccount>(`/api/admin/center/accounts/${id}/password`, {
+      method: 'POST', body: JSON.stringify({ newPassword, reason }),
+    }),
+  deleteCenterUpstreamAccount: (id: number, reason: string) =>
+    request<void>(`/api/admin/center/accounts/${id}`, {
+      method: 'DELETE', body: JSON.stringify({ reason }),
+    }),
+  centerAccountSessions: (id: number) =>
+    request<CenterMachineSession[]>(`/api/admin/center/accounts/${id}/sessions`),
   listCenterAgents: () => request<CenterAgent[]>('/api/admin/center/agents'),
-  createCenterAgent: (body: { agentCode: string; agentName: string; upstreamAccount: string; creditLimit: number }) =>
-    request<CenterAgentCreated>('/api/admin/center/agents', { method: 'POST', body: JSON.stringify(body) }),
   changeCenterAgentStatus: (id: number, status: 'ACTIVE' | 'DISABLED') =>
     request<CenterAgent>(`/api/admin/center/agents/${id}/status`, {
       method: 'PATCH',
       body: JSON.stringify({ status }),
     }),
-  grantCenterAgent: (id: number, body: { amount: number; reason?: string; idempotencyKey: string }) =>
+  grantCenterAgent: (id: number, body: { amount: number; reason: string; idempotencyKey: string }) =>
     request<CenterAgent>(`/api/admin/center/agents/${id}/grants`, { method: 'POST', body: JSON.stringify(body) }),
   setCenterAgentCreditLimit: (id: number, body: { creditLimit: number; idempotencyKey: string }) =>
     request<CenterAgent>(`/api/admin/center/agents/${id}/credit-limit`, {
@@ -677,10 +723,20 @@ export const api = {
     search.set('pageSize', String(params.pageSize || 20))
     return request<CenterAgentLedgerPage>(`/api/admin/center/agents/${id}/ledger?${search.toString()}`)
   },
-  listCenterOrders: (params: { centerAgentId?: number; status?: string; page?: number; pageSize?: number } = {}) => {
+  listCenterOrders: (params: {
+    centerAgentId?: number; groupId?: number; machineId?: number; localBetId?: number;
+    centerOrderNo?: string; gameCode?: string; issueNumber?: string; status?: string;
+    createdFrom?: string; createdTo?: string; page?: number; pageSize?: number
+  } = {}) => {
     const search = new URLSearchParams()
-    if (params.centerAgentId) search.set('centerAgentId', String(params.centerAgentId))
-    if (params.status) search.set('status', params.status)
+    if (params.centerAgentId !== undefined) search.set('centerAgentId', String(params.centerAgentId))
+    if (params.groupId !== undefined) search.set('groupId', String(params.groupId))
+    if (params.machineId !== undefined) search.set('machineId', String(params.machineId))
+    if (params.localBetId !== undefined) search.set('localBetId', String(params.localBetId))
+    for (const key of ['centerOrderNo', 'gameCode', 'issueNumber', 'status', 'createdFrom', 'createdTo'] as const) {
+      const value = params[key]?.trim()
+      if (value) search.set(key, value)
+    }
     search.set('page', String(params.page || 1))
     search.set('pageSize', String(params.pageSize || 20))
     return request<CenterOrderPage>(`/api/admin/center/agents/orders?${search.toString()}`)
@@ -689,18 +745,20 @@ export const api = {
   settleCenterIssue: (body: {
     gameCode: string
     issueNumber: string
-    number: number
-    fan: number
-    parity: string
-    size: string
-    drawNumbers?: string
   }) => request<CenterSettlementResult>('/api/admin/center/agents/settlements', {
     method: 'POST',
     body: JSON.stringify(body),
   }),
-  centerReconciliation: (params: { machineId?: number; limit?: number } = {}) => {
+  centerReconciliation: (params: {
+    machineId?: number
+    centerAgentId?: number
+    issueNumber?: string
+    limit?: number
+  } = {}) => {
     const search = new URLSearchParams()
     if (params.machineId) search.set('machineId', String(params.machineId))
+    if (params.centerAgentId) search.set('centerAgentId', String(params.centerAgentId))
+    if (params.issueNumber?.trim()) search.set('issueNumber', params.issueNumber.trim())
     search.set('limit', String(params.limit || 50))
     return request<CenterReconciliation>(`/api/admin/center/agents/reconciliation?${search.toString()}`)
   },
@@ -740,6 +798,7 @@ export const api = {
   disposeReconciliationDifference: (body: {
     differenceType: string
     betId: number
+    centerAgentId?: number | null
     resolution: ReconciliationResolution
     reason?: string
     effectiveDays?: number
@@ -1027,18 +1086,14 @@ export const api = {
     })
   },
   getMobileDisplayHome: () => request<MobileDisplayHomeResponse>('/api/display/mobile/home'),
-  /**
-   * 报网配置与状态（BY220 `robot.php` 报网栏）。
-   *
-   * `machineId` 可省略：机器账号固定读自己那台；管理员/子账号必须显式选择机器。
-   */
+  /** 中心上游报网状态与当前机器的报网开关。 */
   getReportConfig: (machineId?: number | null) => {
     const query = new URLSearchParams()
     if (machineId !== null && machineId !== undefined) query.set('machineId', String(machineId))
     const suffix = query.toString()
     return request<ReportConfigView>(`/api/admin/player-desk/report${suffix ? `?${suffix}` : ''}`)
   },
-  /** 保存报网配置；字段为 `null` 时后端保持原值，密码仅在非空时覆盖。 */
+  /** 保存当前机器的自动上报和失败自动退单开关。 */
   updateReportConfig: (payload: ReportConfigUpdateRequest) => {
     const body: Record<string, unknown> = { ...payload }
     if (body.machineId === null || body.machineId === undefined) delete body.machineId
@@ -1047,19 +1102,16 @@ export const api = {
       body: JSON.stringify(body),
     })
   },
-  /** 本地模拟登录上游（不发起任何外部请求）：成功后机器报网状态为在线。 */
-  loginReport: (machineId?: number | null) =>
+  /** 使用分配的中心账号登录；服务端从当前机器会话确定机器范围。 */
+  loginReport: (payload: { username: string; password: string }) =>
     request<ReportConfigView>('/api/admin/player-desk/report/login', {
       method: 'POST',
-      body: JSON.stringify(machineId === null || machineId === undefined ? {} : { machineId }),
+      body: JSON.stringify(payload),
     }),
-  /** 退出上游：机器报网状态置为离线，保留上次登录时间。 */
-  logoutReport: (machineId?: number | null) =>
-    request<ReportConfigView>('/api/admin/player-desk/report/logout', {
-      method: 'POST',
-      body: JSON.stringify(machineId === null || machineId === undefined ? {} : { machineId }),
-    }),
-  /** 按上报状态列出注单（BY220 未报/失败/超时订单）。 */
+  /** 服务端从当前认证机器上下文确定退出的中心账号会话。 */
+  logoutReport: () =>
+    request<ReportConfigView>('/api/admin/player-desk/report/logout', { method: 'POST' }),
+  /** 按上报状态列出注单（未发送/未报/失败/超时订单）。 */
   listReportOrders: (params: { machineId?: number | null; status?: ReportStatus | null; page?: number; pageSize?: number }) => {
     const query = new URLSearchParams()
     if (params.machineId !== null && params.machineId !== undefined) query.set('machineId', String(params.machineId))
@@ -1068,11 +1120,17 @@ export const api = {
     query.set('pageSize', String(params.pageSize ?? 20))
     return request<ReportOrderPage>(`/api/admin/player-desk/report/orders?${query.toString()}`)
   },
-  /** 重报单笔注单（BY220 `reFeidan`）：仅未报/失败/超时且属于当前机器。 */
+  /** 重报单笔注单（BY220 `reFeidan`）：仅未发送/未报/失败/超时且属于当前机器。 */
   resubmitReportOrder: (betId: number, machineId?: number | null) =>
     request<ReportResubmitResult>(`/api/admin/player-desk/report/orders/${betId}/resubmit`, {
       method: 'POST',
       body: JSON.stringify(machineId === null || machineId === undefined ? {} : { machineId }),
+    }),
+  /** Records a one-time local bet conclusion after a confirmed center cancellation/refund. */
+  disposeReportLocalOrder: (betId: number, payload: ReportLocalDispositionRequest) =>
+    request<ReportLocalDispositionResult>(`/api/admin/player-desk/report/orders/${betId}/local-disposition`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     }),
   getPlayerBehavior: (userId: number) => request<PlayerDeskBehavior>(`/api/admin/player-desk/players/${userId}/behavior`),
   updatePlayerBehavior: (userId: number, payload: TestPlayerBehaviorRequest) =>

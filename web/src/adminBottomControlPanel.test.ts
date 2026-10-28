@@ -116,10 +116,10 @@ describe('admin bottom control panel', () => {
     await settle()
 
     expect(handle.save).toHaveBeenCalledWith({ closeSeconds: 120, cancelSeconds: 10, rebateRate: 5 })
-    expect(container.textContent).toContain('预留封盘、取消与返水已保存')
+    expect(container.textContent).toContain('已自动保存')
   })
 
-  it('saves through the explicit save button and disables the fields while saving', async () => {
+  it('automatically saves on change and disables fields while saving', async () => {
     let release: ((value: boolean) => void) | undefined
     const save = vi.fn(() => new Promise<boolean>(resolve => { release = resolve }))
     const handle = fakeConsole({ save })
@@ -132,18 +132,16 @@ describe('admin bottom control panel', () => {
     rebate.dispatchEvent(new Event('input'))
     await nextTick()
 
-    container.querySelector<HTMLButtonElement>('.bottom-control-save')?.click()
+    rebate.dispatchEvent(new Event('change'))
     await nextTick()
 
     expect(save).toHaveBeenCalledWith({ closeSeconds: 100, cancelSeconds: 10, rebateRate: 8 })
-    expect(container.querySelector<HTMLButtonElement>('.bottom-control-save')?.textContent).toContain('保存中')
     expect(rebate.disabled).toBe(true)
 
     release?.(true)
     await settle()
 
-    expect(container.querySelector<HTMLButtonElement>('.bottom-control-save')?.textContent).toContain('保存')
-    expect(container.textContent).toContain('预留封盘、取消与返水已保存')
+    expect(container.textContent).toContain('已自动保存')
   })
 
   it('shows the error text and keeps no success notice when the machine save fails', async () => {
@@ -176,7 +174,7 @@ describe('admin bottom control panel', () => {
     expect(container.textContent).toContain('身份范围尚未就绪')
   })
 
-  it('lets the right corner and countdown switches be turned on and off and marks stage 4', async () => {
+  it('renders the right corner and countdown display switches as local controls', async () => {
     const container = mountPanel()
     await settle()
 
@@ -185,7 +183,7 @@ describe('admin bottom control panel', () => {
     expect(corner[0].checked).toBe(true)
     expect(corner[1].checked).toBe(false)
     expect(countdown[0].checked).toBe(true)
-    expect(container.textContent).toContain('阶段 4 接入')
+    expect(container.textContent).not.toContain('阶段 4 接入')
 
     corner[1].click()
     countdown[1].click()

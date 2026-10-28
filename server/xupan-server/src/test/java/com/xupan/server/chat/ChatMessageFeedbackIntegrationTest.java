@@ -59,6 +59,7 @@ class ChatMessageFeedbackIntegrationTest {
 
     private long userId;
     private long accountId;
+    private long machineId;
 
     @BeforeEach
     void setUp() {
@@ -68,6 +69,14 @@ class ChatMessageFeedbackIntegrationTest {
                 passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(userId, "USER");
         accountId = walletService.ensureWalletForUser(userId, DISPLAY_NAME);
+        jdbcTemplate.update("""
+                INSERT INTO agent (agent_code, display_name, account_user_id, system_owned, status, bot_count)
+                VALUES ('CHAT-FEEDBACK-MACHINE', '聊天反馈测试机器', ?, FALSE, 'ACTIVE', 0)
+                """, userId);
+        machineId = jdbcTemplate.queryForObject(
+                "SELECT id FROM agent WHERE agent_code = 'CHAT-FEEDBACK-MACHINE'", Long.class);
+        jdbcTemplate.update("UPDATE demo_user_account SET agent_id = ? WHERE id = ?", machineId, accountId);
+        configureMachine();
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
         jdbcTemplate.update("DELETE FROM game_issue_event");
         jdbcTemplate.update("DELETE FROM game_issue");
@@ -156,20 +165,20 @@ class ChatMessageFeedbackIntegrationTest {
     }
 
     @Test
-    void batchBetDropsOnlyTheOverLimitItemAndExplainsTheQuota() {
+    void batchBetOverLimitIsRejectedAtomicallyAndExplainsTheQuota() {
         walletService.grant(userId, userId, new BigDecimal("100.00"), "批量限额测试充值",
                 "CHAT-FEEDBACK-GRANT-LIMIT-1");
         setFanLimit(15);
 
         ChatMessage message = messageService.sendUserMessage(userId, "main", "feedback-limit-1",
-                "1番10,2番10", Instant.now());
+                "1番10,1番10", Instant.now());
 
-        assertThat(message.messageType().name()).isEqualTo("USER_BET");
+        assertThat(message.messageType().name()).isEqualTo("USER_CHAT");
         assertThat(count("SELECT COUNT(*) FROM game_bet WHERE user_id = ? AND settlement_status = 'PENDING'",
-                accountId)).isEqualTo(1);
-        assertThat(balance()).isEqualByComparingTo("90.00");
-        String feedback = "@" + DISPLAY_NAME + "  攻击成功，使用粮草10, 剩余粮草：90"
-                + "\n@" + DISPLAY_NAME + "  下注 2番10 已拒绝：超过番限额15，剩余可下5";
+                accountId)).isZero();
+        assertThat(balance()).isEqualByComparingTo("100.00");
+        String feedback = "@" + DISPLAY_NAME + "  下注未成功"
+                + "\n@" + DISPLAY_NAME + "  下注 1番10 已拒绝：超过番限额15，剩余可下5";
         assertThat(robotContents()).as("机器人消息内容").contains(feedback);
         assertThat(robotOutbox(feedback)).isEqualTo(1);
     }
@@ -271,7 +280,19 @@ class ChatMessageFeedbackIntegrationTest {
     }
 
     private void setFanLimit(int fanLimit) {
-        jdbcTemplate.update("UPDATE game_betting_config SET fan_limit = ? WHERE id = 1", fanLimit);
+        jdbcTemplate.update("UPDATE agent SET fan_limit = ? WHERE id = ?", fanLimit, machineId);
+    }
+
+    private void configureMachine() {
+        jdbcTemplate.update("""
+                UPDATE agent
+                   SET odds_rate = 95, special_odds_rate = 18, board_open = TRUE,
+                       total_limit = 1000, positive_limit = 20000, angle_limit = 20000,
+                       strict_limit = 20000, tong_limit = 20000, car_limit = 20000,
+                       special_limit = 20000, odd_even_limit = 20000, big_small_limit = 20000,
+                       fan_limit = 20000, add_limit = 20000, player_min_stake = 1, player_max_stake = 5001
+                 WHERE id = ?
+                """, machineId);
     }
 
     private void resetBettingConfig() {
@@ -304,8 +325,12 @@ class ChatMessageFeedbackIntegrationTest {
         jdbcTemplate.update("DELETE FROM game_bet WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?))", USERNAME);
+        jdbcTemplate.update("DELETE FROM game_bet_batch WHERE account_id IN "
+                + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
+                + "(SELECT id FROM sys_user WHERE username = ?))", USERNAME);
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);
+        jdbcTemplate.update("DELETE FROM agent WHERE agent_code = 'CHAT-FEEDBACK-MACHINE'");
         jdbcTemplate.update("DELETE FROM auth_ws_ticket WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);
         jdbcTemplate.update("DELETE FROM auth_session WHERE user_id IN "

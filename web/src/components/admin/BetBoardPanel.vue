@@ -32,7 +32,7 @@ let clockTimer: ReturnType<typeof setInterval> | undefined
 let requestSequence = 0
 
 /**
- * 重报（BY220 `index/reFeidan`）只对"未报/失败/超时"的注单开放。
+ * 重报（BY220 `index/reFeidan`）只对"未发送/未报/失败/超时"的注单开放。
  *
  * BY220 把重报入口做在**下注榜的注单状态标记**上（`admin_list.html:1975-1992`），
  * 因此这里同样是点状态标记触发，不再另设"上报订单"区块。
@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
         <div v-else class="bet-board-list">
           <div v-for="item in board.items" :key="item.id" class="bet-board-row">
             <!-- BY220 把上报状态与重报入口都放在注单这一行上（admin_list.html:1961-1992）：
-                 未报/失败/超时时点状态标记即"重新飞单"，已报的不可点。 -->
+                 未发送/未报/失败/超时时点状态标记即"重新飞单"，已报的不可点。 -->
             <button
               type="button"
               class="bet-board-copy"
@@ -322,7 +322,9 @@ onBeforeUnmount(() => {
   color: var(--ops-red, #d94747);
 }
 
-.bet-board-copy.is-report-unreported .bet-board-report-status {
+.bet-board-copy.is-report-unreported .bet-board-report-status,
+.bet-board-copy.is-report-pending .bet-board-report-status,
+.bet-board-copy.is-report-not_sent .bet-board-report-status {
   color: #8a6d1f;
 }
 

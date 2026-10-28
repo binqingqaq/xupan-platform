@@ -1,5 +1,6 @@
 package com.xupan.server.center.service;
 
+import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CenterAgentRiskLimitTest {
 
     private static final String AGENT_CODE = "RISK_LIMIT_AGENT";
+    private static final String GROUP_CODE = "RISK_LIMIT_GROUP";
+    private static final String MACHINE_CODE = "RISK_LIMIT_MACHINE";
+    private static final String MACHINE_USER = "risk_limit_machine_user";
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -38,17 +42,29 @@ class CenterAgentRiskLimitTest {
     private CenterOrderService orderService;
     @Autowired
     private CenterAgentRepository agentRepository;
+    @Autowired
+    private UserRepository userRepository;
 
     private long centerAgentId;
+    private long machineId;
+    private long groupId;
+    private int betSequence;
 
     @BeforeEach
     void setUp() {
         clean();
+        long userId = userRepository.insert(MACHINE_USER, "风控测试机器用户", "test-hash", "ACTIVE");
+        jdbc.update("INSERT INTO agent_group (group_code, display_name, status) VALUES (?, '风控测试组', 'ACTIVE')",
+                GROUP_CODE);
+        groupId = jdbc.queryForObject("SELECT id FROM agent_group WHERE group_code = ?", Long.class, GROUP_CODE);
+        jdbc.update("INSERT INTO agent (agent_code, display_name, group_id, account_user_id, system_owned, status) "
+                + "VALUES (?, '风控测试机器', ?, ?, FALSE, 'ACTIVE')", MACHINE_CODE, groupId, userId);
+        machineId = jdbc.queryForObject("SELECT id FROM agent WHERE agent_code = ?", Long.class, MACHINE_CODE);
         jdbc.update("""
                 INSERT INTO center_agent (agent_code, agent_name, upstream_account, token_hash, token_prefix,
-                                          status, credit_limit, available_balance)
-                VALUES (?, '风控测试代理', ?, ?, 'riskpfx', 'ACTIVE', 1000000.00, 1000000.00)
-                """, AGENT_CODE, "risk_limit_upstream", "a".repeat(64));
+                                          status, credit_limit, available_balance, agent_group_id)
+                VALUES (?, '风控测试代理', ?, ?, 'riskpfx', 'ACTIVE', 1000000.00, 1000000.00, ?)
+                """, AGENT_CODE, "risk_limit_upstream", "a".repeat(64), groupId);
         centerAgentId = jdbc.queryForObject(
                 "SELECT id FROM center_agent WHERE agent_code = ?", Long.class, AGENT_CODE);
     }
@@ -86,10 +102,10 @@ class CenterAgentRiskLimitTest {
     @Test
     @DisplayName("配置代理级单期敞口上限后按该代理累计判定")
     void perAgentIssueExposureLimitApplies() {
-        agentRepository.updateRiskLimits(centerAgentId, null, new BigDecimal("1000.00"));
+        agentRepository.updateRiskLimits(centerAgentId, null, new BigDecimal("2000.00"));
 
         assertThat(accept("RISK-EXP-1", new BigDecimal("600.00")).status()).isEqualTo("ACCEPTED");
-        // 600 + 600 = 1200 > 1000，应被拒
+        // 每笔最大风险 1710，累计 3420 超过 2000 应被拒
         CenterOrderService.Accepted rejected = accept("RISK-EXP-2", new BigDecimal("600.00"));
         assertThat(rejected.status()).isEqualTo("REJECTED");
         assertThat(rejected.rejectCode()).isEqualTo("CENTER_ISSUE_EXPOSURE_EXCEEDED");
@@ -118,12 +134,12 @@ class CenterAgentRiskLimitTest {
     }
 
     @Test
-    @DisplayName("额度不足也计入风控命中，类别为 ACCOUNT")
-    void availableInsufficientRecordedAsAccountCategory() {
+    @DisplayName("中心和机器风险额度合计不足也计入风控命中，类别为 ACCOUNT")
+    void combinedRiskCapacityInsufficientRecordedAsAccountCategory() {
         jdbc.update("UPDATE center_agent SET available_balance = 10.00 WHERE id = ?", centerAgentId);
         CenterOrderService.Accepted rejected = accept("RISK-AVAIL-1", new BigDecimal("50.00"));
 
-        assertThat(rejected.rejectCode()).isEqualTo("CENTER_AVAILABLE_INSUFFICIENT");
+        assertThat(rejected.rejectCode()).isEqualTo("CENTER_RISK_CAPACITY_INSUFFICIENT");
         assertThat(agentRepository.findRecentRiskHits(centerAgentId, 10))
                 .singleElement()
                 .satisfies(hit -> assertThat(hit.ruleCategory()).isEqualTo("ACCOUNT"));
@@ -162,7 +178,15 @@ class CenterAgentRiskLimitTest {
     }
 
     private CenterOrderService.Accepted accept(String orderNo, BigDecimal amount) {
-        return orderService.accept(centerAgentId, orderNo, null, null, "AU8", "39999501",
+        String betCode = "RISK_LIMIT_BET_" + (++betSequence);
+        jdbc.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot, machine_id_snapshot, agent_id_snapshot)
+                VALUES ('AU8', NULL, ?, ?, '39999501', 1, 'FAN', '1', ?, 3.850, ?, ?)
+                """, betCode, betCode, amount, machineId, machineId);
+        long betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
+        return orderService.accept(centerAgentId, orderNo, betId, machineId, "IGNORED", "IGNORED",
                 "FAN", "1", new BigDecimal("3.850"), amount);
     }
 
@@ -176,6 +200,13 @@ class CenterAgentRiskLimitTest {
                 + "(SELECT id FROM center_agent WHERE agent_code = ?)", AGENT_CODE);
         // center_risk_hit 随 center_agent 级联删除
         jdbc.update("DELETE FROM center_agent WHERE agent_code = ?", AGENT_CODE);
+        jdbc.update("DELETE FROM game_bet WHERE machine_id_snapshot IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN "
+                + "(SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
+        jdbc.update("DELETE FROM agent_group WHERE group_code = ?", GROUP_CODE);
+        jdbc.update("DELETE FROM sys_user WHERE username = ?", MACHINE_USER);
     }
 
     @AfterEach

@@ -12,16 +12,27 @@ public final class BetFlowMetricsCalculator {
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
     private static final BigDecimal TWO = new BigDecimal("2");
     private static final BigDecimal THREE = new BigDecimal("3");
+    private static final int MONEY_SCALE = 2;
 
     private BetFlowMetricsCalculator() {}
 
     public static Metrics calculate(PlayType playType, String parametersText, BigDecimal stake,
                                     BigDecimal odds, BigDecimal netProfit, String settlementStatus,
                                     BigDecimal rebateRate, BigDecimal specialRebateRate) {
+        return calculate(playType, parametersText, stake, odds, netProfit, settlementStatus,
+                rebateRate, specialRebateRate, null);
+    }
+
+    public static Metrics calculate(PlayType playType, String parametersText, BigDecimal stake,
+                                    BigDecimal odds, BigDecimal netProfit, String settlementStatus,
+                                    BigDecimal rebateRate, BigDecimal specialRebateRate,
+                                    BigDecimal selectionUnitStake) {
         BigDecimal normalizedStake = money(stake);
         BigDecimal normalizedProfit = money(netProfit);
-        BigDecimal normalizedOdds = odds == null ? BigDecimal.ZERO : odds;
         boolean special = playType == PlayType.SPECIAL;
+        BigDecimal unitStake = special
+                ? normalizeUnitStake(parametersText, normalizedStake, selectionUnitStake)
+                : normalizedStake;
         boolean won = "WIN".equals(settlementStatus);
         boolean lost = "LOSE".equals(settlementStatus);
         BigDecimal singleFlow = ZERO;
@@ -29,18 +40,18 @@ public final class BetFlowMetricsCalculator {
         BigDecimal fanShui = ZERO;
         BigDecimal doubleFanShui = ZERO;
         if (won) {
-            BigDecimal payout = money(normalizedStake.multiply(normalizedOdds));
+            BigDecimal payout = money(normalizedStake.add(normalizedProfit));
             singleFlow = special ? payout : normalizedProfit;
             doubleFlow = wonDoubleFlow(playType, parametersText, normalizedStake);
             fanShui = special
-                    ? money(normalizedStake.multiply(rate(specialRebateRate)))
+                    ? multiplyDown(unitStake, rate(specialRebateRate))
                     : rebate(normalizedProfit, rebateRate);
         } else if (lost) {
             doubleFlow = normalizedStake;
         }
         if (won || lost) {
             BigDecimal base = special
-                    ? won ? normalizedStake.multiply(normalizedOdds) : ZERO
+                    ? won ? money(normalizedStake.add(normalizedProfit)) : ZERO
                     : doubleRebateBase(playType, parametersText, normalizedStake, won);
             doubleFanShui = rebate(base, rebateRate);
         }
@@ -68,7 +79,43 @@ public final class BetFlowMetricsCalculator {
     }
 
     private static BigDecimal rebate(BigDecimal base, BigDecimal rateValue) {
-        return money(base.multiply(rate(rateValue)).divide(ONE_HUNDRED, 6, RoundingMode.HALF_UP));
+        BigDecimal percentage = rate(rateValue).divide(ONE_HUNDRED, MONEY_SCALE, RoundingMode.DOWN);
+        return base.multiply(percentage).setScale(MONEY_SCALE, RoundingMode.DOWN);
+    }
+
+    private static BigDecimal multiplyDown(BigDecimal amount, BigDecimal rateValue) {
+        return amount.multiply(rateValue).setScale(MONEY_SCALE, RoundingMode.DOWN);
+    }
+
+    private static BigDecimal normalizeUnitStake(String parametersText, BigDecimal stake,
+                                                 BigDecimal selectionUnitStake) {
+        int selectionCount = selectionCount(parametersText);
+        BigDecimal unitStake = selectionUnitStake;
+        if (unitStake == null) {
+            try {
+                unitStake = stake.divide(BigDecimal.valueOf(selectionCount), MONEY_SCALE,
+                        RoundingMode.UNNECESSARY);
+            } catch (ArithmeticException invalidUnitStake) {
+                throw new IllegalArgumentException("特码总额必须能按号码数等分到两位小数", invalidUnitStake);
+            }
+        }
+        if (unitStake.signum() <= 0 || unitStake.scale() > MONEY_SCALE
+                || money(unitStake).multiply(BigDecimal.valueOf(selectionCount)).compareTo(stake) != 0) {
+            throw new IllegalArgumentException("特码总额必须等于单号投注额乘号码数");
+        }
+        return money(unitStake);
+    }
+
+    private static int selectionCount(String parametersText) {
+        if (parametersText == null || parametersText.isBlank()) {
+            throw new IllegalArgumentException("特码必须至少包含一个号码");
+        }
+        int count = 0;
+        for (String value : parametersText.split(",")) {
+            if (!value.isBlank()) count++;
+        }
+        if (count == 0) throw new IllegalArgumentException("特码必须至少包含一个号码");
+        return count;
     }
 
     private static BigDecimal divide(BigDecimal value, BigDecimal divisor) {

@@ -2,7 +2,7 @@ import { createApp, nextTick } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminSubAccounts from './views/PlatformAdminSubAccounts.vue'
 import { api } from './api'
-import { formField, formInput, setFormInput, selectFormOption, dialogSubmit } from './platformAdminAccountTestHelpers'
+import { formField, formInput, setFormInput, dialogSubmit } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -33,10 +33,6 @@ function subAccount(overrides: Record<string, unknown> = {}) {
     status: 'ACTIVE',
     subAccountManage: false,
     machineManage: true,
-    unifiedReportEnabled: true,
-    reportUsername: 'feidan-user',
-    reportNetworkCode: 'K28',
-    reportRouteCode: 'A',
     machineCount: 1,
     createdAt: '2026-10-02T01:00:00Z',
     ...overrides,
@@ -91,95 +87,26 @@ describe('platform admin sub accounts', () => {
     vi.restoreAllMocks()
   })
 
-  /**
-   * 回归：编辑子账号必须回显已保存的飞单账号。
-   *
-   * 以前 openEdit 固定 reportUsername: ''，后端又整表单覆盖，导致"编辑子账号"会把飞单账号清空（静默丢数据）。
-   */
-  it('backfills the stored report username when editing', async () => {
+  it('keeps legacy report configuration out of the subaccount UI and update payload', async () => {
     await mountSubAccounts()
-    openFirstRowEditor()
-    await settle()
-
-    expect(fieldInput('飞单账号')?.value).toBe('feidan-user')
-
-    dialogSubmit()
-    await settle()
-    expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({
-      reportUsername: 'feidan-user',
-      reportNetworkCode: 'K28',
-      reportRouteCode: 'A',
-    }))
-  })
-
-  /**
-   * V73：统一飞单的报网类型（`agent_group.report_type`）必须能回填并随表单提交。
-   *
-   * BY220 里机器的报网类型（`x_robot.flyers_type`）由所选网盘的 `code` 决定
-   * （`rbt/controller/Index.php:745`），网盘表 `x_rbwp` 没有类型列；本项目把它与「网盘编码」
-   * 拆成两列，因此在子账号表单里显式维护。BY220 `sub/list.html` 没有独立的类型列，
-   * 所以列表也不加「类型」列——本用例只固定表单侧的回填与提交。
-   */
-  it('backfills the unified report type and submits it with the form', async () => {
-    vi.mocked(api.listSubAccounts).mockResolvedValue([subAccount({ reportType: 'K28' })] as never)
-    await mountSubAccounts()
-    openFirstRowEditor()
-    await settle()
-
-    expect(formField('报网类型').textContent).toContain('K28')
-    await selectFormOption('报网类型', 'wns')
-
-    dialogSubmit()
-    await settle()
-    expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({ reportType: 'WNS' }))
-  })
-
-  /**
-   * V74：BY220 `sub/list.html:59-61` 的「网盘状态/网盘余额/网盘下注」
-   * （`x_admin.feidanonline/feidanmoney/feidanbetting`）必须显示在子账号列表里，
-   * 并且「上游地址」（BY220 `x_admin.feidanurl`，只保存不请求）能回填并随表单提交。
-   */
-  it('shows the unified report upstream state columns and backfills the upstream url', async () => {
-    vi.mocked(api.listSubAccounts).mockResolvedValue([subAccount({
-      reportUrl: 'http://127.0.0.1:9001',
-      reportOnline: true,
-      reportBalance: 1234.5,
-      reportStake: 66,
-    })] as never)
-    await mountSubAccounts()
-
-    const headers = Array.from(container?.querySelectorAll('th') ?? []).map(cell => cell.textContent)
-    expect(headers).toEqual(expect.arrayContaining(['网盘状态', '网盘余额', '网盘下注']))
-    const text = container?.textContent ?? ''
-    expect(text).toContain('在线')
-    expect(text).toContain('1234.50')
-    expect(text).toContain('66.00')
+    const headers = Array.from(container?.querySelectorAll('th') ?? []).map(cell => cell.textContent?.trim())
+    expect(headers).not.toEqual(expect.arrayContaining(['开启飞单', '网盘', '盘口', '飞单账号', '飞单密码', '网盘状态', '网盘余额', '网盘下注']))
 
     openFirstRowEditor()
     await settle()
-    expect(fieldInput('上游地址')?.value).toBe('http://127.0.0.1:9001')
+    const labels = Array.from(container?.querySelectorAll('.el-dialog .el-form-item__label') ?? [])
+      .map(label => label.textContent?.trim())
+    expect(labels).not.toEqual(expect.arrayContaining(['网盘', '盘口', '报网类型', '飞单账号', '上游地址', '统一飞单']))
 
     dialogSubmit()
     await settle()
-    expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({
-      reportUrl: 'http://127.0.0.1:9001',
-    }))
-  })
-
-  it('clears the report username only when the field is emptied on purpose', async () => {
-    await mountSubAccounts()
-    openFirstRowEditor()
-    await settle()
-
-    const input = fieldInput('飞单账号')
-    if (!input) throw new Error('missing report username input')
-    input.value = ''
-    input.dispatchEvent(new Event('input'))
-    await settle()
-
-    dialogSubmit()
-    await settle()
-    expect(api.updateSubAccount).toHaveBeenCalledWith(1, expect.objectContaining({ reportUsername: '' }))
+    const payload = vi.mocked(api.updateSubAccount).mock.calls[0][1]
+    for (const field of [
+      'unifiedReportEnabled', 'reportUsername', 'reportNetworkCode', 'reportRouteCode',
+      'reportType', 'reportUrl', 'reportPassword', 'reportOnline', 'reportBalance', 'reportStake',
+    ]) {
+      expect(payload).not.toHaveProperty(field)
+    }
   })
 
   /**
@@ -226,7 +153,7 @@ describe('platform admin sub accounts', () => {
 
     expect(api.updateSubAccount).toHaveBeenCalledTimes(1)
     const payload = vi.mocked(api.updateSubAccount).mock.calls[0][1]
-    expect(payload).toMatchObject({ up: 100, down: 30, online: true, reportUsername: 'feidan-user' })
+    expect(payload).toMatchObject({ up: 100, down: 30, online: true })
     expect(payload).not.toHaveProperty('score')
   })
 

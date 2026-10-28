@@ -122,14 +122,14 @@ class ReportRetryBackoffTest {
     void retrySchedulingAccumulatesAttempts() {
         long betId = insertBet("BACKOFF_COUNT");
         // insertAttempt 会把 attempt_count 置为 attemptNo(=1)，因此这里从 1 起累加。
-        insertAttempt(betId, "REJECTED", 1);
+        long attemptId = insertAttempt(betId, "REJECTED", 1);
 
-        int first = orderRepository.scheduleRetry(betId, Instant.now().plusSeconds(30));
-        int second = orderRepository.scheduleRetry(betId, Instant.now().plusSeconds(60));
+        int first = orderRepository.scheduleRetry(attemptId, Instant.now().plusSeconds(30));
+        int second = orderRepository.scheduleRetry(attemptId, Instant.now().plusSeconds(60));
         assertThat(first).as("第一次重试后计数为 2（原有 1 次 + 本次）").isEqualTo(2);
         assertThat(second).as("第二次重试后计数为 3").isEqualTo(3);
 
-        assertThat(orderRepository.markManual(betId, "RETRY_EXHAUSTED", "达上限")).isEqualTo(1);
+        assertThat(orderRepository.markManual(attemptId, "RETRY_EXHAUSTED", "达上限")).isEqualTo(1);
         assertThat(orderRepository.currentAttemptCount(betId)).isEqualTo(3);
     }
 

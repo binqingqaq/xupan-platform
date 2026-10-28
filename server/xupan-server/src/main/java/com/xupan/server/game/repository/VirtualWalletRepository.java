@@ -334,6 +334,27 @@ public class VirtualWalletRepository {
                 betId, issue, "撤单返还:" + betId);
     }
 
+    /** Refunds a center-disposed local bet with an idempotency key distinct from ordinary cancellation. */
+    public WalletLedgerEntry appendCenterDispositionRefund(long operatorUserId, long targetUserId, long betId,
+                                                            long accountId, String issueNumber, BigDecimal amount,
+                                                            String reason) {
+        BigDecimal value = positiveMoney(amount, "WALLET_AMOUNT_INVALID");
+        String issue = requiredText(issueNumber, "issueNumber", 64);
+        String safeReason = reason(reason);
+        String key = "CENTER_LOCAL_DISPOSITION_REFUND:" + betId;
+        VirtualWallet wallet = lockWallet(targetUserId);
+        if (wallet.accountId() != accountId) {
+            throw new IllegalStateException("WALLET_BET_MISMATCH: 注单与钱包操作不匹配");
+        }
+        Optional<WalletLedgerEntry> replay = findLedgerByIdempotencyKey(key);
+        if (replay.isPresent()) {
+            return replayOrConflict(replay.get(), WalletOperationType.SETTLEMENT_REVERSAL, value,
+                    targetUserId, safeReason, betId);
+        }
+        return append(wallet, WalletOperationType.SETTLEMENT_REVERSAL, value, operatorUserId,
+                operatorName(operatorUserId), key, betId, issue, safeReason);
+    }
+
     public List<WalletLedgerEntry> findLedgerByUserId(long userId, int limit) {
         if (userId <= 0 || limit < 1 || limit > 100) {
             throw new IllegalArgumentException("钱包流水查询参数无效");

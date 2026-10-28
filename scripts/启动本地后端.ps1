@@ -44,6 +44,7 @@ if ([string]::IsNullOrWhiteSpace($appUser) -or [string]::IsNullOrWhiteSpace($app
 $env:XUPAN_DB_URL = 'jdbc:mysql://127.0.0.1:3307/xupan_platform?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai'
 $env:XUPAN_DB_USERNAME = $appUser
 $env:XUPAN_DB_PASSWORD = $appPassword
+$env:XUPAN_AUTOMATION_ENABLED = 'true'
 $env:XUPAN_AUTH_REFRESH_COOKIE_SECURE = 'false'
 $env:XUPAN_AUTH_PLAYER_LINK_DISPLAY_KEY = $linkDisplayKey
 

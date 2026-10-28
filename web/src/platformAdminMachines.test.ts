@@ -28,9 +28,9 @@ let app: ReturnType<typeof createApp> | null = null
 
 function machine(overrides: Record<string, unknown> = {}) {
   return {
-    id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11,
+    id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11, configVersion: 4,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
-    boardOpen: true, robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
+    boardOpen: true, robotManage: false, configEditEnabled: true, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
     cancelSeconds: 0, rebateRate: 1.5, oddsRate: 1, specialRebateRate: 0.5, specialOddsRate: 1,
     rebateMode: 'SINGLE', totalLimit: 10000, positiveLimit: 0, angleLimit: 0, strictLimit: 0,
     tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0,
@@ -83,14 +83,21 @@ afterEach(() => {
 })
 
 describe('platform admin machines', () => {
-  it('submits rebateMode DOUBLE from the create form', async () => {
+  it('hides machine betting parameters in the create form and omits them from its payload', async () => {
     await mountMachines()
     expect(container?.textContent).toContain('机器管理')
-    expect(container?.textContent).toContain('返水口径')
     expect(container?.textContent).not.toContain('展示名')
 
     container?.querySelectorAll<HTMLButtonElement>('.content > header button')[0]?.click()
     await settle()
+    const createDialogText = document.querySelector('.el-dialog')?.textContent ?? ''
+    for (const label of [
+      '返水(百分数)', '返水口径', '赔率', '特码返水(比率)', '特码赔率', '单场总限额',
+      '正限额', '角限额', '念限额', '通限额', '车限额', '单码限额', '单双限额',
+      '大小限额', '番限额', '加限额', '玩家最高注额', '玩家最小注额',
+    ]) {
+      expect(createDialogText).not.toContain(label)
+    }
 
     const inputs = container?.querySelectorAll<HTMLInputElement>('.el-dialog .form-grid input')
     if (!inputs || inputs.length < 2) throw new Error('missing machine form inputs')
@@ -100,18 +107,22 @@ describe('platform admin machines', () => {
     inputs[1]!.dispatchEvent(new Event('input'))
     await settle()
 
-    expect(rebateModeLabel()).toBe('单边')
-    await selectFormOption('返水口径', '双边')
-    expect(rebateModeLabel()).toBe('双边')
-
     dialogSubmit()
     await settle()
 
     expect(api.createMachine).toHaveBeenCalledWith(expect.objectContaining({
       username: 'bot002',
-      rebateMode: 'DOUBLE',
     }))
-    expect(vi.mocked(api.createMachine).mock.calls[0][0]).not.toHaveProperty('displayName')
+    const createPayload = vi.mocked(api.createMachine).mock.calls[0][0]
+    expect(createPayload).not.toHaveProperty('displayName')
+    for (const field of [
+      'rebateRate', 'oddsRate', 'specialRebateRate', 'specialOddsRate', 'rebateMode',
+      'totalLimit', 'positiveLimit', 'angleLimit', 'strictLimit', 'tongLimit', 'carLimit',
+      'specialLimit', 'oddEvenLimit', 'bigSmallLimit', 'fanLimit', 'addLimit',
+      'playerMaxStake', 'playerMinStake',
+    ]) {
+      expect(createPayload).not.toHaveProperty(field)
+    }
   })
 
   it('shows the stored rebate mode in the list and backfills it when editing', async () => {
@@ -128,6 +139,8 @@ describe('platform admin machines', () => {
 
     rows[0]?.querySelectorAll<HTMLButtonElement>('button')[0]?.click()
     await settle()
+    expect(document.querySelector('.el-dialog')?.textContent).toContain('赔率')
+    expect(document.querySelector('.el-dialog')?.textContent).toContain('单场总限额')
     expect(rebateModeLabel()).toBe('双边')
     clickText(document.querySelector('.el-dialog')!, '取消')
     await settle()
@@ -138,7 +151,32 @@ describe('platform admin machines', () => {
 
     dialogSubmit()
     await settle()
-    expect(api.updateMachine).toHaveBeenCalledWith(2, expect.objectContaining({ rebateMode: 'SINGLE' }))
+    expect(api.updateMachine).toHaveBeenCalledWith(2, 4, expect.objectContaining({ rebateMode: 'SINGLE' }))
+    expect(api.updateMachine).toHaveBeenCalledWith(2, 4, expect.objectContaining({ oddsRate: 1, totalLimit: 10000 }))
+  })
+
+  it('rejects inverted player stake bounds before updating an existing machine', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([machine({ id: 3 })] as never)
+    await mountMachines()
+    container?.querySelector('tbody tr button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await settle()
+
+    const maxInput = formField('玩家最高注额').querySelector<HTMLInputElement>('input')
+    const minInput = formField('玩家最小注额').querySelector<HTMLInputElement>('input')
+    if (!maxInput || !minInput) throw new Error('missing player stake inputs')
+    maxInput.value = '1'
+    maxInput.dispatchEvent(new Event('input', { bubbles: true }))
+    maxInput.dispatchEvent(new Event('change', { bubbles: true }))
+    minInput.value = '10'
+    minInput.dispatchEvent(new Event('input', { bubbles: true }))
+    minInput.dispatchEvent(new Event('change', { bubbles: true }))
+    await settle()
+
+    dialogSubmit()
+    await settle()
+
+    expect(api.updateMachine).not.toHaveBeenCalled()
+    expect(document.querySelector('.el-dialog')?.textContent).toContain('玩家最小注额不能大于玩家最高注额')
   })
 
   it('falls back to SINGLE for machines without a stored rebate mode', async () => {
@@ -171,7 +209,7 @@ describe('platform admin machines', () => {
 
     dialogSubmit()
     await settle()
-    expect(api.updateMachine).toHaveBeenCalledWith(7, expect.objectContaining({ games: ['AU8', 'K28'] }))
+    expect(api.updateMachine).toHaveBeenCalledWith(7, 4, expect.objectContaining({ games: ['AU8', 'K28'] }))
   })
 
   it('renders an empty games selection for machines without games', async () => {

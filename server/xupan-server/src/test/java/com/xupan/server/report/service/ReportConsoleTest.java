@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.xupan.server.agent.service.AgentAdminService;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
+import com.xupan.server.game.service.VirtualWalletService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,9 +17,11 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.time.temporal.ChronoUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -31,11 +34,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 阶段 4：运营后台（{@code /console}，BY220 {@code robot.php}）报网/盘口的后端行为。
  *
  * <p>覆盖：读配置与统计、保存配置（密码只存密文、响应绝不回显）、范围与越权、
- * 本地模拟登录/退出（不发外部请求）、按盘口线路重报的状态机、订单按上报状态筛选与计数、
+ * 中心账号密码登录/退出、按报网状态重报的状态机、订单按上报状态筛选与计数、
  * 以及下注链路入口 {@link ReportService#submitForBet(long)} 的自动上报条件。</p>
  *
- * <p>合规边界：全部使用本地模拟适配器，不访问任何外部地址；
- * {@code report_url} 只保存不请求；测试里使用的域名是 {@code .invalid} 保留域。</p>
+ * <p>合规边界：报网登录和上报均在当前应用内部闭环，不访问外部上游。</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -49,10 +51,11 @@ class ReportConsoleTest {
     private static final String MACHINE_A_CODE = "REPORTCONSOLE_A";
     private static final String MACHINE_B_CODE = "REPORTCONSOLE_B";
     private static final String PASSWORD = "ReportConsolePassword123";
-    /** 只在本机测试中出现的假飞单密码；断言它绝不出现在任何响应与审计里。 */
-    private static final String REPORT_SECRET = "ReportConsoleFlyPassword123!";
-    private static final String REPORT_URL = "https://report.invalid/upstream";
-    private static final String ISSUE_NUMBER = "39999801";
+    private static final String CENTER_USERNAME = "reportconsole-center";
+    private static final String CENTER_PASSWORD = "ReportConsoleCenterPassword123!";
+    private static final String GROUP_CODE = "REPORTCONSOLE_GROUP";
+    private static final String ISSUE_NUMBER = Long.toString(
+            java.util.concurrent.ThreadLocalRandom.current().nextLong(100_000_000_000L, 999_999_999_999L));
 
     @Autowired
     private MockMvc mockMvc;
@@ -72,9 +75,16 @@ class ReportConsoleTest {
     @Autowired
     private ReportService reportService;
 
+    @Autowired
+    private com.xupan.server.center.service.CenterUpstreamAccountService centerAccountService;
+
+    @Autowired
+    private VirtualWalletService walletService;
+
     private long adminId;
     private long machineAId;
     private long machineBId;
+    private long centerGroupId;
 
     /** 通过接口创建的玩家用户名由后端自动生成，必须显式登记才能可靠清理。 */
     private final List<Long> createdPlayerUserIds = new ArrayList<>();
@@ -83,10 +93,25 @@ class ReportConsoleTest {
     void setUp() {
         createdPlayerUserIds.clear();
         clean();
+        java.time.Instant now = java.time.Instant.now();
+        jdbc.update("""
+                INSERT INTO game_issue (game_code, issue_number, status, phase, issue_started_at,
+                                        betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, 'OPEN', 'BETTING', ?, ?, ?)
+                """, ISSUE_NUMBER, java.sql.Timestamp.from(now),
+                java.sql.Timestamp.from(now.plus(1, ChronoUnit.HOURS)),
+                java.sql.Timestamp.from(now.plus(2, ChronoUnit.HOURS)));
         adminId = userRepository.insert(ADMIN, "报网配置管理员", passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
-        machineAId = agentAdminService.createAgent(MACHINE_A_CODE, MACHINE_A_USER, "报网机器A", PASSWORD, null, adminId).id();
-        machineBId = agentAdminService.createAgent(MACHINE_B_CODE, MACHINE_B_USER, "报网机器B", PASSWORD, null, adminId).id();
+        jdbc.update("INSERT INTO agent_group (group_code, display_name, status, created_by) VALUES (?, ?, 'ACTIVE', ?)",
+                GROUP_CODE, "报网测试子账号", adminId);
+        centerGroupId = jdbc.queryForObject("SELECT id FROM agent_group WHERE group_code = ?", Long.class, GROUP_CODE);
+        machineAId = agentAdminService.createAgent(MACHINE_A_CODE, MACHINE_A_USER, "报网机器A", PASSWORD,
+                centerGroupId, adminId).id();
+        machineBId = agentAdminService.createAgent(MACHINE_B_CODE, MACHINE_B_USER, "报网机器B", PASSWORD,
+                centerGroupId, adminId).id();
+        centerAccountService.createAccount(centerGroupId, CENTER_USERNAME, CENTER_PASSWORD,
+                new java.math.BigDecimal("10000.00"), Instant.now().plus(30, ChronoUnit.DAYS), adminId);
     }
 
     @AfterEach
@@ -94,52 +119,40 @@ class ReportConsoleTest {
         clean();
     }
 
-    /**
-     * 回归（账本原则 8）：同一上游账号不得被多台机器共用；软删除后必须释放占用。
-     *
-     * <p>依据《代理报网盘口与结算业务规则说明》§14：共用同一上游账号会导致
-     * 余额混合、订单归属不明、风险共用与退款不清。</p>
-     */
+    /** 同一子账号的机器可用同一中心账号，但登录会话按机器分别建立。 */
     @Test
-    void forbidsSharingUpstreamAccountAcrossMachinesAndReleasesOnDelete() throws Exception {
+    void centerLoginUsesAssignedCredentialsAndKeepsSessionsMachineScoped() throws Exception {
         String tokenA = login(MACHINE_A_USER, PASSWORD);
         String tokenB = login(MACHINE_B_USER, PASSWORD);
 
-        // 机器 A 占用 feidan-a
-        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenA))
-                        .contentType("application/json").content("{\"reportUsername\":\"feidan-a\"}"))
+        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(tokenA))
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + CENTER_USERNAME + "\",\"password\":\"wrong-password\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("CENTER_UPSTREAM_AUTH_INVALID"));
+
+        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(tokenA))
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + CENTER_USERNAME + "\",\"password\":\"" + CENTER_PASSWORD + "\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportUsername").value("feidan-a"));
+                .andExpect(jsonPath("$.reportOnline").value(true))
+                .andExpect(jsonPath("$.centerAccountUsername").value(CENTER_USERNAME));
 
-        // 机器 B 使用同一上游账号 → 409
-        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenB))
-                        .contentType("application/json").content("{\"reportUsername\":\"feidan-a\"}"))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("REPORT_USERNAME_TAKEN"));
+        assertThat(online(machineAId)).isTrue();
+        assertThat(online(machineBId)).isFalse();
 
-        // 换成别的账号即可
-        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenB))
-                        .contentType("application/json").content("{\"reportUsername\":\"feidan-b\"}"))
+        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(tokenB))
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + CENTER_USERNAME + "\",\"password\":\"" + CENTER_PASSWORD + "\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportUsername").value("feidan-b"));
+                .andExpect(jsonPath("$.reportOnline").value(true));
+        assertThat(online(machineBId)).isTrue();
 
-        // 软删除机器 B → 释放上游账号与凭据，不长期占位
-        String adminToken = login(ADMIN, PASSWORD);
-        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                        .delete("/api/admin/machines/" + machineBId).header("Authorization", bearer(adminToken)))
-                .andExpect(status().isNoContent());
-        assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agent WHERE id = ? AND report_username IS NOT NULL",
-                Long.class, machineBId)).isZero();
-        assertThat(jdbc.queryForObject(
-                "SELECT COUNT(*) FROM agent WHERE id = ? AND report_password_ciphertext IS NOT NULL",
-                Long.class, machineBId)).isZero();
-
-        // 释放后机器 A 可以改用 feidan-b
-        mockMvc.perform(put("/api/admin/player-desk/report").header("Authorization", bearer(tokenA))
-                        .contentType("application/json").content("{\"reportUsername\":\"feidan-b\"}"))
+        mockMvc.perform(post("/api/admin/player-desk/report/logout").header("Authorization", bearer(tokenA)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportUsername").value("feidan-b"));
+                .andExpect(jsonPath("$.reportOnline").value(false));
+        assertThat(online(machineAId)).isFalse();
+        assertThat(online(machineBId)).isTrue();
     }
 
     @Test
@@ -149,57 +162,41 @@ class ReportConsoleTest {
         mockMvc.perform(get("/api/admin/player-desk/report").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.machineId").value((int) machineAId))
-                .andExpect(jsonPath("$.reportType").doesNotExist())
                 .andExpect(jsonPath("$.reportAuto").value(false))
                 .andExpect(jsonPath("$.reportOnline").value(false))
                 .andExpect(jsonPath("$.reportWithdraw").value(false))
-                .andExpect(jsonPath("$.reportUsername").doesNotExist())
-                .andExpect(jsonPath("$.hasPassword").value(false))
-                .andExpect(jsonPath("$.reportUrl").doesNotExist())
-                .andExpect(jsonPath("$.reportNetworkCode").doesNotExist())
-                .andExpect(jsonPath("$.reportRouteCode").doesNotExist())
-                .andExpect(jsonPath("$.reportBalance").value(0.0))
-                .andExpect(jsonPath("$.reportStake").value(0.0))
-                .andExpect(jsonPath("$.reportLastLoginAt").doesNotExist())
+                .andExpect(jsonPath("$.centerAccountUsername").value(CENTER_USERNAME))
+                .andExpect(jsonPath("$.centerAccountExpiresAt").isNotEmpty())
+                .andExpect(jsonPath("$.centerAvailableBalance").value(10000.0))
+                .andExpect(jsonPath("$.centerFrozenBalance").value(0.0))
+                .andExpect(jsonPath("$.centerOpenStake").value(0.0))
                 .andExpect(jsonPath("$.timeoutOrderCount").value(0))
                 .andExpect(jsonPath("$.unreportedCount").value(0))
                 .andExpect(jsonPath("$.failedOrderCount").value(0));
     }
 
     @Test
-    void savesReportConfigWithoutEverReturningPassword() throws Exception {
+    void savesMachineReportSwitchesWithoutExternalAccountConfiguration() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
 
         MvcResult saved = mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(fullConfig("A", true, true, REPORT_SECRET)))
+                        .content("{\"reportAuto\":true,\"reportWithdraw\":true}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.machineId").value((int) machineAId))
-                .andExpect(jsonPath("$.reportType").value("TT"))
                 .andExpect(jsonPath("$.reportAuto").value(true))
                 .andExpect(jsonPath("$.reportWithdraw").value(true))
-                .andExpect(jsonPath("$.reportUsername").value("feidan-a"))
-                .andExpect(jsonPath("$.hasPassword").value(true))
-                .andExpect(jsonPath("$.reportUrl").value(REPORT_URL))
-                .andExpect(jsonPath("$.reportNetworkCode").value("NET_A"))
-                .andExpect(jsonPath("$.reportRouteCode").value("A"))
                 .andReturn();
 
         MvcResult read = mockMvc.perform(get("/api/admin/player-desk/report").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.hasPassword").value(true))
+                .andExpect(jsonPath("$.centerAccountUsername").value(CENTER_USERNAME))
                 .andReturn();
 
-        // 密码只存密文：库里既不是明文，也必须带加密版本前缀
-        String ciphertext = jdbc.queryForObject(
-                "SELECT report_password_ciphertext FROM agent WHERE id = ?", String.class, machineAId);
-        assertThat(ciphertext).isNotBlank().isNotEqualTo(REPORT_SECRET).startsWith("v1.");
-
-        // 明文与密文都不得出现在任何响应体里
         String savedBody = saved.getResponse().getContentAsString();
         String readBody = read.getResponse().getContentAsString();
-        assertThat(savedBody).doesNotContain(REPORT_SECRET).doesNotContain(ciphertext);
-        assertThat(readBody).doesNotContain(REPORT_SECRET).doesNotContain(ciphertext);
+        assertThat(savedBody).doesNotContain("reportPassword").doesNotContain("reportUrl");
+        assertThat(readBody).doesNotContain("reportPassword").doesNotContain("reportUrl");
 
         // 审计记录存在且不含密码
         String summary = jdbc.queryForObject("""
@@ -207,17 +204,15 @@ class ReportConsoleTest {
                  WHERE permission_code = 'AGENT_REPORT_CONFIG' AND resource_id = ?
                  ORDER BY id DESC LIMIT 1
                 """, String.class, Long.toString(machineAId));
-        assertThat(summary).isNotNull().doesNotContain(REPORT_SECRET).doesNotContain(ciphertext);
+        assertThat(summary).isNotNull().doesNotContain(CENTER_PASSWORD);
 
-        // 不传密码时保留已保存的密文（不会被清空）
+        // 只更新一个开关时保留另一个值。
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportRouteCode\":\"B\"}"))
+                        .content("{\"reportWithdraw\":false}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportRouteCode").value("B"))
-                .andExpect(jsonPath("$.hasPassword").value(true));
-        assertThat(jdbc.queryForObject("SELECT report_password_ciphertext FROM agent WHERE id = ?",
-                String.class, machineAId)).isEqualTo(ciphertext);
+                .andExpect(jsonPath("$.reportAuto").value(true))
+                .andExpect(jsonPath("$.reportWithdraw").value(false));
     }
 
     @Test
@@ -234,7 +229,7 @@ class ReportConsoleTest {
                 .andExpect(status().isForbidden());
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(adminToken)).contentType("application/json")
-                        .content("{\"reportType\":\"TT\"}"))
+                        .content("{\"reportAuto\":true}"))
                 .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/admin/player-desk/report").param("machineId", String.valueOf(machineAId))
                         .header("Authorization", bearer(adminToken)))
@@ -250,59 +245,44 @@ class ReportConsoleTest {
                 .andExpect(jsonPath("$.code").value("MACHINE_NOT_FOUND"));
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"machineId\":" + machineBId + ",\"reportType\":\"TT\"}"))
+                        .content("{\"machineId\":" + machineBId + ",\"reportAuto\":true}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("MACHINE_NOT_FOUND"));
 
-        // 取值校验：报网类型 / 盘口线路 / 上游地址
+        // 开关字段保持严格类型校验；旧外部配置不再是当前契约。
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportType\":\"BOGUS\"}"))
+                        .content("{\"reportAuto\":\"not-a-boolean\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REPORT_TYPE_INVALID"));
-        mockMvc.perform(put("/api/admin/player-desk/report")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportRouteCode\":\"E\"}"))
+                .andExpect(jsonPath("$.code").exists());
+        mockMvc.perform(get("/api/admin/player-desk/report/orders").param("status", "BOGUS")
+                        .header("Authorization", bearer(token)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REPORT_ROUTE_INVALID"));
-        mockMvc.perform(put("/api/admin/player-desk/report")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportUrl\":\"ftp://report.invalid/upstream\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REPORT_URL_INVALID"));
-        mockMvc.perform(put("/api/admin/player-desk/report")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportPassword\":\"" + "x".repeat(129) + "\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REPORT_CREDENTIAL_INVALID"));
-        mockMvc.perform(put("/api/admin/player-desk/report")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportNetworkCode\":\"" + "N".repeat(65) + "\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REPORT_NETWORK_CODE_INVALID"));
+                .andExpect(jsonPath("$.code").value("REPORT_STATUS_INVALID"));
     }
 
     @Test
-    void loginRequiresCompleteConfigAndTogglesOnlineState() throws Exception {
+    void centerCredentialsAreRequiredAndLoginLogoutToggleSessionState() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
 
-        // 前置条件不满足：没有类型/网盘/盘口/账号
-        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(token)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("REPORT_CONFIG_INCOMPLETE"));
+        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(token))
+                        .contentType("application/json")
+                        .content("{\"username\":\"" + CENTER_USERNAME + "\",\"password\":\"bad-password\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("CENTER_UPSTREAM_AUTH_INVALID"));
         assertThat(online(machineAId)).isFalse();
 
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(fullConfig("A", false, false, REPORT_SECRET)))
+                        .content("{\"reportAuto\":false,\"reportWithdraw\":false}"))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(token)))
+        loginCenter(token)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reportOnline").value(true))
-                .andExpect(jsonPath("$.reportLastLoginAt").isNotEmpty());
+                .andExpect(jsonPath("$.centerAccountUsername").value(CENTER_USERNAME));
         assertThat(online(machineAId)).isTrue();
-        assertThat(jdbc.queryForObject("SELECT report_last_login_at FROM agent WHERE id = ?",
+        assertThat(jdbc.queryForObject("SELECT authenticated_at FROM center_machine_session WHERE machine_agent_id = ?",
                 java.sql.Timestamp.class, machineAId)).isNotNull();
 
         mockMvc.perform(get("/api/admin/player-desk/report").header("Authorization", bearer(token)))
@@ -313,25 +293,23 @@ class ReportConsoleTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.reportOnline").value(false));
         assertThat(online(machineAId)).isFalse();
-        // 退出不清空登录时间与配置
-        assertThat(jdbc.queryForObject("SELECT report_last_login_at FROM agent WHERE id = ?",
+        assertThat(jdbc.queryForObject("SELECT revoked_at FROM center_machine_session WHERE machine_agent_id = ?",
                 java.sql.Timestamp.class, machineAId)).isNotNull();
     }
 
     @Test
-    void resubmitMovesStatusByRouteAndEnforcesScope() throws Exception {
+    void resubmitUsesCenterSessionAndEnforcesMachineScope() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(fullConfig("A", false, false, REPORT_SECRET)))
+                        .content("{\"reportAuto\":false,\"reportWithdraw\":false}"))
                 .andExpect(status().isOk());
-        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(token)))
-                .andExpect(status().isOk());
+        loginCenter(token).andExpect(status().isOk());
 
         long accountA = createPlayer(token, "报网验证玩家A");
         long acceptedBet = insertBet(accountA, "reportconsole-bet-accepted", "PENDING");
 
-        // 盘口 A → 适配器接受 → REPORTED
+        // 中心内部接单成功后，机器侧记录 ACCEPTED。
         mockMvc.perform(post("/api/admin/player-desk/report/orders/" + acceptedBet + "/resubmit")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
@@ -340,17 +318,13 @@ class ReportConsoleTest {
                 .andExpect(jsonPath("$.config.machineId").value((int) machineAId));
         assertThat(reportStatusOf(acceptedBet)).isEqualTo("ACCEPTED");
 
-        // 盘口 D → 适配器超时 → TIMEOUT（超时不退款、不删单，只标记）
-        mockMvc.perform(put("/api/admin/player-desk/report")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content("{\"reportRouteCode\":\"D\"}"))
-                .andExpect(status().isOk());
-        long timeoutBet = insertBet(accountA, "reportconsole-bet-timeout", "PENDING");
+        // TIMEOUT 是可重报状态；处理依赖有效中心会话，不再依赖线路选项。
+        long timeoutBet = insertBet(accountA, "reportconsole-bet-timeout", "TIMEOUT");
         mockMvc.perform(post("/api/admin/player-desk/report/orders/" + timeoutBet + "/resubmit")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reportStatus").value("TIMEOUT"));
-        assertThat(reportStatusOf(timeoutBet)).isEqualTo("TIMEOUT");
+                .andExpect(jsonPath("$.reportStatus").value("ACCEPTED"));
+        assertThat(reportStatusOf(timeoutBet)).isEqualTo("ACCEPTED");
         assertThat(jdbc.queryForObject("SELECT settlement_status FROM game_bet WHERE id = ?",
                 String.class, timeoutBet)).isEqualTo("PENDING");
 
@@ -414,6 +388,12 @@ class ReportConsoleTest {
                 .andExpect(jsonPath("$.items[0].issueNumber").value(ISSUE_NUMBER))
                 .andExpect(jsonPath("$.items[0].settlementStatus").value("PENDING"));
 
+        mockMvc.perform(get("/api/admin/player-desk/report/orders").param("status", "REJECTED")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].responseCode").value("CENTER_TEST_REJECTED"))
+                .andExpect(jsonPath("$.items[0].responseMessage").value("测试拒绝原因"));
+
         mockMvc.perform(get("/api/admin/player-desk/report/orders").param("status", "ACCEPTED")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
@@ -431,6 +411,106 @@ class ReportConsoleTest {
     }
 
     @Test
+    void keepsLocalBetAfterCenterCancellationAndMakesDecisionImmutableAndIdempotent() throws Exception {
+        String token = login(MACHINE_A_USER, PASSWORD);
+        long accountId = createPlayer(token, "中心撤单保留本地单玩家");
+        long betId = insertCenterManualBet(accountId, "reportconsole-bet-center-cancel-keep", "CANCELLED");
+        java.math.BigDecimal balanceBefore = playerBalance(accountId);
+        String reason = "中心明确撤单，核对本地注单有效，保留参加本地开奖";
+
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + betId + "/local-disposition")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"decision\":\"KEEP_LOCAL\",\"reason\":\"" + reason + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.centerOutcome").value("CANCELLED"))
+                .andExpect(jsonPath("$.decision").value("KEEP_LOCAL"))
+                .andExpect(jsonPath("$.settlementStatus").value("PENDING"))
+                .andExpect(jsonPath("$.refundedAmount").value(0))
+                .andExpect(jsonPath("$.replayed").value(false));
+        assertThat(playerBalance(accountId)).isEqualByComparingTo(balanceBefore);
+        assertThat(jdbc.queryForObject("SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId))
+                .isEqualTo("PENDING");
+        assertThat(reportStatusOf(betId)).isEqualTo("CANCELLED");
+
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + betId + "/local-disposition")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"decision\":\"KEEP_LOCAL\",\"reason\":\"" + reason + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.replayed").value(true));
+
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + betId + "/local-disposition")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"decision\":\"REFUND_CANCEL_LOCAL\",\"reason\":\"改成退款\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("REPORT_LOCAL_DISPOSITION_ALREADY_DECIDED"));
+
+        mockMvc.perform(get("/api/admin/player-desk/report/orders").param("status", "CANCELLED")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].localCenterOutcome").value("CANCELLED"))
+                .andExpect(jsonPath("$.items[0].localDisposition").value("KEEP_LOCAL"))
+                .andExpect(jsonPath("$.items[0].localDispositionReason").value(reason));
+        assertThat(dispositionAuditCount(betId)).isEqualTo(1L);
+    }
+
+    @Test
+    void refundDispositionCancelsLocalBetAndCreditsStakeExactlyOnce() throws Exception {
+        String token = login(MACHINE_A_USER, PASSWORD);
+        long accountId = createPlayer(token, "中心退款本地退款玩家");
+        long betId = insertCenterManualBet(accountId, "reportconsole-bet-center-refund", "REFUNDED");
+        java.math.BigDecimal balanceBefore = playerBalance(accountId);
+        String reason = "中心退款已核实，本地注单同步退回本金并取消";
+        String request = "{\"decision\":\"REFUND_CANCEL_LOCAL\",\"reason\":\"" + reason + "\"}";
+
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + betId + "/local-disposition")
+                        .header("Authorization", bearer(token)).contentType("application/json").content(request))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.centerOutcome").value("REFUNDED"))
+                .andExpect(jsonPath("$.decision").value("REFUND_CANCEL_LOCAL"))
+                .andExpect(jsonPath("$.settlementStatus").value("CANCELED"))
+                .andExpect(jsonPath("$.refundedAmount").value(10.0))
+                .andExpect(jsonPath("$.replayed").value(false));
+        assertThat(playerBalance(accountId)).isEqualByComparingTo(balanceBefore.add(new java.math.BigDecimal("10.00")));
+        assertThat(jdbc.queryForObject("SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId))
+                .isEqualTo("CANCELED");
+        assertThat(jdbc.queryForObject("""
+                SELECT COUNT(*) FROM demo_balance_ledger
+                 WHERE idempotency_key = ? AND related_bet_id = ? AND amount = 10.00
+                """, Long.class, "CENTER_LOCAL_DISPOSITION_REFUND:" + betId, betId)).isEqualTo(1L);
+
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + betId + "/local-disposition")
+                        .header("Authorization", bearer(token)).contentType("application/json").content(request))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.replayed").value(true));
+        assertThat(playerBalance(accountId)).isEqualByComparingTo(balanceBefore.add(new java.math.BigDecimal("10.00")));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM demo_balance_ledger WHERE idempotency_key = ?",
+                Long.class, "CENTER_LOCAL_DISPOSITION_REFUND:" + betId)).isEqualTo(1L);
+        assertThat(dispositionAuditCount(betId)).isEqualTo(1L);
+    }
+
+    @Test
+    void localDispositionRequiresReasonAndEnforcesMachineOwnership() throws Exception {
+        String machineAToken = login(MACHINE_A_USER, PASSWORD);
+        String machineBToken = login(MACHINE_B_USER, PASSWORD);
+        long accountB = createPlayer(machineBToken, "中心撤单跨机器玩家");
+        long foreignBet = insertCenterManualBet(accountB, "reportconsole-bet-center-cancel-foreign", "CANCELLED");
+
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + foreignBet + "/local-disposition")
+                        .header("Authorization", bearer(machineAToken)).contentType("application/json")
+                        .content("{\"decision\":\"KEEP_LOCAL\",\"reason\":\"跨机器测试\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("REPORT_BET_NOT_FOUND"));
+        mockMvc.perform(post("/api/admin/player-desk/report/orders/" + foreignBet + "/local-disposition")
+                        .header("Authorization", bearer(machineBToken)).contentType("application/json")
+                        .content("{\"decision\":\"KEEP_LOCAL\",\"reason\":\" \"}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT settlement_status FROM game_bet WHERE id = ?",
+                String.class, foreignBet)).isEqualTo("PENDING");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM report_local_disposition WHERE bet_id = ?",
+                Long.class, foreignBet)).isZero();
+    }
+
+    @Test
     void submitForBetOnlyReportsWhenAutoAndOnline() throws Exception {
         String token = login(MACHINE_A_USER, PASSWORD);
         long accountA = createPlayer(token, "自动上报玩家");
@@ -439,14 +519,13 @@ class ReportConsoleTest {
         // 自动上报开、但机器离线 → 不提交，状态不变
         mockMvc.perform(put("/api/admin/player-desk/report")
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(fullConfig("A", true, false, REPORT_SECRET)))
+                        .content("{\"reportAuto\":true,\"reportWithdraw\":false}"))
                 .andExpect(status().isOk());
         assertThat(reportService.submitForBet(betId)).isEmpty();
         assertThat(reportStatusOf(betId)).isEqualTo("PENDING");
 
-        // 本地模拟登录后 → 自动上报成功，并且重复调用是幂等的
-        mockMvc.perform(post("/api/admin/player-desk/report/login").header("Authorization", bearer(token)))
-                .andExpect(status().isOk());
+        // 中心账号登录后 → 自动上报成功，并且重复调用是幂等的
+        loginCenter(token).andExpect(status().isOk());
         assertThat(reportService.submitForBet(betId)).contains("ACCEPTED");
         assertThat(reportStatusOf(betId)).isEqualTo("ACCEPTED");
         assertThat(reportService.submitForBet(betId)).isEmpty();
@@ -455,11 +534,11 @@ class ReportConsoleTest {
         assertThat(reportService.submitForBet(999999999L)).isEmpty();
     }
 
-    private static String fullConfig(String routeCode, boolean auto, boolean withdraw, String reportPassword) {
-        return "{\"reportType\":\"TT\",\"reportAuto\":" + auto + ",\"reportWithdraw\":" + withdraw
-                + ",\"reportUsername\":\"feidan-a\",\"reportPassword\":\"" + reportPassword + "\","
-                + "\"reportUrl\":\"" + REPORT_URL + "\",\"reportNetworkCode\":\"NET_A\","
-                + "\"reportRouteCode\":\"" + routeCode + "\"}";
+    private org.springframework.test.web.servlet.ResultActions loginCenter(String machineToken) throws Exception {
+        return mockMvc.perform(post("/api/admin/player-desk/report/login")
+                .header("Authorization", bearer(machineToken)).contentType("application/json")
+                .content("{\"username\":\"" + CENTER_USERNAME + "\",\"password\":\""
+                        + CENTER_PASSWORD + "\"}"));
     }
 
     private long createPlayer(String token, String displayName) throws Exception {
@@ -490,12 +569,50 @@ class ReportConsoleTest {
         if (betId != null && reportStatus != null && !"PENDING".equals(reportStatus)) {
             jdbc.update("""
                     INSERT INTO report_upstream_order
-                        (bet_id, agent_id, attempt_no, status, idempotency_key, sent_at, resolved_at)
-                    SELECT ?, a.agent_id, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        (bet_id, agent_id, attempt_no, status, response_code, response_message,
+                         idempotency_key, sent_at, resolved_at)
+                    SELECT ?, a.agent_id, 1, ?,
+                           CASE WHEN ? = 'REJECTED' THEN 'CENTER_TEST_REJECTED' ELSE 'CENTER_TEST_STATUS' END,
+                           CASE WHEN ? = 'REJECTED' THEN '测试拒绝原因' ELSE '测试状态记录' END,
+                           ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                       FROM demo_user_account a WHERE a.id = ?
-                    """, betId, reportStatus, "SEED-" + betCode, accountId);
+                    """, betId, reportStatus, reportStatus, reportStatus, "SEED-" + betCode, accountId);
         }
         return betId;
+    }
+
+    private long insertCenterManualBet(long accountId, String betCode, String centerOutcome) {
+        long betId = insertBet(accountId, betCode, null);
+        Long agentId = jdbc.queryForObject("SELECT agent_id FROM demo_user_account WHERE id = ?", Long.class, accountId);
+        Long sysUserId = jdbc.queryForObject("SELECT sys_user_id FROM demo_user_account WHERE id = ?", Long.class, accountId);
+        Long centerAgentId = jdbc.queryForObject("SELECT id FROM center_agent WHERE agent_code = ?",
+                Long.class, CENTER_USERNAME);
+        Long machineUserId = jdbc.queryForObject("SELECT account_user_id FROM agent WHERE id = ?",
+                Long.class, agentId);
+        walletService.grant(machineUserId, sysUserId, new java.math.BigDecimal("20.00"),
+                "中心撤退款本地注单测试下注本金", "REPORTCONSOLE-SEED-GRANT:" + betCode);
+        walletService.debitForBet(sysUserId, betId, betCode, ISSUE_NUMBER, new java.math.BigDecimal("10.00"));
+        String responseCode = "CANCELLED".equals(centerOutcome) ? "CENTER_CANCELLED" : "CENTER_REFUNDED";
+        jdbc.update("""
+                INSERT INTO report_upstream_order
+                    (bet_id, agent_id, center_agent_id, attempt_no, status, report_type,
+                     response_code, response_message, idempotency_key, sent_at, resolved_at)
+                VALUES (?, ?, ?, 1, 'MANUAL', 'CENTER', ?, '测试中心终态', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, betId, agentId, centerAgentId, responseCode, "SEED-CENTER-" + betCode);
+        return betId;
+    }
+
+    private java.math.BigDecimal playerBalance(long accountId) {
+        return jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id = ?",
+                java.math.BigDecimal.class, accountId);
+    }
+
+    private long dispositionAuditCount(long betId) {
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM sys_operation_log
+                 WHERE permission_code = 'AGENT_REPORT_CONFIG' AND resource_id = ?
+                   AND request_path LIKE '%/local-disposition'
+                """, Long.class, Long.toString(betId));
     }
 
     private String reportStatusOf(long betId) {
@@ -507,7 +624,10 @@ class ReportConsoleTest {
     }
 
     private boolean online(long machineId) {
-        Boolean value = jdbc.queryForObject("SELECT report_online FROM agent WHERE id = ?", Boolean.class, machineId);
+        Boolean value = jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM center_machine_session
+                 WHERE machine_agent_id = ? AND revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP)
+                """, Boolean.class, machineId);
         return Boolean.TRUE.equals(value);
     }
 
@@ -527,6 +647,8 @@ class ReportConsoleTest {
     private void clean() {
         List<Long> machineIds = jdbc.queryForList("SELECT id FROM agent WHERE agent_code IN (?, ?)",
                 Long.class, MACHINE_A_CODE, MACHINE_B_CODE);
+        List<Long> centerAccountIds = jdbc.queryForList("SELECT id FROM center_agent WHERE agent_code = ?",
+                Long.class, CENTER_USERNAME);
         List<Long> users = new ArrayList<>(jdbc.queryForList(
                 "SELECT id FROM sys_user WHERE username LIKE 'reportconsole-%'", Long.class));
         users.addAll(createdPlayerUserIds);
@@ -553,10 +675,19 @@ class ReportConsoleTest {
             delete("DELETE FROM player_name_change_record WHERE user_id IN (%s)", owners);
             delete("DELETE FROM player_link_expiration_config WHERE user_id IN (%s)", owners);
         }
+        if (!centerAccountIds.isEmpty()) {
+            delete("DELETE FROM center_order_disposition WHERE center_order_id IN "
+                    + "(SELECT id FROM center_order WHERE center_agent_id IN (%s))", centerAccountIds);
+            delete("DELETE FROM center_order WHERE center_agent_id IN (%s)", centerAccountIds);
+            delete("DELETE FROM center_machine_session WHERE center_agent_id IN (%s)", centerAccountIds);
+            delete("DELETE FROM center_agent_ledger WHERE center_agent_id IN (%s)", centerAccountIds);
+            delete("DELETE FROM center_agent WHERE id IN (%s)", centerAccountIds);
+        }
         if (!accounts.isEmpty()) {
             delete("DELETE FROM demo_balance_ledger WHERE user_id IN (%s)", accounts);
         }
         delete("DELETE FROM game_bet WHERE bet_code LIKE 'reportconsole-%'");
+        jdbc.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number = ?", ISSUE_NUMBER);
         if (!accounts.isEmpty()) {
             delete("DELETE FROM game_bet WHERE user_id IN (%s)", accounts);
         }
@@ -570,6 +701,7 @@ class ReportConsoleTest {
             delete("DELETE FROM agent_ledger WHERE agent_id IN (%s)", machineIds);
         delete("DELETE FROM agent WHERE id IN (%s)", machineIds);
         }
+        jdbc.update("DELETE FROM agent_group WHERE group_code = ?", GROUP_CODE);
         if (!owners.isEmpty()) {
             delete("DELETE FROM sys_login_log WHERE user_id IN (%s)", owners);
             delete("DELETE FROM auth_session WHERE user_id IN (%s)", owners);

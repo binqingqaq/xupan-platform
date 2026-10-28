@@ -8,10 +8,12 @@ import { ApiError, api } from './api'
 import {
   MACHINE_LIMIT_FIELDS,
   MACHINE_ONLY_FIELD_HINT,
+  type MachineLimitKey,
   createMachineConfigConsoleStore,
   machineConfigPayload,
   resolveMachineConfigLevel,
   resolveMachineConfigTargetId,
+  validateMachineLimitDraft,
 } from './machineConfigConsole'
 import type { BettingConfigView, MachineConfigView, PlayerDeskScope } from './types'
 
@@ -229,6 +231,8 @@ describe('machine config console scope resolution', () => {
     expect(payload).toEqual({
       boardOpen: true,
       chaseEnabled: false,
+      expectedVersion: 1,
+      countdownVisible: true,
       botCount: 3,
       closeSeconds: 100,
       cancelSeconds: 10,
@@ -254,6 +258,52 @@ describe('machine config console scope resolution', () => {
     // PUT 是整表单替换：漏掉 botCount 会把机器托上限写成 0。
     expect(payload).not.toHaveProperty('botLimit')
   })
+
+  it('blocks saves when the server marks the machine configuration read-only', async () => {
+    vi.mocked(api.getMachineConfig).mockResolvedValue(machineConfig({ configEditable: false }))
+    const store = machineStore(machineScope())
+    await settle()
+    await mount(AdminWelcomeControlPanel, {
+      part: 'game',
+      scope: machineScope(),
+      machineId: null,
+      machineConsole: store,
+    })
+
+    await expect(store.save({ oddsRate: 93 })).resolves.toBe(false)
+    expect(store.error).toContain('关闭代理配置权限')
+    expect(api.updateMachineConfig).not.toHaveBeenCalled()
+    expect(inputBy('#admin-display-odds').disabled).toBe(true)
+    expect(document.body.querySelector('.game-control-limit-button')).toBeNull()
+  })
+
+  it('keeps the persisted configuration visible after a network failure', async () => {
+    vi.mocked(api.updateMachineConfig).mockRejectedValue(new TypeError('Failed to fetch'))
+    const store = machineStore(machineScope())
+    await settle()
+    await mount(AdminWelcomeControlPanel, {
+      part: 'game',
+      scope: machineScope(),
+      machineId: null,
+      machineConsole: store,
+    })
+
+    await setInputValue(inputBy('#admin-display-odds'), '93')
+
+    expect(shellText()).toContain('机器配置保存失败，请稍后重试')
+    expect(shellText()).not.toContain('已保存')
+    expect(inputBy('#admin-display-odds').value).toBe('95')
+  })
+})
+
+describe('machine limit precision', () => {
+  it('accepts nonnegative limits to two decimal places', () => {
+    const draft = Object.fromEntries(MACHINE_LIMIT_FIELDS.map(field => [field.key, '0'])) as Record<MachineLimitKey, string>
+    draft.totalLimit = '0.01'
+
+    expect(validateMachineLimitDraft(draft).ok).toBe(true)
+    expect(validateMachineLimitDraft({ ...draft, totalLimit: '0.001' }).ok).toBe(false)
+  })
 })
 
 describe('machine account top status bar', () => {
@@ -269,7 +319,7 @@ describe('machine account top status bar', () => {
 
     expect(api.getMachineConfig).toHaveBeenCalledWith(18)
     expect(api.getBettingConfig).not.toHaveBeenCalled()
-    expect(shellText()).toContain('LOCALADMIN 本地参考后台')
+    expect(shellText()).toContain('当前状态：')
     expect(inputBy('#admin-display-odds').value).toBe('95')
     expect(inputBy('#admin-special-odds').value).toBe('18')
     expect(inputBy('#admin-special-rebate').value).toBe('1')
@@ -304,7 +354,7 @@ describe('machine account top status bar', () => {
       machineConsole: store,
     })
 
-    expect(shellText()).toContain('流水显示:')
+    expect(shellText()).toContain('流水显示：')
     const select = selectBy('#admin-rebate-mode')
     expect(Array.from(select.options).map(option => option.textContent)).toEqual(['单边', '双边'])
 
@@ -408,7 +458,7 @@ describe('platform administrator "all machines" global fallback', () => {
 
     expect(api.getBettingConfig).toHaveBeenCalledTimes(1)
     expect(api.getMachineConfig).not.toHaveBeenCalled()
-    expect(shellText()).toContain('全部机器（全局配置）')
+    expect(shellText()).toContain(MACHINE_ONLY_FIELD_HINT)
     expect(selectBy('#admin-rebate-mode').disabled).toBe(true)
     expect(shellText()).toContain(MACHINE_ONLY_FIELD_HINT)
     expect(inputBy('#admin-display-odds').value).toBe('95')
@@ -433,7 +483,7 @@ describe('platform administrator "all machines" global fallback', () => {
     corner?.[1].click()
     await nextTick()
     expect(corner?.[1].checked).toBe(true)
-    expect(shellText()).toContain('阶段 4 接入')
+    expect(corner?.[1].checked).toBe(true)
   })
 })
 
@@ -464,7 +514,7 @@ describe('bottom control panel machine wiring', () => {
       rebateRate: 8,
     }))
     expect(api.updateBettingDisplay).not.toHaveBeenCalled()
-    expect(shellText()).toContain('预留封盘、取消与返水已保存')
+    expect(shellText()).toContain('已自动保存')
   })
 
   it('shows the backend error and no success text when the machine save fails', async () => {

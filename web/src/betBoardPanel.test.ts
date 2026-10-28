@@ -52,7 +52,7 @@ describe('bet board panel', () => {
     expect(cancelButton?.textContent).toBe('×')
     expect(cancelButton?.getAttribute('title')).toBe('管理员撤单功能暂未开放')
     expect(container.querySelector('.bet-board-summary')?.textContent?.replace(/\s+/g, ''))
-      .toContain('(普:0,托:100)')
+      .toContain('(普：0,托：100)')
 
     app.unmount()
     container.remove()
@@ -63,6 +63,10 @@ describe('bet board panel', () => {
    * 未报/失败/超时点状态即"重新飞单"，已报的不可点。
    */
   it('shows the report status on the bet row and resubmits when clicked', async () => {
+    vi.mocked(api.getBetBoard).mockResolvedValue({
+      ...currentBoard,
+      items: [{ ...currentBoard.items[0], reportStatus: 'NOT_SENT' as const }],
+    })
     vi.mocked(api.resubmitReportOrder).mockResolvedValue({
       betId: 1,
       reportStatus: 'ACCEPTED',
@@ -81,7 +85,7 @@ describe('bet board panel', () => {
 
     const statusButton = container.querySelector<HTMLButtonElement>('.bet-board-copy')
     expect(statusButton).not.toBeNull()
-    expect(statusButton?.textContent?.replace(/\s+/g, '')).toContain('未报')
+    expect(statusButton?.textContent?.replace(/\s+/g, '')).toContain('未发送')
     expect(statusButton?.disabled).toBe(false)
     expect(statusButton?.getAttribute('title')).toBe('点击重新飞单')
 

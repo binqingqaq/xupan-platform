@@ -232,9 +232,11 @@ public class PlayerPointsReportService {
                 settledBetCount++;
                 netProfit = netProfit.add(value.netProfit());
             }
+            PlayType playType = PlayType.valueOf(value.playType());
             BetFlowMetricsCalculator.Metrics metrics = BetFlowMetricsCalculator.calculate(
-                    PlayType.valueOf(value.playType()), value.parametersText(), value.stake(), value.odds(),
-                    value.netProfit(), value.settlementStatus(), value.rebateRate(), value.specialRebateRate());
+                    playType, value.parametersText(), value.stake(), value.odds(),
+                    value.netProfit(), value.settlementStatus(), value.rebateRate(), value.specialRebateRate(),
+                    playType == PlayType.SPECIAL ? value.selectionUnitStake() : value.stake());
             singleFlow = singleFlow.add(metrics.singleFlow());
             doubleFlow = doubleFlow.add(metrics.doubleFlow());
             singleRebate = singleRebate.add(metrics.fanShui());

@@ -51,16 +51,17 @@ public class SecurityConfig {
                         .hasAuthority("PERM_SYSTEM_MONITOR_READ")
                         // WebSocket authentication is performed by the one-time ticket interceptor.
                         .requestMatchers("/ws/chat/**").permitAll()
-                        // 中心上游接单面（/api/center/**）用**代理 Token** 认证，不是会话认证，
-                        // 因此在这里放行，由 CenterOrderController 内部校验 Token 并自行返回 401。
-                        // 注意：这条放行只覆盖 /api/center/**，不影响 /api/admin/**（超管面仍需权限）。
-                        .requestMatchers("/api/center", "/api/center/**").permitAll()
+                        // 中心上游本轮改为同进程调用，旧 Token HTTP 接单入口不得继续对外开放。
+                        .requestMatchers("/api/center", "/api/center/**").denyAll()
                         // 顺序要紧：更具体的 orders/** 必须排在 agents/** 之前，否则会被上面那条吃掉，
                         // 变成"看订单需要账户管理权限"，与"只看订单不看账户"的设计不符。
                         .requestMatchers(HttpMethod.GET, "/api/admin/center/agents/orders",
                                         "/api/admin/center/agents/orders/**")
                         .hasAuthority("PERM_CENTER_ORDER_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/center/agents").denyAll()
                         .requestMatchers("/api/admin/center/agents", "/api/admin/center/agents/**")
+                        .hasAuthority("PERM_CENTER_AGENT_MANAGE")
+                        .requestMatchers("/api/admin/center/accounts", "/api/admin/center/accounts/**")
                         .hasAuthority("PERM_CENTER_AGENT_MANAGE")
                         .requestMatchers("/api/auth/logout", "/api/auth/me", "/api/auth/ws-ticket").authenticated()
                         .requestMatchers(HttpMethod.PUT, "/api/me/avatar").access(nonChatOnly())
@@ -79,7 +80,10 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/reports", "/api/admin/reports/**").hasAuthority("PERM_REPORT_READ")
                         .requestMatchers(HttpMethod.GET, "/api/admin/draw-history", "/api/admin/draw-history/**").hasAuthority("PERM_DRAW_HISTORY_READ")
                         .requestMatchers(HttpMethod.POST, "/api/admin/draw-history/*/force-settle", "/api/admin/draw-history/force-settle-all").hasAuthority("PERM_DRAW_HISTORY_FORCE_SETTLE")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/draw-history/*/*/force-settle").hasAuthority("PERM_DRAW_HISTORY_FORCE_SETTLE")
                         .requestMatchers(HttpMethod.POST, "/api/admin/draw-history/supplement").hasAuthority("PERM_DRAW_HISTORY_SUPPLEMENT")
+                        .requestMatchers(HttpMethod.PUT, "/api/admin/draw-history/*/*/draft").hasAuthority("PERM_DRAW_HISTORY_SUPPLEMENT")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/draw-history/*/*/confirm").hasAuthority("PERM_DRAW_HISTORY_SUPPLEMENT")
                         .requestMatchers(HttpMethod.GET, "/api/admin/unsettled-orders", "/api/admin/unsettled-orders/**").hasAuthority("PERM_UNSETTLED_ORDER_READ")
                         .requestMatchers(HttpMethod.DELETE, "/api/admin/unsettled-orders/**").hasAuthority("PERM_UNSETTLED_ORDER_DELETE")
                         .requestMatchers(HttpMethod.GET, "/api/admin/order-corrections", "/api/admin/order-corrections/**").hasAuthority("PERM_ORDER_CORRECTION_READ")

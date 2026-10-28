@@ -23,10 +23,14 @@ import java.util.Optional;
  *   <li>取消 = 下注后 {@code cancel} 秒内有效，{@code cancel=0} 关闭（{@code common.php:2067-2106}）</li>
  * </ul>
  *
- * <p>机器赔率未配置（0/NULL）时回退全局 {@code game_odds}，因此存量机器的行为保持不变。</p>
+ * <p>本业务只使用所属机器的 P/T。缺少机器或 P/T 未配置时拒绝报价，不能回退全局赔率。</p>
  */
 @Service
 public class AgentBettingPolicy {
+
+    public enum DisplayOddsRuleKey {
+        BASE, FAN, STRICT, CAR, NONE_PAIR, NONE_TRIPLE, TONG, SPECIAL
+    }
 
     /** 机器已闭盘（BY220 isOpen=0）。 */
     public static final String BOARD_CLOSED = "GAME_BOARD_CLOSED";
@@ -45,22 +49,54 @@ public class AgentBettingPolicy {
      * @param config    机器配置
      */
     public BigDecimal effectiveOdds(PlayType playType, BigDecimal globalOdds, MachineBettingConfig config) {
+        return effectiveOdds(playType, globalOdds, config, java.util.List.of());
+    }
+
+    public BigDecimal effectiveOdds(PlayType playType, BigDecimal globalOdds, MachineBettingConfig config,
+                                    java.util.List<Integer> parameters) {
         if (playType == null) {
             throw new IllegalArgumentException("玩法不能为空");
         }
         MachineBettingConfig machine = config == null ? MachineBettingConfig.DEFAULT : config;
         if (playType == PlayType.SPECIAL) {
             if (machine.hasConfiguredSpecialOdds()) {
-                return scale3(machine.specialOddsRate().max(ONE));
+                return machine.specialOddsRate().setScale(4, RoundingMode.UNNECESSARY);
             }
-            return scale3(requireGlobal(globalOdds));
+            throw new IllegalStateException("MACHINE_SPECIAL_ODDS_UNAVAILABLE");
         }
         if (machine.hasConfiguredOdds()) {
-            BigDecimal converted = ONE.add(machine.oddsRate().multiply(weight(playType))
-                    .divide(HUNDRED, 6, RoundingMode.HALF_UP));
-            return scale3(converted.max(ONE));
+            BigDecimal weight = playType == PlayType.NONE && parameters != null && parameters.size() == 3
+                    ? new BigDecimal("0.5") : weight(playType);
+            BigDecimal converted = ONE.add(machine.oddsRate().multiply(weight)
+                    .divide(HUNDRED, 12, RoundingMode.HALF_UP));
+            return converted.max(ONE).setScale(3, RoundingMode.DOWN);
         }
-        return scale3(requireGlobal(globalOdds));
+        throw new IllegalStateException("MACHINE_ODDS_UNAVAILABLE");
+    }
+
+    /** 生成玩家格子展示值；CAR 使用 BY220 页面系数 0.333，与下注结算权重 1/3 分开。 */
+    public BigDecimal displayOdds(DisplayOddsRuleKey ruleKey, MachineBettingConfig config) {
+        if (ruleKey == null) throw new IllegalArgumentException("展示赔率规则不能为空");
+        MachineBettingConfig machine = config == null ? MachineBettingConfig.DEFAULT : config;
+        if (ruleKey == DisplayOddsRuleKey.SPECIAL) {
+            if (machine.hasConfiguredSpecialOdds()) {
+                return machine.specialOddsRate().setScale(4, RoundingMode.UNNECESSARY);
+            }
+            throw new IllegalStateException("MACHINE_SPECIAL_ODDS_UNAVAILABLE");
+        }
+        if (!machine.hasConfiguredOdds()) throw new IllegalStateException("MACHINE_ODDS_UNAVAILABLE");
+
+        BigDecimal weight = switch (ruleKey) {
+            case BASE, NONE_PAIR -> ONE;
+            case FAN -> new BigDecimal("3");
+            case STRICT -> new BigDecimal("2");
+            case CAR -> new BigDecimal("0.333");
+            case NONE_TRIPLE, TONG -> new BigDecimal("0.5");
+            case SPECIAL -> throw new IllegalStateException("unreachable");
+        };
+        BigDecimal converted = ONE.add(machine.oddsRate().multiply(weight)
+                .divide(HUNDRED, 12, RoundingMode.HALF_UP));
+        return converted.max(ONE).setScale(3, RoundingMode.DOWN);
     }
 
     /** 玩法权重：番=3、念/严=2、车/推=1/3、通=1/2，其余为 1。 */
@@ -105,22 +141,11 @@ public class AgentBettingPolicy {
         };
     }
 
-    private static BigDecimal requireGlobal(BigDecimal globalOdds) {
-        if (globalOdds == null) {
-            throw new IllegalArgumentException("玩法赔率不存在");
-        }
-        return globalOdds;
-    }
-
-    private static BigDecimal scale3(BigDecimal value) {
-        return value.setScale(3, RoundingMode.HALF_UP);
-    }
-
     private static Map<PlayType, BigDecimal> weights() {
         EnumMap<PlayType, BigDecimal> values = new EnumMap<>(PlayType.class);
         values.put(PlayType.FAN, new BigDecimal("3"));
         values.put(PlayType.ANGLE, ONE);
-        values.put(PlayType.CAR, new BigDecimal("0.333333"));
+        values.put(PlayType.CAR, BigDecimal.ONE.divide(new BigDecimal("3"), 12, RoundingMode.HALF_UP));
         values.put(PlayType.STRICT, new BigDecimal("2"));
         values.put(PlayType.ADD, ONE);
         values.put(PlayType.POSITIVE, ONE);

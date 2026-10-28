@@ -1,21 +1,14 @@
 <script setup lang="ts">
-/**
- * 报网控制面板（BY220 `robot.php` 报网栏，`x_robot.flyers_*`）。
- *
- * 用户 2026-10-02 确认按 A 方案做完整闭环：报网状态真实影响订单与玩家余额。
- * 合规边界（强制）：本项目**不接入任何真实外部上游**。"登录"是本地模拟（后端只置在线状态与登录时间，
- * 不发起任何网络请求）；密码只在保存时上传，界面永不回显（只显示是否已设置）。
- *
- * 层级：机器账号固定操作自己那台；管理员/子账号必须先选择机器。未选机器时本面板只读并提示。
- */
+/** 代理机器范围内的中心账号登录状态与报网开关。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, apiErrorMessage } from '../../api'
 import {
-  REPORT_ROUTE_OPTIONS,
-  REPORT_TYPE_OPTIONS,
   type PlayerDeskScope,
   type ReportConfigUpdateRequest,
   type ReportConfigView,
+  type ReportOrderItem,
+  type ReportLocalDispositionDecision,
+  type ReportStatus,
 } from '../../types'
 
 const props = defineProps<{
@@ -34,55 +27,52 @@ const loggingIn = ref(false)
 const notice = ref('')
 const noticeKind = ref<'ok' | 'error'>('ok')
 
-/** "设置账号"弹窗。密码单独输入，保存后即清空，永不回显。 */
-const accountDialogOpen = ref(false)
-const accountDraft = reactive({
-  reportUsername: '',
-  reportPassword: '',
-  reportUrl: '',
-  reportNetworkCode: '',
-  reportRouteCode: 'A' as string,
+const loginDialogOpen = ref(false)
+const loginDraft = reactive({ username: '', password: '' })
+const reportOrders = ref<ReportOrderItem[]>([])
+const reportOrderTotal = ref(0)
+const reportOrderPage = ref(1)
+const reportOrderStatus = ref<ReportStatus | ''>('')
+const reportOrdersOpen = ref(false)
+const reportOrdersLoading = ref(false)
+const reportOrderPageSize = 10
+const dispositionOrder = ref<ReportOrderItem | null>(null)
+const dispositionSaving = ref(false)
+const dispositionDraft = reactive<{ decision: ReportLocalDispositionDecision; reason: string }>({
+  decision: 'KEEP_LOCAL',
+  reason: '',
 })
 
-/** 机器账号固定自己那台；管理员/子账号必须显式选择机器，否则不允许写。 */
 const effectiveMachineId = computed<number | null>(() => {
   if (props.scope?.mode === 'MACHINE') return props.scope.machineId ?? null
   return props.machineId ?? null
 })
 
 const machineReady = computed(() => effectiveMachineId.value !== null)
+const machineIdentity = computed(() => props.scope?.mode === 'MACHINE')
 const readOnlyHint = computed(() => {
   if (!props.scope) return '身份范围尚未就绪，报网配置暂不可编辑'
   if (!machineReady.value) return '请先在上方选择机器：报网配置属于每台机器自己的设置'
   return ''
 })
-
-const reportTypeLabel = computed(() => {
-  const value = config.value?.reportType
-  if (!value) return '未设置'
-  return REPORT_TYPE_OPTIONS.find(option => option.value === value)?.label ?? value
+const canEdit = computed(() => machineReady.value && !readOnlyHint.value && config.value !== null)
+const loginButtonDisabled = computed(() => !canEdit.value || !machineIdentity.value
+  || loggingIn.value || saving.value || config.value?.reportOnline === true)
+const onlineText = computed(() => config.value ? (config.value.reportOnline ? '在线' : '离线') : '未加载')
+const onlineClass = computed(() => config.value?.reportOnline ? 'is-online' : 'is-offline')
+const centerUsername = computed(() => config.value?.centerAccountUsername || '未分配')
+const centerAccountExpiryText = computed(() => {
+  const value = config.value?.centerAccountExpiresAt
+  if (!value) return '未提供'
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return value
+  if (timestamp <= Date.now()) return '已过期'
+  return `有效期至 ${new Date(timestamp).toLocaleString('zh-CN', { hour12: false })}`
 })
 
-const onlineText = computed(() => (config.value?.reportOnline ? '在线' : '离线'))
-const loginButtonDisabled = computed(() => !machineReady.value || loggingIn.value || saving.value)
-
-/**
- * BY220 统一飞单：子账号的 `x_admin.feidan/feidanname/feidanid/feidantype` 是统一飞单来源
- * （`Users.php::add()` 保存、`sub/list.html` 的「开启飞单/网盘/盘口/飞单账号」列展示）。
- * 机器自身没配飞单账号、而所属子账号 `unified_report_enabled=1` 且配了账号时，后端按子账号配置回退，
- * 并在 `config.inheritedFromGroup` 标记；此时这些字段**不是机器自己已配置**，界面必须如实标注。
- */
-const inheritedFromGroup = computed(() => config.value?.inheritedFromGroup === true)
-const inheritedSuffix = computed(() => (inheritedFromGroup.value ? '（继承子账号）' : ''))
-/** 继承态下字段为空时显示「沿用子账号」，不能显示成机器自己的「未设置」。 */
-function reportFieldText(value: string | null | undefined): string {
-  if (value) return value
-  return inheritedFromGroup.value ? '沿用子账号' : '未设置'
+function formatAmount(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(2) : '—'
 }
-const reportPasswordText = computed(() => {
-  if (config.value?.hasPassword) return '已设置'
-  return inheritedFromGroup.value ? '沿用子账号' : '未设置'
-})
 
 function setNotice(message: string, kind: 'ok' | 'error' = 'ok') {
   notice.value = message
@@ -90,15 +80,16 @@ function setNotice(message: string, kind: 'ok' | 'error' = 'ok') {
 }
 
 /**
- * 读取机器报网配置与状态统计。
+ * 读取机器中心账号、额度和报网状态。
  *
- * 上报订单列表与重报入口**不在这里**：BY220 把它们做在下注榜的注单状态标记上
- * （`admin_list.html:1975-1992`），因此由 `BetBoardPanel` 承担；本面板只保留报网控制行
- * （类型、账号、登录/退出、开关、超时/未报/失败计数、刷新），与 BY220 报网栏一致。
+ * 订单明细与重报入口由下注榜面板承担；本面板负责中心账号状态、额度摘要、开关和计数。
  */
 async function load() {
+  notice.value = ''
   if (!machineReady.value) {
     config.value = null
+    reportOrders.value = []
+    reportOrderTotal.value = 0
     return
   }
   loading.value = true
@@ -112,9 +103,91 @@ async function load() {
   }
 }
 
-/** 保存报网类型/开关等基础配置（不动账号密码）。 */
+async function loadOrders(page = reportOrderPage.value) {
+  if (!machineReady.value) return
+  reportOrdersLoading.value = true
+  try {
+    const result = await api.listReportOrders({
+      machineId: effectiveMachineId.value,
+      status: reportOrderStatus.value || undefined,
+      page,
+      pageSize: reportOrderPageSize,
+    })
+    reportOrders.value = result.items
+    reportOrderPage.value = result.page
+    reportOrderTotal.value = result.total
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '报网订单加载失败'), 'error')
+  } finally {
+    reportOrdersLoading.value = false
+  }
+}
+
+function toggleReportOrders() {
+  reportOrdersOpen.value = !reportOrdersOpen.value
+  if (reportOrdersOpen.value) void loadOrders(1)
+}
+
+function reportStatusLabel(status: ReportStatus): string {
+  const labels: Record<ReportStatus, string> = {
+    PENDING: '未报', NOT_SENT: '未发送', ACCEPTED: '已接受', REJECTED: '已拒绝',
+    TIMEOUT: '待核实', MANUAL: '人工待处置', CANCELLED: '已撤单', REFUNDED: '已退单', SETTLED: '已结算',
+  }
+  return labels[status]
+}
+
+function canResolveLocalDisposition(order: ReportOrderItem): boolean {
+  return order.reportStatus === 'MANUAL'
+    && (order.responseCode === 'CENTER_CANCELLED' || order.responseCode === 'CENTER_REFUNDED')
+    && order.localDisposition === null
+}
+
+function localDispositionLabel(decision: ReportLocalDispositionDecision | null): string {
+  if (decision === 'KEEP_LOCAL') return '保留本地注单继续结算'
+  if (decision === 'REFUND_CANCEL_LOCAL') return '退款并取消本地注单'
+  return '待人工核对'
+}
+
+function openDispositionDialog(order: ReportOrderItem) {
+  dispositionOrder.value = order
+  dispositionDraft.decision = 'KEEP_LOCAL'
+  dispositionDraft.reason = ''
+}
+
+function closeDispositionDialog() {
+  if (dispositionSaving.value) return
+  dispositionOrder.value = null
+  dispositionDraft.reason = ''
+}
+
+async function submitDisposition() {
+  const order = dispositionOrder.value
+  const reason = dispositionDraft.reason.trim()
+  if (!order || !canEdit.value) return
+  if (!reason) {
+    setNotice('请填写本地处理原因', 'error')
+    return
+  }
+  dispositionSaving.value = true
+  try {
+    const result = await api.disposeReportLocalOrder(order.betId, {
+      machineId: effectiveMachineId.value,
+      decision: dispositionDraft.decision,
+      reason,
+    })
+    dispositionOrder.value = null
+    setNotice(result.replayed ? '已读取该注单的既有处理结论' : '本地注单处理结论已保存')
+    await Promise.all([loadOrders(), load()])
+  } catch (cause) {
+    setNotice(apiErrorMessage(cause, '本地注单处理失败'), 'error')
+  } finally {
+    dispositionSaving.value = false
+  }
+}
+
+/** 保存机器范围内的报网开关。 */
 async function saveBase(payload: Partial<ReportConfigUpdateRequest>, okText: string) {
-  if (!machineReady.value) {
+  if (!canEdit.value) {
     setNotice(readOnlyHint.value, 'error')
     return
   }
@@ -133,105 +206,82 @@ async function saveBase(payload: Partial<ReportConfigUpdateRequest>, okText: str
   }
 }
 
-function onReportTypeChange(event: Event) {
-  const value = (event.target as HTMLSelectElement).value
-  void saveBase({ reportType: value }, `报网类型已保存为 ${reportTypeLabelOf(value)}`)
-}
-
-function reportTypeLabelOf(value: string): string {
-  return REPORT_TYPE_OPTIONS.find(option => option.value === value)?.label ?? value
-}
-
 function onToggleAuto() {
   const next = !config.value?.reportAuto
-  void saveBase({ reportAuto: next }, next ? '已开启自动上报网盘' : '已关闭自动上报网盘')
+  void saveBase({ reportAuto: next }, next ? '已开启自动上报' : '已关闭自动上报')
 }
 
 function onToggleWithdraw() {
   const next = !config.value?.reportWithdraw
   void saveBase(
     { reportWithdraw: next },
-    next ? '已开启失败自动退单（上报失败将取消订单并退还玩家积分）' : '已关闭失败自动退单',
+    next ? '已开启失败自动退单' : '已关闭失败自动退单',
   )
 }
 
-function openAccountDialog() {
-  if (!machineReady.value) {
+function openLoginDialog() {
+  if (!machineIdentity.value) {
+    setNotice('请使用机器账号在代理控制台登录中心账号', 'error')
+    return
+  }
+  if (!canEdit.value) {
     setNotice(readOnlyHint.value, 'error')
     return
   }
-  // 统一飞单继承态**不回填**子账号的飞单账号/网盘/盘口：那是子账号的共享账号，
-  // 一旦原样提交就会被写成本机自有配置（撞上游账号唯一约束，兄弟机器立刻报「已被占用」，
-  // 而且本机以后不再跟随子账号轮换）。留空提交＝继续沿用子账号。
-  const inherited = config.value?.inheritedFromGroup === true
-  accountDraft.reportUsername = inherited ? '' : (config.value?.reportUsername ?? '')
-  accountDraft.reportPassword = ''
-  accountDraft.reportUrl = config.value?.reportUrl ?? ''
-  accountDraft.reportNetworkCode = inherited ? '' : (config.value?.reportNetworkCode ?? '')
-  accountDraft.reportRouteCode = inherited ? '' : (config.value?.reportRouteCode ?? 'A')
-  accountDialogOpen.value = true
+  loginDraft.username = config.value?.centerAccountUsername ?? ''
+  loginDraft.password = ''
+  loginDialogOpen.value = true
 }
 
-function closeAccountDialog() {
-  accountDialogOpen.value = false
-  accountDraft.reportPassword = ''
-}
-
-async function saveAccount() {
-  if (!machineReady.value) {
-    setNotice(readOnlyHint.value, 'error')
-    return
-  }
-  saving.value = true
-  try {
-    const username = accountDraft.reportUsername.trim()
-    config.value = await api.updateReportConfig({
-      machineId: effectiveMachineId.value ?? undefined,
-      // 留空表示继续沿用子账号统一飞单：必须传 null（保持原值），不能传空串（会被当成显式清空）
-      reportUsername: username || null,
-      // 密码为空表示不修改；非空才覆盖（后端只存密文）
-      reportPassword: accountDraft.reportPassword.trim() || null,
-      reportUrl: accountDraft.reportUrl.trim(),
-      reportNetworkCode: username ? accountDraft.reportNetworkCode.trim() : null,
-      reportRouteCode: username ? (accountDraft.reportRouteCode || 'A') : null,
-    })
-    emit('changed', config.value)
-    setNotice('报网账号已保存（密码只存密文，界面不回显）')
-    closeAccountDialog()
-  } catch (cause) {
-    setNotice(apiErrorMessage(cause, '报网账号保存失败'), 'error')
-  } finally {
-    saving.value = false
-  }
+function closeLoginDialog() {
+  loginDialogOpen.value = false
+  loginDraft.password = ''
 }
 
 async function login() {
-  if (!machineReady.value) {
+  if (!machineIdentity.value) {
+    setNotice('请使用机器账号在代理控制台登录中心账号', 'error')
+    return
+  }
+  if (!canEdit.value) {
     setNotice(readOnlyHint.value, 'error')
+    return
+  }
+  const username = loginDraft.username.trim()
+  const password = loginDraft.password
+  const machineId = effectiveMachineId.value
+  if (!username || !password || machineId === null) {
+    setNotice('请输入中心账号名和密码', 'error')
     return
   }
   loggingIn.value = true
   try {
-    config.value = await api.loginReport(effectiveMachineId.value)
+    config.value = await api.loginReport({ username, password })
     emit('changed', config.value)
-    setNotice('报网登录成功（本地模拟，未连接任何外部平台）')
+    setNotice('中心账号登录成功，已连接本系统中心上游')
+    closeLoginDialog()
   } catch (cause) {
     setNotice(apiErrorMessage(cause, '报网登录失败'), 'error')
   } finally {
+    loginDraft.password = ''
     loggingIn.value = false
   }
 }
 
 async function logout() {
-  if (!machineReady.value) {
+  if (!machineIdentity.value) {
+    setNotice('请使用机器账号在代理控制台退出中心账号', 'error')
+    return
+  }
+  if (!canEdit.value) {
     setNotice(readOnlyHint.value, 'error')
     return
   }
   saving.value = true
   try {
-    config.value = await api.logoutReport(effectiveMachineId.value)
+    config.value = await api.logoutReport()
     emit('changed', config.value)
-    setNotice('已退出报网（在线状态置为离线）')
+    setNotice('已退出中心账号')
   } catch (cause) {
     setNotice(apiErrorMessage(cause, '退出报网失败'), 'error')
   } finally {
@@ -256,63 +306,37 @@ defineExpose({ load })
 <template>
   <section class="report-control-panel" aria-label="报网控制">
     <div class="report-control-row report-control-main-row">
-      <strong class="report-control-label">报网类型:</strong>
-      <select
-        class="report-type-select"
-        :value="config?.reportType ?? ''"
-        :disabled="!machineReady || saving"
-        aria-label="报网类型"
-        @change="onReportTypeChange"
-      >
-        <option value="">未设置</option>
-        <option v-for="option in REPORT_TYPE_OPTIONS" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
-      <!-- BY220：机器的 flyers_type 由所选网盘/统一飞单决定（rbt/controller/Index.php:745），
-           继承态下这里显示的就是子账号统一飞单的类型；显式改成别的值＝写成本机自己的类型。 -->
-      <span
-        v-if="inheritedFromGroup"
-        class="report-control-metric report-control-type-source"
-        title="当前报网类型来自所属子账号的统一飞单；选择其它值会写成本机自己的类型"
-      >{{ inheritedSuffix }}</span>
-      <button type="button" class="report-control-button report-control-account" :disabled="!machineReady || saving" @click="openAccountDialog">
-        设置账号
-      </button>
-      <button type="button" class="report-control-button report-control-logout" :disabled="loginButtonDisabled || !config?.reportOnline" @click="logout">
+      <strong class="report-control-label">中心账号:</strong>
+      <span class="report-control-account-name">{{ centerUsername }}</span>
+      <span class="report-control-expiry">{{ centerAccountExpiryText }}</span>
+      <strong class="report-control-label">报网状态:</strong>
+      <span class="report-control-state" :class="onlineClass">{{ onlineText }}</span>
+      <button type="button" class="report-control-button report-control-logout" :disabled="!canEdit || !machineIdentity || saving || loggingIn || !config?.reportOnline" @click="logout">
         退出
       </button>
-      <button type="button" class="report-control-button report-control-login" :disabled="loginButtonDisabled" @click="login">
-        {{ loggingIn ? '登录中' : '登录' }}
+      <button type="button" class="report-control-button report-control-login" :disabled="loginButtonDisabled" @click="openLoginDialog">
+        {{ loggingIn ? '登录中' : config?.reportOnline ? '已登录' : '登录' }}
       </button>
-      <!-- BY220 本地环境登录时同样把 betting 写 0（rbt/Index.php:801-803）；本项目不接真实上游，界面如实标注为本地模拟值。 -->
-      <span class="report-control-metric" title="本地模拟：本项目不接真实上游，该值不会由上游返回">押注: <b>{{ config?.reportStake ?? 0 }}</b></span>
     </div>
 
     <div class="report-control-row report-control-status-row">
-      <strong class="report-control-label">报网状态:</strong>
-      <span class="report-control-state" :class="config?.reportOnline ? 'is-online' : 'is-offline'">
-        {{ onlineText }}
-      </span>
-      <label class="report-control-check" :class="{ 'is-disabled': !machineReady }">
-        <input type="checkbox" :checked="config?.reportWithdraw ?? false" :disabled="!machineReady || saving" @change="onToggleWithdraw" />
+      <label class="report-control-check" :class="{ 'is-disabled': !canEdit || saving || loggingIn }">
+        <input type="checkbox" :checked="config?.reportWithdraw ?? false" :disabled="!canEdit || saving || loggingIn" @change="onToggleWithdraw" />
         失败自动退单
       </label>
-      <label class="report-control-check" :class="{ 'is-disabled': !machineReady }">
-        <input type="checkbox" :checked="config?.reportAuto ?? false" :disabled="!machineReady || saving" @change="onToggleAuto" />
-        自动上报网盘
+      <label class="report-control-check" :class="{ 'is-disabled': !canEdit || saving || loggingIn }">
+        <input type="checkbox" :checked="config?.reportAuto ?? false" :disabled="!canEdit || saving || loggingIn" @change="onToggleAuto" />
+        自动上报
       </label>
-      <span class="report-control-metric">超时订单: <b>{{ config?.timeoutOrderCount ?? 0 }}</b></span>
-      <span class="report-control-metric">未报: <b>{{ config?.unreportedCount ?? 0 }}</b></span>
-      <span class="report-control-metric">失败: <b>{{ config?.failedOrderCount ?? 0 }}</b></span>
+      <span class="report-control-metric">可用额度: <b>{{ formatAmount(config?.centerAvailableBalance) }}</b></span>
+      <span class="report-control-metric">冻结额度: <b>{{ formatAmount(config?.centerFrozenBalance) }}</b></span>
+      <span class="report-control-metric">押注/未结: <b>{{ formatAmount(config?.centerOpenStake) }}</b></span>
+      <span class="report-control-metric">待核实: <b>{{ config?.timeoutOrderCount ?? '—' }}</b></span>
+      <span class="report-control-metric">未报: <b>{{ config?.unreportedCount ?? '—' }}</b></span>
+      <span class="report-control-metric">失败: <b>{{ config?.failedOrderCount ?? '—' }}</b></span>
       <button type="button" class="report-control-button report-control-refresh" :disabled="!machineReady || loading" @click="load">
         {{ loading ? '刷新中' : '刷新' }}
       </button>
-    </div>
-
-    <!-- BY220 统一飞单：机器自身没配飞单账号时按所属子账号配置回退（机器自身配置优先） -->
-    <div v-if="inheritedFromGroup" class="report-control-row report-control-inherit-row">
-      <span class="report-control-inherit-hint">当前使用所属子账号的统一飞单配置（网盘/盘口/飞单账号继承，机器自身配置优先）</span>
     </div>
 
     <p v-if="readOnlyHint" class="report-control-hint">{{ readOnlyHint }}</p>
@@ -320,54 +344,121 @@ defineExpose({ load })
       {{ notice }}
     </p>
 
-    <!-- BY220 报网栏到此结束（robot.php 的报网控制区）。
-         上报订单列表与重报不在这里：BY220 把它们做在下注榜的注单状态标记上
-         （application/rbt/view/index/admin_list.html:1975-1992），由 BetBoardPanel 承担。 -->
-
-    <div v-if="accountDialogOpen" class="report-account-mask" role="dialog" aria-label="设置报网账号">
-      <div class="report-account-dialog">
-        <div class="report-account-head">
-          <strong>设置报网账号</strong>
-          <button type="button" class="report-control-button" @click="closeAccountDialog">关闭</button>
-        </div>
-        <label class="report-account-field">
-          <span>飞单账号</span>
-          <input v-model="accountDraft.reportUsername" type="text" maxlength="128" placeholder="上游飞单账号" />
-        </label>
-        <label class="report-account-field">
-          <span>飞单密码</span>
-          <input
-            v-model="accountDraft.reportPassword"
-            type="password"
-            maxlength="128"
-            :placeholder="config?.hasPassword ? '留空表示不修改' : '上游飞单密码'"
-          />
-        </label>
-        <label class="report-account-field">
-          <span>上游地址</span>
-          <input v-model="accountDraft.reportUrl" type="text" maxlength="512" placeholder="仅保存，不发起请求" />
-        </label>
-        <label class="report-account-field">
-          <span>网盘编码</span>
-          <input v-model="accountDraft.reportNetworkCode" type="text" maxlength="64" placeholder="如 K28" />
-        </label>
-        <label class="report-account-field">
-          <span>盘口线路</span>
-          <select v-model="accountDraft.reportRouteCode">
-            <option v-for="route in REPORT_ROUTE_OPTIONS" :key="route" :value="route">{{ route }}</option>
+    <div class="report-orders-toolbar">
+      <button type="button" class="report-control-button" :disabled="!machineReady" @click="toggleReportOrders">
+        {{ reportOrdersOpen ? '收起订单' : '报网订单' }}
+      </button>
+      <template v-if="reportOrdersOpen">
+        <label class="report-order-filter">状态
+          <select v-model="reportOrderStatus" :disabled="reportOrdersLoading" @change="loadOrders(1)">
+            <option value="">全部</option>
+            <option value="PENDING">未报</option>
+            <option value="NOT_SENT">未发送</option>
+            <option value="REJECTED">已拒绝</option>
+            <option value="TIMEOUT">待核实</option>
+            <option value="MANUAL">人工待处置</option>
+            <option value="ACCEPTED">已接受</option>
+            <option value="CANCELLED">已撤单</option>
+            <option value="REFUNDED">已退单</option>
+            <option value="SETTLED">已结算</option>
           </select>
         </label>
-        <p class="report-account-note">
-          <template v-if="config?.inheritedFromGroup === true">
-            当前沿用所属子账号的统一飞单配置：留空保存＝继续沿用；要改为本机专属，请填写本机飞单账号并选择盘口线路。
-          </template>
-          密码只保存密文、界面不回显；本项目不连接任何外部平台，登录为本地模拟。
-        </p>
+        <button type="button" class="report-control-button" :disabled="reportOrdersLoading" @click="loadOrders()">
+          {{ reportOrdersLoading ? '刷新中' : '刷新订单' }}
+        </button>
+      </template>
+    </div>
+    <div v-if="reportOrdersOpen" class="report-orders-content">
+      <table class="report-orders-table">
+        <thead><tr><th>注单</th><th>期号</th><th>玩法</th><th>金额</th><th>报网状态</th><th>本地注单处理</th><th>中心响应</th><th>时间</th></tr></thead>
+        <tbody>
+          <tr v-for="order in reportOrders" :key="order.betId">
+            <td>{{ order.betCode || order.betId }}</td>
+            <td>{{ order.issueNumber }}</td>
+            <td>{{ order.playType }} {{ order.parametersText || '' }}</td>
+            <td>{{ formatAmount(order.stake) }}</td>
+            <td>{{ reportStatusLabel(order.reportStatus) }}</td>
+            <td class="report-local-disposition-cell">
+              <template v-if="order.localDisposition">
+                <strong>{{ localDispositionLabel(order.localDisposition) }}</strong>
+                <span>{{ order.localDispositionReason || '—' }}</span>
+                <small v-if="order.localDispositionAt">{{ order.localDispositionAt.replace('T', ' ').slice(0, 19) }}</small>
+              </template>
+              <template v-else-if="canResolveLocalDisposition(order)">
+                <span>待人工核对</span>
+                <button type="button" class="report-control-button" :disabled="!canEdit || reportOrdersLoading" @click="openDispositionDialog(order)">处理本地注单</button>
+              </template>
+              <span v-else>—</span>
+            </td>
+            <td>{{ order.responseMessage || order.responseCode || '—' }}</td>
+            <td>{{ order.createdAt.replace('T', ' ').slice(0, 19) }}</td>
+          </tr>
+          <tr v-if="!reportOrdersLoading && !reportOrders.length"><td colspan="8">暂无报网订单</td></tr>
+        </tbody>
+      </table>
+      <div class="report-orders-pagination">
+        <span>共 {{ reportOrderTotal }} 笔</span>
+        <button type="button" class="report-control-button" :disabled="reportOrdersLoading || reportOrderPage <= 1" @click="loadOrders(reportOrderPage - 1)">上一页</button>
+        <span>第 {{ reportOrderPage }} 页</span>
+        <button type="button" class="report-control-button" :disabled="reportOrdersLoading || reportOrderPage * reportOrderPageSize >= reportOrderTotal" @click="loadOrders(reportOrderPage + 1)">下一页</button>
+      </div>
+    </div>
+
+    <div v-if="loginDialogOpen" class="report-account-mask" role="dialog" aria-modal="true" aria-label="登录中心账号">
+      <div class="report-account-dialog">
+        <div class="report-account-head">
+          <strong>登录中心账号</strong>
+          <button type="button" class="report-control-button" :disabled="loggingIn" @click="closeLoginDialog">关闭</button>
+        </div>
+        <label class="report-account-field">
+          <span>账号名</span>
+          <input v-model="loginDraft.username" type="text" maxlength="128" autocomplete="username" :disabled="loggingIn" />
+        </label>
+        <label class="report-account-field">
+          <span>密码</span>
+          <input
+            v-model="loginDraft.password"
+            type="password"
+            maxlength="128"
+            autocomplete="current-password"
+            placeholder="请输入中心账号密码"
+            :disabled="loggingIn"
+          />
+        </label>
+        <p class="report-account-note">登录请求由本系统内部中心服务校验。</p>
         <div class="report-account-actions">
-          <button type="button" class="report-control-button report-control-login" :disabled="saving" @click="saveAccount">
-            {{ saving ? '保存中' : '保存' }}
+          <button type="button" class="report-control-button report-control-login" :disabled="!canEdit || loggingIn || !loginDraft.username.trim() || !loginDraft.password" @click="login">
+            {{ loggingIn ? '登录中' : '登录' }}
           </button>
-          <button type="button" class="report-control-button" @click="closeAccountDialog">取消</button>
+          <button type="button" class="report-control-button" :disabled="loggingIn" @click="closeLoginDialog">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="dispositionOrder" class="report-account-mask" role="dialog" aria-modal="true" aria-label="处理中心撤退款后的本地注单">
+      <div class="report-account-dialog report-disposition-dialog">
+        <div class="report-account-head">
+          <strong>处理本地注单 {{ dispositionOrder.betCode || dispositionOrder.betId }}</strong>
+          <button type="button" class="report-control-button" :disabled="dispositionSaving" @click="closeDispositionDialog">关闭</button>
+        </div>
+        <p class="report-disposition-summary">
+          中心结果：{{ dispositionOrder.responseCode === 'CENTER_CANCELLED' ? '已撤单' : '已退款' }}；
+          本地注单金额：{{ formatAmount(dispositionOrder.stake) }}
+        </p>
+        <fieldset class="report-disposition-options" :disabled="dispositionSaving">
+          <legend>本地处理结论</legend>
+          <label><input v-model="dispositionDraft.decision" type="radio" value="KEEP_LOCAL" /> 保留本地注单，继续参加本地开奖结算</label>
+          <label><input v-model="dispositionDraft.decision" type="radio" value="REFUND_CANCEL_LOCAL" /> 退还玩家本金并取消本地注单</label>
+        </fieldset>
+        <label class="report-disposition-reason">
+          <span>处理原因</span>
+          <textarea v-model="dispositionDraft.reason" maxlength="255" rows="3" required :disabled="dispositionSaving" placeholder="填写核对依据或处理原因" />
+        </label>
+        <div class="report-account-actions">
+          <button type="button" class="report-control-button report-control-login" :disabled="!canEdit || dispositionSaving || !dispositionDraft.reason.trim()" @click="submitDisposition">
+            {{ dispositionSaving ? '保存中' : '确认处理' }}
+          </button>
+          <button type="button" class="report-control-button" :disabled="dispositionSaving" @click="closeDispositionDialog">取消</button>
         </div>
       </div>
     </div>
@@ -409,21 +500,6 @@ defineExpose({ load })
   white-space: nowrap;
 }
 
-.report-type-select {
-  height: 24px;
-  min-width: 74px;
-  border: 1px solid #dcdfe6;
-  background: #fff;
-  color: #606266;
-  font-weight: 400;
-  font-size: 14px;
-}
-
-.report-type-select:disabled {
-  background: #eef2f6;
-  color: #93a4b3;
-}
-
 .report-control-button {
   display: inline-flex;
   height: 24px;
@@ -447,8 +523,14 @@ defineExpose({ load })
   cursor: not-allowed;
 }
 
-.report-control-account {
-  min-width: 58px;
+.report-control-account-name {
+  min-width: 100px;
+  font-weight: 600;
+}
+
+.report-control-expiry {
+  color: #68727c;
+  font-size: 12px;
 }
 
 .report-control-logout {
@@ -536,14 +618,6 @@ defineExpose({ load })
   background: #fff8e1;
 }
 
-/* BY220 统一飞单继承提示（子账号配置回退） */
-.report-control-inherit-hint {
-  padding: 1px 6px;
-  border: 1px solid #e2cd8f;
-  background: #fff8e1;
-  color: #8a6d1f;
-}
-
 .report-control-notice.is-ok {
   color: #2f7a2a;
   background: #eefaf0;
@@ -572,6 +646,54 @@ defineExpose({ load })
   box-shadow: 0 6px 20px rgb(20 35 50 / 30%);
 }
 
+.report-disposition-dialog {
+  width: min(440px, calc(100vw - 24px));
+}
+
+.report-disposition-summary {
+  margin: 4px 0 10px;
+  color: #5f6f7d;
+  font-size: 12px;
+}
+
+.report-disposition-options {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  padding: 8px;
+  font-size: 12px;
+}
+
+.report-disposition-options label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.report-disposition-options input {
+  margin: 1px 0 0;
+}
+
+.report-disposition-reason {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 10px;
+  color: var(--ops-blue-deep, #15599d);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-disposition-reason textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--ops-line, #8eb7e6);
+  padding: 6px;
+  color: #25313b;
+  font: inherit;
+  font-weight: 400;
+}
+
 .report-account-head {
   display: flex;
   align-items: center;
@@ -589,12 +711,14 @@ defineExpose({ load })
 
 .report-account-field span {
   width: 66px;
+  flex: 0 0 66px;
   color: var(--ops-blue-deep, #15599d);
   font-weight: 700;
 }
 
 .report-account-field input,
 .report-account-field select {
+  min-width: 0;
   flex: 1;
   height: 24px;
   border: 1px solid var(--ops-line, #8eb7e6);
@@ -613,5 +737,87 @@ defineExpose({ load })
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+
+.report-account-field input:disabled {
+  background: #f2f5f8;
+  color: #7a8792;
+}
+
+.report-orders-toolbar,
+.report-orders-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--ops-line, #8eb7e6);
+}
+
+.report-order-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.report-order-filter select {
+  height: 24px;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  padding: 0 5px;
+}
+
+.report-orders-content {
+  overflow-x: auto;
+  padding: 0 10px 8px;
+}
+
+.report-orders-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.report-orders-table th,
+.report-orders-table td {
+  border-bottom: 1px solid #d9e2ea;
+  padding: 5px 7px;
+  white-space: nowrap;
+}
+
+.report-orders-table td:nth-child(7) {
+  white-space: normal;
+  min-width: 160px;
+}
+
+.report-local-disposition-cell {
+  min-width: 210px;
+  white-space: normal;
+}
+
+.report-local-disposition-cell strong,
+.report-local-disposition-cell span,
+.report-local-disposition-cell small {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.report-local-disposition-cell small {
+  color: #6c7882;
+}
+
+.report-orders-pagination {
+  justify-content: flex-end;
+}
+
+@media (max-width: 480px) {
+  .report-control-row {
+    align-items: flex-start;
+  }
+
+  .report-account-dialog {
+    width: min(360px, calc(100vw - 24px));
+  }
 }
 </style>

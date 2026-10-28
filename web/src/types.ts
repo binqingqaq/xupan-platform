@@ -527,6 +527,8 @@ export type MachineRebateMode = 'SINGLE' | 'DOUBLE'
  */
 export interface MachineConfigView {
   machineId: number
+  configVersion?: number
+  configEditable?: boolean
   machineCode: string
   machineName: string
   boardOpen: boolean
@@ -569,6 +571,7 @@ export interface MachineConfigView {
  */
 export interface MachineConfigUpdateRequest {
   machineId?: number
+  expectedVersion: number
   boardOpen: boolean
   chaseEnabled: boolean
   botCount: number
@@ -812,13 +815,23 @@ export interface GameView {
   previousBalls: BallView[]
   history: GameHistoryView[]
   odds: OddsView[]
+  displayOdds: DisplayOddsView[]
   bets: BetView[]
   account: AccountView
   serverNow: string
   bettingEndsAt: string | null
   drawEndsAt: string | null
   preview: boolean
+  oddsRate: number
+  specialOddsRate: number
+  configVersion: number
+  specialEnabled: boolean
   events: GameEventView[]
+}
+
+export interface DisplayOddsView {
+  ruleKey: string
+  displayValue: string
 }
 
 export interface GameEventView {
@@ -860,48 +873,27 @@ export interface MobileDisplayLotteryCardView {
   summary: string[]
 }
 
-/**
- * 机器报网配置（BY220 `robot.php` 报网栏 / `x_robot.flyers_*`）。
- *
- * 密码永不回显：只返回 `hasPassword` 布尔。
- */
+/** 中心账号报网状态与机器级自动上报开关。 */
 export interface ReportConfigView {
   machineId: number
-  reportType: string | null
   reportAuto: boolean
   reportOnline: boolean
   reportWithdraw: boolean
-  reportUsername: string | null
-  hasPassword: boolean
-  reportUrl: string | null
-  reportNetworkCode: string | null
-  reportRouteCode: string | null
-  reportBalance: number
-  reportStake: number
-  reportLastLoginAt: string | null
+  centerAccountUsername: string | null
+  centerAccountExpiresAt: string | null
+  centerAvailableBalance: number
+  centerFrozenBalance: number
+  centerOpenStake: number
   timeoutOrderCount: number
   unreportedCount: number
   failedOrderCount: number
-  /**
-   * BY220 统一飞单回退：机器自身没配飞单账号，而所属子账号 `unified_report_enabled=1`
-   * 且配了飞单账号（`x_admin.feidan/feidanname/feidanid/feidantype`，见 `Users.php::add()`
-   * 与 `sub/list.html` 的「开启飞单/网盘/盘口/飞单账号」列）时，后端按子账号配置回退，
-   * 并置 `true` 表示当前用的是子账号的统一飞单配置（机器自身配置优先）。
-   */
-  inheritedFromGroup?: boolean
 }
 
-/** 报网配置保存请求；null 表示保持原值，密码仅在非空时覆盖。 */
+/** 代理机器可修改的报网上报开关。 */
 export interface ReportConfigUpdateRequest {
   machineId?: number
-  reportType?: string | null
   reportAuto?: boolean | null
   reportWithdraw?: boolean | null
-  reportUsername?: string | null
-  reportPassword?: string | null
-  reportUrl?: string | null
-  reportNetworkCode?: string | null
-  reportRouteCode?: string | null
 }
 
 /** 报网上报状态；TIMEOUT 与 FAILED 分开，便于"超时订单"计数与重报。 */
@@ -909,14 +901,16 @@ export interface ReportConfigUpdateRequest {
  * 上游上报订单状态（Flyway V58 ck_report_upstream_order_status）。
  *
  * 对应需求文档《代理报网盘口与结算业务规则说明》§16.4：
- * 待处理/已接受/已拒绝/超时/已撤单/已退款/已结算。
- * 注单的上报状态由**最新一行上报订单**派生；没有任何上报订单行时派生为 PENDING（还没报）。
+ * 待处理/未发送/已接受/已拒绝/超时/已撤单/已退款/已结算。
+ * 没有上报订单行时为 PENDING；存在未发送的上报批次但还未实际发送时为 NOT_SENT。
  */
 export type ReportStatus =
   | 'PENDING'
+  | 'NOT_SENT'
   | 'ACCEPTED'
   | 'REJECTED'
   | 'TIMEOUT'
+  | 'MANUAL'
   | 'CANCELLED'
   | 'REFUNDED'
   | 'SETTLED'
@@ -935,7 +929,34 @@ export interface ReportOrderItem {
   odds: number
   settlementStatus: string
   reportStatus: ReportStatus
+  responseCode: string | null
+  responseMessage: string | null
+  localCenterOutcome: 'CANCELLED' | 'REFUNDED' | null
+  localDisposition: ReportLocalDispositionDecision | null
+  localDispositionReason: string | null
+  localDispositionOperatorId: number | null
+  localDispositionAt: string | null
   createdAt: string
+}
+
+export type ReportLocalDispositionDecision = 'KEEP_LOCAL' | 'REFUND_CANCEL_LOCAL'
+
+export interface ReportLocalDispositionRequest {
+  machineId?: number | null
+  decision: ReportLocalDispositionDecision
+  reason: string
+}
+
+export interface ReportLocalDispositionResult {
+  betId: number
+  centerOutcome: 'CANCELLED' | 'REFUNDED'
+  decision: ReportLocalDispositionDecision
+  reason: string
+  settlementStatus: string
+  refundedAmount: number
+  operatorUserId: number
+  decidedAt: string
+  replayed: boolean
 }
 
 export interface ReportOrderPage {
@@ -965,14 +986,42 @@ export const REPORT_TYPE_OPTIONS = [
 
 /** 盘口线路 A-D（BY220 上游内部线路）。 */
 export const REPORT_ROUTE_OPTIONS = ['A', 'B', 'C', 'D'] as const
-/** 中心上游代理（额度三层是三个不同事实，见账本原则 1）。 */
+export type CenterUpstreamAccountStatus = 'ACTIVE' | 'DISABLED' | 'EXPIRED'
+
+/** 管理端分配给代理子账号使用的中心登录账号。 */
+export interface CenterUpstreamAccount {
+  accountId: number
+  groupId: number
+  groupName: string
+  username: string
+  status: CenterUpstreamAccountStatus
+  expiresAt: string | null
+  availableBalance: number
+  frozenBalance: number
+  openStake: number
+  lastLoginAt: string | null
+  online: boolean
+  onlineMachineCount: number
+}
+
+export interface CreatedCenterUpstreamAccount {
+  account: CenterUpstreamAccount
+}
+
+export interface CreateCenterUpstreamAccountRequest {
+  groupId: number
+  username: string
+  password: string
+  initialQuota: number
+  expiresAt: string | null
+}
+
+/** 中心业务代理（额度三层是三个不同事实，见账本原则 1）。 */
 export interface CenterAgent {
   id: number
   agentCode: string
   agentName: string
   upstreamAccount: string
-  /** Token 只保存哈希，这里只有可展示前缀 */
-  tokenPrefix: string
   status: 'ACTIVE' | 'DISABLED'
   creditLimit: number
   availableBalance: number
@@ -1059,12 +1108,6 @@ export interface ReconciliationRetention {
   expired: number
 }
 
-/** 创建中心代理的响应：token 是**唯一一次**返回的原文。 */
-export interface CenterAgentCreated {
-  agent: CenterAgent
-  token: string
-}
-
 export interface CenterAgentLedgerEntry {
   id: number
   bucket: 'AVAILABLE' | 'FROZEN' | 'UPSTREAM_UNSETTLED' | 'CREDIT_LIMIT'
@@ -1118,30 +1161,30 @@ export interface CenterOrderPage {
   total: number
 }
 
+export interface CenterMachineSession {
+  machineId: number
+  machineCode: string
+  machineName: string
+  machineStatus: string
+  sessionStatus: 'NOT_LOGGED_IN' | 'ONLINE' | 'EXPIRED' | 'REVOKED' | 'ACCOUNT_DISABLED' | 'ACCOUNT_EXPIRED' | 'GROUP_INACTIVE' | 'MACHINE_INACTIVE'
+  authenticatedAt: string | null
+  expiresAt: string | null
+  revokedAt: string | null
+  revokeReason: string | null
+}
+
 export interface CenterOrderSummary {
   status: string
   total: number
   amount: number
 }
 
-export interface CenterSettledOrder {
-  orderId: number
-  centerAgentId: number
-  agentOrderNo: string
-  settleResult: string
-  settleAmount: number
-  stake: number
-  label: string
-}
-
 export interface CenterSettlementResult {
   gameCode: string
   issueNumber: string
-  settledCount: number
-  skippedCount: number
-  agentWinTotal: number
-  agentLoseTotal: number
-  orders: CenterSettledOrder[]
+  histories: number
+  orders: number
+  message: string
 }
 
 export interface CenterReconciliationDifference {
@@ -1151,6 +1194,8 @@ export interface CenterReconciliationDifference {
   centerStatus: string | null
   localAmount: number | null
   centerAmount: number | null
+  centerAgentId: number | null
+  issueNumber: string | null
   /** 该差异当前是否已被有效处置（未撤销、未过期）；事实不会被隐藏，只是标记 */
   disposed: boolean
 }
@@ -1163,7 +1208,29 @@ export interface CenterReconciliation {
     centerUnresolved: number
     activeCenterAgents: number
   }
+  financial: {
+    reservedOrders: number
+    reservedRiskAmount: number
+    centerFrozenAmount: number
+    machineFrozenAmount: number
+    reservationMismatchCount: number
+    settledOrders: number
+    settledAmount: number
+    oneSidedSettlementCount: number
+    settlementLedgerNetAmount: number
+    settlementLedgerExpectedNetAmount: number
+    settlementLedgerMismatchCount: number
+    refundedOrders: number
+    refundedRiskAmount: number
+    refundDispositionAmount: number
+    refundMismatchCount: number
+    cancelledOrders: number
+    cancelledRiskAmount: number
+    cancelDispositionAmount: number
+    cancelMismatchCount: number
+  }
   differenceCount: number
+  financialIssueCount: number
   balanced: boolean
   differences: CenterReconciliationDifference[]
   missingInCenterCount: number

@@ -17,11 +17,15 @@ public class GameIssueEventRepository {
     }
 
     public boolean appendOnce(String issueNumber, String eventType, String message, Instant createdAt) {
+        return appendOnce("AU8", issueNumber, eventType, message, createdAt);
+    }
+
+    public boolean appendOnce(String gameCode, String issueNumber, String eventType, String message, Instant createdAt) {
         try {
             return jdbcTemplate.update("""
                     INSERT INTO game_issue_event (game_code, issue_number, event_type, message, created_at)
-                    VALUES ((SELECT game_code FROM game_issue WHERE issue_number = ?), ?, ?, ?, ?)
-                    """, issueNumber, issueNumber, eventType, message,
+                    VALUES (?, ?, ?, ?, ?)
+                    """, gameCode, issueNumber, eventType, message,
                     java.sql.Timestamp.from(createdAt)) == 1;
         } catch (DuplicateKeyException duplicate) {
             return false;
@@ -29,14 +33,18 @@ public class GameIssueEventRepository {
     }
 
     public List<EventRecord> findByIssue(String issueNumber) {
+        return findByIssue("AU8", issueNumber);
+    }
+
+    public List<EventRecord> findByIssue(String gameCode, String issueNumber) {
         return jdbcTemplate.query("""
                 SELECT id, issue_number, event_type, message, created_at
                   FROM game_issue_event
-                 WHERE issue_number = ?
+                 WHERE game_code = ? AND issue_number = ?
                  ORDER BY id
                 """, (rs, rowNum) -> new EventRecord(rs.getLong("id"), rs.getString("issue_number"),
                 rs.getString("event_type"), rs.getString("message"), rs.getTimestamp("created_at").toInstant()),
-                issueNumber);
+                gameCode, issueNumber);
     }
 
     public record EventRecord(long id, String issueNumber, String eventType, String message, Instant createdAt) {

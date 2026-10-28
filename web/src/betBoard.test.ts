@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { betBoardCountdown, betBoardFanClass, formatBetBoardPoints } from './betBoard'
+import {
+  betBoardCanResubmit,
+  betBoardCountdown,
+  betBoardFanClass,
+  betBoardReportStatusLabel,
+  formatBetBoardPoints,
+} from './betBoard'
 
 describe('bet board helpers', () => {
   it('formats board totals without unnecessary decimals', () => {
@@ -18,5 +24,11 @@ describe('bet board helpers', () => {
     expect(betBoardFanClass(1)).toBe('bet-board-fan-1')
     expect(betBoardFanClass(4)).toBe('bet-board-fan-4')
     expect(betBoardFanClass(9)).toBe('bet-board-fan-1')
+  })
+
+  it('labels NOT_SENT as unsent and allows resubmission', () => {
+    expect(betBoardReportStatusLabel('NOT_SENT')).toBe('未发送')
+    expect(betBoardCanResubmit('NOT_SENT')).toBe(true)
+    expect(betBoardCanResubmit('ACCEPTED')).toBe(false)
   })
 })

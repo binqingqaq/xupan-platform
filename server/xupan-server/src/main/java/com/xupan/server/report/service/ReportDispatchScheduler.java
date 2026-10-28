@@ -12,8 +12,8 @@ import org.springframework.stereotype.Component;
  *
  * <p>BY220 每 2.4 秒捞出 {@code flyers_status = 3} 的订单重新飞单；xupan 以可配置间隔调用
  * {@link ReportService#dispatchPending(boolean, int)}，只处理"已开启自动上报且在线且报网类型已配置"的机器。
- * 上报结果写回 {@code report_upstream_order}（未报→已报/失败/超时）；机器开启失败自动退单时，
- * 失败即退还玩家本金并物理删除注单（BY220 {@code common.php:1627-1641}）。</p>
+ * 上报结果写回 {@code report_upstream_order}；明确拒绝且机器开启失败自动退单时，退还玩家本金并将原单
+ * 标为取消保留（BY220 {@code common.php:1627-1641} 的物理删除行为按本项目需求基线保留为可审计的本地事实）。</p>
  *
  * <p>并发：经由 {@link ScheduledTaskLock} 加 MySQL 命名锁，多进程并存时只有一个进程执行本轮。</p>
  *

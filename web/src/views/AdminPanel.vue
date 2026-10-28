@@ -264,9 +264,9 @@ onMounted(load)
             <label v-for="(_, index) in drawNumbers" :key="index" :for="`draw-${index}`">第{{ index + 1 }}球<input :id="`draw-${index}`" v-model.number="drawNumbers[index]" type="number" min="1" max="20" placeholder="--" /></label>
           </div>
           <div class="action-row">
-            <button type="button" class="secondary-button" :disabled="busy || current?.status !== 'OPEN'" @click="randomNumbers">随机填入</button>
-            <button type="button" class="primary-button" :disabled="busy || current?.status !== 'OPEN'" @click="draw">封盘并开奖</button>
-            <button type="button" class="secondary-button" :disabled="busy || current?.status === 'OPEN'" @click="resetIssue">开启下一期</button>
+            <button type="button" class="secondary-button" :disabled="busy || current?.phase !== 'DRAWING'" @click="randomNumbers">随机填入</button>
+            <button type="button" class="primary-button" :disabled="busy || current?.phase !== 'DRAWING'" @click="draw">确认开奖结果</button>
+            <button type="button" class="secondary-button" :disabled="busy || current?.phase !== 'SETTLED'" @click="resetIssue">开启下一期</button>
           </div>
         </section>
 

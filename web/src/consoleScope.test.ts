@@ -83,7 +83,7 @@ function machine(overrides: Record<string, unknown> = {}) {
   return {
     id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
-    boardOpen: true, robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
+    boardOpen: true, robotManage: false, configEditEnabled: true, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
     cancelSeconds: 0, rebateRate: 1.5, oddsRate: 1, specialRebateRate: 0.5, specialOddsRate: 1,
     rebateMode: 'SINGLE', totalLimit: 10000, positiveLimit: 0, angleLimit: 0, strictLimit: 0,
     tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0,

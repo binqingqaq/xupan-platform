@@ -40,7 +40,8 @@ class SettlementServiceTest {
         assertStatus(PlayType.NONE, List.of(1, 2), SettlementStatus.LOSE);
         assertStatus(PlayType.NONE, List.of(1, 3), SettlementStatus.DRAW);
         assertStatus(PlayType.TONG, List.of(3, 4, 1), SettlementStatus.DRAW);
-        assertStatus(PlayType.TONG, List.of(1, 3, 2), SettlementStatus.LOSE);
+        assertStatus(PlayType.TONG, List.of(1, 3, 2), SettlementStatus.WIN);
+        assertStatus(PlayType.TONG, List.of(2, 1, 3), SettlementStatus.LOSE);
         assertStatus(PlayType.NONE, List.of(1, 2, 3), SettlementStatus.WIN);
         assertStatus(PlayType.CAR, List.of(1, 2, 3), SettlementStatus.WIN);
         assertStatus(PlayType.CAR, List.of(1, 3, 4), SettlementStatus.LOSE);
@@ -55,6 +56,62 @@ class SettlementServiceTest {
         assertThat(settlement.status()).isEqualTo(SettlementStatus.WIN);
         assertThat(settlement.netProfit()).isEqualByComparingTo("285.00");
         assertThat(settlement.odds()).isEqualByComparingTo("3.850");
+    }
+
+    @Test
+    void carSettlementUsesExactOneThirdRateInsteadOfRoundedDisplayOdds() {
+        SettlementResult settlement = service.settle(PlayType.CAR, List.of(1, 2, 3), stake,
+                new BigDecimal("1.316"), stake, new BigDecimal("95"), result);
+
+        assertThat(settlement.status()).isEqualTo(SettlementStatus.WIN);
+        assertThat(settlement.netProfit()).isEqualByComparingTo("31.66");
+        assertThat(settlement.odds()).isEqualByComparingTo("1.316");
+    }
+
+    @Test
+    void settlesMultiNumberSpecialByWinningUnitStakeAgainstWholeInstructionAmount() {
+        SettlementResult settlement = service.settle(PlayType.SPECIAL, List.of(1, 2),
+                new BigDecimal("200.00"), new BigDecimal("18.00"),
+                new BigDecimal("100.00"), BallResult.fromNumber(1));
+
+        assertThat(settlement.status()).isEqualTo(SettlementStatus.WIN);
+        assertThat(settlement.stake().add(settlement.netProfit())).isEqualByComparingTo("1800.00");
+        assertThat(settlement.netProfit()).isEqualByComparingTo("1600.00");
+    }
+
+    @Test
+    void settlesAndSnapshotsFourDecimalSpecialOddsWithoutPrematureRounding() {
+        SettlementResult settlement = service.settle(PlayType.SPECIAL, List.of(18),
+                new BigDecimal("100.00"), new BigDecimal("18.1234"),
+                new BigDecimal("100.00"), result);
+
+        assertThat(settlement.odds()).isEqualByComparingTo("18.1234");
+        assertThat(settlement.stake().add(settlement.netProfit())).isEqualByComparingTo("1812.34");
+    }
+
+    @Test
+    void ignoresDatabaseScalePaddingButRejectsExcessNonZeroOrdinaryOddsPrecision() {
+        service.validateBet(PlayType.FAN, List.of(1), new BigDecimal("10.00"), new BigDecimal("1.9500"));
+
+        org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.validateBet(PlayType.FAN, List.of(1),
+                        new BigDecimal("10.00"), new BigDecimal("1.9501")))
+                .withMessageContaining("精度符合玩法要求");
+    }
+
+    @Test
+    void rejectsSpecialUnitStakeThatDoesNotMatchInstructionTotal() {
+        org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.settle(PlayType.SPECIAL, List.of(1, 2),
+                        new BigDecimal("200.00"), new BigDecimal("18.00"),
+                        new BigDecimal("90.00"), BallResult.fromNumber(1)));
+    }
+
+    @Test
+    void legacySpecialSettlementOnlyInfersExactlyDivisibleUnitStake() {
+        org.assertj.core.api.Assertions.assertThatIllegalArgumentException()
+                .isThrownBy(() -> service.settle(PlayType.SPECIAL, List.of(1, 2, 3),
+                        new BigDecimal("100.00"), new BigDecimal("18.00"), BallResult.fromNumber(1)));
     }
 
     @Test

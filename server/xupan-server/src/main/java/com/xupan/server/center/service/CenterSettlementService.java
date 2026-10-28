@@ -1,5 +1,6 @@
 package com.xupan.server.center.service;
 
+import com.xupan.server.agent.service.AgentLedgerService;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
 import com.xupan.server.game.domain.BallResult;
@@ -41,15 +42,18 @@ public class CenterSettlementService {
     private final CenterOrderRepository orderRepository;
     private final CenterAgentRepository agentRepository;
     private final CenterAgentService agentService;
+    private final AgentLedgerService agentLedgerService;
     private final SettlementService settlementService;
 
     public CenterSettlementService(CenterOrderRepository orderRepository,
                                    CenterAgentRepository agentRepository,
                                    CenterAgentService agentService,
+                                   AgentLedgerService agentLedgerService,
                                    SettlementService settlementService) {
         this.orderRepository = orderRepository;
         this.agentRepository = agentRepository;
         this.agentService = agentService;
+        this.agentLedgerService = agentLedgerService;
         this.settlementService = settlementService;
     }
 
@@ -65,6 +69,41 @@ public class CenterSettlementService {
         if (result == null) {
             throw BusinessException.badRequest("CENTER_DRAW_RESULT_REQUIRED", "开奖结果不能为空");
         }
+        ConfirmedDraw draw = confirmedDraw(gameCode, issueNumber);
+        if (draw.results().stream().anyMatch(locked -> !locked.equals(result))) {
+            throw BusinessException.conflict("CENTER_DRAW_RESULT_MISMATCH",
+                    "调用方开奖结果与已确认并锁定的开奖记录不一致");
+        }
+        return settleIssue(gameCode, issueNumber, draw, limit);
+    }
+
+    /** 按每条中心订单保存的球号，选择本期对应的开奖结果。 */
+    @Transactional
+    public SettlementSummary settleIssue(String gameCode, String issueNumber, List<BallResult> ballResults,
+                                         String drawNumbers, int limit) {
+        if (ballResults == null || ballResults.size() < 8
+                || ballResults.subList(0, Math.min(8, ballResults.size())).stream().anyMatch(value -> value == null)) {
+            throw BusinessException.badRequest("CENTER_DRAW_RESULTS_INVALID", "必须提供完整的 8 个开奖球结果");
+        }
+        List<BallResult> snapshot = List.copyOf(ballResults.subList(0, 8));
+        ConfirmedDraw draw = confirmedDraw(gameCode, issueNumber);
+        if (!snapshot.equals(draw.results())) {
+            throw BusinessException.conflict("CENTER_DRAW_RESULT_MISMATCH",
+                    "调用方开奖结果与已确认并锁定的开奖记录不一致");
+        }
+        return settleIssue(gameCode, issueNumber, draw, limit);
+    }
+
+    private ConfirmedDraw confirmedDraw(String gameCode, String issueNumber) {
+        List<Integer> numbers = orderRepository.findConfirmedDrawNumbers(gameCode, issueNumber)
+                .orElseThrow(() -> BusinessException.conflict("CENTER_DRAW_RESULT_NOT_CONFIRMED",
+                        "中心订单只能依据已确认并锁定的开奖结果结算"));
+        String text = numbers.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        return new ConfirmedDraw(numbers.stream().map(BallResult::fromNumber).toList(), text);
+    }
+
+    private SettlementSummary settleIssue(String gameCode, String issueNumber,
+                                           ConfirmedDraw draw, int limit) {
         List<CenterOrderRepository.OrderRow> orders =
                 orderRepository.findAcceptedByIssue(gameCode, issueNumber, limit);
         List<SettledOrder> settled = new ArrayList<>();
@@ -73,7 +112,13 @@ public class CenterSettlementService {
         BigDecimal agentLoseTotal = BigDecimal.ZERO.setScale(2);
 
         for (CenterOrderRepository.OrderRow order : orders) {
-            SettledOrder one = settleOrder(order, result, drawNumbers);
+            BallResult result = order.ballNumber() == null || order.ballNumber() < 1 || order.ballNumber() > 8
+                    ? null : draw.results().get(order.ballNumber() - 1);
+            if (result == null) {
+                skipped++;
+                continue;
+            }
+            SettledOrder one = settleOrder(order, result, draw.numbersText());
             if (one == null) {
                 skipped++;
                 continue;
@@ -101,7 +146,7 @@ public class CenterSettlementService {
         if (!"ACCEPTED".equals(order.status())) {
             return null;
         }
-        // 中心侧只认玩法代码与参数；解析或参数校验失败按"无法结算"处理，
+        // 中心侧只认已保存的玩法参数和赔率快照；解析或参数校验失败按"无法结算"处理，
         // 跳过并留给人工，绝不放任它把整期结算打断，也绝不静默赔钱。
         PlayType playType;
         List<Integer> parameters;
@@ -110,74 +155,97 @@ public class CenterSettlementService {
             playType = PlayType.valueOf(order.playType().trim().toUpperCase(java.util.Locale.ROOT));
             parameters = parseParameters(order.playText());
             outcome = settlementService.settle(playType, parameters, order.amount(),
-                    normalizeOdds(order.odds()), result);
+                    normalizeOdds(order.odds()), null, order.machineOddsRateSnapshot(), result);
         } catch (IllegalArgumentException exception) {
             return null;
         }
         SettlementStatus status = outcome.status();
 
-        // 先锁代理行，再动额度，避免并发结算把同一笔额度用两次
-        agentRepository.lockById(order.centerAgentId());
+        // 全链路锁顺序固定为中心账号 -> 报单机器，和接单时一致。
+        agentRepository.lockById(order.centerAgentId())
+                .orElseThrow(() -> BusinessException.notFound("CENTER_AGENT_NOT_FOUND", "中心账号不存在"));
+        if (order.localAgentId() != null) {
+            agentLedgerService.lockMachineScore(order.localAgentId());
+        } else if (nz(order.machineFundedAmount()).signum() > 0) {
+            throw BusinessException.conflict("CENTER_MACHINE_RESERVATION_INVALID", "中心订单缺少风险补足机器");
+        }
+
         String settleResult;
         BigDecimal settleAmount;
         String entryType;
+        BigDecimal actualCenterLoss = BigDecimal.ZERO.setScale(2);
         switch (status) {
             case WIN -> {
-                // 代理赢：中心赔出 = 本金 × (赔率 - 1)，从上游未结算划回可用
+                // 玩家赢：中心只承担净赢额，不承担玩家取回的本金。
                 settleResult = "AGENT_WIN";
-                settleAmount = outcome.netProfit().abs();
+                settleAmount = outcome.netProfit().max(BigDecimal.ZERO).setScale(2);
+                actualCenterLoss = settleAmount;
                 entryType = CenterAgentService.TYPE_SETTLE_WIN;
             }
             case LOSE -> {
-                // 代理输：中心收走本金（本金已在冻结/未结算里，直接清零）
+                // 玩家输：本金计入中心可用额度。
                 settleResult = "AGENT_LOSE";
                 settleAmount = order.amount();
                 entryType = CenterAgentService.TYPE_SETTLE_LOSE;
             }
             default -> {
-                // DRAW / CANCELED / PENDING：流局，本金原额退回可用
+                // DRAW / CANCELED / PENDING：仅释放风险冻结，不产生中心输赢。
                 settleResult = "VOID";
-                settleAmount = order.amount();
+                settleAmount = BigDecimal.ZERO.setScale(2);
                 entryType = CenterAgentService.TYPE_SETTLE_REFUND;
             }
         }
 
-        // 冻结 → 上游未结算（只在冻结仍有余额时移动，避免重复移动）
-        if (order.frozenAmount().signum() > 0) {
+        BigDecimal centerReserved = nz(order.frozenAmount());
+        BigDecimal machineReserved = nz(order.machineFundedAmount());
+        BigDecimal riskAmount = nz(order.riskAmount());
+        if (order.riskPolicyVersion() == 1
+                && centerReserved.add(machineReserved).compareTo(riskAmount) != 0) {
+            throw BusinessException.conflict("CENTER_RISK_RESERVATION_INVALID", "中心订单风险冻结与风险快照不一致");
+        }
+        if (actualCenterLoss.compareTo(riskAmount) > 0) {
+            throw BusinessException.conflict("CENTER_RISK_LIMIT_BREACHED", "实际净赔付超过接单时冻结的最大风险");
+        }
+        BigDecimal centerConsumed = actualCenterLoss.min(centerReserved).setScale(2);
+        BigDecimal machineConsumed = actualCenterLoss.subtract(centerConsumed).max(BigDecimal.ZERO).setScale(2);
+        if (machineConsumed.compareTo(machineReserved) > 0) {
+            throw BusinessException.conflict("CENTER_RISK_RESERVATION_INVALID", "机器风险冻结不足以覆盖实际净赔付");
+        }
+        BigDecimal centerRelease = centerReserved.subtract(centerConsumed).setScale(2);
+        BigDecimal machineRelease = machineReserved.subtract(machineConsumed).setScale(2);
+
+        // 中心风险冻结 → 未结算 → 释放或消耗；所有分录与订单终态在同一事务内提交。
+        if (centerReserved.signum() > 0) {
             agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_FROZEN,
-                    CenterAgentService.TYPE_UPSTREAM_MOVE, "OUT", order.frozenAmount(),
+                    CenterAgentService.TYPE_UPSTREAM_MOVE, "OUT", centerReserved,
                     "开奖转未结算：期号 " + order.issueNumber(), "CENTER_ORDER", Long.toString(order.id()),
                     "CENTER-UNSETTLED-OUT-" + order.id(), null);
             agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_UPSTREAM_UNSETTLED,
-                    CenterAgentService.TYPE_UPSTREAM_MOVE, "IN", order.frozenAmount(),
+                    CenterAgentService.TYPE_UPSTREAM_MOVE, "IN", centerReserved,
                     "开奖转未结算：期号 " + order.issueNumber(), "CENTER_ORDER", Long.toString(order.id()),
                     "CENTER-UNSETTLED-IN-" + order.id(), null);
+            agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_UPSTREAM_UNSETTLED,
+                    entryType, "OUT", centerReserved,
+                    "第二层结算：期号 " + order.issueNumber() + " " + settleResult, "CENTER_ORDER",
+                    Long.toString(order.id()), "CENTER-SETTLE-UNSETTLED-" + order.id(), null);
         }
 
-        // 未结算 → 可用。
-        //
-        // 语义要点（容易写错的地方）：
-        //   * 代理赢：中心赔出净额 settleAmount，从"未结算"划出、进"可用"；
-        //     本金部分是代理自己的钱，本来就在未结算里，不进可用（否则等于中心连本金一起送）。
-        //   * 代理输：本金在接单时就已从可用划走，输掉只是"未结算层的本金归中心"，
-        //     **不能再动可用额度**——再扣一次就是把同一笔本金扣两遍（本用例曾在真实运行中暴露此问题）。
-        //   * 流局：本金原额退回可用。
-        agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_UPSTREAM_UNSETTLED,
-                entryType, "OUT", order.amount(),
-                "第二层结算：期号 " + order.issueNumber() + " " + settleResult, "CENTER_ORDER",
-                Long.toString(order.id()), "CENTER-SETTLE-UNSETTLED-" + order.id(), null);
-        if ("AGENT_WIN".equals(settleResult)) {
+        if (centerRelease.signum() > 0) {
             agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
-                    entryType, "IN", settleAmount,
-                    "第二层结算：期号 " + order.issueNumber() + " 中心赔出", "CENTER_ORDER",
-                    Long.toString(order.id()), "CENTER-SETTLE-AVAILABLE-" + order.id(), null);
-        } else if ("VOID".equals(settleResult)) {
+                    entryType, "IN", centerRelease,
+                    "第二层结算释放未消耗中心风险：期号 " + order.issueNumber(), "CENTER_ORDER",
+                    Long.toString(order.id()), "CENTER-SETTLE-AVAILABLE-RELEASE-" + order.id(), null);
+        }
+        if ("AGENT_LOSE".equals(settleResult)) {
             agentService.moveInternal(order.centerAgentId(), CenterAgentService.BUCKET_AVAILABLE,
                     entryType, "IN", order.amount(),
-                    "第二层结算：期号 " + order.issueNumber() + " 流局退回本金", "CENTER_ORDER",
-                    Long.toString(order.id()), "CENTER-SETTLE-AVAILABLE-" + order.id(), null);
+                    "第二层结算：期号 " + order.issueNumber() + " 计入输掉的本金", "CENTER_ORDER",
+                    Long.toString(order.id()), "CENTER-SETTLE-AVAILABLE-STAKE-" + order.id(), null);
         }
-        // 代理输：可用额度不再变动（本金已在接单时离开可用）
+
+        if (order.localAgentId() != null && machineRelease.signum() > 0) {
+            agentLedgerService.releaseCenterRisk(order.localAgentId(), machineRelease, order.id());
+        }
 
         int updated = orderRepository.settle(order.id(), settleResult, settleAmount, drawNumbers,
                 Instant.now());
@@ -187,6 +255,10 @@ public class CenterSettlementService {
         }
         return new SettledOrder(order.id(), order.centerAgentId(), order.agentOrderNo(), settleResult,
                 settleAmount, order.amount(), settleResultLabel(settleResult));
+    }
+
+    private static BigDecimal nz(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO.setScale(2) : value;
     }
 
     /**
@@ -255,5 +327,8 @@ public class CenterSettlementService {
     public record SettlementSummary(String gameCode, String issueNumber, int settledCount, int skippedCount,
                                     BigDecimal agentWinTotal, BigDecimal agentLoseTotal,
                                     List<SettledOrder> orders) {
+    }
+
+    private record ConfirmedDraw(List<BallResult> results, String numbersText) {
     }
 }

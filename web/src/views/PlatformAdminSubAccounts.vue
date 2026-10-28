@@ -5,9 +5,6 @@ import { api, apiErrorMessage } from '../api'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { SubAccount, SubAccountInput } from '../types/platformAdmin'
-// 报网类型选项与机器端（ReportControlPanel）复用同一份，取值集合与后端 ck_agent_report_type /
-// ck_agent_group_report_type 一致（BY220 x_robot.flyers_type）。
-import { REPORT_TYPE_OPTIONS } from '../types'
 
 /**
  * BY220 `sub/form.html` 的表单态。
@@ -24,8 +21,7 @@ function emptyForm(): SubAccountForm {
   return {
     username: '', rawPassword: '', score: 0,
     up: null, down: null, online: false,
-    expiresAt: null, subAccountManage: false, machineManage: false, unifiedReportEnabled: false,
-    reportUsername: '', reportNetworkCode: '', reportRouteCode: '', reportType: '', reportUrl: '',
+    expiresAt: null, subAccountManage: false, machineManage: false,
   }
 }
 function fieldValue(value: number | null | undefined): number | null {
@@ -58,12 +54,6 @@ function openEdit(row: SubAccount) {
     // BY220：编辑态「上分」「下分」每次都是空输入框（不是回显历史值），「在线/下线」按 `x_admin.online` 回显。
     up: null, down: null, online: row.online === true,
     expiresAt: instantToLocalDateTime(row.expiresAt), subAccountManage: row.subAccountManage, machineManage: row.machineManage,
-    unifiedReportEnabled: row.unifiedReportEnabled, reportUsername: row.reportUsername || '',
-    reportNetworkCode: row.reportNetworkCode || '', reportRouteCode: row.reportRouteCode || '',
-    reportType: row.reportType || '',
-    // BY220 `x_admin.feidanurl`：只保存不请求；`reportOnline/reportBalance/reportStake` 是上游状态，
-    // 不接受表单设定（BY220 表单也没有），只在列表展示。
-    reportUrl: row.reportUrl || '',
   })
   formOpen.value = true
 }
@@ -77,12 +67,6 @@ async function submit() {
     expiresAt: localDateTimeToInstant(form.expiresAt),
     subAccountManage: form.subAccountManage,
     machineManage: form.machineManage,
-    unifiedReportEnabled: form.unifiedReportEnabled,
-    reportUsername: form.reportUsername ?? '',
-    reportNetworkCode: form.reportNetworkCode ?? '',
-    reportRouteCode: form.reportRouteCode ?? '',
-    reportType: form.reportType ?? '',
-    reportUrl: form.reportUrl ?? '',
   }
   // 新增态：BY220 只提交初始「积分」，没有上分/下分/在线开关。
   const usernames = editingId.value ? [] : parseUsernames(base.username)
@@ -166,14 +150,6 @@ onMounted(() => { void load() })
         <el-table-column label="子账号权限" width="110"><template #default="{ row }">{{ row.subAccountManage ? '开通' : '关闭' }}</template></el-table-column>
         <el-table-column label="机器人权限" width="110"><template #default="{ row }">{{ row.machineManage ? '开通' : '关闭' }}</template></el-table-column>
         <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag :type="isLocked(row as SubAccount) ? 'danger' : row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ statusText(row as SubAccount) }}</el-tag></template></el-table-column>
-        <el-table-column label="开启飞单" width="100"><template #default="{ row }">{{ row.unifiedReportEnabled ? '开通' : '关闭' }}</template></el-table-column>
-        <el-table-column prop="reportNetworkCode" label="网盘" min-width="100"><template #default="{ row }">{{ row.reportNetworkCode || '未接入' }}</template></el-table-column>
-        <el-table-column prop="reportRouteCode" label="盘口" min-width="90"><template #default="{ row }">{{ row.reportRouteCode || '未设置' }}</template></el-table-column>
-        <el-table-column prop="reportUsername" label="飞单账号" min-width="120"><template #default="{ row }">{{ row.reportUsername || '未设置' }}</template></el-table-column>
-        <el-table-column label="飞单密码" width="100"><template #default="{ row }">{{ row.hasReportPassword ? '已设置' : '未设置' }}</template></el-table-column>
-        <el-table-column label="网盘状态" width="100"><template #default="{ row }"><el-tag :type="row.reportOnline ? 'success' : 'info'" effect="light">{{ row.reportOnline ? '在线' : '离线' }}</el-tag></template></el-table-column>
-        <el-table-column label="网盘余额" width="110" align="right"><template #default="{ row }">{{ (row.reportBalance ?? 0).toFixed(2) }}</template></el-table-column>
-        <el-table-column label="网盘下注" width="110" align="right"><template #default="{ row }">{{ (row.reportStake ?? 0).toFixed(2) }}</template></el-table-column>
         <el-table-column prop="machineCount" label="机器数量" width="100" align="right" />
         <el-table-column label="操作" fixed="right" width="244"><template #default="{ row }"><div class="actions"><el-button link type="primary" @click="openEdit(row as SubAccount)">编辑</el-button><el-button v-if="isLocked(row as SubAccount)" link type="warning" @click="unlock(row as SubAccount)">解锁</el-button><el-button v-else link type="primary" @click="toggle(row as SubAccount)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button><el-button link type="danger" @click="remove(row as SubAccount)">删除</el-button></div></template></el-table-column>
         <template #empty><el-empty description="暂无子账号" /></template>
@@ -188,14 +164,8 @@ onMounted(() => { void load() })
         <el-form-item v-if="editingId" label="下分"><el-input-number v-model="form.down" :min="0.01" :step="0.01" :precision="2" controls-position="right" class="full-width" placeholder="请输入" /></el-form-item>
         <el-form-item v-if="editingId" label="在线/下线"><el-switch v-model="form.online" /></el-form-item>
         <el-form-item label="失效时间"><el-date-picker v-model="form.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" :disabled-date="(date: Date) => date.getTime() > Date.parse('2038-01-18T00:00')" class="full-width" /></el-form-item>
-        <el-form-item label="网盘"><el-input v-model="form.reportNetworkCode" placeholder="内部配置代码" /></el-form-item>
-        <el-form-item label="盘口"><el-input v-model="form.reportRouteCode" placeholder="A / B / C / D" /></el-form-item>
-        <el-form-item label="报网类型"><el-select v-model="form.reportType" class="full-width"><el-option label="未设置" value="" /><el-option v-for="option in REPORT_TYPE_OPTIONS" :key="option.value" :label="option.label" :value="option.value" /></el-select></el-form-item>
-        <el-form-item label="飞单账号"><el-input v-model="form.reportUsername" /></el-form-item>
-        <el-form-item label="上游地址"><el-input v-model="form.reportUrl" maxlength="512" placeholder="只保存，不发起请求" /></el-form-item>
         <el-form-item label="子账号权限"><el-switch v-model="form.subAccountManage" /></el-form-item>
         <el-form-item label="机器人权限"><el-switch v-model="form.machineManage" /></el-form-item>
-        <el-form-item label="统一飞单"><el-switch v-model="form.unifiedReportEnabled" /></el-form-item>
         <div class="dialog-footer"><el-button @click="formOpen = false">取消</el-button><el-button type="primary" native-type="submit" :loading="busy">确认</el-button></div>
       </el-form>
     </el-dialog>

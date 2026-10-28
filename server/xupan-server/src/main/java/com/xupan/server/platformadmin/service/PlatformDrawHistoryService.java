@@ -1,12 +1,16 @@
 package com.xupan.server.platformadmin.service;
 
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.center.service.CenterSettlementService;
 import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
+import com.xupan.server.game.repository.GameIssueEventRepository;
+import com.xupan.server.game.service.BetSettlementCompletedEvent;
 import com.xupan.server.game.service.SettlementService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.web.BusinessException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,14 +34,23 @@ public class PlatformDrawHistoryService {
     private final PermissionService permissionService;
     private final SettlementService settlementService;
     private final VirtualWalletService walletService;
+    private final CenterSettlementService centerSettlementService;
+    private final GameIssueEventRepository eventRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public PlatformDrawHistoryService(JdbcTemplate jdbc, PermissionService permissionService,
                                       SettlementService settlementService,
-                                      VirtualWalletService walletService) {
+                                      VirtualWalletService walletService,
+                                      CenterSettlementService centerSettlementService,
+                                      GameIssueEventRepository eventRepository,
+                                      ApplicationEventPublisher eventPublisher) {
         this.jdbc = jdbc;
         this.permissionService = permissionService;
         this.settlementService = settlementService;
         this.walletService = walletService;
+        this.centerSettlementService = centerSettlementService;
+        this.eventRepository = eventRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -48,7 +61,8 @@ public class PlatformDrawHistoryService {
         }
         String normalizedGameCode = normalizeGameCode(gameCode);
         String keyword = issueNumber == null || issueNumber.isBlank() ? null : issueNumber.trim();
-        StringBuilder where = new StringBuilder(" WHERE i.number_1 IS NOT NULL AND i.game_code = ?");
+        StringBuilder where = new StringBuilder(
+                " WHERE (i.number_1 IS NOT NULL OR i.phase = 'DRAWING') AND i.game_code = ?");
         List<Object> args = new ArrayList<>();
         args.add(normalizedGameCode);
         if (keyword != null) { where.append(" AND issue_number LIKE ?"); args.add("%" + keyword + "%"); }
@@ -59,7 +73,7 @@ public class PlatformDrawHistoryService {
                 SELECT i.game_code, d.display_name AS game_name,
                        i.issue_number, i.number_1, i.number_2, i.number_3, i.number_4,
                        i.number_5, i.number_6, i.number_7, i.number_8,
-                       i.phase, i.opened_at, i.settled_at,
+                       i.phase, i.opened_at, i.settled_at, i.draw_confirmed_at, i.draw_result_version,
                        (SELECT COUNT(*) FROM game_bet b
                           JOIN demo_user_account a ON a.id=b.user_id
                          WHERE b.game_code=i.game_code AND b.issue_number=i.issue_number
@@ -69,6 +83,9 @@ public class PlatformDrawHistoryService {
                          WHERE b.game_code=i.game_code AND b.issue_number=i.issue_number
                            AND a.player_kind='NORMAL'
                            AND b.settlement_status='PENDING') pending_bet_count
+                       ,(SELECT COUNT(*) FROM center_order c
+                           WHERE c.game_code=i.game_code AND c.issue_number=i.issue_number
+                             AND c.status='ACCEPTED') pending_center_order_count
                   FROM game_issue i
                   JOIN game_definition d ON d.game_code = i.game_code
                 """ + where + " ORDER BY i.id DESC LIMIT ? OFFSET ?",
@@ -77,7 +94,9 @@ public class PlatformDrawHistoryService {
                         rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
                         rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
                         rs.getString("phase"), instant(rs.getTimestamp("opened_at")), instant(rs.getTimestamp("settled_at")),
-                        rs.getLong("bet_count"), rs.getLong("pending_bet_count")), pageArgs.toArray());
+                        instant(rs.getTimestamp("draw_confirmed_at")), rs.getInt("draw_result_version"),
+                        rs.getLong("bet_count"), rs.getLong("pending_bet_count"),
+                        rs.getLong("pending_center_order_count")), pageArgs.toArray());
         return new Page(items, page, pageSize, total == null ? 0 : total);
     }
 
@@ -87,6 +106,22 @@ public class PlatformDrawHistoryService {
         if (issueNumber == null || issueNumber.isBlank()) {
             throw BusinessException.badRequest("DRAW_HISTORY_QUERY_INVALID", "期号不能为空");
         }
+        return queryBets(null, issueNumber.trim());
+    }
+
+    @Transactional(readOnly = true)
+    public List<BetRow> bets(String gameCode, String issueNumber, long operator) {
+        require(operator, READ_PERMISSION, "DRAW_HISTORY_FORBIDDEN", "没有开奖历史权限");
+        return queryBets(normalizeGameCode(gameCode), requiredIssue(issueNumber));
+    }
+
+    private List<BetRow> queryBets(String gameCode, String issueNumber) {
+        String gamePredicate = gameCode == null ? "" : " AND b.game_code=?";
+        List<Object> args = new ArrayList<>();
+        args.add(issueNumber);
+        if (gameCode != null) {
+            args.add(gameCode);
+        }
         return jdbc.query("""
                 SELECT b.bet_code, b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
                        b.settlement_status, b.net_profit, b.explanation, b.created_at, b.settled_at,
@@ -95,12 +130,12 @@ public class PlatformDrawHistoryService {
                   JOIN demo_user_account a ON a.id=b.user_id
                   JOIN sys_user u ON u.id=a.sys_user_id
                  WHERE b.issue_number=? AND a.player_kind='NORMAL'
-                 ORDER BY b.id
-                """, (rs, n) -> new BetRow(rs.getString("bet_code"), rs.getString("display_name"),
-                rs.getString("member_code"), rs.getString("play_type"), rs.getString("parameters_text"),
-                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"),
-                rs.getBigDecimal("net_profit"), rs.getString("explanation"), instant(rs.getTimestamp("created_at")),
-                instant(rs.getTimestamp("settled_at"))), issueNumber.trim());
+                """ + gamePredicate + " ORDER BY b.id",
+                (rs, n) -> new BetRow(rs.getString("bet_code"), rs.getString("display_name"),
+                        rs.getString("member_code"), rs.getString("play_type"), rs.getString("parameters_text"),
+                        rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"),
+                        rs.getBigDecimal("net_profit"), rs.getString("explanation"), instant(rs.getTimestamp("created_at")),
+                        instant(rs.getTimestamp("settled_at"))), args.toArray());
     }
 
     @Transactional
@@ -111,9 +146,21 @@ public class PlatformDrawHistoryService {
         }
         String normalizedIssue = issueNumber.trim();
         HistoryTarget history = lockHistory(normalizedIssue);
-        int settled = settleLockedHistory(history);
-        audit(operator, normalizedIssue, 1, settled);
-        return new SettlementSummary(false, 1, settled, "已强制结算 " + settled + " 条订单");
+        SettlementCounts settled = settleLockedHistory(history);
+        audit(operator, normalizedIssue, 1, settled.totalOrders());
+        return new SettlementSummary(false, 1, settled.totalOrders(),
+                "已补齐结算：本地 " + settled.localOrders() + " 条，中心 " + settled.centerOrders() + " 条");
+    }
+
+    @Transactional
+    public SettlementSummary forceSettleIssue(String gameCode, String issueNumber, long operator) {
+        require(operator, FORCE_PERMISSION, "DRAW_HISTORY_FORCE_FORBIDDEN", "没有强制结算权限");
+        String normalizedGameCode = normalizeGameCode(gameCode);
+        String normalizedIssue = requiredIssue(issueNumber);
+        SettlementCounts settled = settleLockedHistory(lockHistory(normalizedGameCode, normalizedIssue));
+        audit(operator, normalizedIssue, 1, settled.totalOrders());
+        return new SettlementSummary(false, 1, settled.totalOrders(),
+                "已补齐结算：本地 " + settled.localOrders() + " 条，中心 " + settled.centerOrders() + " 条");
     }
 
     @Transactional
@@ -123,17 +170,36 @@ public class PlatformDrawHistoryService {
             throw BusinessException.badRequest("DRAW_HISTORY_CONFIRM_REQUIRED", "缺少强制结算确认参数");
         }
         List<IssueKey> issues = jdbc.query("""
-                SELECT DISTINCT b.game_code, b.issue_number
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id=b.user_id
-                 WHERE a.player_kind='NORMAL' AND b.settlement_status='PENDING'
-                 ORDER BY b.game_code, b.issue_number
+                SELECT DISTINCT pending.game_code, pending.issue_number
+                  FROM (
+                        SELECT b.game_code, b.issue_number
+                          FROM game_bet b
+                          JOIN demo_user_account a ON a.id=b.user_id
+                         WHERE a.player_kind='NORMAL' AND b.settlement_status='PENDING'
+                        UNION ALL
+                        SELECT c.game_code, c.issue_number
+                          FROM center_order c
+                         WHERE c.status='ACCEPTED'
+                       ) pending
+                  JOIN game_issue i ON i.game_code=pending.game_code
+                                   AND i.issue_number=pending.issue_number
+                 WHERE i.draw_confirmed_at IS NOT NULL
+                 ORDER BY pending.game_code, pending.issue_number
                 """, (rs, rowNum) -> new IssueKey(rs.getString("game_code"), rs.getString("issue_number")));
         Long pendingOrders = jdbc.queryForObject("""
-                SELECT COUNT(*)
-                  FROM game_bet b
-                  JOIN demo_user_account a ON a.id=b.user_id
-                 WHERE a.player_kind='NORMAL' AND b.settlement_status='PENDING'
+                SELECT COUNT(*) FROM (
+                    SELECT b.game_code, b.issue_number, b.id AS order_id, 'LOCAL' AS source_type
+                      FROM game_bet b
+                      JOIN demo_user_account a ON a.id=b.user_id
+                     WHERE a.player_kind='NORMAL' AND b.settlement_status='PENDING'
+                    UNION ALL
+                    SELECT c.game_code, c.issue_number, c.id AS order_id, 'CENTER' AS source_type
+                      FROM center_order c
+                     WHERE c.status='ACCEPTED'
+                ) pending
+                JOIN game_issue i ON i.game_code=pending.game_code
+                                 AND i.issue_number=pending.issue_number
+               WHERE i.draw_confirmed_at IS NOT NULL
                 """, Long.class);
         if (preview) {
             return new SettlementSummary(true, issues.size(), pendingOrders == null ? 0L : pendingOrders, "预检完成");
@@ -156,8 +222,22 @@ public class PlatformDrawHistoryService {
         String normalizedIssue = requiredIssue(issueNumber);
         List<Integer> normalizedNumbers = validateNumbers(numbers);
         Instant normalizedOpenedAt = openedAt == null ? Instant.now() : openedAt;
+        if (!normalizedOpenedAt.isBefore(Instant.now())) {
+            throw BusinessException.badRequest("DRAW_SUPPLEMENT_NOT_HISTORICAL", "补期只能用于过去的期号");
+        }
+        Timestamp activeIssueStartedAt = jdbc.queryForObject("""
+                SELECT MIN(issue_started_at)
+                  FROM game_issue
+                 WHERE game_code = ? AND phase IN ('BETTING', 'DRAWING')
+                """, Timestamp.class, normalizedGameCode);
+        if (activeIssueStartedAt != null && !normalizedOpenedAt.isBefore(activeIssueStartedAt.toInstant())) {
+            throw BusinessException.conflict("DRAW_SUPPLEMENT_ACTIVE_ISSUE", "补期时间不能覆盖当前或未来的投注期");
+        }
         HistoryTarget existing = lockExistingHistory(normalizedGameCode, normalizedIssue);
         boolean created = existing == null;
+        if (existing != null && ("BETTING".equals(existing.phase()) || "DRAWING".equals(existing.phase()))) {
+            throw BusinessException.conflict("DRAW_SUPPLEMENT_ACTIVE_ISSUE", "当前期不能通过补期入口直接开奖");
+        }
         if (existing != null && existing.numbers().stream().anyMatch(value -> value > 0)) {
             throw BusinessException.conflict("DRAW_HISTORY_ALREADY_DRAWN", "此期数已经有开奖号码");
         }
@@ -166,53 +246,153 @@ public class PlatformDrawHistoryService {
                     INSERT INTO game_issue
                         (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
                          number_5, number_6, number_7, number_8, issue_started_at, opened_at,
-                         closed_at, settled_at)
-                    VALUES (?, ?, 'CLOSED', 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         closed_at, settled_at, draw_result_version, draw_confirmed_at, draw_confirmed_by)
+                    VALUES (?, ?, 'CLOSED', 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                     """, normalizedGameCode, normalizedIssue, normalizedNumbers.get(0), normalizedNumbers.get(1),
                     normalizedNumbers.get(2), normalizedNumbers.get(3), normalizedNumbers.get(4),
                     normalizedNumbers.get(5), normalizedNumbers.get(6), normalizedNumbers.get(7),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
-                    Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt));
+                    Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
+                    Timestamp.from(normalizedOpenedAt), operator);
         } else {
             int updated = jdbc.update("""
                     UPDATE game_issue
                        SET status='CLOSED', phase='SETTLED',
                            number_1=?, number_2=?, number_3=?, number_4=?, number_5=?, number_6=?, number_7=?, number_8=?,
                            opened_at=COALESCE(opened_at, ?), closed_at=COALESCE(closed_at, ?),
-                           settled_at=COALESCE(settled_at, ?), updated_at=CURRENT_TIMESTAMP
-                     WHERE game_code=? AND issue_number=? AND number_1 IS NULL
+                           settled_at=COALESCE(settled_at, ?), draw_result_version=draw_result_version + 1,
+                           draw_confirmed_at=?, draw_confirmed_by=?, updated_at=CURRENT_TIMESTAMP
+                     WHERE game_code=? AND issue_number=? AND number_1 IS NULL AND draw_confirmed_at IS NULL
                     """, normalizedNumbers.get(0), normalizedNumbers.get(1), normalizedNumbers.get(2),
                     normalizedNumbers.get(3), normalizedNumbers.get(4), normalizedNumbers.get(5),
                     normalizedNumbers.get(6), normalizedNumbers.get(7), Timestamp.from(normalizedOpenedAt),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
-                    normalizedGameCode, normalizedIssue);
+                    Timestamp.from(normalizedOpenedAt), operator, normalizedGameCode, normalizedIssue);
             if (updated != 1) {
                 throw BusinessException.conflict("DRAW_HISTORY_ALREADY_DRAWN", "此期数已经有开奖号码");
             }
         }
-        int settled = settleIssue(normalizedGameCode, normalizedIssue);
+        SettlementCounts settled = settleLockedHistory(lockHistory(normalizedGameCode, normalizedIssue));
+        eventRepository.appendOnce(normalizedGameCode, normalizedIssue, "DRAW_RESULT",
+                resultMessage(normalizedIssue, normalizedNumbers), normalizedOpenedAt);
         jdbc.update("""
                 INSERT INTO sys_operation_log
                     (operator_user_id, permission_code, http_method, request_path, resource_id,
                      result, error_code, request_summary, ip_digest, created_at)
                 VALUES (?, ?, 'POST', '/api/admin/draw-history/supplement', ?, 'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
                 """, operator, SUPPLEMENT_PERMISSION, normalizedIssue,
-                "gameCode=" + normalizedGameCode + ",created=" + created + ",orders=" + settled);
-        return new SupplementSummary(created, settled, settled == 0 ? "补期成功，无待结算订单" : "补期成功，已结算 " + settled + " 条订单");
+                "gameCode=" + normalizedGameCode + ",created=" + created + ",orders=" + settled.totalOrders());
+        return new SupplementSummary(created, settled.totalOrders(),
+                "补期确认成功：本地 " + settled.localOrders() + " 条，中心 " + settled.centerOrders() + " 条");
+    }
+
+    @Transactional
+    public DraftSummary updateDraft(String gameCode, String issueNumber, List<Integer> numbers, long operator) {
+        require(operator, SUPPLEMENT_PERMISSION, "DRAW_HISTORY_SUPPLEMENT_FORBIDDEN", "没有开奖编辑权限");
+        String normalizedGameCode = normalizeGameCode(gameCode);
+        String normalizedIssue = requiredIssue(issueNumber);
+        List<Integer> normalizedNumbers = validateNumbers(numbers);
+        HistoryTarget existing = lockExistingHistory(normalizedGameCode, normalizedIssue);
+        if (existing == null) {
+            throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
+        }
+        if (existing.drawConfirmedAt() != null) {
+            throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
+        }
+        if (!"DRAWING".equals(existing.phase()) && !"CLOSED".equals(existing.phase())) {
+            throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
+        }
+        int updated = jdbc.update("""
+                UPDATE game_issue
+                   SET number_1=?, number_2=?, number_3=?, number_4=?, number_5=?, number_6=?, number_7=?, number_8=?,
+                       draw_result_version=draw_result_version + 1, updated_at=CURRENT_TIMESTAMP
+                 WHERE game_code=? AND issue_number=? AND draw_confirmed_at IS NULL
+                """, normalizedNumbers.get(0), normalizedNumbers.get(1), normalizedNumbers.get(2),
+                normalizedNumbers.get(3), normalizedNumbers.get(4), normalizedNumbers.get(5),
+                normalizedNumbers.get(6), normalizedNumbers.get(7), normalizedGameCode, normalizedIssue);
+        if (updated != 1) {
+            throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
+        }
+        jdbc.update("""
+                INSERT INTO sys_operation_log
+                    (operator_user_id, permission_code, http_method, request_path, resource_id,
+                     result, error_code, request_summary, ip_digest, created_at)
+                VALUES (?, ?, 'PUT', ?, ?, 'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
+                """, operator, SUPPLEMENT_PERMISSION,
+                "/api/admin/draw-history/" + normalizedGameCode + "/" + normalizedIssue + "/draft",
+                normalizedIssue, "before=" + numberText(existing.numbers()) + ",after=" + numberText(normalizedNumbers)
+                        + ",version=" + (existing.resultVersion() + 1));
+        return new DraftSummary(normalizedGameCode, normalizedIssue, normalizedNumbers,
+                existing.resultVersion() + 1, "开奖草稿已保存");
+    }
+
+    @Transactional
+    public ConfirmationSummary confirmDraft(String gameCode, String issueNumber, long operator) {
+        require(operator, SUPPLEMENT_PERMISSION, "DRAW_HISTORY_SUPPLEMENT_FORBIDDEN", "没有开奖确认权限");
+        String normalizedGameCode = normalizeGameCode(gameCode);
+        String normalizedIssue = requiredIssue(issueNumber);
+        HistoryTarget draft = lockExistingHistory(normalizedGameCode, normalizedIssue);
+        if (draft == null) {
+            throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
+        }
+        if (draft.drawConfirmedAt() != null) {
+            List<Integer> numbers = validateNumbers(draft.numbers());
+            SettlementCounts recovered = settleLockedHistory(draft);
+            return new ConfirmationSummary(normalizedGameCode, normalizedIssue, draft.resultVersion(),
+                    draft.drawConfirmedAt(), recovered.localOrders(), recovered.centerOrders(),
+                    "开奖结果已确认；已补齐尚未完成的结算");
+        }
+        if (!"DRAWING".equals(draft.phase()) && !"CLOSED".equals(draft.phase())) {
+            throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
+        }
+        List<Integer> numbers = validateNumbers(draft.numbers());
+        Instant confirmedAt = Instant.now();
+        int updated = jdbc.update("""
+                UPDATE game_issue
+                   SET status='CLOSED', phase='SETTLED', opened_at=COALESCE(opened_at, ?),
+                       closed_at=COALESCE(closed_at, ?), settled_at=?,
+                       draw_result_version=draw_result_version + 1, draw_confirmed_at=?, draw_confirmed_by=?,
+                       updated_at=CURRENT_TIMESTAMP
+                 WHERE game_code=? AND issue_number=? AND draw_confirmed_at IS NULL
+                """, Timestamp.from(confirmedAt), Timestamp.from(confirmedAt), Timestamp.from(confirmedAt),
+                Timestamp.from(confirmedAt), operator, normalizedGameCode, normalizedIssue);
+        if (updated != 1) {
+            throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已被其他操作确认");
+        }
+        SettlementCounts settled = settleLockedHistory(lockHistory(normalizedGameCode, normalizedIssue));
+        eventRepository.appendOnce(normalizedGameCode, normalizedIssue, "DRAW_RESULT",
+                resultMessage(normalizedIssue, numbers), confirmedAt);
+        jdbc.update("""
+                INSERT INTO sys_operation_log
+                    (operator_user_id, permission_code, http_method, request_path, resource_id,
+                     result, error_code, request_summary, ip_digest, created_at)
+                VALUES (?, ?, 'POST', ?, ?, 'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
+                """, operator, SUPPLEMENT_PERMISSION,
+                "/api/admin/draw-history/" + normalizedGameCode + "/" + normalizedIssue + "/confirm",
+                normalizedIssue, "numbers=" + numberText(numbers) + ",version=" + (draft.resultVersion() + 1)
+                        + ",localOrders=" + settled.localOrders() + ",centerOrders=" + settled.centerOrders());
+        return new ConfirmationSummary(normalizedGameCode, normalizedIssue, draft.resultVersion() + 1,
+                confirmedAt, settled.localOrders(), settled.centerOrders(), "开奖结果已确认并完成双层结算");
     }
 
     private int settleIssue(String gameCode, String issueNumber) {
-        return settleLockedHistory(lockHistory(gameCode, issueNumber));
+        return settleLockedHistory(lockHistory(gameCode, issueNumber)).totalOrders();
     }
 
-    private int settleLockedHistory(HistoryTarget history) {
+    private SettlementCounts settleLockedHistory(HistoryTarget history) {
+        if (history.drawConfirmedAt() == null) {
+            throw BusinessException.conflict("DRAW_RESULT_NOT_CONFIRMED", "开奖结果尚未确认，不能结算");
+        }
         List<PendingBet> bets = lockPendingBets(history.gameCode(), history.issueNumber());
         Instant settledAt = Instant.now();
         int settled = 0;
         for (PendingBet bet : bets) {
+            if (bet.ballNumber() < 1 || bet.ballNumber() > history.numbers().size()) {
+                throw BusinessException.conflict("DRAW_HISTORY_BALL_INVALID", "注单球号不在本期开奖结果范围内");
+            }
             BallResult ballResult = BallResult.fromNumber(history.numbers().get(bet.ballNumber() - 1));
             var settlement = settlementService.settle(bet.playType(), bet.parameters(),
-                    bet.stake(), bet.odds(), ballResult);
+                    bet.stake(), bet.odds(), bet.selectionUnitStake(), bet.machineOddsRate(), ballResult);
             int updated = jdbc.update("""
                     UPDATE game_bet
                        SET settlement_status=?, net_profit=?, explanation=?, settled_at=?
@@ -227,22 +407,36 @@ public class PlatformDrawHistoryService {
                 walletService.creditForSettlement(bet.sysUserId(), bet.id(), history.issueNumber(), payout,
                         "强制结算：" + history.issueNumber());
             }
+            eventPublisher.publishEvent(new BetSettlementCompletedEvent(bet.id(), bet.accountId(),
+                    history.issueNumber(), settlement.status(), settlement.stake(),
+                    settlement.netProfit(), payout));
             settled++;
         }
-        return settled;
+        List<BallResult> ballResults = history.numbers().stream().map(BallResult::fromNumber).toList();
+        String drawNumbers = numberText(history.numbers());
+        CenterSettlementService.SettlementSummary center = centerSettlementService.settleIssue(
+                history.gameCode(), history.issueNumber(), ballResults, drawNumbers, Integer.MAX_VALUE);
+        if (center.skippedCount() > 0) {
+            throw BusinessException.conflict("CENTER_ORDER_SETTLEMENT_INCOMPLETE",
+                    "存在无法按开奖结果结算的中心订单，双层结算已回滚");
+        }
+        return new SettlementCounts(settled, center.settledCount());
     }
 
 
     private HistoryTarget lockExistingHistory(String gameCode, String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
                 SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8
+                       number_5, number_6, number_7, number_8, phase,
+                       draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE game_code=? AND issue_number=?
                    FOR UPDATE
                 """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"), List.of(
                         rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8"))),
+                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                        rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
+                        rs.getInt("draw_result_version")),
                 gameCode, issueNumber);
         return rows.isEmpty() ? null : rows.get(0);
     }
@@ -282,16 +476,26 @@ public class PlatformDrawHistoryService {
     private HistoryTarget lockHistory(String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
                 SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8
+                       number_5, number_6, number_7, number_8, phase,
+                       draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE issue_number=?
+                 ORDER BY game_code
                    FOR UPDATE
                 """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"), List.of(
                         rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8"))),
+                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                        rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
+                        rs.getInt("draw_result_version")),
                 issueNumber);
         if (rows.isEmpty()) {
             throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到对应开奖记录");
+        }
+        if (rows.size() > 1) {
+            throw BusinessException.badRequest("DRAW_HISTORY_GAME_REQUIRED", "该期号对应多个彩种，请指定彩种");
+        }
+        if (rows.get(0).drawConfirmedAt() == null) {
+            throw BusinessException.conflict("DRAW_RESULT_NOT_CONFIRMED", "开奖结果尚未确认，不能结算");
         }
         if (rows.get(0).numbers().stream().anyMatch(value -> value == 0)) {
             throw BusinessException.conflict("DRAW_HISTORY_NOT_DRAWN", "该期还没有开奖号码，不能强制结算");
@@ -302,16 +506,22 @@ public class PlatformDrawHistoryService {
     private HistoryTarget lockHistory(String gameCode, String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
                 SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8
+                       number_5, number_6, number_7, number_8, phase,
+                       draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE game_code=? AND issue_number=?
                    FOR UPDATE
                 """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"), List.of(
                         rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8"))),
+                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                        rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
+                        rs.getInt("draw_result_version")),
                 gameCode, issueNumber);
         if (rows.isEmpty()) {
             throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到对应开奖记录");
+        }
+        if (rows.get(0).drawConfirmedAt() == null) {
+            throw BusinessException.conflict("DRAW_RESULT_NOT_CONFIRMED", "开奖结果尚未确认，不能结算");
         }
         if (rows.get(0).numbers().stream().anyMatch(value -> value == 0)) {
             throw BusinessException.conflict("DRAW_HISTORY_NOT_DRAWN", "该期还没有开奖号码，不能强制结算");
@@ -322,7 +532,9 @@ public class PlatformDrawHistoryService {
     private List<PendingBet> lockPendingBets(String gameCode, String issueNumber) {
         return jdbc.query("""
                 SELECT b.id, b.user_id, a.sys_user_id, b.ball_number, b.play_type,
-                       b.parameters_text, b.stake, b.odds_snapshot
+                       b.parameters_text, b.stake, b.odds_snapshot, b.machine_odds_rate_snapshot,
+                       (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
+                           AS selection_unit_stake
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id=b.user_id
                  WHERE b.game_code=? AND b.issue_number=? AND a.player_kind='NORMAL'
@@ -332,7 +544,8 @@ public class PlatformDrawHistoryService {
                 """, (rs, n) -> new PendingBet(rs.getLong("id"), rs.getLong("user_id"),
                 rs.getLong("sys_user_id"), rs.getInt("ball_number"), PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
-                rs.getBigDecimal("odds_snapshot")), gameCode, issueNumber);
+                rs.getBigDecimal("odds_snapshot"), rs.getBigDecimal("selection_unit_stake"),
+                rs.getBigDecimal("machine_odds_rate_snapshot")), gameCode, issueNumber);
     }
 
     private void audit(long operator, String resourceId, int histories, int orders) {
@@ -358,19 +571,37 @@ public class PlatformDrawHistoryService {
                 .toList();
     }
 
+    private static String numberText(List<Integer> numbers) {
+        return numbers.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+    }
+
+    private static String resultMessage(String issueNumber, List<Integer> numbers) {
+        return issueNumber + "期开奖号码：" + numberText(numbers);
+    }
+
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
 
     public record Page(List<HistoryRow> items, int page, int pageSize, long total) {}
     public record HistoryRow(String gameCode, String gameName, String issueNumber, List<Integer> balls,
                              String phase, Instant openedAt, Instant settledAt,
-                             long betCount, long pendingBetCount) {}
+                             Instant drawConfirmedAt, int drawResultVersion,
+                             long betCount, long pendingBetCount, long pendingCenterOrderCount) {}
     public record BetRow(String betCode, String playerName, String memberCode, String playType,
                          String parametersText, BigDecimal stake, BigDecimal odds, String settlementStatus,
                          BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {}
     public record SettlementSummary(boolean preview, long histories, long orders, String message) {}
     public record SupplementSummary(boolean created, int orders, String message) {}
+    public record DraftSummary(String gameCode, String issueNumber, List<Integer> numbers,
+                               int resultVersion, String message) {}
+    public record ConfirmationSummary(String gameCode, String issueNumber, int resultVersion,
+                                      Instant confirmedAt, int localOrders, int centerOrders, String message) {}
     private record IssueKey(String gameCode, String issueNumber) {}
-    private record HistoryTarget(String gameCode, String issueNumber, List<Integer> numbers) {}
+    private record HistoryTarget(String gameCode, String issueNumber, List<Integer> numbers,
+                                 String phase, Instant drawConfirmedAt, int resultVersion) {}
+    private record SettlementCounts(int localOrders, int centerOrders) {
+        int totalOrders() { return localOrders + centerOrders; }
+    }
     private record PendingBet(long id, long accountId, long sysUserId, int ballNumber, PlayType playType,
-                              List<Integer> parameters, BigDecimal stake, BigDecimal odds) {}
+                              List<Integer> parameters, BigDecimal stake, BigDecimal odds,
+                              BigDecimal selectionUnitStake, BigDecimal machineOddsRate) {}
 }

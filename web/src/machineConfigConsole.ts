@@ -191,9 +191,9 @@ export function validateMachineLimitDraft(
 ): { ok: true; patch: MachineConfigUpdatePatch } | { ok: false; message: string } {
   const values = {} as Record<MachineLimitKey, number>
   for (const field of MACHINE_LIMIT_FIELDS) {
-    const parsed = parseNonNegativeAmount(draft[field.key] ?? '', 0)
+    const parsed = parseNonNegativeAmount(draft[field.key] ?? '', 2)
     // 0 表示"不限制"，与 AgentBettingPolicy/下注校验的语义保持一致。
-    if (parsed === null) return { ok: false, message: `${field.label}必须是不小于 0 的整数，且不能为空` }
+    if (parsed === null) return { ok: false, message: `${field.label}必须是不小于 0 的数字，最多两位小数且不能为空` }
     values[field.key] = parsed
   }
   if (values.playerMaxStake > 0 && values.playerMinStake > values.playerMaxStake) {
@@ -214,6 +214,7 @@ export function machineConfigPayload(
 ): MachineConfigUpdateRequest {
   return {
     boardOpen: config.boardOpen,
+    expectedVersion: config.configVersion ?? 1,
     chaseEnabled: config.chaseEnabled,
     botCount: config.botLimit,
     closeSeconds: config.closeSeconds,
@@ -298,6 +299,10 @@ export function createMachineConfigConsoleStore(
     const target = targetId.value
     if (!current || target === null || level.value !== 'MACHINE') {
       error.value = '机器配置尚未加载，请先刷新后再保存'
+      return false
+    }
+    if (current.configEditable === false) {
+      error.value = '该机器已关闭代理配置权限'
       return false
     }
     if (saving.value) return false

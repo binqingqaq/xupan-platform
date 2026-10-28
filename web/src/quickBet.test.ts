@@ -6,6 +6,7 @@ import {
   backspaceQuickAmount,
   composeQuickBetMessage,
   normalizeQuickBetAmounts,
+  quickBetOptionOdds,
 } from './quickBet'
 
 const allSelectedAt99 = [
@@ -19,6 +20,11 @@ const allSelectedAt99 = [
 describe('quick bet helpers', () => {
   it('contains the complete reference quick panel and composes the exact batch message', () => {
     expect(QUICK_BET_OPTIONS).toHaveLength(74)
+    expect(QUICK_BET_OPTIONS.filter(option => option.section === 'top')).toHaveLength(22)
+    expect(QUICK_BET_OPTIONS.filter(option => option.section === 'lower')).toHaveLength(52)
+    expect(QUICK_BET_OPTIONS.filter(option => option.playType !== 'SPECIAL')).toHaveLength(54)
+    expect(QUICK_BET_OPTIONS.filter(option => option.playType === 'SPECIAL').map(option => option.code))
+      .toEqual(Array.from({ length: 20 }, (_, index) => `${String(index + 1).padStart(2, '0')}特`))
     expect(composeQuickBetMessage(QUICK_BET_OPTIONS.map(option => option.key), '99'))
       .toBe(allSelectedAt99)
   })
@@ -26,6 +32,24 @@ describe('quick bet helpers', () => {
   it('keeps the selected option order independent from click order', () => {
     expect(composeQuickBetMessage(['special-20', 'angle-34', 'car-1'], '50'))
       .toBe('34角50,1车50,20特50')
+  })
+
+  it('applies the entered unit amount to every selected special number', () => {
+    expect(composeQuickBetMessage(['special-01', 'special-02'], '100'))
+      .toBe('01特100,02特100')
+  })
+
+  it('reads the server quote mapped to each cell rule without recalculating it', () => {
+    const option = (key: string) => QUICK_BET_OPTIONS.find(item => item.key === key)!
+    const quotes = { BASE: '1.950', FAN: '3.850', STRICT: '2.900', CAR: '1.316',
+      NONE_PAIR: '1.950', NONE_TRIPLE: '1.475', TONG: '1.475', SPECIAL: '18.00' }
+    expect(quickBetOptionOdds(option('fan-1'), quotes)).toBe('3.850')
+    expect(quickBetOptionOdds(option('strict-3-4'), quotes)).toBe('2.900')
+    expect(quickBetOptionOdds(option('none-2-3'), quotes)).toBe('1.950')
+    expect(quickBetOptionOdds(option('none-12-3'), quotes)).toBe('1.475')
+    expect(quickBetOptionOdds(option('car-1'), quotes)).toBe('1.316')
+    expect(quickBetOptionOdds(option('special-01'), quotes)).toBe('18.00')
+    expect(quickBetOptionOdds(option('angle-34'), {})).toBe('--')
   })
 
   it('handles amount input and quick amount defaults', () => {

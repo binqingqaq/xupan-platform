@@ -74,6 +74,24 @@ class GameDataRepositoryTest {
     }
 
     @Test
+    void doesNotOverwriteConfirmedIssueResult() {
+        repository.saveIssue("TEST-CONFIRMED", "CLOSED", List.of(1, 2, 3, 4, 5, 6, 7, 8));
+        jdbcTemplate.update("""
+                UPDATE game_issue
+                   SET draw_result_version = 1, draw_confirmed_at = CURRENT_TIMESTAMP
+                 WHERE game_code = 'AU8' AND issue_number = 'TEST-CONFIRMED'
+                """);
+
+        assertThatThrownBy(() -> repository.saveIssue("TEST-CONFIRMED", "CLOSED",
+                List.of(8, 7, 6, 5, 4, 3, 2, 1)))
+                .hasMessageContaining("DRAW_RESULT_LOCKED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT number_1 FROM game_issue
+                 WHERE game_code = 'AU8' AND issue_number = 'TEST-CONFIRMED'
+                """, Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     void readsOnlyCompleteSettledHistoryInSettlementOrder() {
         repository.saveIssue("TEST-HISTORY-OLD", "OPEN", null);
         repository.saveIssue("TEST-HISTORY-OLD", "CLOSED", List.of(1, 2, 3, 4, 5, 6, 7, 8));
