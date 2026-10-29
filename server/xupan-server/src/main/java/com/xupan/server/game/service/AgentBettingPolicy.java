@@ -32,8 +32,8 @@ public class AgentBettingPolicy {
         BASE, FAN, STRICT, CAR, NONE_PAIR, NONE_TRIPLE, TONG, SPECIAL
     }
 
-    /** 机器已闭盘（BY220 isOpen=0）。 */
-    public static final String BOARD_CLOSED = "GAME_BOARD_CLOSED";
+    /** 机器手动封盘（BY220 isOpen=0），与期次封盘时间独立。 */
+    public static final String MANUALLY_CLOSED = "GAME_MACHINE_MANUALLY_CLOSED";
     /** 已到该机器的封盘时间（BY220 fengpan）。 */
     public static final String MACHINE_CLOSED = "GAME_MACHINE_CLOSED";
 
@@ -108,8 +108,8 @@ public class AgentBettingPolicy {
     /** 下注前校验该机器是否允许下注；返回拒绝原因码。 */
     public Optional<String> rejectBet(MachineBettingConfig config, GameDataRepository.IssueRecord issue, Instant now) {
         MachineBettingConfig machine = config == null ? MachineBettingConfig.DEFAULT : config;
-        if (!machine.boardOpen()) {
-            return Optional.of(BOARD_CLOSED);
+        if (!machine.manualBettingOpen()) {
+            return Optional.of(MANUALLY_CLOSED);
         }
         if (isClosedForBetting(machine, issue, now)) {
             return Optional.of(MACHINE_CLOSED);
@@ -135,7 +135,7 @@ public class AgentBettingPolicy {
 
     public static String rejectionMessage(String reason) {
         return switch (reason) {
-            case BOARD_CLOSED -> "本机已闭盘，禁止下注";
+            case MANUALLY_CLOSED -> "已停止下注";
             case MACHINE_CLOSED -> "已到封盘时间，禁止下注";
             default -> "当前不能下注";
         };

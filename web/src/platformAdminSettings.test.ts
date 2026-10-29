@@ -118,7 +118,7 @@ describe('platform admin settings', () => {
       siteTitle: '测试标题',
       version: 3,
     }))
-    expect(container?.textContent).toContain('保存成功')
+    expect(document.querySelector('.xupan-admin-notice')?.textContent).toContain('保存成功')
   })
 
   it('previews and confirms the BY220 delete-all-accounts operation', async () => {
@@ -134,7 +134,7 @@ describe('platform admin settings', () => {
 
     expect(api.previewDeleteAllAccounts).toHaveBeenCalledWith('DELETE_ALL_ACCOUNTS')
     expect(api.deleteAllAccounts).toHaveBeenCalledWith('DELETE_ALL_ACCOUNTS')
-    expect(container?.textContent).toContain('已删除子账号 1 个，机器 2 个，玩家/托 3 个')
+    expect(document.body.textContent).toContain('已删除子账号 1 个，机器 2 个，玩家/托 3 个')
   })
 
   it('previews and confirms the BY220 clear-data operation', async () => {
@@ -152,6 +152,6 @@ describe('platform admin settings', () => {
 
     expect(api.previewClearData).toHaveBeenCalledWith('2026-09-01T00:00', 'CONFIRM_CLEAR')
     expect(api.clearData).toHaveBeenCalledWith('2026-09-01T00:00', 'CONFIRM_CLEAR')
-    expect(container?.textContent).toContain('共 24 条')
+    expect(document.body.textContent).toContain('共 24 条')
   })
 })

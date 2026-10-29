@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, apiErrorMessage, restoreSession } from '../api'
-import { isConsoleEntryAccount } from '../consoleScope'
+import { canRedirectWithinEntry, isConsoleEntryAccount } from '../consoleScope'
+import { matchesMachineLoginUsername, normalizeMachineLoginUsername } from '../consoleLoginLink'
 import { machineConfigPayload } from '../machineConfigConsole'
 import type { MachineConfigUpdatePatch } from '../machineConfigConsole'
 import type { MachineConfigView } from '../types'
+import { adminNotice } from '../services/adminNotice'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +29,29 @@ function sendHeaderToFrame() {
   if (route.path !== '/hby019-demo/console') return
   const data = liveHeader.value ? { ...liveHeader.value } : { state: 'loading' }
   sendToFrame({ type: 'xupan-agent-header', data })
+}
+
+function isConsoleLoginRoute() {
+  return route.meta.consoleLogin === 'generic' || route.meta.consoleLogin === 'machine'
+    || route.path === '/hby019-demo/login'
+}
+
+function sendLoginPrefill() {
+  if (!isConsoleLoginRoute()) return
+  const bound = route.meta.consoleLogin === 'machine'
+  const username = bound ? normalizeMachineLoginUsername(route.params.username) : null
+  sendToFrame({
+    type: 'xupan-console-login-prefill',
+    username: username ?? '',
+    readOnly: bound,
+    invalid: bound && username === null,
+  })
+}
+
+function loginLandingPath() {
+  if (route.meta.consoleLogin === 'machine') return '/hby019-demo/console'
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  return canRedirectWithinEntry(redirect, 'CONSOLE') ? redirect : '/hby019-demo/console'
 }
 
 async function loadAgentHeader() {
@@ -329,13 +354,18 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
       const rebateMode = machineConfig.rebateMode === 'DOUBLE' ? 3 : 1
       sendToFrame({ type: 'xupan-player-response', requestId, data: {
         IsNeedLogin: false,
+        IsKaiPan: machineConfig.manualBettingOpen ? 1 : 0,
         playersManagedByXupan: true,
+        PeiLv: machineConfig.oddsRate,
+        tePeilv: machineConfig.specialOddsRate,
+        teFanshui: machineConfig.specialRebateRate,
         FanShui: machineConfig.rebateRate,
         Hold5TimeSeconds: machineConfig.closeSeconds,
         CancelInSecs: machineConfig.cancelSeconds,
         rob: {
           ls: rebateMode,
           dj: (machineConfig.countdownVisible ?? true) ? 1 : 2,
+          xiugai: machineConfig.robotManage ? 1 : 0,
         },
         count1: summary.normalCount,
         count2: summary.botCount,
@@ -350,6 +380,14 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
           isTuoManual: 0,
         })),
       } })
+      return
+    }
+    if (data.path === '/rbt/index/updatepanstatus') {
+      const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
+      const current = liveMachineConfig.value ?? await api.getMachineConfig()
+      const result = await api.updateMachineBettingState(current.machineId, Number(requestData.st) === 1)
+      liveMachineConfig.value = { ...current, manualBettingOpen: result.manualBettingOpen }
+      sendToFrame({ type: 'xupan-player-response', requestId, data: result.manualBettingOpen ? 1 : 0 })
       return
     }
     if (data.path === '/rbt/index/getcmdlist') {
@@ -705,20 +743,30 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
 }
 
 async function handleLoginRequest(data: Record<string, unknown>) {
-  if (!['/hby019-demo/login', '/hby019-demo/console'].includes(route.path)
+  const isConsolePage = route.path === '/hby019-demo/console'
+  if (!(isConsoleLoginRoute() || isConsolePage)
     || typeof data.username !== 'string' || typeof data.password !== 'string'
     || !data.username.trim() || !data.password) return
+  const requestedUsername = data.username.trim()
+  if (route.meta.consoleLogin === 'machine') {
+    const expectedUsername = normalizeMachineLoginUsername(route.params.username)
+    if (!matchesMachineLoginUsername(requestedUsername, expectedUsername)) {
+      sendToFrame({ type: 'xupan-console-login-result', error: expectedUsername
+        ? '登录用户名与链接不一致，请重新打开机器登录地址' : '机器登录地址无效，请联系管理员重新复制' })
+      return
+    }
+  }
 
   try {
-    const result = await api.login(data.username.trim(), data.password, 'CONSOLE')
+    const result = await api.login(requestedUsername, data.password, 'CONSOLE')
     if (!isConsoleEntryAccount(result.user.roles)) {
       await api.logout()
       throw new Error('该账号不是机器账号')
     }
-    if (route.path === '/hby019-demo/console') {
+    if (isConsolePage) {
       window.location.assign('/hby019-demo/console')
     } else {
-      await router.replace('/hby019-demo/console')
+      await router.replace(loginLandingPath())
     }
   } catch (error) {
     sendToFrame({ type: 'xupan-console-login-result', error: apiErrorMessage(error, '账号或密码错误，请重试') })
@@ -729,7 +777,23 @@ function handleFrameMessage(event: MessageEvent) {
   if (event.origin !== window.location.origin || event.source !== frame.value?.contentWindow) return
   if (!event.data || typeof event.data !== 'object') return
   const data = event.data as Record<string, unknown>
-  if (data.type === 'xupan-console-login') {
+  if (data.type === 'xupan-admin-notice') {
+    const sourcePage = route.path === '/hby019-demo/console' ? 'console.html'
+      : route.path === '/hby019-demo/showdetails' ? 'showdetails.html'
+        : isConsoleLoginRoute() ? 'index.html' : null
+    if (!sourcePage) return
+    try {
+      if (frame.value?.contentWindow?.location.pathname !== `/hby019-demo/source/${sourcePage}`) return
+    } catch {
+      return
+    }
+    if (Object.keys(data).length !== 3 || !['type', 'level', 'message'].every(key => Object.prototype.hasOwnProperty.call(data, key))
+      || typeof data.level !== 'string' || !['success', 'error', 'warning', 'info'].includes(data.level)
+      || typeof data.message !== 'string') return
+    const message = data.message.trim()
+    if (!message || message.length > 300 || /<[^>]*>|[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(message)) return
+    adminNotice.show(data.level as 'success' | 'error' | 'warning' | 'info', message)
+  } else if (data.type === 'xupan-console-login') {
     void handleLoginRequest(data)
   } else if (data.type === 'xupan-console-logout' && route.path === '/hby019-demo/console') {
     void (async () => {
@@ -747,6 +811,7 @@ function handleFrameMessage(event: MessageEvent) {
 function handleFrameLoad() {
   syncPlayerRoute()
   sendHeaderToFrame()
+  sendLoginPrefill()
 }
 
 function syncPlayerRoute() {
@@ -779,14 +844,24 @@ onBeforeUnmount(() => {
   document.body.classList.remove('hby019-demo-host')
 })
 
-watch(() => route.path, path => {
+watch(() => [route.path, route.meta.consoleLogin, route.params.username, route.query.reason] as const,
+  ([path, loginMode, , reason]) => {
   liveHeader.value = null
   if (path === '/hby019-demo/console') void loadAgentHeader()
-  else if (path === '/hby019-demo/login') {
+  if ((path === '/hby019-demo/login' || loginMode === 'generic') && typeof reason === 'string') {
+    const reasonMessage: Record<string, string> = {
+      expired: '登录状态已失效，请重新登录',
+      'no-permission': '当前账号没有进入该后台的权限，请用有权限的账号重新登录',
+      'logged-out': '你已退出登录',
+    }
+    if (reasonMessage[reason]) adminNotice.warning(reasonMessage[reason])
+  }
+  if ((path === '/hby019-demo/login' || loginMode === 'generic') && reason !== 'no-permission') {
     void restoreSession('CONSOLE').then(user => {
       if (user && isConsoleEntryAccount(user.roles)) void router.replace('/hby019-demo/console')
     })
   }
+  sendLoginPrefill()
 }, { immediate: true })
 
 watch(liveHeader, sendHeaderToFrame)

@@ -79,7 +79,7 @@ describe('platform admin password', () => {
       confirmPassword: 'ChangedPassword123',
       username: '',
     })
-    expect(container.textContent).toContain('修改成功')
+    expect(document.body.textContent).toContain('修改成功')
     await vi.advanceTimersByTimeAsync(1500)
     expect(api.logout).toHaveBeenCalled()
     expect(routerReplace).toHaveBeenCalledWith('/platform-admin/login')

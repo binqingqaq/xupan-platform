@@ -2,6 +2,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { SubAccount, SubAccountInput } from '../types/platformAdmin'
@@ -40,7 +41,6 @@ const accounts = ref<SubAccount[]>([])
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
-const feedback = ref('')
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const currentUser = ref('超级管理员')
@@ -58,9 +58,11 @@ function openEdit(row: SubAccount) {
   formOpen.value = true
 }
 async function submit() {
-  if (!form.username.trim()) return
+  if (!form.username.trim()) {
+    adminNotice.warning('请输入用户名')
+    return
+  }
   error.value = ''
-  feedback.value = ''
   const base: SubAccountInput = {
     username: form.username.trim(),
     rawPassword: form.rawPassword || undefined,
@@ -71,7 +73,7 @@ async function submit() {
   // 新增态：BY220 只提交初始「积分」，没有上分/下分/在线开关。
   const usernames = editingId.value ? [] : parseUsernames(base.username)
   if (!editingId.value && usernames === null) {
-    error.value = '用户名不能为空，多个用户名请用英文逗号分隔'
+    adminNotice.warning('用户名不能为空，多个用户名请用英文逗号分隔')
     return
   }
   busy.value = true
@@ -84,16 +86,16 @@ async function submit() {
       if (up !== null) payload.up = up
       if (down !== null) payload.down = down
       await api.updateSubAccount(editingId.value, payload)
-      feedback.value = '子账号已更新'
+      adminNotice.success('子账号已更新')
     } else {
       // 前端只发一次请求（用户名按逗号规范化后整体提交），由后端拆分批量建号。
       await api.createSubAccount({ ...base, username: (usernames ?? []).join(','), score: Number(form.score) || 0 })
-      feedback.value = `已创建 ${(usernames ?? []).length} 个子账号`
+      adminNotice.success(`已创建 ${(usernames ?? []).length} 个子账号`)
     }
     formOpen.value = false
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '子账号保存失败')
+    adminNotice.error(apiErrorMessage(cause, '子账号保存失败'))
   } finally {
     busy.value = false
   }
@@ -106,15 +108,15 @@ async function remove(row: SubAccount) {
   error.value = ''
   try {
     await api.deleteSubAccount(row.id)
-    feedback.value = '子账号已删除'
+    adminNotice.success('子账号已删除')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '子账号删除失败')
+    adminNotice.error(apiErrorMessage(cause, '子账号删除失败'))
   } finally {
     busy.value = false
   }
 }
-async function toggle(row: SubAccount) { busy.value = true; try { await api.changeSubAccountStatus(row.id, row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'); await load() } catch (cause) { error.value = apiErrorMessage(cause, '子账号状态更新失败') } finally { busy.value = false } }
+async function toggle(row: SubAccount) { busy.value = true; try { await api.changeSubAccountStatus(row.id, row.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE'); adminNotice.success('子账号状态已更新'); await load() } catch (cause) { adminNotice.error(apiErrorMessage(cause, '子账号状态更新失败')) } finally { busy.value = false } }
 /** 登录账号被锁（LOCKED）时必须显式提示：锁定期间登录只会提示「用户名或密码错误」，且不会自动解锁。 */
 function isLocked(row: SubAccount) { return row.accountStatus === 'LOCKED' }
 function statusText(row: SubAccount) { return isLocked(row) ? '已锁定' : row.status === 'ACTIVE' ? '正常' : '停用' }
@@ -124,10 +126,10 @@ async function unlock(row: SubAccount) {
   try {
     // 置回 ACTIVE 会顺带清空 locked_until 与失败次数（UserRepository.updateManagedStatus），即解锁。
     await api.changeSubAccountStatus(row.id, 'ACTIVE')
-    feedback.value = `[${row.username}] 已解锁`
+    adminNotice.success(`[${row.username}] 已解锁`)
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '子账号解锁失败')
+    adminNotice.error(apiErrorMessage(cause, '子账号解锁失败'))
   } finally {
     busy.value = false
   }
@@ -142,7 +144,6 @@ onMounted(() => { void load() })
     <section class="platform-admin-content">
       <header class="page-heading"><div><h1>子账号</h1></div><el-button type="primary" @click="openCreate">添加子账号</el-button></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
       <el-table scrollbar-always-on v-loading="loading" :data="accounts" row-key="id" border stripe class="accounts-table">
         <el-table-column prop="username" label="用户名" min-width="120"><template #default="{ row }">{{ row.username || '未设置' }}</template></el-table-column>
         <el-table-column label="失效日期" min-width="165"><template #default="{ row }">{{ formatTime(row.expiresAt) }}</template></el-table-column>

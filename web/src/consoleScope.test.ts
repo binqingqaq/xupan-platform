@@ -83,7 +83,7 @@ function machine(overrides: Record<string, unknown> = {}) {
   return {
     id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
-    boardOpen: true, robotManage: false, configEditEnabled: true, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
+    robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
     cancelSeconds: 0, rebateRate: 1.5, oddsRate: 1, specialRebateRate: 0.5, specialOddsRate: 1,
     rebateMode: 'SINGLE', totalLimit: 10000, positiveLimit: 0, angleLimit: 0, strictLimit: 0,
     tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0,
@@ -236,7 +236,7 @@ describe('console scope helpers', () => {
   it('wires the any-permission and role judgements into the router guard', () => {
     const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
     const consoleScopeSource = readFileSync(resolve(process.cwd(), 'src/consoleScope.ts'), 'utf8')
-    const loginSource = readFileSync(resolve(process.cwd(), 'src/views/LoginView.vue'), 'utf8')
+    const loginSource = readFileSync(resolve(process.cwd(), 'src/views/Hby019SourcePage.vue'), 'utf8')
 
     expect(routerSource).toContain('requiredAnyPermission?: readonly string[]')
     expect(routerSource).toContain('requiredRoles?: readonly string[]')
@@ -244,7 +244,9 @@ describe('console scope helpers', () => {
     // 总门禁同时看角色与权限（角色维度落在 `consoleScope.ts`）。
     expect(consoleScopeSource).toContain('isRouteAccessAllowed(input.meta, input.user.permissions, input.user.roles ?? [])')
     expect(routerSource).toContain('resolveRouteGuardDecision(')
-    expect(loginSource).toContain('consoleLandingPath(user.roles)')
+    expect(routerSource).toContain("{ path: '/login', component: Hby019SourcePage")
+    expect(routerSource).toContain("{ path: '/console/login/:username', component: Hby019SourcePage")
+    expect(loginSource).toContain("api.login(requestedUsername, data.password, 'CONSOLE')")
     expect(loginSource).toContain('isConsoleEntryAccount')
     expect(loginSource).not.toContain("return '/agent'")
   })
@@ -624,7 +626,7 @@ describe('route guard diversion', () => {
 
   it('wires the guard and the 401 listener to the entry-aware helpers', () => {
     const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
-    const loginSource = readFileSync(resolve(process.cwd(), 'src/views/LoginView.vue'), 'utf8')
+    const loginSource = readFileSync(resolve(process.cwd(), 'src/views/Hby019SourcePage.vue'), 'utf8')
     const platformLoginSource = readFileSync(resolve(process.cwd(), 'src/views/PlatformAdminLoginView.vue'), 'utf8')
 
     expect(routerSource).toContain('resolveRouteGuardDecision({')
@@ -635,16 +637,13 @@ describe('route guard diversion', () => {
     expect(routerSource).toContain('loginPathForRoute(current.path)')
     expect(routerSource).toContain("reason: 'expired'")
 
-    for (const source of [loginSource, platformLoginSource]) {
-      expect(source).toContain('当前账号没有进入该后台的权限，请用有权限的账号重新登录')
-      // 永不触发的 `reason === 'forbidden'` 死分支已删除。
-      expect(source).not.toContain("reason === 'forbidden'")
-      expect(source).toContain("route.query.reason === 'no-permission'")
-    }
+    expect(loginSource).toContain("reason !== 'no-permission'")
+    expect(platformLoginSource).toContain('当前账号没有进入该后台的权限，请用有权限的账号重新登录')
+    expect(platformLoginSource).not.toContain("reason === 'forbidden'")
+    expect(platformLoginSource).toContain("route.query.reason === 'no-permission'")
     // redirect 回跳：只接受站内绝对路径，防开放重定向（两个登录页同口径）。
-    for (const source of [loginSource, platformLoginSource]) {
-      expect(source).toContain('explicitRedirect')
-      expect(source).toContain("value.startsWith('/') && !value.startsWith('//')")
-    }
+    expect(loginSource).toContain("canRedirectWithinEntry(redirect, 'CONSOLE')")
+    expect(platformLoginSource).toContain('explicitRedirect')
+    expect(platformLoginSource).toContain("value.startsWith('/') && !value.startsWith('//')")
   })
 })

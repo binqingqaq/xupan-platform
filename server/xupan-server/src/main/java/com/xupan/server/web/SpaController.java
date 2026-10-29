@@ -53,6 +53,11 @@ public class SpaController {
         return "forward:/index.html";
     }
 
+    @GetMapping("/console/login/{username}")
+    public String forwardToMachineLogin() {
+        return "forward:/index.html";
+    }
+
     @GetMapping({"/display", "/display/", "/display/mobile", "/display/mobile/"})
     public String forwardToMobileDisplayReplica() {
         return "forward:/display/mobile-replica/index.html";

@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { ReportNetworkInput, ReportNetworkItem } from '../types/platformAdmin'
 
@@ -9,7 +10,6 @@ const rows = ref<ReportNetworkItem[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
@@ -45,7 +45,6 @@ function openEdit(row: ReportNetworkItem) {
 async function submit() {
   saving.value = true
   error.value = ''
-  feedback.value = ''
   try {
     if (editingId.value === null) {
       await api.createReportNetwork(form.value)
@@ -53,10 +52,10 @@ async function submit() {
       await api.updateReportNetwork(editingId.value, editingVersion.value, form.value)
     }
     formOpen.value = false
-    feedback.value = '成功'
+    adminNotice.success('成功')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '保存失败')
+    adminNotice.error(apiErrorMessage(cause, '保存失败'))
   } finally {
     saving.value = false
   }
@@ -67,9 +66,10 @@ async function toggle(row: ReportNetworkItem) {
   error.value = ''
   try {
     await api.changeReportNetworkStatus(row.id, row.version, next)
+    adminNotice.success('状态已更新')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '状态修改失败')
+    adminNotice.error(apiErrorMessage(cause, '状态修改失败'))
   }
 }
 
@@ -80,13 +80,12 @@ async function remove(row: ReportNetworkItem) {
     return
   }
   error.value = ''
-  feedback.value = ''
   try {
     await api.deleteReportNetwork(row.id, row.version)
-    feedback.value = '成功！'
+    adminNotice.success('成功！')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '删除失败')
+    adminNotice.error(apiErrorMessage(cause, '删除失败'))
   }
 }
 
@@ -102,7 +101,6 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><div><h1>网盘设置</h1><p>管理网盘链接和启用状态</p></div><div class="heading-actions"><el-button :disabled="loading" @click="load">刷新</el-button><el-button type="primary" @click="openCreate">添加</el-button></div></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
       <el-table scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="networks-table">
         <el-table-column prop="name" label="网盘名称" min-width="160" />
         <el-table-column prop="code" label="网盘键名" min-width="150" />

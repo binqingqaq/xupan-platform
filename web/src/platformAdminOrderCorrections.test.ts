@@ -90,6 +90,6 @@ describe('platform admin order corrections', () => {
       command: '1番200',
       ballNumber: 2,
     }))
-    expect(container.textContent).toContain('修改成功')
+    expect(document.body.textContent).toContain('修改成功')
   })
 })

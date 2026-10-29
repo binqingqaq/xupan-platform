@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import { ElMessageBox } from 'element-plus'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { UnsettledOrderItem } from '../types/platformAdmin'
 
@@ -12,7 +13,6 @@ const total = ref(0)
 const loading = ref(false)
 const busyId = ref<number | null>(null)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
@@ -38,14 +38,13 @@ async function remove(row: UnsettledOrderItem) {
   } catch { return }
   busyId.value = row.id
   error.value = ''
-  feedback.value = ''
   try {
     const result = await api.cancelUnsettledOrder(row.id)
-    feedback.value = `成功！已删除注单，返还 ${result.refundedAmount.toFixed(2)}`
+    adminNotice.success(`成功！已删除注单，返还 ${result.refundedAmount.toFixed(2)}`)
     await load(page.value)
     if (rows.value.length === 0 && page.value > 1) await load(page.value - 1)
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '删除未结订单失败')
+    adminNotice.error(apiErrorMessage(cause, '删除未结订单失败'))
   } finally {
     busyId.value = null
   }
@@ -79,7 +78,6 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><h1>未结订单</h1><el-button :disabled="loading" @click="load(page)">刷新</el-button></header>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
-      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
       <el-skeleton v-if="loading" :rows="6" animated />
       <el-table scrollbar-always-on v-else :data="rows" row-key="id" stripe border empty-text="暂无数据">
         <el-table-column prop="subAccount" label="子帐号" min-width="110"><template #default="{ row }">{{ row.subAccount || '--' }}</template></el-table-column>

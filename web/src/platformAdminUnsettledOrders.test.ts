@@ -80,6 +80,6 @@ describe('platform admin unsettled orders', () => {
     await settleOperations()
 
     expect(api.cancelUnsettledOrder).toHaveBeenCalledWith(7)
-    expect(container.textContent).toContain('成功！')
+    expect(document.body.textContent).toContain('成功！')
   })
 })

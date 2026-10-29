@@ -286,7 +286,7 @@ class ChatMessageFeedbackIntegrationTest {
     private void configureMachine() {
         jdbcTemplate.update("""
                 UPDATE agent
-                   SET odds_rate = 95, special_odds_rate = 18, board_open = TRUE,
+                   SET odds_rate = 95, special_odds_rate = 18, manual_betting_open = TRUE,
                        total_limit = 1000, positive_limit = 20000, angle_limit = 20000,
                        strict_limit = 20000, tong_limit = 20000, car_limit = 20000,
                        special_limit = 20000, odd_even_limit = 20000, big_small_limit = 20000,

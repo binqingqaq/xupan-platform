@@ -193,6 +193,6 @@ describe('NotFoundView 与兜底路由', () => {
     expect(routerSource).toContain("const effectivePath = path === '/404' && originalPath ? originalPath : path")
     expect(routerSource).toContain("const originalPath = typeof to.query.path === 'string' ? to.query.path : ''")
     expect(routerSource).toContain('setViewportForRoute(to.path, originalPath)')
-    expect(routerSource).toContain('document.body.classList.toggle(\'ops-console-body\', isConsolePath)')
+    expect(routerSource).toContain("document.body.classList.toggle('ops-console-body', isConsolePath &&")
   })
 })

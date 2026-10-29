@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { GameSettings, GameSettingsInput } from '../types/platformAdmin'
 
@@ -9,7 +10,6 @@ const rows = ref<GameSettings[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
@@ -74,22 +74,25 @@ function openEdit(row: GameSettings) {
 }
 
 async function save() {
-  if (saving.value || !form.value.displayName.trim() || !form.value.gameCode.trim()) return
+  if (saving.value) return
+  if (!form.value.displayName.trim() || !form.value.gameCode.trim()) {
+    adminNotice.warning('请填写彩种名称和键名')
+    return
+  }
   saving.value = true
   error.value = ''
-  feedback.value = ''
   try {
     if (editingId.value === null) {
       await api.createGameSettings(form.value)
-      feedback.value = '成功'
+      adminNotice.success('成功')
     } else {
       await api.updateGameSettings(editingId.value, editingVersion.value, form.value)
-      feedback.value = '成功'
+      adminNotice.success('成功')
     }
     formOpen.value = false
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '保存失败')
+    adminNotice.error(apiErrorMessage(cause, '保存失败'))
   } finally {
     saving.value = false
   }
@@ -101,13 +104,12 @@ async function remove(row: GameSettings) {
     await ElMessageBox.confirm(`确定将[${row.displayName}]删除么?`, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', closeOnClickModal: false })
   } catch { return }
   error.value = ''
-  feedback.value = ''
   try {
     await api.deleteGameSettings(row.id)
-    feedback.value = '成功'
+    adminNotice.success('成功')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '删除失败')
+    adminNotice.error(apiErrorMessage(cause, '删除失败'))
   }
 }
 
@@ -127,7 +129,6 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><h1>游戏设置</h1><div class="heading-actions"><el-button :disabled="loading" @click="load">刷新</el-button><el-button type="primary" @click="openCreate">添加彩种</el-button></div></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
       <el-table scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="games-table">
         <el-table-column prop="displayName" label="彩种名称" min-width="130" />
         <el-table-column prop="gameCode" label="彩种键名" min-width="120" />

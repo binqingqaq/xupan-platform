@@ -131,7 +131,8 @@ public class TestPlayerBehaviorService {
                 WHERE a.agent_id=? AND a.player_kind='BOT'
                   AND u.status='ACTIVE' AND a.status='ACTIVE'
                   AND b.run_mode='AUTOMATIC' AND b.enabled=TRUE
-                  AND ag.status='ACTIVE' AND ag.board_open=TRUE
+                  AND ag.status='ACTIVE'
+                  AND ag.manual_betting_open=TRUE
                   AND (ag.expires_at IS NULL OR ag.expires_at>CURRENT_TIMESTAMP(6))
                   AND EXISTS (SELECT 1 FROM player_access_link l
                                WHERE l.user_id=u.id AND l.scope='PLAYER_FULL'
@@ -259,6 +260,9 @@ public class TestPlayerBehaviorService {
             if (notWorkable != null) {
                 return skipAction(actionId, notWorkable, skipMessage(notWorkable));
             }
+            if ("BET_TEXT".equals(action.actionType()) && !machineBettingOpen(userId)) {
+                return skipAction(actionId, "MACHINE_MANUALLY_CLOSED", skipMessage("MACHINE_MANUALLY_CLOSED"));
+            }
             String idempotencyKey = jdbc.queryForObject("SELECT idempotency_key FROM test_player_action WHERE id=?", String.class, actionId);
             if ("AUTO_UP".equals(action.actionType()) || "AUTO_DOWN".equals(action.actionType())) {
                 return executeAutomaticPoints(actionId, userId, action);
@@ -286,11 +290,17 @@ public class TestPlayerBehaviorService {
         if (executable == null) {
             return skipAction(actionId, "INSUFFICIENT_BALANCE_OR_LIMIT", "余额或玩法限额不允许本次下注");
         }
+        if (!machineBettingOpen(userId)) {
+            return skipAction(actionId, "MACHINE_MANUALLY_CLOSED", skipMessage("MACHINE_MANUALLY_CLOSED"));
+        }
         ChatMessageService.ChatMessageSendOutcome outcome = chatMessageService.sendUserMessageWithOutcome(
                 userId, "main", idempotencyKey, action.sourceText(), Instant.now());
         Long betId = jdbc.query("SELECT id FROM game_bet WHERE request_idempotency_key=?",
                 rs -> rs.next() ? rs.getLong(1) : null, "CHAT-" + idempotencyKey);
         if (betId == null) {
+            if (!machineBettingOpen(userId)) {
+                return skipAction(actionId, "MACHINE_MANUALLY_CLOSED", skipMessage("MACHINE_MANUALLY_CLOSED"));
+            }
             jdbc.update("UPDATE test_player_action SET status='SKIPPED', message_id=?, bet_id=NULL, error_code=?, error_message=?, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?",
                     outcome.message().id(), "LIMIT_EXCEEDED", "注单被封盘或限额拦截", actionId);
             return loadAction(actionId);
@@ -366,10 +376,20 @@ public class TestPlayerBehaviorService {
         return jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id=?", BigDecimal.class, accountId);
     }
 
+    private boolean machineBettingOpen(long userId) {
+        List<Boolean> values = jdbc.queryForList("""
+                SELECT ag.manual_betting_open
+                  FROM demo_user_account a
+                  JOIN agent ag ON ag.id=a.agent_id
+                 WHERE a.sys_user_id=?
+                """, Boolean.class, userId);
+        return !values.isEmpty() && Boolean.TRUE.equals(values.get(0));
+    }
+
     /** Returns the BY220-equivalent stop reason for a bot action. */
     private String workabilityFailure(long userId) {
         List<Workability> rows = jdbc.query("""
-                SELECT u.status user_status,a.status account_status,ag.status machine_status,ag.board_open,
+                SELECT u.status user_status,a.status account_status,ag.status machine_status,
                        ag.expires_at,
                        (SELECT COUNT(*) FROM player_access_link l WHERE l.user_id=u.id AND l.scope='PLAYER_FULL'
                         AND l.revoked_at IS NULL AND l.expires_at>CURRENT_TIMESTAMP(6)) usable_links
@@ -377,12 +397,12 @@ public class TestPlayerBehaviorService {
                   LEFT JOIN agent ag ON ag.id=a.agent_id
                  WHERE u.id=? AND a.player_kind='BOT'
                 """, (rs,n) -> new Workability(rs.getString("user_status"),rs.getString("account_status"),
-                rs.getString("machine_status"),rs.getBoolean("board_open"),rs.getTimestamp("expires_at"),
+                rs.getString("machine_status"),rs.getTimestamp("expires_at"),
                 rs.getInt("usable_links")), userId);
         if (rows.isEmpty()) return "PLAYER_INACTIVE";
         Workability state=rows.get(0);
         if (!"ACTIVE".equals(state.userStatus()) || !"ACTIVE".equals(state.accountStatus())) return "PLAYER_INACTIVE";
-        if (!"ACTIVE".equals(state.machineStatus()) || !state.boardOpen()
+        if (!"ACTIVE".equals(state.machineStatus())
                 || state.machineExpiresAt()!=null && state.machineExpiresAt().toInstant().isBefore(Instant.now())) return "MACHINE_CLOSED";
         return state.usableLinks()>0 ? null : "LINK_INVALID";
     }
@@ -415,6 +435,7 @@ public class TestPlayerBehaviorService {
             case "PLAYER_INACTIVE" -> "玩家已停用或删除";
             case "ISSUE_CLOSED" -> "期号已封盘或开奖，动作不再执行";
             case "MACHINE_CLOSED" -> "机器已停用、闭盘或到期，托停止工作";
+            case "MACHINE_MANUALLY_CLOSED" -> "机器已手动封盘，托下注动作不再执行";
             default -> reasonCode;
         };
     }
@@ -476,7 +497,7 @@ public class TestPlayerBehaviorService {
         return value.length() > 255 ? value.substring(0, 255) : value;
     }
 
-    private record Workability(String userStatus, String accountStatus, String machineStatus, boolean boardOpen, java.sql.Timestamp machineExpiresAt, int usableLinks) {
+    private record Workability(String userStatus, String accountStatus, String machineStatus, java.sql.Timestamp machineExpiresAt, int usableLinks) {
     }
 
     private record AccountState(long accountId, BigDecimal balance) {

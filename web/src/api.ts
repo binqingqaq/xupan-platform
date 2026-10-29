@@ -50,6 +50,7 @@ import type {
   BettingLimits,
   MachineConfigUpdateRequest,
   MachineConfigView,
+  MachineBettingStateView,
   ReportConfigUpdateRequest,
   ReportConfigView,
   ReportOrderPage,
@@ -1085,6 +1086,12 @@ export const api = {
       body: JSON.stringify(body),
     })
   },
+  /** 手动开/封盘只允许当前机器账号更新本人机器；这是下注许可，不是期次阶段。 */
+  updateMachineBettingState: (machineId: number, open: boolean) =>
+    request<MachineBettingStateView>('/api/admin/player-desk/machine-betting-state', {
+      method: 'PUT',
+      body: JSON.stringify({ machineId, open }),
+    }),
   getMobileDisplayHome: () => request<MobileDisplayHomeResponse>('/api/display/mobile/home'),
   /** 中心上游报网状态与当前机器的报网开关。 */
   getReportConfig: (machineId?: number | null) => {

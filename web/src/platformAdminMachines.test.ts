@@ -1,8 +1,10 @@
 import { createApp, nextTick } from 'vue'
+import { ElMessage } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminMachines from './views/PlatformAdminMachines.vue'
 import { api } from './api'
-import { formField, selectFormOption, dialogSubmit, clickText } from './platformAdminAccountTestHelpers'
+import { adminNotice } from './services/adminNotice'
+import { formField, selectFormOption, dialogSubmit, clickText, setFormInput } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -16,8 +18,21 @@ vi.mock('./api', () => ({
     listMachinePlayers: vi.fn(),
     getGameSettings: vi.fn(),
   },
-  apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+  apiErrorMessage: (error: { code?: string }, fallback: string) => error?.code === 'SUB_ACCOUNT_SCORE_INSUFFICIENT'
+    ? '该子帐号积分不足以为机器分配积分！' : fallback,
 }))
+
+vi.mock('./services/adminNotice', async importOriginal => {
+  const original = await importOriginal<typeof import('./services/adminNotice')>()
+  return { adminNotice: {
+    success: vi.fn(original.adminNotice.success),
+    error: vi.fn(original.adminNotice.error),
+    warning: vi.fn(original.adminNotice.warning),
+    info: vi.fn(original.adminNotice.info),
+  } }
+})
+
+vi.mock('element-plus/es/components/message/style/css', () => ({}))
 
 vi.mock('./components/platform-admin/PlatformAdminNav.vue', () => ({
   default: { template: '<nav data-testid="platform-admin-nav" />' },
@@ -25,13 +40,15 @@ vi.mock('./components/platform-admin/PlatformAdminNav.vue', () => ({
 
 let container: HTMLDivElement | null = null
 let app: ReturnType<typeof createApp> | null = null
+let originalClipboard: PropertyDescriptor | undefined
 
 function machine(overrides: Record<string, unknown> = {}) {
   return {
     id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11, configVersion: 4,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
-    boardOpen: true, robotManage: false, configEditEnabled: true, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
-    cancelSeconds: 0, rebateRate: 1.5, oddsRate: 1, specialRebateRate: 0.5, specialOddsRate: 1,
+    manualBettingOpen: true,
+    robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
+    cancelSeconds: 0, rebateRate: 1, oddsRate: 1, specialRebateRate: 0, specialOddsRate: 1,
     rebateMode: 'SINGLE', totalLimit: 10000, positiveLimit: 0, angleLimit: 0, strictLimit: 0,
     tongLimit: 0, carLimit: 0, specialLimit: 0, oddEvenLimit: 0, bigSmallLimit: 0, fanLimit: 0,
     addLimit: 0, playerMaxStake: 0, playerMinStake: 0, normalCount: 2, botCount: 3,
@@ -60,9 +77,11 @@ function rebateModeLabel() {
 }
 
 beforeEach(() => {
-  vi.mocked(api.me).mockResolvedValue({ displayName: '超级管理员', permissions: [] } as never)
+  vi.clearAllMocks()
+  ElMessage.closeAll()
+  vi.mocked(api.me).mockResolvedValue({ displayName: '超级管理员', permissions: ['SUB_ACCOUNT_MANAGE'] } as never)
   vi.mocked(api.listMachines).mockResolvedValue([machine()] as never)
-  vi.mocked(api.listSubAccounts).mockResolvedValue([] as never)
+  vi.mocked(api.listSubAccounts).mockResolvedValue([{ id: 21, username: 'sub001' }] as never)
   vi.mocked(api.createMachine).mockResolvedValue(machine() as never)
   vi.mocked(api.updateMachine).mockResolvedValue(machine() as never)
   vi.mocked(api.deleteMachine).mockResolvedValue(undefined)
@@ -79,10 +98,27 @@ afterEach(() => {
   app = null
   container?.remove()
   container = null
+  if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+  else Reflect.deleteProperty(navigator, 'clipboard')
+  originalClipboard = undefined
   vi.restoreAllMocks()
 })
 
 describe('platform admin machines', () => {
+  it('shows the authoritative manual betting state as read-only machine status', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([
+      machine({ id: 1, manualBettingOpen: true }),
+      machine({ id: 2, accountUsername: 'bot002', manualBettingOpen: false }),
+    ] as never)
+
+    await mountMachines()
+    const rows = container?.querySelectorAll('tbody tr') ?? []
+    expect(Array.from(container?.querySelectorAll('thead th') ?? []).map(cell => cell.textContent).join(' ')).toContain('下注开关')
+    expect(rows[0]?.textContent).toContain('开盘')
+    expect(rows[1]?.textContent).toContain('封盘')
+    expect(container?.querySelectorAll('tbody tr .el-switch').length).toBe(0)
+  })
+
   it('hides machine betting parameters in the create form and omits them from its payload', async () => {
     await mountMachines()
     expect(container?.textContent).toContain('机器管理')
@@ -106,6 +142,7 @@ describe('platform admin machines', () => {
     inputs[1]!.value = 'secret123'
     inputs[1]!.dispatchEvent(new Event('input'))
     await settle()
+    await selectFormOption('所属子账号', 'sub001')
 
     dialogSubmit()
     await settle()
@@ -123,6 +160,31 @@ describe('platform admin machines', () => {
     ]) {
       expect(createPayload).not.toHaveProperty(field)
     }
+  })
+
+  it('explains the password policy beside the field and rejects numeric-only passwords inline', async () => {
+    await mountMachines()
+    container?.querySelectorAll<HTMLButtonElement>('.content > header button')[0]?.click()
+    await settle()
+
+    const dialog = document.querySelector('.el-dialog')!
+    const passwordField = formField('密码')
+    expect(passwordField.textContent).toContain('8–72 个字符')
+    expect(passwordField.textContent).toContain('至少包含一个字母和一个数字')
+    expect(passwordField.textContent).toContain('无需特殊字符')
+    expect(passwordField.textContent).toContain('留空使用系统默认密码')
+    expect(dialog.textContent).not.toContain('test123456')
+
+    setFormInput('用户名', 'bot003')
+    setFormInput('密码', '123456')
+    await selectFormOption('所属子账号', 'sub001')
+    dialogSubmit()
+    await settle()
+
+    expect(api.createMachine).not.toHaveBeenCalled()
+    expect(passwordField.textContent).toContain('长度需为 8–72 个字符')
+    expect(passwordField.textContent).toContain('至少包含一个字母')
+    expect(adminNotice.error).not.toHaveBeenCalled()
   })
 
   it('shows the stored rebate mode in the list and backfills it when editing', async () => {
@@ -176,7 +238,8 @@ describe('platform admin machines', () => {
     await settle()
 
     expect(api.updateMachine).not.toHaveBeenCalled()
-    expect(document.querySelector('.el-dialog')?.textContent).toContain('玩家最小注额不能大于玩家最高注额')
+    expect(adminNotice.error).toHaveBeenCalledWith('玩家最小注额不能大于玩家最高注额')
+    expect(document.querySelector('.el-dialog')?.textContent).not.toContain('玩家最小注额不能大于玩家最高注额')
   })
 
   it('falls back to SINGLE for machines without a stored rebate mode', async () => {
@@ -189,12 +252,7 @@ describe('platform admin machines', () => {
     expect(rebateModeLabel()).toBe('单边')
   })
 
-  /**
-   * 回归：编辑机器必须回显并保留该机器已配置的彩种。
-   *
-   * 以前 openEdit 硬编码 games: ['AU8']，配合后端"先 DELETE agent_game 再回插"，
-   * 导致编辑机器任何字段都会把彩种清成只剩 AU8（静默丢数据）。
-   */
+  // 彩种选择已从表单移除，但编辑其它字段时仍须保留已有彩种关联。
   it('keeps the stored games when editing a machine', async () => {
     vi.mocked(api.listMachines).mockResolvedValue([machine({ id: 7, games: ['AU8', 'K28'] })] as never)
 
@@ -202,25 +260,45 @@ describe('platform admin machines', () => {
     container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
     await settle()
 
-    const checked = Array.from(container?.querySelectorAll<HTMLInputElement>('.games-checks input:checked') ?? [])
-      .map(input => input.value)
-      .sort()
-    expect(checked).toEqual(['AU8', 'K28'])
+    expect(document.querySelector('.el-dialog')?.textContent).not.toContain('彩种')
 
     dialogSubmit()
     await settle()
     expect(api.updateMachine).toHaveBeenCalledWith(7, 4, expect.objectContaining({ games: ['AU8', 'K28'] }))
   })
 
-  it('renders an empty games selection for machines without games', async () => {
+  it('uses the sole default game when a legacy machine has no game association', async () => {
     vi.mocked(api.listMachines).mockResolvedValue([machine({ id: 9, games: [] })] as never)
 
     await mountMachines()
     container?.querySelectorAll<HTMLButtonElement>('tbody tr button')[0]?.click()
     await settle()
 
-    expect(container?.querySelectorAll('.games-checks input:checked').length).toBe(0)
-    expect(container?.querySelector('.games-checks')?.textContent).toContain('澳8番摊')
+    expect(document.querySelector('.el-dialog')?.textContent).not.toContain('彩种')
+    dialogSubmit()
+    await settle()
+    expect(api.updateMachine).toHaveBeenCalledWith(9, 4, expect.objectContaining({ games: ['AU8'] }))
+  })
+
+  it('keeps the edit dialog and entered score when the subaccount balance is insufficient', async () => {
+    vi.mocked(api.updateMachine).mockRejectedValue({ code: 'SUB_ACCOUNT_SCORE_INSUFFICIENT' })
+    await mountMachines()
+    container?.querySelector('tbody tr button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await settle()
+
+    setFormInput('积分', '1230967')
+    await settle()
+    dialogSubmit()
+    await settle()
+
+    expect(api.updateMachine).toHaveBeenCalled()
+    expect(adminNotice.error).toHaveBeenCalledWith('该子帐号积分不足以为机器分配积分！')
+    expect(adminNotice.success).not.toHaveBeenCalled()
+    expect(document.querySelector('.el-dialog')).toBeTruthy()
+    expect(formField('积分').querySelector<HTMLInputElement>('input')?.value).toBe('1230967')
+    expect(container?.querySelector('.content .page-alert')).toBeNull()
+    const toast = document.body.querySelector('.el-message.xupan-admin-notice')
+    expect(toast?.textContent).toContain('该子帐号积分不足以为机器分配积分！')
   })
 
   /**
@@ -248,5 +326,37 @@ describe('platform admin machines', () => {
     unlock?.click()
     await settle()
     expect(api.changeMachineStatus).toHaveBeenCalledWith(5, 'ACTIVE')
+  })
+
+  it('copies the row machine username link using the current site origin', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+
+    await mountMachines()
+    const copyButton = Array.from(container?.querySelectorAll<HTMLButtonElement>('tbody tr button') ?? [])
+      .find(button => button.getAttribute('aria-label') === '复制 bot001 登录地址')
+    expect(copyButton).toBeTruthy()
+
+    copyButton?.click()
+    await settle()
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/^http:\/\/localhost(?::\d+)?\/console\/login\/bot001$/))
+    expect(copyButton?.textContent).toContain('已复制')
+    expect(adminNotice.success).toHaveBeenCalledWith(expect.stringContaining('仅本机可访问'))
+  })
+
+  it('shows a selectable URL when the browser clipboard API is unavailable', async () => {
+    originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+
+    await mountMachines()
+    const copyButton = Array.from(container?.querySelectorAll<HTMLButtonElement>('tbody tr button') ?? [])
+      .find(button => button.getAttribute('aria-label') === '复制 bot001 登录地址')
+    copyButton?.click()
+    await settle()
+
+    expect(document.querySelector<HTMLInputElement>('.el-dialog input[readonly]')?.value)
+      .toMatch(/^http:\/\/localhost(?::\d+)?\/console\/login\/bot001$/)
   })
 })

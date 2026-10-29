@@ -133,7 +133,7 @@ describe('platform admin draw history', () => {
     expect(api.forceSettleAllDrawHistory).toHaveBeenNthCalledWith(2, {
       confirm: 'FORCE_SETTLE_ALL', preview: false,
     })
-    expect(container.textContent).toContain('已强制结算 1 期')
+    expect(document.body.textContent).toContain('已强制结算 1 期')
 
     operationButton('补齐结算', container).click()
     await nextTick()

@@ -60,7 +60,7 @@
       ledger: [{ kind: 0, userWxid: 'local-1889', name: '甲乙丙丁', delta: 100, afterScore: 100.65, time: '2026-10-14 15:11' }],
       nickLogs: {},
       settings: {
-        open: true, odds: 95, specialOdds: 18, rebate: 1, normalRebate: 5,
+        odds: 95, specialOdds: 18, rebate: 1, normalRebate: 5,
         hold: 100, cancel: 20, adapter: true, hideMsg: 0, cmdTuoCount: 20,
         limits: {}, wp: { online: true, auto: 0, withdraw: 0, money: 50000, betting: 0, name: 'lx' },
         tuo: { activeRate: 90, maxBets: 3, cancelledCmdIds: [] }
@@ -434,7 +434,7 @@
     }, s.limits || {});
     return Object.assign({
       IsNeedLogin: false, OverdueTime: new Date('2026-11-01T00:00:00+08:00').getTime(), ServerTime: Date.now(),
-      score: 157, IsKaiPan: s.open ? 1 : 0, lType: localStorage.getItem('xupan.admin.point-request-sound') === 'sound2' ? 2 : 1, qh: '20261015001', PeiLv: s.odds,
+      score: 157, lType: localStorage.getItem('xupan.admin.point-request-sound') === 'sound2' ? 2 : 1, qh: '20261015001', PeiLv: s.odds,
       FanShui: s.normalRebate, Hold5TimeSeconds: s.hold, CancelInSecs: s.cancel,
       tePeilv: s.specialOdds, teFanshui: s.rebate, HideMsg: s.hideMsg,
       rob: rob,
@@ -526,7 +526,6 @@
       }
       case '/rbt/index/delmember':
         db.users = db.users.filter(function (user) { return user.wxid !== data.wxid && String(user.id) !== String(data.uid); }); save(); return 0;
-      case '/rbt/index/updatepanstatus': db.settings.open = Number(data.st) !== 0; save(); return 0;
       case '/rbt/index/updatepeilv':
         if (data.tar && /te|special/i.test(String(data.tar))) db.settings.specialOdds = Number(data.newPeiLv || db.settings.specialOdds);
         else db.settings.odds = Number(data.newPeiLv || db.settings.odds);
@@ -611,7 +610,7 @@
     else settings = $.extend(true, {}, url || {});
     const path = new URL(settings.url || location.pathname, location.href).pathname;
     const xupanPaths = [
-      '/rbt/index/needhandle', '/rbt/index/updatepeilv', '/rbt/index/settype',
+      '/rbt/index/needhandle', '/rbt/index/updatepeilv', '/rbt/index/updatepanstatus', '/rbt/index/settype',
       '/rbt/index/getcmdlist', '/rbt/index/getopenresultlist',
       '/rbt/index/addmember', '/rbt/index/getmembers', '/rbt/index/delmember', '/rbt/index/updatenickname',
       '/rbt/index/getnicknamelog', '/rbt/index/setlinkexpire', '/rbt/index/getuserlink',

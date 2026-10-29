@@ -84,7 +84,7 @@ class CenterReconciliationControllerTest {
         long accountUserId = userRepository.insert("recon-machine-account", "对账机器账号",
                 new BCryptPasswordEncoder().encode(PASSWORD), "ACTIVE");
         jdbc.update("""
-                INSERT INTO agent (agent_code, display_name, status, system_owned, board_open, report_type,
+                INSERT INTO agent (agent_code, display_name, status, system_owned, manual_betting_open, report_type,
                                    report_auto, report_online, center_agent_id, account_user_id, created_by)
                 VALUES ('RECON_MACHINE_A', '对账机器', 'ACTIVE', FALSE, TRUE, 'CENTER', TRUE, TRUE, ?, ?, ?)
                 """, centerAgentId, accountUserId, adminId);

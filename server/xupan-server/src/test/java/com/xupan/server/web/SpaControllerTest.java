@@ -41,4 +41,11 @@ class SpaControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(forwardedUrl("/index.html"));
     }
+
+    @Test
+    void machineLoginLinksServeTheVueApplicationForDirectAccessAndRefresh() throws Exception {
+        mockMvc.perform(get("/console/login/ahy005"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+    }
 }

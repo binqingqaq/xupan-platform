@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { api, clearAccessToken } from '../api'
 import PlayerLinkExpiredView from './PlayerLinkExpiredView.vue'
 import UserRoom from './UserRoom.vue'
 
 const route = useRoute()
+const router = useRouter()
 const busy = ref(true)
 const authenticated = ref(false)
 
@@ -13,11 +14,6 @@ function tokenFromRoute(): string {
   const pathValue = typeof route.params.linkPath === 'string' ? route.params.linkPath : ''
   if (pathValue) return pathValue.split(/\s+/, 1)[0]
   return typeof route.query.token === 'string' ? route.query.token : ''
-}
-
-function keepPlayerLinkInAddressBar(token: string, displayName: string) {
-  const path = `/33/${encodeURIComponent(token)}%20${encodeURIComponent(displayName)}`
-  window.history.replaceState(window.history.state, '', `${path}${window.location.hash}`)
 }
 
 onMounted(async () => {
@@ -31,11 +27,14 @@ onMounted(async () => {
     if (result.user.authMode !== 'PLAYER_LINK' || result.user.scope !== 'PLAYER_FULL') {
       throw new Error('链接范围无效')
     }
-    keepPlayerLinkInAddressBar(token, result.user.displayName)
     authenticated.value = true
+    await router.replace('/room')
   } catch {
     clearAccessToken()
     busy.value = false
+    if (route.path !== '/player-login' || Object.keys(route.query).length > 0) {
+      await router.replace('/player-login')
+    }
   }
 })
 </script>

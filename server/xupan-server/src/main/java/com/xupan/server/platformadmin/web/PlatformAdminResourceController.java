@@ -140,8 +140,7 @@ public class PlatformAdminResourceController {
     }
 
     public record MachineRequest(@NotBlank String username, String rawPassword, Long groupId,
-                                 BigDecimal score, Instant expiresAt, boolean boardOpen, boolean robotManage,
-                                 Boolean configEditEnabled,
+                                 BigDecimal score, Instant expiresAt, Boolean robotManage,
                                  boolean chaseEnabled, int botCount, int closeSeconds, int cancelSeconds,
                                  BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
                                  BigDecimal specialOddsRate, BigDecimal totalLimit, BigDecimal positiveLimit,
@@ -152,11 +151,10 @@ public class PlatformAdminResourceController {
                                  String rebateMode) {
         PlatformAdminService.MachineInput toInput() {
             return new PlatformAdminService.MachineInput(username, rawPassword, groupId, score,
-                    expiresAt, boardOpen, robotManage, chaseEnabled, botCount, closeSeconds, cancelSeconds,
+                    expiresAt, robotManage == null || robotManage, chaseEnabled, botCount, closeSeconds, cancelSeconds,
                     rebateRate, oddsRate, specialRebateRate, specialOddsRate, totalLimit, positiveLimit,
                     angleLimit, strictLimit, tongLimit, carLimit, specialLimit, oddEvenLimit, bigSmallLimit,
-                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode,
-                    configEditEnabled == null || configEditEnabled);
+                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode);
         }
     }
 
@@ -189,8 +187,8 @@ public class PlatformAdminResourceController {
      */
     public record MachineResponse(long id, String code, String accountUsername, long accountUserId,
                                   Long groupId, String groupUsername, BigDecimal score, Instant expiresAt,
-                                  String status, String accountStatus, int configVersion,
-                                  boolean boardOpen, boolean robotManage, boolean configEditEnabled,
+                                  String status, String accountStatus, boolean manualBettingOpen, int configVersion,
+                                  boolean robotManage,
                                   boolean chaseEnabled,
                                   int requestedBotCount, int closeSeconds, int cancelSeconds,
                                   BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
@@ -203,7 +201,8 @@ public class PlatformAdminResourceController {
         static MachineResponse from(PlatformAdminService.MachineRow row) {
             return new MachineResponse(row.id(), row.code(), row.accountUsername(),
                     row.accountUserId(), row.groupId(), row.groupUsername(), row.score(), row.expiresAt(),
-                    row.status(), row.accountStatus(), row.configVersion(), row.boardOpen(), row.robotManage(), row.configEditEnabled(), row.chaseEnabled(),
+                    row.status(), row.accountStatus(), row.manualBettingOpen(), row.configVersion(),
+                    row.robotManage(), row.chaseEnabled(),
                     row.requestedBotCount(),
                     row.closeSeconds(), row.cancelSeconds(), row.rebateRate(), row.oddsRate(),
                     row.specialRebateRate(), row.specialOddsRate(), row.totalLimit(), row.positiveLimit(),

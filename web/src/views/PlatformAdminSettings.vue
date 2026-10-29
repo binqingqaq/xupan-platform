@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { PlatformSettings, PlatformSettingsInput } from '../types/platformAdmin'
 
@@ -21,7 +22,6 @@ const saving = ref(false)
 const dangerSaving = ref(false)
 const clearing = ref(false)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const clearTime = ref('')
 
@@ -54,12 +54,11 @@ async function load() {
 async function save() {
   saving.value = true
   error.value = ''
-  feedback.value = ''
   try {
     applySettings(await api.updatePlatformSettings(form.value))
-    feedback.value = '保存成功！'
+    adminNotice.success('保存成功！')
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '设置保存失败')
+    adminNotice.error(apiErrorMessage(cause, '设置保存失败'))
   } finally {
     saving.value = false
   }
@@ -78,12 +77,11 @@ async function deleteAllAccounts() {
     return
   }
   if (confirmation !== 'DELETE_ALL_ACCOUNTS') {
-    feedback.value = '确认文本不正确，已取消'
+    adminNotice.warning('确认文本不正确，已取消')
     return
   }
   dangerSaving.value = true
   error.value = ''
-  feedback.value = ''
   try {
     const preview = await api.previewDeleteAllAccounts(confirmation)
     const message = `将删除子账号 ${preview.counts.admins} 个、机器 ${preview.counts.robots} 个、玩家/托 ${preview.counts.players} 个，是否继续？`
@@ -93,10 +91,10 @@ async function deleteAllAccounts() {
       return
     }
     const result = await api.deleteAllAccounts(confirmation)
-    feedback.value = result.message
+    adminNotice.success(result.message)
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '全量账号删除失败')
+    adminNotice.error(apiErrorMessage(cause, '全量账号删除失败'))
   } finally {
     dangerSaving.value = false
   }
@@ -105,14 +103,12 @@ async function deleteAllAccounts() {
 async function clearData() {
   if (clearing.value) return
   if (!clearTime.value) {
-    error.value = '请选择清理时间'
-    feedback.value = ''
+    adminNotice.warning('请选择清理时间')
     return
   }
   const confirm = 'CONFIRM_CLEAR'
   clearing.value = true
   error.value = ''
-  feedback.value = ''
   try {
     const preview = await api.previewClearData(clearTime.value, confirm)
     try {
@@ -121,9 +117,9 @@ async function clearData() {
       return
     }
     const result = await api.clearData(clearTime.value, confirm)
-    feedback.value = result.message
+    adminNotice.success(result.message)
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '清空数据失败')
+    adminNotice.error(apiErrorMessage(cause, '清空数据失败'))
   } finally {
     clearing.value = false
   }
@@ -141,7 +137,6 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><h1>设置</h1></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
       <el-skeleton v-if="loading" :rows="7" animated />
       <el-form v-else class="settings-form" label-position="top" @submit.prevent="save">
         <section class="danger-zone">

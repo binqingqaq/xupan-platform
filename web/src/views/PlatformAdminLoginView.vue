@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, apiErrorMessage, restoreSession } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import { canRedirectWithinEntry, isConsoleEntryAccount } from '../consoleScope'
 import type { CurrentUserView } from '../types'
 
@@ -10,7 +11,6 @@ const router = useRouter()
 const username = ref('')
 const password = ref('')
 const busy = ref(false)
-const error = ref('')
 
 /** 只接受站内绝对路径，防开放重定向（与 `LoginView.vue` 同口径）。 */
 const explicitRedirect = computed(() => {
@@ -48,24 +48,23 @@ function canEnter(user: CurrentUserView) {
 
 async function submit() {
   if (!username.value.trim() || !password.value) {
-    error.value = '请输入超级管理账号和密码'
+    adminNotice.warning('请输入超级管理账号和密码')
     return
   }
   busy.value = true
-  error.value = ''
   try {
     // 入口级会话（阶段 5）：平台登录页写 `PLATFORM` 入口的刷新 Cookie。
     const result = await api.login(username.value.trim(), password.value, 'PLATFORM')
     if (!canEnter(result.user)) {
-      error.value = isConsoleEntryAccount(result.user.roles)
+      adminNotice.error(isConsoleEntryAccount(result.user.roles)
         ? '机器账号请到 /login 登录'
-        : '当前账号不是平台超级管理员'
+        : '当前账号不是平台超级管理员')
       return
     }
     password.value = ''
     await router.replace(landingPath())
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '登录失败，请检查账号和密码')
+    adminNotice.error(apiErrorMessage(cause, '登录失败，请检查账号和密码'))
   } finally {
     busy.value = false
   }
@@ -92,7 +91,6 @@ onMounted(async () => {
         <el-form-item label="登录密码">
           <el-input v-model="password" type="password" show-password autocomplete="current-password" />
         </el-form-item>
-        <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
         <el-button type="primary" size="large" :loading="busy" @click="submit">进入超级管理后台</el-button>
       </el-form>
     </el-card>

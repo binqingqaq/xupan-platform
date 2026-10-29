@@ -465,7 +465,7 @@ describe('中心上游管理页', () => {
       expect.objectContaining({ confirmButtonText: '永久删除' }),
     )
     expect(api.deleteCenterUpstreamAccount).toHaveBeenCalledWith(41, '中心账号停止使用')
-    expect(host.textContent ?? '').toContain('机器积分未调整')
+    expect(document.body.textContent ?? '').toContain('机器积分未调整')
   })
 
   it('shows each machine center session with state, login, expiry and revoke reason', async () => {
@@ -670,7 +670,7 @@ describe('中心上游管理页', () => {
     expect(body.action).toBe('REFUND')
     // 幂等键必须存在且与订单+动作绑定
     expect(body.idempotencyKey).toContain('center-disp-11-REFUND')
-    expect(host.textContent ?? '').toContain('REFUNDED')
+    expect(document.body.textContent ?? '').toContain('REFUNDED')
   })
 
   it('shows the disposition history for an order', async () => {
@@ -822,7 +822,7 @@ describe('中心上游管理页', () => {
     await settle()
 
     expect(api.revokeReconciliationDisposition).toHaveBeenCalledWith(7)
-    expect(host.textContent ?? '').toContain('重新变为待处置')
+    expect(document.body.textContent ?? '').toContain('重新变为待处置')
   })
 
   it('shows retention stats for reconciliation dispositions', async () => {

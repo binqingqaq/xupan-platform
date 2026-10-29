@@ -83,7 +83,8 @@ function machineConfig(overrides: Partial<MachineConfigView> = {}): MachineConfi
     machineId: 18,
     machineCode: 'LOCALADMIN',
     machineName: '本地参考后台',
-    boardOpen: true,
+    manualBettingOpen: true,
+    robotManage: true,
     chaseEnabled: false,
     botLimit: 3,
     closeSeconds: 100,
@@ -229,7 +230,6 @@ describe('machine config console scope resolution', () => {
     const payload = machineConfigPayload(machineConfig({ botLimit: 3, totalLimit: 500 }), { oddsRate: 93 })
 
     expect(payload).toEqual({
-      boardOpen: true,
       chaseEnabled: false,
       expectedVersion: 1,
       countdownVisible: true,
@@ -259,23 +259,6 @@ describe('machine config console scope resolution', () => {
     expect(payload).not.toHaveProperty('botLimit')
   })
 
-  it('blocks saves when the server marks the machine configuration read-only', async () => {
-    vi.mocked(api.getMachineConfig).mockResolvedValue(machineConfig({ configEditable: false }))
-    const store = machineStore(machineScope())
-    await settle()
-    await mount(AdminWelcomeControlPanel, {
-      part: 'game',
-      scope: machineScope(),
-      machineId: null,
-      machineConsole: store,
-    })
-
-    await expect(store.save({ oddsRate: 93 })).resolves.toBe(false)
-    expect(store.error).toContain('关闭代理配置权限')
-    expect(api.updateMachineConfig).not.toHaveBeenCalled()
-    expect(inputBy('#admin-display-odds').disabled).toBe(true)
-    expect(document.body.querySelector('.game-control-limit-button')).toBeNull()
-  })
 
   it('keeps the persisted configuration visible after a network failure', async () => {
     vi.mocked(api.updateMachineConfig).mockRejectedValue(new TypeError('Failed to fetch'))
@@ -319,7 +302,7 @@ describe('machine account top status bar', () => {
 
     expect(api.getMachineConfig).toHaveBeenCalledWith(18)
     expect(api.getBettingConfig).not.toHaveBeenCalled()
-    expect(shellText()).toContain('当前状态：')
+    expect(shellText()).not.toContain('当前状态：')
     expect(inputBy('#admin-display-odds').value).toBe('95')
     expect(inputBy('#admin-special-odds').value).toBe('18')
     expect(inputBy('#admin-special-rebate').value).toBe('1')

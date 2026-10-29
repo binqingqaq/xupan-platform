@@ -71,8 +71,8 @@ export type AuthEntry = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
 
 /**
  * 路由 → 入口级使用端（阶段 5，Flyway V75 `auth_session.entry`）：
- * - `/console`、`/agent`、`/hby019-demo/console`、`/hby019-demo/showdetails` → `CONSOLE`（机器账号入口，Cookie `xupan_console_refresh`）；
- * - `/login`、`/platform-admin/**` → `PLATFORM`（平台后台入口，Cookie `xupan_refresh`）；
+ * - `/login`、`/console/login/**`、`/console`、`/agent`、`/hby019-demo/login`、`/hby019-demo/console`、`/hby019-demo/showdetails` → `CONSOLE`（机器账号入口，Cookie `xupan_console_refresh`）；
+ * - `/platform-admin/**` → `PLATFORM`（平台后台入口，Cookie `xupan_refresh`）；
  * - `/player-login`、`/33/**`、`/room` → `PLAYER`（玩家链接，Cookie `xupan_player_refresh`）；
  * - 其余（`/display/**`、`/forbidden`、`/404`、`/`）不绑定入口，返回 `undefined`。
  *
@@ -80,8 +80,9 @@ export type AuthEntry = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
  */
 export function authEntryForRoute(path: string): AuthEntry | undefined {
   if (path === '/console' || path.startsWith('/console/') || path === '/agent' || path.startsWith('/agent/')
+    || path === '/login' || path === '/hby019-demo/login'
     || path === '/hby019-demo/console' || path === '/hby019-demo/showdetails') return 'CONSOLE'
-  if (path === '/login' || path.startsWith('/platform-admin')) return 'PLATFORM'
+  if (path.startsWith('/platform-admin')) return 'PLATFORM'
   if (path === '/player-login' || path.startsWith('/33/') || path === '/room') return 'PLAYER'
   return undefined
 }

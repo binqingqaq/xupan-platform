@@ -8,6 +8,7 @@ import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.game.domain.MachineBettingConfig;
+import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.web.BusinessException;
 import com.xupan.server.web.MoneyAmounts;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -277,8 +279,9 @@ public class PlatformAdminService {
         List<MachineRow> rows = jdbc.query("""
                 SELECT a.id, a.agent_code, u.username account_username, a.account_user_id, a.group_id,
                        g.username group_username, a.score, a.expires_at, a.status, u.status account_status,
-                       a.betting_config_version, a.board_open,
-                       a.robot_manage, a.config_edit_enabled, a.chase_enabled, a.bot_count, a.close_seconds, a.cancel_seconds,
+                       a.betting_config_version,
+                       a.manual_betting_open, a.robot_manage, a.chase_enabled, a.bot_count,
+                       a.close_seconds, a.cancel_seconds,
                        a.rebate_rate, a.odds_rate, a.special_rebate_rate, a.special_odds_rate,
                        a.total_limit, a.positive_limit, a.angle_limit, a.strict_limit, a.tong_limit,
                        a.car_limit, a.special_limit, a.odd_even_limit, a.big_small_limit, a.fan_limit,
@@ -295,9 +298,9 @@ public class PlatformAdminService {
                 """, (rs, n) -> new MachineRow(rs.getLong("id"), rs.getString("agent_code"),
                 rs.getString("account_username"), rs.getLong("account_user_id"), nullableLong(rs, "group_id"),
                 rs.getString("group_username"), rs.getBigDecimal("score"), instant(rs.getTimestamp("expires_at")),
-                rs.getString("status"), rs.getString("account_status"), rs.getInt("betting_config_version"),
-                rs.getBoolean("board_open"), rs.getBoolean("robot_manage"),
-                rs.getBoolean("config_edit_enabled"), rs.getBoolean("chase_enabled"), rs.getInt("bot_count"), rs.getInt("close_seconds"),
+                rs.getString("status"), rs.getString("account_status"),
+                rs.getBoolean("manual_betting_open"), rs.getInt("betting_config_version"),
+                rs.getBoolean("robot_manage"), rs.getBoolean("chase_enabled"), rs.getInt("bot_count"), rs.getInt("close_seconds"),
                 rs.getInt("cancel_seconds"), rs.getBigDecimal("rebate_rate"), rs.getBigDecimal("odds_rate"),
                 rs.getBigDecimal("special_rebate_rate"), rs.getBigDecimal("special_odds_rate"),
                 rs.getBigDecimal("total_limit"), rs.getBigDecimal("positive_limit"), rs.getBigDecimal("angle_limit"),
@@ -314,9 +317,14 @@ public class PlatformAdminService {
     public MachineRow createMachine(MachineInput input, long operator) {
         require(operator, "MACHINE_MANAGE");
         String username = required(input.username(), "机器账号不能为空");
+        validateMachineScore(input.score());
         Long effectiveGroupId = accessService.subAccountGroupId(operator).orElse(input.groupId());
+        if (effectiveGroupId == null) {
+            throw BusinessException.badRequest("MACHINE_GROUP_REQUIRED", "请选择所属子账号");
+        }
         var created = agentAdminService.createAgent(username.toUpperCase(Locale.ROOT), username,
-                username, required(input.rawPassword(), "机器密码不能为空"), effectiveGroupId, operator);
+                username, input.rawPassword() == null || input.rawPassword().isBlank()
+                        ? "test123456" : input.rawPassword(), effectiveGroupId, operator);
         applyMachine(input, created.id(), null, effectiveGroupId, operator, true);
         return findMachine(created.id());
     }
@@ -404,20 +412,51 @@ public class PlatformAdminService {
 
     private void applyMachine(MachineInput input, long id, Long fromGroupId, Long groupId, long operator,
                               boolean create) {
-        validateExpiry(input.expiresAt());
-        // 赔率、返水与限额由数据库 CHECK 兜底，这里先做服务端校验，避免把数据库错误暴露成 500。
-        requireNonNegative(input.oddsRate(), "MACHINE_ODDS_RATE_INVALID", "机器赔率不能为负数");
-        requireNonNegative(input.specialOddsRate(), "MACHINE_SPECIAL_ODDS_RATE_INVALID", "特码赔率不能为负数");
-        requireNonNegative(input.rebateRate(), "MACHINE_REBATE_RATE_INVALID", "返水不能为负数");
-        requireNonNegative(input.specialRebateRate(), "MACHINE_SPECIAL_REBATE_RATE_INVALID", "特码返水不能为负数");
-        requireNonNegative(input.score(), "MACHINE_SCORE_INVALID", "机器积分不能为负数");
-        BigDecimal playerMinStake = machineLimit(input.playerMinStake());
-        BigDecimal playerMaxStake = machineLimit(input.playerMaxStake());
-        if (playerMaxStake.signum() > 0 && playerMinStake.compareTo(playerMaxStake) > 0) {
+        Instant expiresAt = create && input.expiresAt() == null
+                ? Instant.now().plus(7, ChronoUnit.DAYS) : input.expiresAt();
+        validateExpiry(expiresAt);
+        BigDecimal rebateRate = machineValue(input.rebateRate(), create, 0);
+        BigDecimal oddsRate = machineValue(input.oddsRate(), create, 95);
+        BigDecimal specialRebateRate = machineValue(input.specialRebateRate(), create, 0);
+        BigDecimal specialOddsRate = machineValue(input.specialOddsRate(), create, 18);
+        BigDecimal totalLimit = machineValue(input.totalLimit(), create, 5_000);
+        BigDecimal positiveLimit = machineValue(input.positiveLimit(), create, 20_000);
+        BigDecimal angleLimit = machineValue(input.angleLimit(), create, 1_000);
+        BigDecimal strictLimit = machineValue(input.strictLimit(), create, 20_000);
+        BigDecimal tongLimit = machineValue(input.tongLimit(), create, 20_000);
+        BigDecimal carLimit = machineValue(input.carLimit(), create, 20_000);
+        BigDecimal specialLimit = machineValue(input.specialLimit(), create, 200);
+        BigDecimal oddEvenLimit = machineValue(input.oddEvenLimit(), create, 20_000);
+        BigDecimal bigSmallLimit = machineValue(input.bigSmallLimit(), create, 20_000);
+        BigDecimal fanLimit = machineValue(input.fanLimit(), create, 20_000);
+        BigDecimal addLimit = machineValue(input.addLimit(), create, 20_000);
+        BigDecimal playerMaxStake = machineValue(input.playerMaxStake(), create, 5_000);
+        BigDecimal playerMinStake = machineValue(input.playerMinStake(), create, 1);
+        requireNonNegativeInteger(oddsRate, "MACHINE_ODDS_RATE_INVALID", "机器赔率必须是非负整数");
+        requireNonNegativeInteger(specialOddsRate, "MACHINE_SPECIAL_ODDS_RATE_INVALID", "特码赔率必须是非负整数");
+        requireNonNegativeInteger(rebateRate, "MACHINE_REBATE_RATE_INVALID", "返水必须是非负整数");
+        requireNonNegativeInteger(specialRebateRate, "MACHINE_SPECIAL_REBATE_RATE_INVALID", "特码返水必须是非负整数");
+        requireNonNegativeInteger(totalLimit, "MACHINE_LIMIT_INVALID", "单场总限额必须是非负整数");
+        requireNonNegativeInteger(positiveLimit, "MACHINE_LIMIT_INVALID", "正限额必须是非负整数");
+        requireNonNegativeInteger(angleLimit, "MACHINE_LIMIT_INVALID", "角限额必须是非负整数");
+        requireNonNegativeInteger(strictLimit, "MACHINE_LIMIT_INVALID", "念限额必须是非负整数");
+        requireNonNegativeInteger(tongLimit, "MACHINE_LIMIT_INVALID", "通限额必须是非负整数");
+        requireNonNegativeInteger(carLimit, "MACHINE_LIMIT_INVALID", "车限额必须是非负整数");
+        requireNonNegativeInteger(specialLimit, "MACHINE_LIMIT_INVALID", "单码限额必须是非负整数");
+        requireNonNegativeInteger(oddEvenLimit, "MACHINE_LIMIT_INVALID", "单双限额必须是非负整数");
+        requireNonNegativeInteger(bigSmallLimit, "MACHINE_LIMIT_INVALID", "大小限额必须是非负整数");
+        requireNonNegativeInteger(fanLimit, "MACHINE_LIMIT_INVALID", "番限额必须是非负整数");
+        requireNonNegativeInteger(addLimit, "MACHINE_LIMIT_INVALID", "加限额必须是非负整数");
+        requireNonNegativeInteger(playerMaxStake, "MACHINE_LIMIT_INVALID", "玩家最高注额必须是非负整数");
+        requireNonNegativeInteger(playerMinStake, "MACHINE_LIMIT_INVALID", "玩家最小注额必须是非负整数");
+        validateMachineScore(input.score());
+        BigDecimal normalizedPlayerMinStake = machineLimit(playerMinStake);
+        BigDecimal normalizedPlayerMaxStake = machineLimit(playerMaxStake);
+        if (normalizedPlayerMaxStake.signum() > 0 && normalizedPlayerMinStake.compareTo(normalizedPlayerMaxStake) > 0) {
             throw BusinessException.badRequest("MACHINE_STAKE_RANGE_INVALID", "玩家最小注额不能大于玩家最高注额");
         }
         jdbc.update("""
-                UPDATE agent SET group_id=?, expires_at=?, board_open=?, robot_manage=?, config_edit_enabled=?, chase_enabled=?,
+                UPDATE agent SET group_id=?, expires_at=?, robot_manage=?, chase_enabled=?,
                     bot_count=?, close_seconds=?, cancel_seconds=?, rebate_rate=?, odds_rate=?,
                     special_rebate_rate=?, special_odds_rate=?, total_limit=?, positive_limit=?, angle_limit=?,
                     strict_limit=?, tong_limit=?, car_limit=?, special_limit=?, odd_even_limit=?,
@@ -425,15 +464,13 @@ public class PlatformAdminService {
                     rebate_mode=?,
                     updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
-                """, groupId, timestamp(input.expiresAt()), input.boardOpen(),
-                input.robotManage(), input.configEditEnabled(), input.chaseEnabled(), Math.max(0, input.botCount()),
-                Math.max(0, input.closeSeconds()), Math.max(0, input.cancelSeconds()), amount(input.rebateRate()),
-                amount(input.oddsRate()), amount(input.specialRebateRate()), amount(input.specialOddsRate()),
-                machineLimit(input.totalLimit()), machineLimit(input.positiveLimit()), machineLimit(input.angleLimit()),
-                machineLimit(input.strictLimit()), machineLimit(input.tongLimit()), machineLimit(input.carLimit()),
-                machineLimit(input.specialLimit()), machineLimit(input.oddEvenLimit()), machineLimit(input.bigSmallLimit()),
-                machineLimit(input.fanLimit()), machineLimit(input.addLimit()), playerMaxStake,
-                playerMinStake, normalizeRebateMode(input.rebateMode()), id);
+                """, groupId, timestamp(expiresAt), input.robotManage(), input.chaseEnabled(), Math.max(0, input.botCount()),
+                Math.max(0, input.closeSeconds()), Math.max(0, input.cancelSeconds()), rebateRate,
+                oddsRate, specialRebateRate, specialOddsRate, machineLimit(totalLimit), machineLimit(positiveLimit),
+                machineLimit(angleLimit), machineLimit(strictLimit), machineLimit(tongLimit), machineLimit(carLimit),
+                machineLimit(specialLimit), machineLimit(oddEvenLimit), machineLimit(bigSmallLimit),
+                machineLimit(fanLimit), machineLimit(addLimit), normalizedPlayerMaxStake,
+                normalizedPlayerMinStake, normalizeRebateMode(input.rebateMode()), id);
         // 账本原则 2：机器积分不在上面的整值 UPDATE 里写死，统一由账本服务锁行改余额并写流水；
         // BY220 语义：子账号是名下机器的上游资金池——建机器与改机器积分都要从子账号划出/退回
         // （见 AgentLedgerService#assignMachineScore）。目标值与当前值相同时不产生账目，天然幂等。
@@ -449,10 +486,20 @@ public class PlatformAdminService {
                 if (game == null || game.isBlank()) continue;
                 jdbc.update("INSERT INTO agent_game(agent_id, game_code) VALUES (?, ?)", id, game.trim());
             }
+        } else if (create) {
+            jdbc.update("INSERT INTO agent_game(agent_id, game_code) VALUES (?, ?)",
+                    id, GameDataRepository.DEFAULT_GAME_CODE);
         }
         audit(operator, "MACHINE_MANAGE", create ? "POST" : "PUT",
                 create ? "/api/admin/machines" : "/api/admin/machines/" + id, id,
-                "machine,configEditEnabled=" + input.configEditEnabled());
+                "machine configuration saved");
+    }
+
+    private static void validateMachineScore(BigDecimal score) {
+        BigDecimal value = amount(score);
+        if (value.signum() < 0 || value.stripTrailingZeros().scale() > 0) {
+            throw BusinessException.badRequest("MACHINE_SCORE_INVALID", "机器积分必须是非负整数");
+        }
     }
 
     /** 子账号积分的唯一写入点（账本原则 2、3）。 */
@@ -581,8 +628,9 @@ public class PlatformAdminService {
 
     private List<MachineRow> listMachinesInternal(long id) {        return jdbc.query("""
                 SELECT a.id, a.agent_code, u.username account_username, a.account_user_id, a.group_id,
-                       g.username group_username, a.score, a.expires_at, a.status, u.status account_status, a.board_open, a.robot_manage,
-                       a.betting_config_version, a.config_edit_enabled,
+                       g.username group_username, a.score, a.expires_at, a.status, u.status account_status,
+                       a.manual_betting_open, a.robot_manage,
+                       a.betting_config_version,
                        a.chase_enabled, a.bot_count, a.close_seconds, a.cancel_seconds, a.rebate_rate, a.odds_rate,
                        a.special_rebate_rate, a.special_odds_rate, a.total_limit, a.positive_limit, a.angle_limit,
                        a.strict_limit, a.tong_limit, a.car_limit, a.special_limit, a.odd_even_limit,
@@ -599,9 +647,8 @@ public class PlatformAdminService {
                 rs.getString("account_username"), rs.getLong("account_user_id"),
                 nullableLong(rs, "group_id"), rs.getString("group_username"), rs.getBigDecimal("score"),
                 instant(rs.getTimestamp("expires_at")), rs.getString("status"), rs.getString("account_status"),
-                rs.getInt("betting_config_version"),
-                rs.getBoolean("board_open"),
-                rs.getBoolean("robot_manage"), rs.getBoolean("config_edit_enabled"), rs.getBoolean("chase_enabled"), rs.getInt("bot_count"),
+                rs.getBoolean("manual_betting_open"), rs.getInt("betting_config_version"),
+                rs.getBoolean("robot_manage"), rs.getBoolean("chase_enabled"), rs.getInt("bot_count"),
                 rs.getInt("close_seconds"), rs.getInt("cancel_seconds"), rs.getBigDecimal("rebate_rate"),
                 rs.getBigDecimal("odds_rate"), rs.getBigDecimal("special_rebate_rate"),
                 rs.getBigDecimal("special_odds_rate"), rs.getBigDecimal("total_limit"),
@@ -666,6 +713,10 @@ public class PlatformAdminService {
 
     private static BigDecimal amount(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }
 
+    private static BigDecimal machineValue(BigDecimal value, boolean create, long createDefault) {
+        return value != null ? value : create ? BigDecimal.valueOf(createDefault) : BigDecimal.ZERO;
+    }
+
     private static BigDecimal machineLimit(BigDecimal value) {
         BigDecimal normalized = value == null ? BigDecimal.ZERO : value;
         if (normalized.signum() < 0 || normalized.scale() > 2
@@ -675,8 +726,8 @@ public class PlatformAdminService {
         return normalized.setScale(2, java.math.RoundingMode.UNNECESSARY);
     }
 
-    private static void requireNonNegative(BigDecimal value, String code, String message) {
-        if (value != null && value.signum() < 0) {
+    private static void requireNonNegativeInteger(BigDecimal value, String code, String message) {
+        if (value != null && (value.signum() < 0 || value.stripTrailingZeros().scale() > 0)) {
             throw BusinessException.badRequest(code, message);
         }
     }
@@ -718,7 +769,7 @@ public class PlatformAdminService {
                                 boolean machineManage, long machineCount, Instant createdAt,
                                 boolean online, Instant logtime) {}
     public record MachineInput(String username, String rawPassword, Long groupId,
-                               BigDecimal score, Instant expiresAt, boolean boardOpen, boolean robotManage,
+                               BigDecimal score, Instant expiresAt, boolean robotManage,
                                boolean chaseEnabled, int botCount, int closeSeconds, int cancelSeconds,
                                BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
                                BigDecimal specialOddsRate, BigDecimal totalLimit, BigDecimal positiveLimit,
@@ -726,7 +777,7 @@ public class PlatformAdminService {
                                BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
                                BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games,
-                               String rebateMode, boolean configEditEnabled) {}
+                               String rebateMode) {}
     /**
      * 机器行。
      *
@@ -737,8 +788,8 @@ public class PlatformAdminService {
      */
     public record MachineRow(long id, String code, String accountUsername, long accountUserId,
                              Long groupId, String groupUsername, BigDecimal score, Instant expiresAt, String status,
-                             String accountStatus, int configVersion,
-                             boolean boardOpen, boolean robotManage, boolean configEditEnabled, boolean chaseEnabled, int requestedBotCount,
+                             String accountStatus, boolean manualBettingOpen, int configVersion,
+                             boolean robotManage, boolean chaseEnabled, int requestedBotCount,
                              int closeSeconds, int cancelSeconds, BigDecimal rebateRate, BigDecimal oddsRate,
                              BigDecimal specialRebateRate, BigDecimal specialOddsRate, BigDecimal totalLimit,
                              BigDecimal positiveLimit, BigDecimal angleLimit, BigDecimal strictLimit,

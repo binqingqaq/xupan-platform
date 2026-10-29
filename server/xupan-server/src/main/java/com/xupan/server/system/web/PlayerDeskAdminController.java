@@ -76,6 +76,13 @@ import java.util.List;
         return service.machineConfig(user(auth), machineId);
     }
 
+    /** 仅机器账号可切换本人机器的手动下注开关。 */
+    @PutMapping("/machine-betting-state")
+    public PlayerDeskAdminService.MachineBettingState updateMachineBettingState(
+            Authentication auth, @Valid @RequestBody MachineBettingStateRequest request) {
+        return service.updateMachineBettingState(user(auth), request.machineId(), request.open());
+    }
+
     /** 保存机器级配置：代理可改自己那台，管理员按范围改；不改彩种归属。 */
     @PutMapping("/machine-config")
     public PlayerDeskAdminService.MachineConfig updateMachineConfig(Authentication auth,
@@ -441,7 +448,7 @@ import java.util.List;
         }
     }
     /** 机器级配置请求体；字段与 {@link PlayerDeskAdminService.MachineConfigUpdate} 一一对应。 */
-    public record MachineConfigRequest(Long machineId, boolean boardOpen, boolean chaseEnabled, int botCount,
+    public record MachineConfigRequest(Long machineId, boolean chaseEnabled, int botCount,
                                        int closeSeconds, int cancelSeconds, boolean countdownVisible,
                                        BigDecimal rebateRate, BigDecimal oddsRate,
                                        BigDecimal specialRebateRate, BigDecimal specialOddsRate, String rebateMode,
@@ -451,12 +458,15 @@ import java.util.List;
                                        BigDecimal fanLimit, BigDecimal addLimit, BigDecimal playerMinStake,
                                        BigDecimal playerMaxStake, Integer expectedVersion) {
         PlayerDeskAdminService.MachineConfigUpdate toUpdate() {
-            return new PlayerDeskAdminService.MachineConfigUpdate(boardOpen, chaseEnabled, botCount, closeSeconds,
+            return new PlayerDeskAdminService.MachineConfigUpdate(chaseEnabled, botCount, closeSeconds,
                     cancelSeconds, countdownVisible, rebateRate, oddsRate, specialRebateRate, specialOddsRate, rebateMode,
                     totalLimit, positiveLimit, angleLimit, strictLimit, tongLimit, carLimit, specialLimit,
                     oddEvenLimit, bigSmallLimit, fanLimit, addLimit, playerMinStake, playerMaxStake,
                     expectedVersion);
         }
+    }
+
+    public record MachineBettingStateRequest(@NotNull Long machineId, @NotNull Boolean open) {
     }
 
     public record CreateNormal(@NotBlank String displayName, Long machineId) {}    public record CreateBot(String userCode, @NotBlank String displayName, Long machineId) {}

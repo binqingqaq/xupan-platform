@@ -133,6 +133,33 @@ class AgentBettingPolicyIntegrationTest {
     }
 
     @Test
+    void manuallyClosedMachineRejectsBetWithoutChangingWalletOrCreatingOrders() {
+        configureMachine(95, 18, 0, 10, false);
+        gameService.current(userId);
+        BigDecimal balanceBefore = jdbc.queryForObject(
+                "SELECT balance FROM demo_user_account WHERE id = ?", BigDecimal.class, accountId);
+        long betCountBefore = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM game_bet WHERE user_id = ?", Long.class, accountId);
+        long batchCountBefore = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM game_bet_batch WHERE account_id = ?", Long.class, accountId);
+        long ledgerCountBefore = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM demo_balance_ledger WHERE user_id = ?", Long.class, accountId);
+
+        assertThatThrownBy(() -> placeBet(PlayType.FAN, List.of(3), new BigDecimal("10.00"), "manual-close"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        exception -> assertThat(exception.code()).isEqualTo("GAME_MACHINE_MANUALLY_CLOSED"));
+
+        assertThat(jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id = ?",
+                BigDecimal.class, accountId)).isEqualByComparingTo(balanceBefore);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM game_bet WHERE user_id = ?",
+                Long.class, accountId)).isEqualTo(betCountBefore);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM game_bet_batch WHERE account_id = ?",
+                Long.class, accountId)).isEqualTo(batchCountBefore);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM demo_balance_ledger WHERE user_id = ?",
+                Long.class, accountId)).isEqualTo(ledgerCountBefore);
+    }
+
+    @Test
     void machineOddsAreIsolatedAndConfigurationChangesKeepPreviousBetSnapshots() {
         configureMachine(95, 18, 0, 10, true);
         long peerUserId = userRepository.insert(PEER_USERNAME, "机器乙赔率测试玩家",
@@ -148,7 +175,7 @@ class AgentBettingPolicyIntegrationTest {
         jdbc.update("UPDATE demo_user_account SET agent_id = ? WHERE id = ?", peerMachineId, peerAccountId);
         jdbc.update("""
                 UPDATE agent
-                   SET odds_rate = 90, special_odds_rate = 17, board_open = TRUE,
+                   SET odds_rate = 90, special_odds_rate = 17, manual_betting_open = TRUE,
                        total_limit = 20000, positive_limit = 20000, angle_limit = 20000,
                        strict_limit = 20000, tong_limit = 20000, car_limit = 20000,
                        special_limit = 20000, odd_even_limit = 20000, big_small_limit = 20000,
@@ -396,12 +423,10 @@ class AgentBettingPolicyIntegrationTest {
     }
 
     @Test
-    void closedBoardRejectsBetting() {
+    void legacyClosedBoardFlagDoesNotRejectBetting() {
         configureMachine(95, 18, 0, 10, false);
 
-        assertThatThrownBy(() -> placeBet(PlayType.BIG_SMALL, List.of(2), new BigDecimal("100.00"), "board-closed"))
-                .isInstanceOfSatisfying(BusinessException.class,
-                        exception -> assertThat(exception.code()).isEqualTo(AgentBettingPolicy.BOARD_CLOSED));
+        placeBet(PlayType.BIG_SMALL, List.of(2), new BigDecimal("100.00"), "board-closed");
     }
 
     @Test
@@ -726,7 +751,7 @@ class AgentBettingPolicyIntegrationTest {
     private void configurePeerMachine(long peerMachineId, int oddsRate, int fanLimit) {
         jdbc.update("""
                 UPDATE agent
-                   SET odds_rate = ?, special_odds_rate = 18, board_open = TRUE,
+                   SET odds_rate = ?, special_odds_rate = 18, manual_betting_open = TRUE,
                        total_limit = 20000, positive_limit = 20000, angle_limit = 20000,
                        strict_limit = 20000, tong_limit = 20000, car_limit = 20000,
                        special_limit = 20000, odd_even_limit = 20000, big_small_limit = 20000,
@@ -740,7 +765,8 @@ class AgentBettingPolicyIntegrationTest {
         jdbc.update("""
                 UPDATE agent
                    SET odds_rate = ?, special_odds_rate = ?, close_seconds = ?, cancel_seconds = ?,
-                       board_open = ?, rebate_rate = 5, special_rebate_rate = 1, rebate_mode = 'SINGLE',
+                       manual_betting_open = ?,
+                       rebate_rate = 5, special_rebate_rate = 1, rebate_mode = 'SINGLE',
                        total_limit = 20000, positive_limit = 20000, angle_limit = 20000,
                        strict_limit = 20000, tong_limit = 20000, car_limit = 20000,
                        special_limit = 20000, odd_even_limit = 20000, big_small_limit = 20000,

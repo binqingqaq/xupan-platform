@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import { ElMessageBox } from 'element-plus'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { AgentGroup } from '../types/agent'
@@ -85,6 +86,7 @@ const reconForm = ref<{ resolution: ReconciliationResolution; reason: string }>(
 const loading = ref(false)
 const error = ref('')
 const feedback = ref('')
+watch(feedback, message => { if (message) adminNotice.success(message) }, { flush: 'sync' })
 const busy = ref(false)
 
 const showCreateCenterAccount = ref(false)
@@ -223,7 +225,7 @@ async function loadOrders(nextPage = orderPage.value) {
   const createdTo = filters.createdTo ? localDateTimeToInstant(filters.createdTo) : null
   if ((filters.createdFrom && !createdFrom) || (filters.createdTo && !createdTo)
       || (createdFrom && createdTo && Date.parse(createdFrom) > Date.parse(createdTo))) {
-    error.value = '订单时间范围无效'
+    adminNotice.warning('订单时间范围无效')
     return
   }
   const result = await api.listCenterOrders({
@@ -268,7 +270,7 @@ async function loadMachineSessions(account: CenterUpstreamAccount) {
   try {
     machineSessions.value = await api.centerAccountSessions(account.accountId)
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '中心账号会话加载失败')
+    adminNotice.error(apiErrorMessage(cause, '中心账号会话加载失败'))
   } finally {
     sessionsLoading.value = false
   }
@@ -293,7 +295,7 @@ async function searchReconciliation() {
   try {
     await loadReconciliation()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '对账查询失败')
+    adminNotice.error(apiErrorMessage(cause, '对账查询失败'))
   } finally {
     reconciliationLoading.value = false
   }
@@ -344,7 +346,10 @@ function openCenterQuota(account: CenterUpstreamAccount) {
 
 async function grantCenterQuota() {
   const form = quotaForm.value
-  if (form.accountId <= 0 || form.amount <= 0 || !form.idempotencyKey) return
+  if (form.accountId <= 0 || form.amount <= 0 || !form.idempotencyKey) {
+    adminNotice.warning('请选择中心账号并输入有效额度')
+    return
+  }
   busy.value = true
   error.value = ''
   feedback.value = ''
@@ -358,7 +363,7 @@ async function grantCenterQuota() {
     quotaForm.value = { accountId: 0, amount: 0, reason: '', idempotencyKey: '' }
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '中心账号额度调整失败')
+    adminNotice.error(apiErrorMessage(cause, '中心账号额度调整失败'))
   } finally {
     busy.value = false
   }
@@ -367,10 +372,13 @@ async function grantCenterQuota() {
 async function createCenterAccount() {
   const draft = centerAccountForm.value
   const username = draft.username.trim()
-  if (draft.groupId === null || !username || !draft.password) return
+  if (draft.groupId === null || !username || !draft.password) {
+    adminNotice.warning('请填写所属子账号、用户名和密码')
+    return
+  }
   const expiresAt = draft.expiresAt ? localDateTimeToInstant(draft.expiresAt) : null
   if ((draft.expiresAt && !expiresAt) || (draft.expiresAt && !localDateTimeIsFuture(draft.expiresAt))) {
-    error.value = '有效期必须晚于当前时间'
+    adminNotice.warning('有效期必须晚于当前时间')
     return
   }
 
@@ -398,7 +406,7 @@ async function createCenterAccount() {
     feedback.value = '中心账号已创建'
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '创建中心账号失败')
+    adminNotice.error(apiErrorMessage(cause, '创建中心账号失败'))
   } finally {
     busy.value = false
   }
@@ -419,12 +427,12 @@ function openRenewal(account: CenterUpstreamAccount) {
 async function renewCenterAccount() {
   if (!renewalTarget.value) return
   if (!renewalForm.value.reason.trim()) {
-    error.value = '请填写续期原因'
+    adminNotice.warning('请填写续期原因')
     return
   }
   const expiresAt = localDateTimeToInstant(renewalForm.value.expiresAt)
   if (!expiresAt || !localDateTimeIsFuture(renewalForm.value.expiresAt)) {
-    error.value = '新到期时间必须晚于当前时间'
+    adminNotice.warning('新到期时间必须晚于当前时间')
     return
   }
   busy.value = true
@@ -436,7 +444,7 @@ async function renewCenterAccount() {
     renewalTarget.value = null
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '中心账号续期失败')
+    adminNotice.error(apiErrorMessage(cause, '中心账号续期失败'))
   } finally {
     busy.value = false
   }
@@ -450,9 +458,13 @@ function openPasswordReset(account: CenterUpstreamAccount) {
 }
 
 async function resetCenterAccountPassword() {
-  if (!passwordResetTarget.value || !passwordResetDraft.value) return
+  if (!passwordResetTarget.value) return
+  if (!passwordResetDraft.value) {
+    adminNotice.warning('请输入新密码')
+    return
+  }
   if (!passwordResetReason.value.trim()) {
-    error.value = '请填写重置原因'
+    adminNotice.warning('请填写重置原因')
     return
   }
   const account = passwordResetTarget.value
@@ -469,7 +481,7 @@ async function resetCenterAccountPassword() {
     feedback.value = '中心账号密码已重置'
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '重置中心账号密码失败')
+    adminNotice.error(apiErrorMessage(cause, '重置中心账号密码失败'))
   } finally {
     busy.value = false
   }
@@ -483,7 +495,7 @@ function openCenterAccountStatus(account: CenterUpstreamAccount) {
 async function changeCenterAccountStatus() {
   const account = statusTarget.value
   if (!account || !statusReason.value.trim()) {
-    error.value = '请填写状态变更原因'
+    adminNotice.warning('请填写状态变更原因')
     return
   }
   const status = account.status === 'DISABLED' ? 'ACTIVE' : 'DISABLED'
@@ -496,7 +508,7 @@ async function changeCenterAccountStatus() {
     statusTarget.value = null
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '修改中心账号状态失败')
+    adminNotice.error(apiErrorMessage(cause, '修改中心账号状态失败'))
   } finally {
     busy.value = false
   }
@@ -539,7 +551,7 @@ async function deleteCenterAccount(account: CenterUpstreamAccount) {
     feedback.value = `中心账号 ${account.username} 及其中心侧业务数据已删除；机器积分未调整`
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '删除中心账号失败')
+    adminNotice.error(apiErrorMessage(cause, '删除中心账号失败'))
   } finally {
     busy.value = false
   }
@@ -550,9 +562,10 @@ async function toggleStatus(agent: CenterAgent) {
   error.value = ''
   try {
     await api.changeCenterAgentStatus(agent.id, agent.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')
+    adminNotice.success('中心代理状态已更新')
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '修改中心代理状态失败')
+    adminNotice.error(apiErrorMessage(cause, '修改中心代理状态失败'))
   } finally {
     busy.value = false
   }
@@ -571,7 +584,7 @@ async function grant() {
     feedback.value = '额度已充值'
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '充值失败')
+    adminNotice.error(apiErrorMessage(cause, '充值失败'))
   } finally {
     busy.value = false
   }
@@ -589,14 +602,17 @@ async function setLimit() {
     feedback.value = '信用额度已更新'
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '设置信用额度失败')
+    adminNotice.error(apiErrorMessage(cause, '设置信用额度失败'))
   } finally {
     busy.value = false
   }
 }
 
 async function settle() {
-  if (!settleForm.value.gameCode.trim() || !settleForm.value.issueNumber.trim()) return
+  if (!settleForm.value.gameCode.trim() || !settleForm.value.issueNumber.trim()) {
+    adminNotice.warning('请填写彩种和期号')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       '系统只会使用该彩种和期号已确认并锁定的开奖结果补齐未完成结算。',
@@ -617,7 +633,7 @@ async function settle() {
     feedback.value = settlement.value.message
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '补齐开奖结算失败')
+    adminNotice.error(apiErrorMessage(cause, '补齐开奖结算失败'))
   } finally {
     busy.value = false
   }
@@ -642,7 +658,7 @@ async function saveRiskLimits() {
     feedback.value = '代理级风控上限已更新'
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '设置代理级风控上限失败')
+    adminNotice.error(apiErrorMessage(cause, '设置代理级风控上限失败'))
   } finally {
     busy.value = false
   }
@@ -696,7 +712,7 @@ async function dispose(order: CenterOrderItem, action: CenterDispositionAction) 
     disposeForm.value.reason = ''
     await refresh()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '订单处置失败')
+    adminNotice.error(apiErrorMessage(cause, '订单处置失败'))
   } finally {
     busy.value = false
   }
@@ -772,7 +788,7 @@ async function disposeDifference(row: { type: string; betId: number; centerAgent
     reconForm.value.reason = ''
     await Promise.all([loadReconciliation(), loadReconDispositions()])
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '对账差异处置失败')
+    adminNotice.error(apiErrorMessage(cause, '对账差异处置失败'))
   } finally {
     busy.value = false
   }
@@ -787,7 +803,7 @@ async function revokeDifference(item: ReconciliationDisposition) {
     feedback.value = `已撤销差异处置 ${item.differenceType}/${item.betId}，该差异重新变为待处置`
     await Promise.all([loadReconciliation(), loadReconDispositions()])
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '撤销差异处置失败')
+    adminNotice.error(apiErrorMessage(cause, '撤销差异处置失败'))
   } finally {
     busy.value = false
   }
@@ -821,7 +837,6 @@ onMounted(async () => {
 
     <div class="center-messages" aria-live="polite">
       <el-alert v-if="error" type="error" :title="error" show-icon :closable="false" />
-      <el-alert v-if="feedback" type="success" :title="feedback" show-icon :closable="false" />
 
     </div>
 

@@ -73,6 +73,6 @@ describe('platform admin online players', () => {
       title: '管理员消息',
       content: '测试通知内容',
     }))
-    expect(container.textContent).toContain('消息发送成功')
+    expect(document.body.textContent).toContain('消息发送成功')
   })
 })

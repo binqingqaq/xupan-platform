@@ -13,7 +13,7 @@ import java.math.BigDecimal;
  * @param specialOddsRate     特码含本金倍数（BY220 tePeilv），0 表示未配置
  * @param closeSeconds        距开奖前多少秒封盘（BY220 fengpan），0 表示不额外提前
  * @param cancelSeconds       下注后多少秒内可撤单（BY220 cancel），0 表示关闭取消
- * @param boardOpen           是否开盘（BY220 isOpen）
+ * @param manualBettingOpen   机器手动开盘状态（BY220 isOpen）；只影响新下注
  * @param rebateMode          返水口径 SINGLE/DOUBLE（BY220 ls）
  * @param rebateRate          普通返水百分数（BY220 FanShui）
  * @param specialRebateRate   特码返水（BY220 teFanshui）
@@ -22,7 +22,7 @@ public record MachineBettingConfig(BigDecimal oddsRate,
                                    BigDecimal specialOddsRate,
                                    int closeSeconds,
                                    int cancelSeconds,
-                                   boolean boardOpen,
+                                   boolean manualBettingOpen,
                                    String rebateMode,
                                    BigDecimal rebateRate,
                                    BigDecimal specialRebateRate,
@@ -38,10 +38,24 @@ public record MachineBettingConfig(BigDecimal oddsRate,
             0, 0, BettingLimits.UNLIMITED);
 
     public MachineBettingConfig(BigDecimal oddsRate, BigDecimal specialOddsRate, int closeSeconds,
-                                int cancelSeconds, boolean boardOpen, String rebateMode,
+                                int cancelSeconds, String rebateMode,
                                 BigDecimal rebateRate, BigDecimal specialRebateRate) {
-        this(oddsRate, specialOddsRate, closeSeconds, cancelSeconds, boardOpen, rebateMode,
+        this(oddsRate, specialOddsRate, closeSeconds, cancelSeconds, true, rebateMode,
                 rebateRate, specialRebateRate, 0, 0, BettingLimits.UNLIMITED);
+    }
+
+    public MachineBettingConfig(BigDecimal oddsRate, BigDecimal specialOddsRate, int closeSeconds,
+                                int cancelSeconds, boolean manualBettingOpen, String rebateMode,
+                                BigDecimal rebateRate, BigDecimal specialRebateRate) {
+        this(oddsRate, specialOddsRate, closeSeconds, cancelSeconds, manualBettingOpen, rebateMode,
+                rebateRate, specialRebateRate, 0, 0, BettingLimits.UNLIMITED);
+    }
+
+    public MachineBettingConfig(BigDecimal oddsRate, BigDecimal specialOddsRate, int closeSeconds,
+                                int cancelSeconds, String rebateMode, BigDecimal rebateRate,
+                                BigDecimal specialRebateRate, long machineId, int version, BettingLimits limits) {
+        this(oddsRate, specialOddsRate, closeSeconds, cancelSeconds, true, rebateMode, rebateRate,
+                specialRebateRate, machineId, version, limits);
     }
 
     public MachineBettingConfig {

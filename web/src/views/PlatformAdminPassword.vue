@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { PlatformPasswordChangeInput } from '../types/platformAdmin'
 
@@ -12,7 +13,6 @@ const canChangeUsername = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const feedback = ref('')
 const form = ref<PlatformPasswordChangeInput>({
   username: '',
   oldPassword: '',
@@ -39,10 +39,9 @@ async function submit() {
   if (saving.value) return
   saving.value = true
   error.value = ''
-  feedback.value = ''
   try {
     await api.changePlatformPassword(form.value)
-    feedback.value = '修改成功, 请重新登录!'
+    adminNotice.success('修改成功, 请重新登录!')
     window.setTimeout(async () => {
       try {
         await api.logout()
@@ -51,7 +50,7 @@ async function submit() {
       }
     }, 1500)
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '修改失败')
+    adminNotice.error(apiErrorMessage(cause, '修改失败'))
   } finally {
     saving.value = false
   }
@@ -66,7 +65,6 @@ onMounted(() => { document.title = '修改密码'; void load() })
     <section class="content">
       <header class="page-heading"><h1>修改密码</h1></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-alert v-if="feedback" :title="feedback" type="success" show-icon :closable="false" class="page-alert" />
       <el-skeleton v-if="loading" :rows="4" animated />
       <el-form v-else class="password-form" label-position="top" @submit.prevent="submit">
         <el-form-item label="旧密码"><el-input v-model="form.oldPassword" type="password" show-password placeholder="请输入旧密码" autocomplete="off" /></el-form-item>

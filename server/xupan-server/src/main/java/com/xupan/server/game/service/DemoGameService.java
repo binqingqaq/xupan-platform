@@ -204,8 +204,13 @@ public class DemoGameService {
                     : "下注无效：当前期已封盘，不能下注";
             throw BusinessException.conflict("GAME_BETTING_CLOSED", message);
         }
+        Instant now = Instant.now();
+        if (issue.bettingEndsAt() == null || !now.isBefore(issue.bettingEndsAt())) {
+            throw BusinessException.conflict("GAME_BETTING_CLOSED", "下注无效：当前期已封盘，不能下注");
+        }
+        repository.lockMachineBettingState(wallet.accountId());
         MachineBettingConfig machineConfig = repository.findMachineBettingConfig(wallet.accountId());
-        String rejection = agentBettingPolicy.rejectBet(machineConfig, issue, Instant.now()).orElse(null);
+        String rejection = agentBettingPolicy.rejectBet(machineConfig, issue, now).orElse(null);
         if (rejection != null) {
             throw BusinessException.conflict(rejection, AgentBettingPolicy.rejectionMessage(rejection));
         }

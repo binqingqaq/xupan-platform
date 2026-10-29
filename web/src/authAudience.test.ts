@@ -101,6 +101,22 @@ describe('入口级使用端（阶段 5）', () => {
     expect(headerOf(fetchMock, 1)).toBeNull()
   })
 
+  it('玩家房间恢复刷新时固定使用 PLAYER Cookie', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ accessToken: 'token-player' }))
+      .mockResolvedValueOnce(jsonResponse(currentUser({ authMode: 'PLAYER_LINK', scope: 'PLAYER_FULL' })))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = await freshApi('PLATFORM')
+
+    const user = await api.restoreSession('PLAYER')
+
+    expect(user?.authMode).toBe('PLAYER_LINK')
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual(['/api/auth/refresh', '/api/auth/me'])
+    expect(headerOf(fetchMock, 0)).toBe('PLAYER')
+    expect(api.getAuthAudience()).toBe('PLAYER')
+    expect(window.sessionStorage.getItem(AUDIENCE_KEY)).toBe('PLAYER')
+  })
+
   it('跨入口刷新 401 只当"本入口会话失效"：清本入口登录态，不改使用端提示', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 'AUTH_TOKEN_REVOKED', message: 'revoked' }, 401))
     vi.stubGlobal('fetch', fetchMock)
@@ -162,28 +178,29 @@ describe('入口级使用端（阶段 5）', () => {
   it('main.ts 的 requiredAudience 与两个登录页的入口/角色口径', () => {
     const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
     const scopeSource = readFileSync(resolve(process.cwd(), 'src/consoleScope.ts'), 'utf8')
-    const loginSource = readFileSync(resolve(process.cwd(), 'src/views/LoginView.vue'), 'utf8')
+    const loginSource = readFileSync(resolve(process.cwd(), 'src/views/Hby019SourcePage.vue'), 'utf8')
     const platformLoginSource = readFileSync(resolve(process.cwd(), 'src/views/PlatformAdminLoginView.vue'), 'utf8')
 
     // 守卫的三入口口径集中在 `consoleScope.ts::authEntryForRoute`（行为见 consoleScope.test.ts）。
     expect(routerSource).toContain('return authEntryForRoute(path)')
-    expect(scopeSource).toContain("path.startsWith('/agent/')) return 'CONSOLE'")
-    expect(scopeSource).toContain("path === '/login' || path.startsWith('/platform-admin')) return 'PLATFORM'")
+    expect(scopeSource).toContain("path.startsWith('/console/')")
+    expect(scopeSource).toContain("|| path === '/login' || path === '/hby019-demo/login'")
+    expect(scopeSource).toContain("if (path.startsWith('/platform-admin')) return 'PLATFORM'")
     expect(scopeSource).toContain("path === '/player-login' || path.startsWith('/33/') || path === '/room') return 'PLAYER'")
 
     // 登录请求带自己入口的头。
-    expect(loginSource).toContain("api.login(username.value.trim(), password.value, 'CONSOLE')")
+    expect(loginSource).toContain("api.login(requestedUsername, data.password, 'CONSOLE')")
     expect(platformLoginSource).toContain("api.login(username.value.trim(), password.value, 'PLATFORM')")
     // 恢复会话也按本入口。
     expect(loginSource).toContain("restoreSession('CONSOLE')")
     expect(platformLoginSource).toContain("restoreSession('PLATFORM')")
 
     // 跨入口 redirect 过滤（防"回跳→被弹回"死循环，行为见 loginEntryRedirect.test.ts）。
-    expect(loginSource).toContain("canRedirectWithinEntry(explicitRedirect.value, 'CONSOLE')")
+    expect(loginSource).toContain("canRedirectWithinEntry(redirect, 'CONSOLE')")
     expect(platformLoginSource).toContain("canRedirectWithinEntry(explicitRedirect.value, 'PLATFORM')")
 
     // 阶段 4 角色互拒文案 + 平台端默认落地页。
-    expect(loginSource).toContain('该账号不是机器账号，请到 /platform-admin/login 登录')
+    expect(loginSource).toContain("!isConsoleEntryAccount(result.user.roles)")
     expect(loginSource).toContain('isConsoleEntryAccount')
     expect(platformLoginSource).toContain('机器账号请到 /login 登录')
     // 计划 §3.2 第 2 项：平台端默认落地页回退为平台首页 `/platform-admin`（BY220 admin 首页 = 开奖信息）；

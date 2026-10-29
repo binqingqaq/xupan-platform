@@ -10,8 +10,8 @@
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/uikit.gradient.min.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/notify.min.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/base.css">
-        <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/home.css?1791996724">
-        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=20"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
+        <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/home.css?20261028-status-layout">
+        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=21"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
         <script type="text/javascript">
             (function() {
                 var prevOnError = window.onerror;
@@ -509,9 +509,7 @@
             .fanshuiSet2,
             .peilv2 {
                 padding: 2px 0 0 5px;
-                position: absolute;
-                top: 4px;
-                right: 135px;
+                position: relative;
                 border: 1px solid #000;
                 height: 30px;
                 width: 135px;
@@ -658,11 +656,6 @@
             .uk-width-2-3,
             .uk-width-2-6 {
                 width: 33%;
-            }
-
-            #kaipanstatus.sed {
-                color: #909399 !important;
-                border-color: #909399 !important;
             }
 
             .el-overlay {
@@ -863,15 +856,13 @@
                 </div>
                 <div class="rightframe">
                     <div class="right_top">
-                        <div><span class="kaipanstatustit sed">当前状态：</span><button id="kaipanstatus"
-                                style="visibility: visible;color:var(--theme-btn);border-color:var(--theme-border);background:var(--theme-light-bg);">开盘</button>
-                        </div>
-                        <div class="peilv" style="top:4px;"><b>赔率：</b><input class="ok" data-type="PeiLv">
+                        <div class="kaipan-status-display"><span>当前状态：</span><button id="kaipanstatus" class="kaipan-status-value" type="button" disabled aria-pressed="false" title="状态读取中">—</button></div>
+                        <div class="peilv"><b>赔率：</b><input class="ok" data-type="PeiLv">
                             <span style="color:blue;right: 80px;top: 10px;margin-left: 5px;" id="changexe">限额</span>
                         </div>
                         <input id="selefocus" type="text" readonly="readonly">
-                        <div class="peilv2" style="width:120px;right:150px;"><b>特码赔率：</b><input class="ok" data-type="tePeilv"></div>
-                        <div class="fanshuiSet2" style="width:120px;right:10px;"><b>特码返水：</b><input class="ok" data-type="teFanshui"></div>
+                        <div class="peilv2" style="width:120px;"><b>特码赔率：</b><input class="ok" data-type="tePeilv"></div>
+                        <div class="fanshuiSet2" style="width:120px;"><b>特码返水：</b><input class="ok" data-type="teFanshui"></div>
                     </div>
 
                     <div class="functions" style="border-radius: 10px;border:none;padding:0;">
@@ -1781,7 +1772,7 @@
 						},
 						//调用出错执行的函数
 						error: function() {
-							alert('拉取失败，请稍候重试!')
+							alertErr('拉取失败，请稍候重试!')
 						}
 					});
 				} else {
@@ -2602,7 +2593,8 @@
             var mylayer = null;
             var isFirstLoad = true; //表示是第一次执行覆盖微信名
             var centerConfig = {
-                kaipanStatus: 0,
+                manualBettingOpen: null,
+                manualBettingPending: false,
                 applyscorelastid: null, //该机器人最新一条上下分请求的id
                 dw: null,
                 nownotesid: null,
@@ -2696,18 +2688,19 @@
             }
 
             function alertErr(title) {
-                UIkit.notify(title, {
-                    status: 'danger',
-                    pos: 'top-center',
-                    timeout: 2000
-                });
+                adminNotice('error', title);
             }
             function alertSuc(title) {
-                UIkit.notify(title, {
-                    status: 'info',
-                    pos: 'top-center',
-                    timeout: 2000
-                });
+                adminNotice('success', title);
+            }
+            function adminNotice(level, title) {
+                var message = String(title == null ? '' : title).trim();
+                if (!message) return;
+                if (window.parent !== window) {
+                    window.parent.postMessage({ type: 'xupan-admin-notice', level: level, message: message }, window.location.origin);
+                } else {
+                    UIkit.notify(message, { status: level === 'error' ? 'danger' : 'info', pos: 'top-center', timeout: 2000 });
+                }
             }
             function openKuang(tar) {
                 centerConfig.changexe = true;
@@ -3076,20 +3069,24 @@
 
             // 锁屏/切前后台的复位逻辑已经由前面统一注册的 _wakeReset 处理(见 putAjax 后)
 
-            function updatePan(kaipanStatus) {
-                $("#kaipanstatus").addClass("sed");
-                if (kaipanStatus == 1) {
-                    $("#kaipanstatus").removeClass("sed");
-                    $("#kaipanstatus").text("开盘");
-                } else if (kaipanStatus == 2) {
-                    $("#kaipanstatus").text("自动封盘");
-                } else if (kaipanStatus == 3) {
-                    $("#kaipanstatus").removeClass("sed");
-                    $("#kaipanstatus").text("自动开盘");
-                } else {
-                    $("#kaipanstatus").text("封盘");
-                }
+            function updateManualBettingButton(open) {
+                centerConfig.manualBettingOpen = Boolean(open);
+                var button = $("#kaipanstatus");
+                button.text(centerConfig.manualBettingOpen ? "开盘" : "封盘")
+                    .toggleClass("is-closed", !centerConfig.manualBettingOpen)
+                    .attr("aria-pressed", centerConfig.manualBettingOpen ? "true" : "false")
+                    .attr("aria-busy", centerConfig.manualBettingPending ? "true" : "false")
+                    .attr("title", centerConfig.manualBettingPending ? "状态更新中" :
+                        (centerConfig.manualBettingOpen ? "点击封盘，停止该机器的新下注" : "点击开盘，允许该机器按期次规则下注"))
+                    .prop("disabled", centerConfig.manualBettingPending || centerConfig.manualBettingOpen === null);
             }
+
+            function setManualBettingPending(pending) {
+                centerConfig.manualBettingPending = pending;
+                if (centerConfig.manualBettingOpen !== null) updateManualBettingButton(centerConfig.manualBettingOpen);
+                else $("#kaipanstatus").prop("disabled", pending);
+            }
+
             //刷新界面
             function changeUI(data) {
                 //判断是否即将过期
@@ -3121,9 +3118,9 @@
                 }
                 //更新剩余积分
                 $("#leftScore").html(parseFloat(data.score));
-                //更新开盘状态
-                centerConfig.kaipanStatus = data.IsKaiPan;
-                updatePan(data.IsKaiPan);
+                if (!centerConfig.manualBettingPending && data.IsKaiPan !== undefined && data.IsKaiPan !== null) {
+                    updateManualBettingButton(Number(data.IsKaiPan) === 1);
+                }
                 centerConfig.ltype = data.lType;
                 // ── 顶部表单字段: 只在首次加载时覆盖; 之后用户自己操作+保存, 避免"点了没反应"
                 // 用户正在交互(聚焦输入框/刚改过 radio)时也跳过, 防止把用户刚改的内容冲回去
@@ -3164,7 +3161,6 @@
                     //是否隐藏下注成功消息
                     $("#hidesuccessmsg").prop('checked', data.HideMsg == 1);
                 }
-                $("#kaipanstatus").css("visibility", "visible");
                 //更新用户列表的积分(只更新那一行的数字,不重建节点,与 setJifenList 配合)
                 $(data.users).each(function(index) {
                     var sB = data.users[index];
@@ -3741,19 +3737,28 @@
                     }
                 });
             }
-            //开盘
-            $("#kaipanstatus").click(function() {
-                var status = (centerConfig.kaipanStatus == 1 || centerConfig.kaipanStatus == 3) ? 0 : 1;
-                putAjax("/rbt/index/updatepanstatus", {
-                    "dlUserName": 'hby019',
-                    "st": status
-                }, function(data) {
-                    if (data == 0) {
-                        centerConfig.kaipanStatus = status;
-                        updatePan(status);
+            $("#kaipanstatus").on("click", function() {
+                if (centerConfig.manualBettingPending || centerConfig.manualBettingOpen === null) return;
+                var nextOpen = !centerConfig.manualBettingOpen;
+                setManualBettingPending(true);
+                $.ajax({
+                    type: "POST",
+                    url: "/rbt/index/updatepanstatus",
+                    dataType: "json",
+                    data: { "st": nextOpen ? 1 : 0 },
+                    cache: false,
+                    timeout: 10000,
+                    success: function(data) {
+                        setManualBettingPending(false);
+                        updateManualBettingButton(Number(data) === 1);
+                    },
+                    error: function() {
+                        setManualBettingPending(false);
+                        autoHandle();
                     }
                 });
             });
+
             //赔率
             $(".rightframe input").bind("focus", function() {
                 centerConfig.changepeilv = true;
@@ -5154,7 +5159,7 @@
                                         }
                                     },
                                     error: function() {
-                                        alert('拉取失败，请稍候重试!');
+                                    alertErr('拉取失败，请稍候重试!');
                                     }
                                 });
                             } else {

@@ -1,8 +1,11 @@
 import { createApp, h, nextTick } from 'vue'
 import { RouterView, createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import LoginView from './views/LoginView.vue'
 import PlatformAdminLoginView from './views/PlatformAdminLoginView.vue'
+import { adminNotice } from './services/adminNotice'
 import { authEntryForRoute, canRedirectWithinEntry } from './consoleScope'
 import type { CurrentUserView } from './types'
 
@@ -21,6 +24,10 @@ vi.mock('./api', () => ({
   api: { login: mocks.login },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
   restoreSession: mocks.restoreSession,
+}))
+
+vi.mock('./services/adminNotice', () => ({
+  adminNotice: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
 }))
 
 function user(overrides: Partial<CurrentUserView> = {}): CurrentUserView {
@@ -86,7 +93,9 @@ function fillAndSubmit(username: string, password: string) {
   inputs[0].dispatchEvent(new Event('input'))
   inputs[1].value = password
   inputs[1].dispatchEvent(new Event('input'))
-  form.dispatchEvent(new Event('submit'))
+  const platformButton = form.querySelector<HTMLButtonElement>('button.el-button')
+  if (platformButton) platformButton.click()
+  else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
 }
 
 beforeEach(() => {
@@ -108,7 +117,9 @@ describe('路由 → 入口映射', () => {
     expect(authEntryForRoute('/console')).toBe('CONSOLE')
     expect(authEntryForRoute('/agent')).toBe('CONSOLE')
     expect(authEntryForRoute('/hby019-demo/console')).toBe('CONSOLE')
-    expect(authEntryForRoute('/login')).toBe('PLATFORM')
+    expect(authEntryForRoute('/login')).toBe('CONSOLE')
+    expect(authEntryForRoute('/console/login/ahy005')).toBe('CONSOLE')
+    expect(authEntryForRoute('/hby019-demo/login')).toBe('CONSOLE')
     expect(authEntryForRoute('/platform-admin/login')).toBe('PLATFORM')
     // 平台首页与平台子页都归 PLATFORM 入口（原用例用的是已删除的平台侧玩家工作台路径）。
     expect(authEntryForRoute('/platform-admin')).toBe('PLATFORM')
@@ -132,6 +143,25 @@ describe('路由 → 入口映射', () => {
     expect(canRedirectWithinEntry('//evil.example', 'CONSOLE')).toBe(false)
     expect(canRedirectWithinEntry('https://evil.example', 'CONSOLE')).toBe(false)
     expect(canRedirectWithinEntry('', 'CONSOLE')).toBe(false)
+  })
+
+  it('routes both machine login URLs through the reused HBY019 page host', async () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
+    expect(source).toContain("{ path: '/login', component: Hby019SourcePage")
+    expect(source).toContain("{ path: '/console/login/:username', component: Hby019SourcePage")
+  })
+
+  it('restores the player session inside the room without routing the room through a staff gate', () => {
+    const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
+    const roomSource = readFileSync(resolve(process.cwd(), 'src/views/UserRoom.vue'), 'utf8')
+    expect(routerSource).toContain("{ path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '奥巴AI' } }")
+    expect(roomSource).toContain("await restoreSession('PLAYER')")
+    expect(roomSource).toContain('class="player-session-loading"')
+    expect(roomSource).toContain("import { Loading } from '@element-plus/icons-vue'")
+    expect(roomSource).toContain('class="player-session-spinner"')
+    expect(roomSource).toContain('background: #fff;')
+    expect(roomSource).toContain('正在恢复玩家会话')
+    expect(roomSource).toContain('session-expired')
   })
 })
 
@@ -206,7 +236,7 @@ describe('平台端登录页 /platform-admin/login（PLATFORM 入口）', () => 
     await settle()
 
     expect(router?.currentRoute.value.path).toBe('/platform-admin/login')
-    expect(text()).toContain('机器账号请到 /login 登录')
+    expect(adminNotice.error).toHaveBeenCalledWith('机器账号请到 /login 登录')
   })
 
   it('同入口 redirect 照旧回跳', async () => {

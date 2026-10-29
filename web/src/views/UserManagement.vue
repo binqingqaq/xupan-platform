@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import type { AdminRoleOption, AdminUserDetail, AdminUserView } from '../types'
 
 type UserStatus = '' | 'ACTIVE' | 'DISABLED' | 'LOCKED'
@@ -19,9 +20,8 @@ const pageSize = ref(20)
 const total = ref(0)
 const loading = ref(false)
 const busy = ref(false)
-const feedback = ref('')
-const feedbackKind = ref<'success' | 'error'>('success')
 const listError = ref('')
+const referenceError = ref('')
 const detailError = ref('')
 const router = useRouter()
 
@@ -49,11 +49,7 @@ const activeRoles = computed(() => roles.value.filter(role => role.status === 'A
 const selectedStatus = computed(() => selectedUser.value?.status || '')
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
-  feedback.value = message
-  feedbackKind.value = kind
-  window.setTimeout(() => {
-    if (feedback.value === message) feedback.value = ''
-  }, 4000)
+  adminNotice[kind](message)
 }
 
 function dateTime(value?: string | null) {
@@ -93,12 +89,13 @@ async function loadPage() {
 }
 
 async function loadReferenceData() {
+  referenceError.value = ''
   try {
     const [user, roleOptions] = await Promise.all([api.me(), api.getAdminRoles()])
     currentUserId.value = user.id
     roles.value = roleOptions
   } catch (error) {
-    showFeedback(apiErrorMessage(error, '用户管理权限或角色信息加载失败'), 'error')
+    referenceError.value = apiErrorMessage(error, '用户管理权限或角色信息加载失败')
   }
 }
 
@@ -357,6 +354,7 @@ onBeforeUnmount(() => {
         </div>
 
         <p v-if="listError" class="inline-error" role="alert">{{ listError }}</p>
+        <p v-if="referenceError" class="inline-error" role="alert">{{ referenceError }} <button type="button" @click="loadReferenceData">重试</button></p>
         <div v-else-if="loading" class="user-empty-state">正在加载用户列表...</div>
         <div v-else-if="!hasUsers" class="user-empty-state">
           <strong>暂无用户</strong>
@@ -451,7 +449,6 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <p v-if="feedback" class="toast" :class="`toast-${feedbackKind}`" role="status">{{ feedback }}</p>
   </div>
 </template>
 
@@ -960,16 +957,6 @@ onBeforeUnmount(() => {
 
 .admin-page .admin-avatar-editor label {
   font-size: 10px;
-}
-
-.admin-page .toast {
-  top: 7px;
-  right: 7px;
-  width: min(330px, calc(100vw - 14px));
-  border-radius: 1px;
-  box-shadow: 0 2px 8px rgb(25 63 99 / 22%);
-  padding: 7px 9px;
-  font-size: 11px;
 }
 
 @media (max-width: 760px) {

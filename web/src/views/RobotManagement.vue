@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import { toInstantQueryValue, validateRobotDrawComponents } from '../robotAdmin'
 import type { CurrentUserView } from '../types'
 import type {
@@ -60,8 +61,6 @@ const dispatchLoading = ref(false)
 const errorMessage = ref('')
 const detailError = ref('')
 const dispatchError = ref('')
-const feedback = ref('')
-const feedbackKind = ref<'success' | 'error'>('success')
 const selectedEventType = ref<RobotEventType>('ISSUE_STARTED')
 const templateDraft = ref('')
 const templateSaving = ref(false)
@@ -99,11 +98,7 @@ const selectedTemplate = computed<TemplateSummary | null>(() => {
 const drawComponentErrors = computed(() => validateRobotDrawComponents(drawComponents.value))
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
-  feedback.value = message
-  feedbackKind.value = kind
-  window.setTimeout(() => {
-    if (feedback.value === message) feedback.value = ''
-  }, 4000)
+  adminNotice[kind](message)
 }
 
 function dateTime(value?: string | null) {
@@ -186,7 +181,7 @@ async function saveDrawComponents() {
   if (!selectedRobot.value || !canWrite.value || drawComponentSaving.value) return
   const errors = drawComponentErrors.value
   if (errors.length) {
-    drawComponentError.value = errors[0]
+    adminNotice.error(errors[0])
     return
   }
   drawComponentSaving.value = true
@@ -196,7 +191,7 @@ async function saveDrawComponents() {
     syncDrawComponentDraft(result)
     showFeedback('开奖组件配置已保存')
   } catch (error) {
-    drawComponentError.value = apiErrorMessage(error, '开奖组件配置保存失败')
+    adminNotice.error(apiErrorMessage(error, '开奖组件配置保存失败'))
   } finally {
     drawComponentSaving.value = false
   }
@@ -215,11 +210,11 @@ async function previewTemplate() {
   if (!selectedRobot.value || !selectedTemplate.value || !canTemplateWrite.value) return
   const text = templateDraft.value.trim()
   if (!text) {
-    templateError.value = '模板正文不能为空。'
+    adminNotice.error('模板正文不能为空。')
     return
   }
   if (text.length > 1000) {
-    templateError.value = '模板正文不能超过 1000 个字符。'
+    adminNotice.error('模板正文不能超过 1000 个字符。')
     return
   }
   templatePreviewing.value = true
@@ -227,7 +222,7 @@ async function previewTemplate() {
   try {
     templatePreview.value = await api.previewAdminRobotTemplate(selectedRobot.value.robot.id, selectedEventType.value, { templateText: text })
   } catch (error) {
-    templateError.value = apiErrorMessage(error, '模板预览失败')
+    adminNotice.error(apiErrorMessage(error, '模板预览失败'))
   } finally {
     templatePreviewing.value = false
   }
@@ -237,11 +232,11 @@ async function saveTemplate() {
   if (!selectedRobot.value || !selectedTemplate.value || !canTemplateWrite.value) return
   const text = templateDraft.value.trim()
   if (!text) {
-    templateError.value = '模板正文不能为空。'
+    adminNotice.error('模板正文不能为空。')
     return
   }
   if (text.length > 1000) {
-    templateError.value = '模板正文不能超过 1000 个字符。'
+    adminNotice.error('模板正文不能超过 1000 个字符。')
     return
   }
   templateSaving.value = true
@@ -255,7 +250,7 @@ async function saveTemplate() {
     syncTemplateDraft()
     showFeedback(`模板已保存，当前版本 v${saved.version}`)
   } catch (error) {
-    templateError.value = apiErrorMessage(error, '模板保存失败')
+    adminNotice.error(apiErrorMessage(error, '模板保存失败'))
   } finally {
     templateSaving.value = false
   }
@@ -361,7 +356,7 @@ onMounted(async () => {
           <span class="robot-fixed-note">唯一机器人 · 身份固定</span>
         </div>
         <p v-if="!canWrite" class="permission-note">当前账号仅有查看权限。</p>
-        <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }}</p>
+        <p v-if="errorMessage" class="inline-error" role="alert">{{ errorMessage }} <button type="button" @click="refresh">重试加载</button></p>
         <div v-if="loading && !robots.length" class="user-empty-state">正在加载机器人列表...</div>
         <div v-else-if="!robots.length" class="user-empty-state"><strong>固定机器人配置缺失</strong><span>请检查数据库迁移状态。</span></div>
         <div v-else class="user-table-wrap robot-table-wrap">
@@ -384,7 +379,7 @@ onMounted(async () => {
         <section class="admin-section robot-detail-section">
           <div class="section-title"><div><span class="eyebrow">ROBOT IDENTITY</span><h2>固定机器人</h2></div></div>
           <div v-if="detailLoading" class="user-empty-state robot-detail-state">正在加载机器人详情...</div>
-          <p v-else-if="detailError" class="inline-error" role="alert">{{ detailError }}</p>
+          <p v-else-if="detailError" class="inline-error" role="alert">{{ detailError }} <button v-if="selectedRobotId !== null" type="button" @click="loadRobotDetail(selectedRobotId)">重试加载</button></p>
           <div v-else-if="!selectedRobot" class="user-empty-state robot-detail-state">选择一个机器人查看详情。</div>
           <template v-else>
             <dl class="user-detail-grid robot-detail-grid"><div><dt>名称</dt><dd>机器人</dd></div><div><dt>头像</dt><dd>绿色安卓（随应用打包）</dd></div><div><dt>身份</dt><dd>聊天室唯一机器人</dd></div><div><dt>状态</dt><dd>已启用</dd></div><div><dt>配置时间</dt><dd>{{ dateTime(selectedRobot.robot.createdAt) }}</dd></div><div><dt>最近更新</dt><dd>{{ dateTime(selectedRobot.robot.updatedAt) }}</dd></div></dl>
@@ -416,7 +411,7 @@ onMounted(async () => {
         <p v-if="!selectedRobot" class="user-empty-state robot-detail-state">选择机器人后配置开奖消息组件。</p>
         <template v-else>
           <p class="modal-note">三类组件都会提交，顺序使用 1-3；关闭仅表示该段不展示。</p>
-          <p v-if="drawComponentError" class="inline-error" role="alert">{{ drawComponentError }}</p>
+          <p v-if="drawComponentError" class="inline-error" role="alert">{{ drawComponentError }} <button v-if="selectedRobotId !== null" type="button" @click="loadRobotDetail(selectedRobotId)">重试加载</button></p>
           <div class="robot-draw-config-list" aria-label="开奖消息组件配置">
             <div v-for="component in drawComponents" :key="component.component" class="robot-draw-config-row">
               <label class="robot-draw-toggle">
@@ -430,15 +425,14 @@ onMounted(async () => {
               </label>
             </div>
           </div>
-          <p v-if="drawComponentErrors.length" class="inline-error" role="alert">{{ drawComponentErrors[0] }}</p>
-          <div class="modal-actions"><button type="button" class="primary-button" :disabled="!canWrite || drawComponentSaving || drawComponentErrors.length > 0" @click="saveDrawComponents">{{ drawComponentSaving ? '保存中...' : '保存开奖组件配置' }}</button></div>
+          <div class="modal-actions"><button type="button" class="primary-button" :disabled="!canWrite || drawComponentSaving" @click="saveDrawComponents">{{ drawComponentSaving ? '保存中...' : '保存开奖组件配置' }}</button></div>
         </template>
       </section>
 
       <section class="admin-section robot-dispatch-section">
         <div class="section-title"><div><span class="eyebrow">DISPATCH MONITOR</span><h2>投递记录</h2></div><button type="button" class="secondary-button" :disabled="dispatchLoading" @click="loadDispatches">刷新记录</button></div>
         <div class="user-filter-bar robot-dispatch-filters"><label>期号<input v-model="dispatchFilters.issueNumber" type="search" maxlength="64" placeholder="支持中文期号" @keyup.enter="applyDispatchFilters" /></label><label>事件类型<select v-model="dispatchFilters.eventType"><option value="">全部事件</option><option v-for="eventType in eventTypes" :key="eventType" :value="eventType">{{ eventLabels[eventType] }}</option></select></label><label>状态<select v-model="dispatchFilters.status"><option value="">全部状态</option><option v-for="status in dispatchStatuses" :key="status" :value="status">{{ dispatchStatusLabel(status) }}</option></select></label><label>开始时间<input v-model="dispatchFilters.from" type="datetime-local" /></label><label>结束时间<input v-model="dispatchFilters.to" type="datetime-local" /></label><button type="button" class="secondary-button" :disabled="dispatchLoading" @click="applyDispatchFilters">查询</button></div>
-        <p v-if="dispatchError" class="inline-error" role="alert">{{ dispatchError }}</p>
+        <p v-if="dispatchError" class="inline-error" role="alert">{{ dispatchError }} <button type="button" @click="loadDispatches">重试加载</button></p>
         <div v-if="dispatchLoading && !dispatches.length" class="user-empty-state">正在加载投递记录...</div>
         <div v-else-if="!dispatches.length" class="user-empty-state"><strong>暂无投递记录</strong><span>当前筛选条件没有匹配的机器人投递。</span></div>
         <div v-else class="user-table-wrap robot-table-wrap"><table class="user-table robot-dispatch-table"><thead><tr><th>投递 ID</th><th>事件 ID</th><th>期号</th><th>事件类型</th><th>状态</th><th>尝试次数</th><th>下次重试</th><th>消息 ID</th><th>错误摘要</th><th>发布时间</th><th>操作</th></tr></thead><tbody><tr v-for="dispatch in dispatches" :key="dispatch.id"><td>{{ dispatch.id }}</td><td>{{ dispatch.gameEventId }}</td><td>{{ dispatch.issueNumber }}</td><td>{{ eventLabels[dispatch.eventType] }}</td><td><span class="robot-dispatch-status" :class="dispatchStatusClass(dispatch.status)">{{ dispatchStatusLabel(dispatch.status) }}</span></td><td>{{ dispatch.attemptCount }}</td><td>{{ dateTime(dispatch.nextAttemptAt) }}</td><td>{{ dispatch.messageId ?? '--' }}</td><td class="robot-error-cell" :title="dispatch.lastError || undefined">{{ dispatch.lastError || '--' }}</td><td>{{ dateTime(dispatch.publishedAt) }}</td><td><button v-if="dispatch.status === 'FAILED'" type="button" class="table-action" :disabled="!canWrite || retryingDispatchId !== null" @click="retryDispatch(dispatch)">{{ retryingDispatchId === dispatch.id ? '重试中...' : '重试' }}</button><span v-else class="robot-muted-action">不可重试</span></td></tr></tbody></table></div>
@@ -446,7 +440,6 @@ onMounted(async () => {
       </section>
     </main>
 
-    <p v-if="feedback" class="toast" :class="`toast-${feedbackKind}`" role="status" aria-live="polite">{{ feedback }}</p>
   </div>
 </template>
 
@@ -1127,16 +1120,6 @@ onMounted(async () => {
 
 .admin-page .modal-actions {
   margin-top: 6px;
-}
-
-.admin-page .toast {
-  top: 7px;
-  right: 7px;
-  width: min(330px, calc(100vw - 14px));
-  border-radius: 1px;
-  box-shadow: 0 2px 8px rgb(25 63 99 / 22%);
-  padding: 7px 9px;
-  font-size: 11px;
 }
 
 @media (max-width: 760px) {

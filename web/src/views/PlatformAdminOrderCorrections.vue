@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
-import { ElMessage } from 'element-plus'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { OrderCorrectionDetail, OrderCorrectionItem } from '../types/platformAdmin'
 
@@ -12,7 +12,6 @@ const total = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const editorOpen = ref(false)
 const detail = ref<OrderCorrectionDetail | null>(null)
@@ -44,7 +43,6 @@ async function load(nextPage = page.value) {
 
 async function openEditor(row: OrderCorrectionItem) {
   error.value = ''
-  feedback.value = ''
   try {
     detail.value = await api.getOrderCorrection(row.id)
     command.value = detail.value.command
@@ -52,19 +50,18 @@ async function openEditor(row: OrderCorrectionItem) {
     idempotencyKey.value = createIdempotencyKey()
     editorOpen.value = true
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '订单详情加载失败')
+    adminNotice.error(apiErrorMessage(cause, '订单详情加载失败'))
   }
 }
 
 async function submit() {
   if (!detail.value || saving.value) return
   if (command.value.length === 0) {
-    ElMessage.warning('指令不能为空')
+    adminNotice.warning('指令不能为空')
     return
   }
   saving.value = true
   error.value = ''
-  feedback.value = ''
   try {
     const result = await api.correctOrder(detail.value.id, {
       command: command.value,
@@ -72,11 +69,11 @@ async function submit() {
       idempotencyKey: idempotencyKey.value,
     })
     const delta = result.stakeDelta > 0 ? `扣除 ${result.stakeDelta.toFixed(2)}` : result.stakeDelta < 0 ? `返还 ${Math.abs(result.stakeDelta).toFixed(2)}` : '积分不变'
-    feedback.value = `修改成功，${delta}${result.walletBalance === null ? '' : `，当前余额 ${result.walletBalance.toFixed(2)}`}`
+    adminNotice.success(`修改成功，${delta}${result.walletBalance === null ? '' : `，当前余额 ${result.walletBalance.toFixed(2)}`}`)
     editorOpen.value = false
     await load(page.value)
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '订单改单失败')
+    adminNotice.error(apiErrorMessage(cause, '订单改单失败'))
   } finally {
     saving.value = false
   }
@@ -98,7 +95,6 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><h1>订单改单</h1><el-button :disabled="loading" @click="load(page)">刷新</el-button></header>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
-      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
       <el-skeleton v-if="loading" :rows="6" animated />
       <el-table scrollbar-always-on v-else :data="rows" row-key="id" stripe border empty-text="暂无数据">
         <el-table-column prop="id" label="ID" width="90" />

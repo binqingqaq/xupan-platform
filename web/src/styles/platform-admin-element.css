@@ -2,6 +2,13 @@ body.platform-admin-body:not(.ops-console-body) {
   min-width: 320px;
 }
 
+.el-message.xupan-admin-notice {
+  z-index: 10000 !important;
+  max-width: min(560px, calc(100vw - 32px));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .platform-admin-page {
   --el-font-size-extra-large: 22px;
   --el-font-size-large: 19px;

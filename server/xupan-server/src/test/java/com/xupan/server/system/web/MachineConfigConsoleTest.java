@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,6 +24,11 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -68,6 +75,9 @@ class MachineConfigConsoleTest {
 
     @Autowired
     private GameDataRepository gameDataRepository;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private long adminId;
     private long machineAId;
@@ -134,64 +144,112 @@ class MachineConfigConsoleTest {
     }
 
     @Test
-    void disabledMachineConfigPermissionIsReportedAndRejectsDirectWrites() throws Exception {
-        String token = login(MACHINE_A_USER, PASSWORD);
+    void manualBettingStateDefaultsOpenAndOnlyMachineCanChangeOwnState() throws Exception {
+        String machineToken = login(MACHINE_A_USER, PASSWORD);
+        String otherMachineToken = login(MACHINE_B_USER, PASSWORD);
         String adminToken = login(ADMIN, PASSWORD);
-        jdbc.update("UPDATE agent SET config_edit_enabled=FALSE WHERE id=?", machineAId);
 
-        mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(token)))
+        mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(machineToken)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.configEditable").value(false));
+                .andExpect(jsonPath("$.manualBettingOpen").value(true));
 
-        mockMvc.perform(put("/api/admin/player-desk/machine-config")
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(configBody(null, "95", "18", "5", "1", "DOUBLE", 100, 10, "2000")))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("MACHINE_CONFIG_FORBIDDEN"));
-
-        MvcResult machineList = mockMvc.perform(get("/api/admin/machines")
-                        .header("Authorization", bearer(adminToken)))
-                .andExpect(status().isOk()).andReturn();
-        List<Boolean> editableValues = JsonPath.read(machineList.getResponse().getContentAsString(),
-                "$[?(@.id == " + machineAId + ")].configEditEnabled");
-        assertThat(editableValues).containsExactly(false);
-
-        assertThat(jdbc.queryForObject("SELECT odds_rate FROM agent WHERE id=?", BigDecimal.class, machineAId))
-                .isEqualByComparingTo("0");
-    }
-
-    @Test
-    void platformAdminControlsMachineConfigPermissionThroughMachineApi() throws Exception {
-        String adminToken = login(ADMIN, PASSWORD);
         MvcResult initialList = mockMvc.perform(get("/api/admin/machines")
                         .header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk()).andReturn();
-        List<Integer> versions = JsonPath.read(initialList.getResponse().getContentAsString(),
-                "$[?(@.id == " + machineAId + ")].configVersion");
-        int version = versions.getFirst();
-        List<Boolean> initiallyEditable = JsonPath.read(initialList.getResponse().getContentAsString(),
-                "$[?(@.id == " + machineAId + ")].configEditEnabled");
-        assertThat(initiallyEditable).containsExactly(true);
+        assertThat((List<Boolean>) JsonPath.read(initialList.getResponse().getContentAsString(),
+                "$[?(@.id == " + machineAId + ")].manualBettingOpen")).containsExactly(true);
 
-        mockMvc.perform(put("/api/admin/machines/" + machineAId)
-                        .queryParam("expectedConfigVersion", String.valueOf(version))
-                        .header("Authorization", bearer(adminToken)).contentType("application/json")
-                        .content(platformMachineConfigBody("91", "19", "4", "0.75", "1500")
-                                .replace("\"robotManage\":false", "\"robotManage\":false,\"configEditEnabled\":false")))
+        mockMvc.perform(put("/api/admin/player-desk/machine-betting-state")
+                        .header("Authorization", bearer(machineToken)).contentType("application/json")
+                        .content("{\"machineId\":" + machineAId + ",\"open\":false}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.configEditEnabled").value(false));
+                .andExpect(jsonPath("$.manualBettingOpen").value(false));
+        mockMvc.perform(get("/api/admin/player-desk/machine-config").header("Authorization", bearer(machineToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manualBettingOpen").value(false));
 
-        MvcResult disabledList = mockMvc.perform(get("/api/admin/machines")
-                        .header("Authorization", bearer(adminToken)))
-                .andExpect(status().isOk()).andReturn();
-        List<Boolean> disabledValues = JsonPath.read(disabledList.getResponse().getContentAsString(),
-                "$[?(@.id == " + machineAId + ")].configEditEnabled");
-        assertThat(disabledValues).containsExactly(false);
-        String auditSummary = jdbc.queryForObject("""
-                SELECT request_summary FROM sys_operation_log
-                 WHERE request_path = ? ORDER BY id DESC LIMIT 1
-                """, String.class, "/api/admin/machines/" + machineAId);
-        assertThat(auditSummary).contains("configEditEnabled=false");
+        // A repeated desired state is idempotent and does not create duplicate audit entries.
+        mockMvc.perform(put("/api/admin/player-desk/machine-betting-state")
+                        .header("Authorization", bearer(machineToken)).contentType("application/json")
+                        .content("{\"machineId\":" + machineAId + ",\"open\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.manualBettingOpen").value(false));
+        assertThat(auditCount(machineAId)).isEqualTo(1);
+
+        mockMvc.perform(put("/api/admin/player-desk/machine-betting-state")
+                        .header("Authorization", bearer(otherMachineToken)).contentType("application/json")
+                        .content("{\"machineId\":" + machineAId + ",\"open\":true}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("MACHINE_NOT_FOUND"));
+        mockMvc.perform(put("/api/admin/player-desk/machine-betting-state")
+                        .header("Authorization", bearer(adminToken)).contentType("application/json")
+                        .content("{\"machineId\":" + machineAId + ",\"open\":true}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("MACHINE_BETTING_STATE_FORBIDDEN"));
+        mockMvc.perform(put("/api/admin/player-desk/machine-betting-state")
+                        .header("Authorization", bearer(machineToken)).contentType("application/json")
+                        .content("{\"machineId\":" + machineAId + "}"))
+                .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT manual_betting_open FROM agent WHERE id=?", Boolean.class, machineAId))
+                .isFalse();
+        assertThat(auditCount(machineAId)).isEqualTo(1);
+    }
+
+    @Test
+    void expiredMachineCannotChangeManualBettingState() throws Exception {
+        String token = login(MACHINE_A_USER, PASSWORD);
+        jdbc.update("UPDATE agent SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1' DAY WHERE id = ?", machineAId);
+        mockMvc.perform(put("/api/admin/player-desk/machine-betting-state")
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content("{\"machineId\":" + machineAId + ",\"open\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("MACHINE_NOT_ACTIVE"));
+        assertThat(jdbc.queryForObject("SELECT manual_betting_open FROM agent WHERE id=?", Boolean.class, machineAId))
+                .isTrue();
+        assertThat(auditCount(machineAId)).isZero();
+    }
+
+    @Test
+    void stateToggleWaitsForInFlightBetTransactionMachineRowLock() throws Exception {
+        String machineToken = login(MACHINE_A_USER, PASSWORD);
+        long playerAccountId = createPlayerUnderMachineA(machineToken);
+        CountDownLatch machineRowLocked = new CountDownLatch(1);
+        CountDownLatch releaseBet = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> inFlightBet = executor.submit(() -> new TransactionTemplate(transactionManager)
+                    .executeWithoutResult(status -> {
+                        gameDataRepository.lockMachineBettingState(playerAccountId);
+                        machineRowLocked.countDown();
+                        try {
+                            if (!releaseBet.await(5, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException("test did not release the bet transaction");
+                            }
+                        } catch (InterruptedException exception) {
+                            Thread.currentThread().interrupt();
+                            throw new IllegalStateException(exception);
+                        }
+                    }));
+            assertThat(machineRowLocked.await(3, TimeUnit.SECONDS)).isTrue();
+
+            Future<MvcResult> close = executor.submit(() -> mockMvc.perform(
+                            put("/api/admin/player-desk/machine-betting-state")
+                                    .header("Authorization", bearer(machineToken)).contentType("application/json")
+                                    .content("{\"machineId\":" + machineAId + ",\"open\":false}"))
+                    .andReturn());
+            Thread.sleep(150);
+            assertThat(close.isDone()).isFalse();
+
+            releaseBet.countDown();
+            inFlightBet.get(3, TimeUnit.SECONDS);
+            assertThat(close.get(3, TimeUnit.SECONDS).getResponse().getStatus()).isEqualTo(200);
+            assertThat(jdbc.queryForObject("SELECT manual_betting_open FROM agent WHERE id=?",
+                    Boolean.class, machineAId)).isFalse();
+        } finally {
+            releaseBet.countDown();
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(3, TimeUnit.SECONDS)).isTrue();
+        }
     }
 
     /**
@@ -340,7 +398,7 @@ class MachineConfigConsoleTest {
         Integer expectedVersion = jdbc.queryForObject(
                 "SELECT betting_config_version FROM agent WHERE id = ?", Integer.class, targetMachineId);
         return "{" + machineField
-                + "\"boardOpen\":true,\"chaseEnabled\":false,\"countdownVisible\":true,\"botCount\":1,"
+                + "\"chaseEnabled\":false,\"countdownVisible\":true,\"botCount\":1,"
                 + "\"closeSeconds\":" + closeSeconds + ",\"cancelSeconds\":" + cancelSeconds + ","
                 + "\"rebateRate\":" + rebateRate + ",\"oddsRate\":" + oddsRate + ","
                 + "\"specialRebateRate\":" + specialRebateRate + ",\"specialOddsRate\":" + specialOddsRate + ","
@@ -353,7 +411,7 @@ class MachineConfigConsoleTest {
     private String platformMachineConfigBody(String oddsRate, String specialOddsRate, String rebateRate,
                                              String specialRebateRate, String totalLimit) {
         return "{\"username\":\"" + MACHINE_A_USER + "\",\"groupId\":null,\"score\":0,"
-                + "\"expiresAt\":null,\"boardOpen\":true,\"robotManage\":false,\"chaseEnabled\":false,"
+                + "\"expiresAt\":null,\"robotManage\":false,\"chaseEnabled\":false,"
                 + "\"botCount\":0,\"closeSeconds\":80,\"cancelSeconds\":9,\"rebateRate\":" + rebateRate
                 + ",\"oddsRate\":" + oddsRate + ",\"specialRebateRate\":" + specialRebateRate
                 + ",\"specialOddsRate\":" + specialOddsRate + ",\"rebateMode\":\"SINGLE\",\"totalLimit\":"
@@ -381,6 +439,14 @@ class MachineConfigConsoleTest {
     private int closeSecondsOf(long machineId) {
         Integer value = jdbc.queryForObject("SELECT close_seconds FROM agent WHERE id=?", Integer.class, machineId);
         return value == null ? 0 : value;
+    }
+
+    private long auditCount(long machineId) {
+        return jdbc.queryForObject("""
+                SELECT COUNT(*) FROM sys_operation_log
+                 WHERE request_path = '/api/admin/player-desk/machine-betting-state'
+                   AND resource_id = ?
+                """, Long.class, Long.toString(machineId));
     }
 
     private String login(String username, String password) throws Exception {

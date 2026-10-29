@@ -22,10 +22,9 @@ class AgentBettingPolicyTest {
 
     private final AgentBettingPolicy policy = new AgentBettingPolicy();
 
-    private static MachineBettingConfig machine(int oddsRate, int specialOddsRate, int closeSeconds, int cancelSeconds,
-                                                boolean boardOpen) {
+    private static MachineBettingConfig machine(int oddsRate, int specialOddsRate, int closeSeconds, int cancelSeconds) {
         return new MachineBettingConfig(new BigDecimal(oddsRate), new BigDecimal(specialOddsRate),
-                closeSeconds, cancelSeconds, boardOpen, "SINGLE", new BigDecimal("5"), new BigDecimal("1"));
+                closeSeconds, cancelSeconds, "SINGLE", new BigDecimal("5"), new BigDecimal("1"));
     }
 
     @Test
@@ -42,7 +41,7 @@ class AgentBettingPolicyTest {
 
     @Test
     void configuredOddsAreConvertedAndRoundedToThreeDecimals() {
-        MachineBettingConfig machine = machine(95, 18, 0, 10, true);
+        MachineBettingConfig machine = machine(95, 18, 0, 10);
 
         assertThat(policy.effectiveOdds(PlayType.BIG_SMALL, new BigDecimal("1.900"), machine))
                 .isEqualByComparingTo("1.950");
@@ -64,7 +63,7 @@ class AgentBettingPolicyTest {
 
     @Test
     void displayOddsUseMachineRatesAndBy220CellSpecificPrecision() {
-        MachineBettingConfig machine = machine(95, 18, 0, 10, true);
+        MachineBettingConfig machine = machine(95, 18, 0, 10);
 
         assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.BASE, machine))
                 .isEqualByComparingTo("1.950");
@@ -88,7 +87,7 @@ class AgentBettingPolicyTest {
     @Test
     void preservesFourDecimalSpecialOddsConfiguredForTheMachine() {
         MachineBettingConfig machine = new MachineBettingConfig(new BigDecimal("95"),
-                new BigDecimal("18.1234"), 0, 10, true, "SINGLE", new BigDecimal("5"), new BigDecimal("1"));
+                new BigDecimal("18.1234"), 0, 10, "SINGLE", new BigDecimal("5"), new BigDecimal("1"));
 
         assertThat(policy.effectiveOdds(PlayType.SPECIAL, null, machine)).isEqualByComparingTo("18.1234");
         assertThat(policy.displayOdds(AgentBettingPolicy.DisplayOddsRuleKey.SPECIAL, machine))
@@ -97,7 +96,7 @@ class AgentBettingPolicyTest {
 
     @Test
     void unconfiguredMachineNeverFallsBackToGlobalOdds() {
-        MachineBettingConfig machine = machine(0, 0, 0, 10, true);
+        MachineBettingConfig machine = machine(0, 0, 0, 10);
 
         assertThatThrownBy(() -> policy.effectiveOdds(PlayType.FAN, new BigDecimal("3.500"), machine))
                 .isInstanceOf(IllegalStateException.class).hasMessage("MACHINE_ODDS_UNAVAILABLE");
@@ -107,7 +106,7 @@ class AgentBettingPolicyTest {
 
     @Test
     void missingGlobalOddsIsRejectedWhenMachineHasNoConfiguration() {
-        MachineBettingConfig machine = machine(0, 0, 0, 10, true);
+        MachineBettingConfig machine = machine(0, 0, 0, 10);
 
         assertThatThrownBy(() -> policy.effectiveOdds(PlayType.FAN, null, machine))
                 .isInstanceOf(IllegalStateException.class)
@@ -121,29 +120,31 @@ class AgentBettingPolicyTest {
                 "3000000", "OPEN", "BETTING", List.of(), drawEndsAt.minusSeconds(300),
                 drawEndsAt.minusSeconds(120), drawEndsAt, null);
 
-        MachineBettingConfig sixty = machine(95, 18, 60, 10, true);
+        MachineBettingConfig sixty = machine(95, 18, 60, 10);
         assertThat(policy.isClosedForBetting(sixty, issue, drawEndsAt.minusSeconds(61))).isFalse();
         // 剩余时间正好等于封盘秒数时仍按下注允许处理（BY220 使用 < 判断）。
         assertThat(policy.isClosedForBetting(sixty, issue, drawEndsAt.minusSeconds(60))).isFalse();
         assertThat(policy.isClosedForBetting(sixty, issue, drawEndsAt.minusSeconds(59))).isTrue();
 
         // close_seconds=0 表示不额外提前封盘，行为与配置前一致。
-        MachineBettingConfig zero = machine(95, 18, 0, 10, true);
+        MachineBettingConfig zero = machine(95, 18, 0, 10);
         assertThat(policy.isClosedForBetting(zero, issue, drawEndsAt.minusSeconds(1))).isFalse();
     }
 
     @Test
-    void boardClosedAndSealWindowProduceDistinctReasons() {
+    void manualMachineClosureAndSealWindowProduceDistinctReasons() {
         Instant drawEndsAt = Instant.parse("2026-10-02T12:00:00Z");
         GameDataRepository.IssueRecord issue = new GameDataRepository.IssueRecord(
                 "3000000", "OPEN", "BETTING", List.of(), drawEndsAt.minusSeconds(300),
                 drawEndsAt.minusSeconds(120), drawEndsAt, null);
 
-        assertThat(policy.rejectBet(machine(95, 18, 0, 10, false), issue, drawEndsAt.minusSeconds(200)))
-                .contains(AgentBettingPolicy.BOARD_CLOSED);
-        assertThat(policy.rejectBet(machine(95, 18, 60, 10, true), issue, drawEndsAt.minusSeconds(30)))
+        MachineBettingConfig manuallyClosed = new MachineBettingConfig(new BigDecimal("95"), new BigDecimal("18"),
+                60, 10, false, "SINGLE", BigDecimal.ZERO, BigDecimal.ZERO);
+        assertThat(policy.rejectBet(manuallyClosed, issue, drawEndsAt.minusSeconds(90)))
+                .contains(AgentBettingPolicy.MANUALLY_CLOSED);
+        assertThat(policy.rejectBet(machine(95, 18, 60, 10), issue, drawEndsAt.minusSeconds(30)))
                 .contains(AgentBettingPolicy.MACHINE_CLOSED);
-        assertThat(policy.rejectBet(machine(95, 18, 60, 10, true), issue, drawEndsAt.minusSeconds(90)))
+        assertThat(policy.rejectBet(machine(95, 18, 60, 10), issue, drawEndsAt.minusSeconds(90)))
                 .isEmpty();
     }
 
@@ -151,9 +152,9 @@ class AgentBettingPolicyTest {
     void cancellationWindowAndDisabledStateFollowCancelSeconds() {
         Instant now = Instant.parse("2026-10-02T12:00:00Z");
 
-        assertThat(policy.cancellationWindowStart(machine(95, 18, 0, 10, true), now))
+        assertThat(policy.cancellationWindowStart(machine(95, 18, 0, 10), now))
                 .isEqualTo(now.minusSeconds(10));
-        assertThat(machine(95, 18, 0, 0, true).cancellationDisabled()).isTrue();
-        assertThat(machine(95, 18, 0, 10, true).cancellationDisabled()).isFalse();
+        assertThat(machine(95, 18, 0, 0).cancellationDisabled()).isTrue();
+        assertThat(machine(95, 18, 0, 10).cancellationDisabled()).isFalse();
     }
 }

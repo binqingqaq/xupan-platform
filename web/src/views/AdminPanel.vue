@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import type {
   AdminUserView,
   CurrentUserView,
@@ -30,8 +31,7 @@ const idempotencyKey = ref(createIdempotencyKey())
 const lastOperation = ref<WalletOperationResponse | null>(null)
 const drawNumbers = ref<(number | null)[]>(Array(8).fill(null))
 const oddsDraft = ref<Partial<Record<PlayType, number>>>({})
-const feedback = ref('')
-const feedbackKind = ref<'success' | 'error'>('success')
+const loadError = ref('')
 const busy = ref(false)
 const router = useRouter()
 
@@ -45,11 +45,7 @@ function createIdempotencyKey() {
 }
 
 function showFeedback(message: string, kind: 'success' | 'error' = 'success') {
-  feedback.value = message
-  feedbackKind.value = kind
-  window.setTimeout(() => {
-    if (feedback.value === message) feedback.value = ''
-  }, 3500)
+  adminNotice[kind](message)
 }
 
 async function logout() {
@@ -61,6 +57,7 @@ async function logout() {
 }
 
 async function load() {
+  loadError.value = ''
   try {
     const [game, user] = await Promise.all([api.current(), api.me()])
     current.value = game
@@ -69,7 +66,7 @@ async function load() {
     drawNumbers.value = game.balls.map(ball => ball.number)
     if (user.roles.includes('ADMIN')) await loadWalletUsers()
   } catch (error) {
-    showFeedback(apiErrorMessage(error, '后台数据加载失败'), 'error')
+    loadError.value = apiErrorMessage(error, '后台数据加载失败')
   }
 }
 
@@ -207,6 +204,7 @@ onMounted(load)
     </header>
 
     <main class="admin-main">
+      <p v-if="loadError" class="admin-load-error" role="alert">{{ loadError }} <button type="button" @click="load">重试</button></p>
       <section class="admin-summary" aria-label="运行概览">
         <div class="summary-item"><span>当前期</span><strong>{{ current?.issueNumber || '--' }}</strong></div>
         <div class="summary-item"><span>状态</span><strong>{{ statusText }}</strong></div>
@@ -287,7 +285,6 @@ onMounted(load)
         </section>
       </div>
     </main>
-    <p v-if="feedback" class="toast" :class="`toast-${feedbackKind}`" role="status">{{ feedback }}</p>
   </div>
 </template>
 
@@ -711,15 +708,8 @@ onMounted(load)
   text-align: center;
 }
 
-.admin-page .toast {
-  top: 7px;
-  right: 7px;
-  width: min(330px, calc(100vw - 14px));
-  border-radius: 1px;
-  box-shadow: 0 2px 8px rgb(25 63 99 / 22%);
-  padding: 7px 9px;
-  font-size: 11px;
-}
+.admin-load-error { padding: 8px; color: #9f1239; background: #fff0f2; }
+.admin-load-error button { margin-left: 8px; cursor: pointer; }
 
 @media (max-width: 760px) {
   .admin-page .admin-header {

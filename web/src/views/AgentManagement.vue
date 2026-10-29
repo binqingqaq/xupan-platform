@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, apiErrorMessage } from '../api'
+import { adminNotice } from '../services/adminNotice'
 import type { Agent, AgentGroup, AgentPlayerAssignment } from '../types/agent'
 
 const router = useRouter()
@@ -11,7 +12,6 @@ const assignments = ref<AgentPlayerAssignment[]>([])
 const loading = ref(true)
 const busy = ref(false)
 const error = ref('')
-const feedback = ref('')
 const groupForm = reactive({ code: '', displayName: '' })
 const agentForm = reactive({ agentCode: '', username: '', displayName: '', rawPassword: '', groupId: '' })
 const selectedAgents = reactive<Record<number, number | ''>>({})
@@ -41,26 +41,30 @@ async function load() {
 }
 
 async function createGroup() {
-  if (!groupForm.code.trim() || !groupForm.displayName.trim()) return
+  if (!groupForm.code.trim() || !groupForm.displayName.trim()) {
+    adminNotice.error('请填写渠道组编码和名称')
+    return
+  }
   busy.value = true
-  feedback.value = ''
   try {
     await api.createAgentGroup({ code: groupForm.code.trim(), displayName: groupForm.displayName.trim() })
     groupForm.code = ''
     groupForm.displayName = ''
-    feedback.value = '渠道组已创建'
+    adminNotice.success('渠道组已创建')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '渠道组创建失败')
+    adminNotice.error(apiErrorMessage(cause, '渠道组创建失败'))
   } finally {
     busy.value = false
   }
 }
 
 async function createAgent() {
-  if (!agentForm.agentCode.trim() || !agentForm.username.trim() || !agentForm.displayName.trim() || !agentForm.rawPassword) return
+  if (!agentForm.agentCode.trim() || !agentForm.username.trim() || !agentForm.displayName.trim() || !agentForm.rawPassword) {
+    adminNotice.error('请完整填写代理编码、用户名、名称和密码')
+    return
+  }
   busy.value = true
-  feedback.value = ''
   try {
     await api.createAgent({
       agentCode: agentForm.agentCode.trim(),
@@ -74,10 +78,10 @@ async function createAgent() {
     agentForm.displayName = ''
     agentForm.rawPassword = ''
     agentForm.groupId = ''
-    feedback.value = '代理账号已创建'
+    adminNotice.success('代理账号已创建')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '代理创建失败')
+    adminNotice.error(apiErrorMessage(cause, '代理创建失败'))
   } finally {
     busy.value = false
   }
@@ -89,10 +93,10 @@ async function toggleAgent(agent: Agent) {
   error.value = ''
   try {
     await api.changeAgentStatus(agent.id, agent.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')
-    feedback.value = agent.status === 'ACTIVE' ? '代理已停用' : '代理已启用'
+    adminNotice.success(agent.status === 'ACTIVE' ? '代理已停用' : '代理已启用')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '代理状态更新失败')
+    adminNotice.error(apiErrorMessage(cause, '代理状态更新失败'))
   } finally {
     busy.value = false
   }
@@ -105,10 +109,10 @@ async function assignPlayer(item: AgentPlayerAssignment) {
   error.value = ''
   try {
     await api.assignPlayerToAgent(item.userId, Number(agentId))
-    feedback.value = '玩家归属已更新'
+    adminNotice.success('玩家归属已更新')
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '玩家归属更新失败')
+    adminNotice.error(apiErrorMessage(cause, '玩家归属更新失败'))
   } finally {
     busy.value = false
   }
@@ -138,8 +142,7 @@ onMounted(() => { void load() })
       </div>
     </header>
 
-    <p v-if="error" class="agent-feedback error" role="alert">{{ error }}</p>
-    <p v-if="feedback" class="agent-feedback">{{ feedback }}</p>
+    <p v-if="error" class="agent-feedback error" role="alert">{{ error }} <button type="button" @click="load">重试加载</button></p>
 
     <section class="agent-panel-grid">
       <article class="agent-panel">
@@ -243,8 +246,7 @@ onMounted(() => { void load() })
 .agent-status { display: inline-block; padding: 2px 6px; border-radius: 10px; background: #d9eadc; }
 .agent-status.disabled { background: #ead9d9; }
 .agent-assign-cell { display: flex; gap: 6px; }
-.agent-feedback { max-width: 1148px; margin: 0 auto 12px; padding: 10px 12px; background: #dce8df; }
-.agent-feedback.error { background: #ead9d9; }
+.agent-feedback { max-width: 1148px; margin: 0 auto 12px; padding: 10px 12px; background: #ead9d9; }
 .agent-empty { padding: 18px; color: #746b5d; }
 @media (max-width: 900px) { .agent-panel-grid, .agent-form { grid-template-columns: 1fr; } .agent-admin-page { padding: 12px; } .agent-table { display: block; overflow-x: auto; } }
 </style>

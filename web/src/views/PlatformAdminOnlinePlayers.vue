@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { OnlinePlayerItem } from '../types/platformAdmin'
 
 const rows = ref<OnlinePlayerItem[]>([])
 const loading = ref(false)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const messageOpen = ref(false)
 const messageTarget = ref<OnlinePlayerItem | null>(null)
@@ -39,13 +39,12 @@ async function disconnect(row: OnlinePlayerItem) {
     await ElMessageBox.confirm(`确定将[${row.username}]强制下线么?`, '强制下线确认', { type: 'warning', confirmButtonText: '强制下线', cancelButtonText: '取消', closeOnClickModal: false })
   } catch { return }
   error.value = ''
-  feedback.value = ''
   try {
     const result = await api.disconnectOnlinePlayer(row.userId)
-    feedback.value = `成功！已断开 ${result.disconnectedSessions} 个会话`
+    adminNotice.success(`成功！已断开 ${result.disconnectedSessions} 个会话`)
     await load()
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '强制下线失败')
+    adminNotice.error(apiErrorMessage(cause, '强制下线失败'))
   }
 }
 
@@ -59,12 +58,11 @@ function openMessage(row: OnlinePlayerItem) {
 async function sendMessage() {
   if (!messageTarget.value || sending.value) return
   if (messageTitle.value.length === 0 || messageContent.value.length === 0) {
-    ElMessage.warning('标题和内容不能为空')
+    adminNotice.warning('标题和内容不能为空')
     return
   }
   sending.value = true
   error.value = ''
-  feedback.value = ''
   try {
     await api.sendOnlinePlayerMessage(messageTarget.value.userId, {
       title: messageTitle.value,
@@ -72,9 +70,9 @@ async function sendMessage() {
       idempotencyKey: createIdempotencyKey(),
     })
     messageOpen.value = false
-    feedback.value = '消息发送成功'
+    adminNotice.success('消息发送成功')
   } catch (cause) {
-    error.value = apiErrorMessage(cause, '消息发送失败')
+    adminNotice.error(apiErrorMessage(cause, '消息发送失败'))
   } finally {
     sending.value = false
   }
@@ -104,7 +102,6 @@ onUnmounted(() => {
         <el-button :disabled="loading" @click="load">刷新</el-button>
       </header>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
-      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
       <el-skeleton v-if="loading && rows.length === 0" :rows="5" animated />
       <el-table scrollbar-always-on v-else v-loading="loading" :data="rows" row-key="userId" stripe border empty-text="暂无在线用户">
         <el-table-column prop="displayName" label="玩家昵称" min-width="140" />

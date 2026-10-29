@@ -1,0 +1,2 @@
+ALTER TABLE agent
+    ADD COLUMN manual_betting_open BOOLEAN NOT NULL DEFAULT TRUE;

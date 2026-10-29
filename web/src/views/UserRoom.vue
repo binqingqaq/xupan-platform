@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { api, apiErrorMessage, ApiError, pointRequestErrorMessage } from '../api'
+import { Loading } from '@element-plus/icons-vue'
+import { api, apiErrorMessage, ApiError, getAuthAudience, pointRequestErrorMessage, restoreSession } from '../api'
 import Hby019AccountPanelFrame from '../components/Hby019AccountPanelFrame.vue'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import QuickBetPanel from '../components/QuickBetPanel.vue'
@@ -756,6 +757,18 @@ async function load() {
   }
 }
 
+async function initializeRoom() {
+  if (props.playerLinkOnly && (!api.hasAccessToken() || getAuthAudience() !== 'PLAYER')) {
+    const user = await restoreSession('PLAYER')
+    if (!user) {
+      authenticated.value = false
+      sessionChecked.value = true
+      return
+    }
+  }
+  await load()
+}
+
 async function login() {
   if (!loginUsername.value.trim() || !loginPassword.value) {
     loginError.value = '请输入用户名和密码'
@@ -1198,7 +1211,7 @@ onMounted(() => {
   } else {
     window.addEventListener('resize', updateComposerHeight)
   }
-  void load()
+  void initializeRoom()
   gameRefreshTimer = window.setInterval(() => { if (authenticated.value) void loadGame() }, 1000)
   countdownTimer = window.setInterval(() => {
     clockTick.value = Date.now()
@@ -1225,8 +1238,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" />
-  <div v-else class="reference-room" :class="{
+  <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" session-expired />
+  <div v-else class="reference-room" :aria-busy="props.playerLinkOnly && !sessionChecked" :class="{
     'interface-two': interfaceMode === 'ui2',
     'account-open': menuOpen,
     'chat-font-mini': chatFontSize === 'mini',
@@ -1235,6 +1248,10 @@ onUnmounted(() => {
     'chat-font-big': chatFontSize === 'big',
     'chat-font-bold': chatFontBold,
   }">
+    <div v-if="props.playerLinkOnly && !sessionChecked" class="player-session-loading" role="status" aria-live="polite">
+      <el-icon class="player-session-spinner" aria-hidden="true"><Loading /></el-icon>
+      <span class="player-session-loading-label">正在恢复玩家会话</span>
+    </div>
     <header v-show="platformSettings?.headerEnabled !== false" class="reference-header">
       <div class="reference-toolbar">
         <select v-if="gameCatalog.length > 1" v-model="selectedGameCode" class="game-select" aria-label="选择彩种" @change="switchGame">
@@ -1509,6 +1526,35 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.player-session-loading {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  pointer-events: all;
+}
+.player-session-spinner {
+  color: #767676;
+  font-size: 26px;
+  animation: player-session-spin 800ms linear infinite;
+}
+.player-session-loading-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+@keyframes player-session-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .player-session-spinner { animation-duration: 1600ms; }
+}
 .game-select { margin-right: 8px; max-width: 140px; border: 0; border-radius: 4px; padding: 5px 8px; background: #fff; color: #222; font-weight: 600; }
 .account-summary {
   width: calc(100% - 24px);

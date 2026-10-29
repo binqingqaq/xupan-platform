@@ -39,13 +39,13 @@ export interface Machine {
   score: number
   expiresAt: string | null
   status: 'ACTIVE' | 'DISABLED'
+  /** BY220 `x_robot.isOpen`：只读状态展示，代理在 `/console` 手动切换。 */
+  manualBettingOpen: boolean
   /** 登录账号（`sys_user.status`）的真实状态；`LOCKED` 表示登录被永久拒绝，需在机器管理里解锁。 */
   accountStatus?: 'ACTIVE' | 'DISABLED' | 'LOCKED' | 'DELETED' | null
   /** 机器赔率、返水与限额配置的乐观锁版本；编辑提交必须原样带回。 */
   configVersion: number
-  boardOpen: boolean
   robotManage: boolean
-  configEditEnabled: boolean
   chaseEnabled: boolean
   /** 该机器已配置的彩种（BY220 `x_robot.game` 逗号串）；编辑时必须回显，不能覆盖。 */
   games: string[]
@@ -99,11 +99,9 @@ export interface MachineInput {
   username: string
   rawPassword?: string
   groupId: number | null
-  score: number
+  score: number | null
   expiresAt: string | null
-  boardOpen: boolean
   robotManage: boolean
-  configEditEnabled: boolean
   chaseEnabled: boolean
   botCount: number
   closeSeconds: number

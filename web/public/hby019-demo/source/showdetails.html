@@ -483,6 +483,13 @@
 </div>
 
 <script type="text/javascript">
+    function showAdminNoticeError(message) {
+        if (window.parent !== window) {
+            window.parent.postMessage({ type: 'xupan-admin-notice', level: 'error', message: message }, window.location.origin);
+        } else {
+            window.alert(message);
+        }
+    }
     var totalDays = 8;
     var dayIndex = totalDays - 1;//天的索引，最后一天（今天）
     var timeType = 1;//0点还是6点一天， 0是0点一天，1是6点一天
@@ -630,7 +637,7 @@
                 },
                 //调用出错执行的函数
                 error: function () {
-                    alert('拉取失败，请稍候重试!')
+                    showAdminNoticeError('拉取失败，请稍候重试!')
                 }
             });
         }

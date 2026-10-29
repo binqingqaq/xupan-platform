@@ -61,7 +61,7 @@ class TestPlayerBehaviorServiceTest {
         machineUserId = userRepository.insert(MACHINE, "行为机器", passwordPolicy.encode("BehaviorMachine123"), "ACTIVE");
         userRepository.assignRole(machineUserId, "AGENT");
         agentId = agentRepository.createAgent("behavior-machine-code", "行为机器", null, machineUserId, adminId);
-        jdbc.update("UPDATE agent SET board_open=TRUE,chase_enabled=TRUE,score=5000 WHERE id=?", agentId);
+        jdbc.update("UPDATE agent SET manual_betting_open=TRUE,chase_enabled=TRUE,score=5000 WHERE id=?", agentId);
 
         botId = userRepository.insertTestPlayer(BOT, "行为托", null, passwordPolicy.encode("BehaviorBot123"));
         userRepository.assignRole(botId, "USER");
@@ -157,6 +157,53 @@ class TestPlayerBehaviorServiceTest {
         playerLinkAuthenticationService.revoke(botId, linkId, adminId);
         assertThat(behaviorService.dispatch(botId)).isEmpty();
         assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='BET_TEXT'", botId, issue)).isZero();
+    }
+
+    @Test
+    void manuallyClosedMachineDoesNotPlanBotBetsButStillAllowsNonBetBotActions() {
+        jdbc.update("UPDATE agent SET manual_betting_open=FALSE WHERE id=?", agentId);
+
+        assertThat(behaviorService.dispatch(botId)).isEmpty();
+        assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='BET_TEXT'",
+                botId, issue)).isZero();
+
+        long behaviorId = jdbc.queryForObject("SELECT id FROM test_player_behavior WHERE account_id=?", Long.class, accountId);
+        jdbc.update("""
+                INSERT INTO test_player_action(behavior_id,user_id,account_id,issue_number,action_no,action_type,
+                                               idempotency_key,source_text,scheduled_at)
+                VALUES (?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP(6))
+                """, behaviorId, botId, accountId, issue, 901, "AUTO_QUERY",
+                "BOT-CLOSED-QUERY-" + botId, "查");
+        long actionId = jdbc.queryForObject("SELECT id FROM test_player_action WHERE user_id=? AND issue_number=? AND action_no=901",
+                Long.class, botId, issue);
+
+        assertThat(behaviorService.execute(actionId).status()).isEqualTo("SUCCEEDED");
+    }
+
+    @Test
+    void pendingBotBetIsSkippedPermanentlyWhenMachineCloses() {
+        walletService.grant(adminId, botId, new BigDecimal("1000"), "测试初始虚拟积分", "BOT-CLOSE-GRANT");
+        behaviorService.dispatch(botId);
+        long actionId = jdbc.queryForObject("SELECT id FROM test_player_action WHERE user_id=? AND issue_number=? AND action_type='BET_TEXT'",
+                Long.class, botId, issue);
+
+        jdbc.update("UPDATE agent SET manual_betting_open=FALSE WHERE id=?", agentId);
+        PlayerDeskRepository.ActionRow skipped = behaviorService.execute(actionId);
+        assertThat(skipped.status()).isEqualTo("SKIPPED");
+        assertThat(skipped.errorCode()).isEqualTo("MACHINE_MANUALLY_CLOSED");
+        assertThat(count("SELECT COUNT(*) FROM game_bet WHERE user_id=? AND issue_number=?", accountId, issue)).isZero();
+
+        jdbc.update("UPDATE agent SET manual_betting_open=TRUE WHERE id=?", agentId);
+        behaviorService.dispatch(botId, true);
+        PlayerDeskRepository.ActionRow afterReopen = jdbc.queryForObject("SELECT * FROM test_player_action WHERE id=?",
+                (rs, rowNum) -> new PlayerDeskRepository.ActionRow(rs.getLong("id"), rs.getString("issue_number"),
+                        rs.getInt("action_no"), rs.getString("action_type"), rs.getString("source_text"),
+                        rs.getString("status"), rs.getInt("attempts"), rs.getString("error_code"),
+                        rs.getString("error_message"), (Long) rs.getObject("message_id"), (Long) rs.getObject("bet_id"),
+                        rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant()), actionId);
+        assertThat(afterReopen.status()).isEqualTo("SKIPPED");
+        assertThat(afterReopen.errorCode()).isEqualTo("MACHINE_MANUALLY_CLOSED");
+        assertThat(count("SELECT COUNT(*) FROM game_bet WHERE user_id=? AND issue_number=?", accountId, issue)).isZero();
     }
 
     private BigDecimal balance() {

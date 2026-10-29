@@ -236,6 +236,6 @@ describe('platform admin sub accounts', () => {
     expect(api.createSubAccount).toHaveBeenCalledWith(expect.objectContaining({ username: 'a,b,c', score: 0 }))
     expect(vi.mocked(api.createSubAccount).mock.calls[0][0]).not.toHaveProperty('displayName')
     expect(vi.mocked(api.createSubAccount).mock.calls[0][0]).not.toHaveProperty('up')
-    expect(container?.textContent).toContain('已创建 3 个子账号')
+    expect(document.body.textContent).toContain('已创建 3 个子账号')
   })
 })

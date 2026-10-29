@@ -247,15 +247,6 @@
         border-radius: 10px;
         background:#fefefe;
     }
-    #kaipanstatus{
-        visibility:hidden;
-    }
-    .kaipanstatustit {
-        color: red;
-    }
-    .kaipanstatustit.sed{
-        color:#000!important;
-    }
     .shangxiafentit.sed{
         color:red!important;
     }
@@ -304,8 +295,14 @@
         border-radius:10px;
     }
     .right_top{
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
         padding:5px;
         position:relative;
+        box-sizing:border-box;
+        min-height:42px;
+        gap:6px;
     }
     .yuliufengpan input {
         width:40px;
@@ -315,15 +312,42 @@
 
     .peilv{
         padding:2px 0 0 5px;
-        position:absolute;
+        position:relative;
+        flex:0 0 auto;
         background:#fff;
-        top:2px;
-        right:290px;
         border:1px solid #000;
         height:30px;
         width:135px;
         line-height:30px;
         border-radius:10px;
+    }
+    .kaipan-status-display{
+        display:flex;
+        align-items:center;
+        flex:0 0 auto;
+        gap:4px;
+        white-space:nowrap;
+    }
+    .kaipan-status-value{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-width:36px;
+        height:28px;
+        padding:0 6px;
+        font:inherit;
+        cursor:pointer;
+        border:1px solid #409eff;
+        border-radius:4px;
+        background:#ecf5ff;
+        color:#409eff;
+        line-height:1;
+    }
+    .kaipan-status-value:disabled{cursor:wait;opacity:.72}
+    .kaipan-status-value.is-closed{
+        border-color:#dcdfe6;
+        background:#f4f4f5;
+        color:#909399;
     }
     .peilv input {
         width:45px;

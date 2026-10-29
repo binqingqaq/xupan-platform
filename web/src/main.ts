@@ -2,7 +2,6 @@ import { createApp } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
 import ForbiddenView from './views/ForbiddenView.vue'
-import LoginView from './views/LoginView.vue'
 import NotFoundView from './views/NotFoundView.vue'
 import UserRoom from './views/UserRoom.vue'
 import PlayerLinkLoginView from './views/PlayerLinkLoginView.vue'
@@ -25,6 +24,7 @@ declare module 'vue-router' {
     requiredRoles?: readonly string[]
     /** 命中任一角色即拒绝（`/console` 用 `['ADMIN', 'SUB_ACCOUNT']` 挡平台账号）。 */
     excludeRoles?: readonly string[]
+    consoleLogin?: 'generic' | 'machine'
     title?: string
   }
 }
@@ -33,7 +33,8 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/room' },
-    { path: '/login', component: LoginView, meta: { title: 'AI模型房间管理' } },
+    { path: '/login', component: Hby019SourcePage, name: 'console-login', meta: { consoleLogin: 'generic', title: '机器账号登录' } },
+    { path: '/console/login/:username', component: Hby019SourcePage, name: 'console-machine-login', meta: { consoleLogin: 'machine', title: '机器账号登录' } },
     { path: '/hby019-demo', redirect: to => ({ path: '/hby019-demo/login', query: to.query, hash: to.hash }) },
     { path: '/hby019-demo/login', component: Hby019SourcePage, meta: { title: 'AI模型登录页' } },
     {
@@ -74,7 +75,7 @@ const router = createRouter({
     { path: '/player-login', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
     { path: '/forbidden', component: ForbiddenView, meta: { title: 'AI模型房间管理' } },
-    { path: '/room', component: UserRoom, meta: { requiresAuth: true, title: '奥巴AI' } },
+    { path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '奥巴AI' } },
     // 已收敛：`/agent` 曾是重复实现出来的代理后台。用户 2026-10-02 确认代理后台唯一入口是 `/console`
     // （BY220 `robot.php` 语义：机器账号登录、按机器隔离），旧地址保留自动跳转兼容。
     { path: '/agent', redirect: '/console' },
@@ -110,6 +111,7 @@ function isAdminRoute(path: string): boolean {
 function setViewportForRoute(path: string, originalPath = '') {
   const effectivePath = path === '/404' && originalPath ? originalPath : path
   const isHbyDemo = effectivePath.startsWith('/hby019-demo')
+  const isConsoleLogin = effectivePath === '/login' || /^\/console\/login\/[^/]+\/?$/.test(effectivePath)
   const isPlatformAdmin = effectivePath.startsWith('/platform-admin')
   const isConsolePath = effectivePath.startsWith('/platform-admin') || effectivePath === '/console' || effectivePath.startsWith('/console/') || effectivePath === '/agent' || effectivePath.startsWith('/agent/')
   document.body.classList.toggle('platform-admin-body', isPlatformAdmin)
@@ -132,6 +134,7 @@ function setViewportForRoute(path: string, originalPath = '') {
   }
   viewport.setAttribute('content', isHbyDemo
     ? hbyContent[effectivePath] || 'width=device-width,initial-scale=1.0'
+    : isConsoleLogin ? 'width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no'
     : isPlatformAdmin ? 'width=device-width, initial-scale=1.0'
       : isAdminRoute(effectivePath) ? 'width=1000, user-scalable=yes' : 'width=device-width, initial-scale=1.0')
 }

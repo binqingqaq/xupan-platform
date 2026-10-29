@@ -417,7 +417,7 @@ public class GameDataRepository {
                        COALESCE(a.special_odds_rate, 0) special_odds_rate,
                        COALESCE(a.close_seconds, 0) close_seconds,
                        COALESCE(a.cancel_seconds, 0) cancel_seconds,
-                       COALESCE(a.board_open, TRUE) board_open,
+                       COALESCE(a.manual_betting_open, TRUE) manual_betting_open,
                        COALESCE(a.rebate_mode, 'SINGLE') rebate_mode,
                        COALESCE(a.rebate_rate, 0) rebate_rate,
                        COALESCE(a.special_rebate_rate, 0) special_rebate_rate,
@@ -441,7 +441,7 @@ public class GameDataRepository {
                  WHERE d.id = ?
                 """, (rs, rowNum) -> new MachineBettingConfig(
                 rs.getBigDecimal("odds_rate"), rs.getBigDecimal("special_odds_rate"),
-                rs.getInt("close_seconds"), rs.getInt("cancel_seconds"), rs.getBoolean("board_open"),
+                rs.getInt("close_seconds"), rs.getInt("cancel_seconds"), rs.getBoolean("manual_betting_open"),
                 rs.getString("rebate_mode"), rs.getBigDecimal("rebate_rate"),
                 rs.getBigDecimal("special_rebate_rate"), rs.getLong("machine_id"),
                 rs.getInt("config_version"), new MachineBettingConfig.BettingLimits(
@@ -453,6 +453,25 @@ public class GameDataRepository {
                         rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"),
                         rs.getBigDecimal("player_min_stake"))), accountId);
         return rows.isEmpty() ? MachineBettingConfig.DEFAULT : rows.get(0);
+    }
+
+    /**
+     * 在下注事务中锁定玩家所属机器的手动开盘状态行。
+     * 开关更新也锁定 agent 行，保证关盘提交后不会再有先前读到“开盘”的新注单提交。
+     */
+    public void lockMachineBettingState(long accountId) {
+        jdbcTemplate.query("""
+                SELECT ag.id
+                  FROM demo_user_account d
+                  JOIN agent ag ON ag.id = d.agent_id
+                 WHERE d.id = ? AND ag.deleted_at IS NULL
+                 FOR UPDATE
+                """, rs -> {
+            while (rs.next()) {
+                rs.getLong(1);
+            }
+            return null;
+        }, accountId);
     }
 
     /**

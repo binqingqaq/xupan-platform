@@ -118,17 +118,19 @@ public class PlayerDeskAdminService {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         long targetAgentId = machineIdOf(scope, machineId);
         MachineConfig config = jdbc.query("""
-                SELECT ag.id, ag.agent_code, ag.display_name, ag.board_open, ag.chase_enabled, ag.bot_count,
+                SELECT ag.id, ag.agent_code, ag.display_name, ag.manual_betting_open,
+                       ag.robot_manage, ag.chase_enabled, ag.bot_count,
                        ag.countdown_visible,
                        ag.close_seconds, ag.cancel_seconds, ag.rebate_rate, ag.odds_rate,
                        ag.special_rebate_rate, ag.special_odds_rate, ag.rebate_mode,
                        ag.total_limit, ag.positive_limit, ag.angle_limit, ag.strict_limit, ag.tong_limit,
                        ag.car_limit, ag.special_limit, ag.odd_even_limit, ag.big_small_limit,
                        ag.fan_limit, ag.add_limit, ag.player_min_stake, ag.player_max_stake,
-                       ag.betting_config_version, ag.config_edit_enabled
+                       ag.betting_config_version
                   FROM agent ag WHERE ag.id = ? AND ag.deleted_at IS NULL
                 """, (rs, rowNum) -> new MachineConfig(rs.getLong("id"), rs.getString("agent_code"),
-                rs.getString("display_name"), rs.getBoolean("board_open"), rs.getBoolean("chase_enabled"),
+                rs.getString("display_name"), rs.getBoolean("manual_betting_open"), rs.getBoolean("robot_manage"),
+                rs.getBoolean("chase_enabled"),
                 rs.getBoolean("countdown_visible"), rs.getInt("bot_count"), rs.getInt("close_seconds"),
                 rs.getInt("cancel_seconds"),
                 rs.getBigDecimal("rebate_rate"), rs.getBigDecimal("odds_rate"),
@@ -138,10 +140,52 @@ public class PlayerDeskAdminService {
                 rs.getBigDecimal("car_limit"), rs.getBigDecimal("special_limit"), rs.getBigDecimal("odd_even_limit"),
                 rs.getBigDecimal("big_small_limit"), rs.getBigDecimal("fan_limit"), rs.getBigDecimal("add_limit"),
                 rs.getBigDecimal("player_min_stake"), rs.getBigDecimal("player_max_stake"),
-                rs.getInt("betting_config_version"), rs.getBoolean("config_edit_enabled")), targetAgentId)
+                rs.getInt("betting_config_version")), targetAgentId)
                 .stream().findFirst()
                 .orElseThrow(() -> BusinessException.notFound("MACHINE_NOT_FOUND", "机器不存在或已停用"));
         return config;
+    }
+
+    /** 代理机器账号仅可手动切换自己的下注开关；状态锁与下注事务共用 agent 行。 */
+    @Transactional
+    public MachineBettingState updateMachineBettingState(long operator, Long machineId, Boolean open) {
+        if (open == null) {
+            throw BusinessException.badRequest("MACHINE_BETTING_STATE_REQUIRED", "机器开盘状态不能为空");
+        }
+        PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
+        if (!(scope instanceof PlayerDeskScopeService.Scope.Machine machine)) {
+            throw BusinessException.forbidden("MACHINE_BETTING_STATE_FORBIDDEN", "只有机器账号可以切换本机开盘状态");
+        }
+        long targetAgentId = machineIdOf(scope, machineId);
+        List<ManualBettingStateRow> rows = jdbc.query("""
+                SELECT manual_betting_open, status, expires_at
+                  FROM agent
+                 WHERE id = ? AND account_user_id = ? AND deleted_at IS NULL
+                 FOR UPDATE
+                """, (rs, rowNum) -> new ManualBettingStateRow(rs.getBoolean("manual_betting_open"),
+                rs.getString("status"), instant(rs.getTimestamp("expires_at"))), targetAgentId, operator);
+        ManualBettingStateRow current = rows.stream().findFirst()
+                .orElseThrow(() -> BusinessException.notFound("MACHINE_NOT_FOUND", "机器不存在或已停用"));
+        Instant now = Instant.now();
+        if (!"ACTIVE".equals(current.status())
+                || (current.expiresAt() != null && !current.expiresAt().isAfter(now))) {
+            throw BusinessException.conflict("MACHINE_NOT_ACTIVE", "机器已停用或过期，不能切换开盘状态");
+        }
+        if (current.manualBettingOpen() == open) {
+            return new MachineBettingState(current.manualBettingOpen());
+        }
+        int changed = jdbc.update("""
+                UPDATE agent SET manual_betting_open = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND account_user_id = ? AND deleted_at IS NULL AND status = 'ACTIVE'
+                   AND (expires_at IS NULL OR expires_at > ?)
+                """, open, targetAgentId, operator, java.sql.Timestamp.from(now));
+        if (changed != 1) {
+            throw BusinessException.conflict("MACHINE_NOT_ACTIVE", "机器已停用或过期，不能切换开盘状态");
+        }
+        auditRepository.record(operator, "AGENT_PLAYER_MANAGE", "PUT",
+                "/api/admin/player-desk/machine-betting-state", Long.toString(targetAgentId), "SUCCESS", null,
+                "machineId=" + targetAgentId + ",manualBettingOpen=" + open, null, Instant.now());
+        return new MachineBettingState(open);
     }
 
     /**
@@ -157,9 +201,6 @@ public class PlayerDeskAdminService {
             throw BusinessException.forbidden("MACHINE_CONFIG_FORBIDDEN", "没有机器配置权限");
         }
         long targetAgentId = machineIdOf(scope, machineId);
-        if (!scope.global() && !machineConfig(operator, targetAgentId).configEditable()) {
-            throw BusinessException.forbidden("MACHINE_CONFIG_FORBIDDEN", "该机器已关闭代理配置权限");
-        }
         requireNonNegative(update.oddsRate(), "MACHINE_ODDS_RATE_INVALID", "机器赔率不能为负数");
         requireNonNegative(update.specialOddsRate(), "MACHINE_SPECIAL_ODDS_RATE_INVALID", "特码赔率不能为负数");
         requireNonNegative(update.rebateRate(), "MACHINE_REBATE_RATE_INVALID", "返水不能为负数");
@@ -177,22 +218,21 @@ public class PlayerDeskAdminService {
             throw BusinessException.badRequest("MACHINE_CONFIG_VERSION_REQUIRED", "机器配置版本无效，请刷新后重试");
         }
         int changed = jdbc.update("""
-                UPDATE agent SET board_open=?, chase_enabled=?, bot_count=?, close_seconds=?, cancel_seconds=?, countdown_visible=?,
+                UPDATE agent SET chase_enabled=?, bot_count=?, close_seconds=?, cancel_seconds=?, countdown_visible=?,
                     rebate_rate=?, odds_rate=?, special_rebate_rate=?, special_odds_rate=?, rebate_mode=?,
                     total_limit=?, positive_limit=?, angle_limit=?, strict_limit=?, tong_limit=?, car_limit=?,
                     special_limit=?, odd_even_limit=?, big_small_limit=?, fan_limit=?, add_limit=?,
                     player_min_stake=?, player_max_stake=?, betting_config_version=betting_config_version+1,
                     updated_at=CURRENT_TIMESTAMP
                  WHERE id=? AND deleted_at IS NULL AND betting_config_version=?
-                   AND (? = TRUE OR config_edit_enabled = TRUE)
-                """, update.boardOpen(), update.chaseEnabled(), Math.max(0, update.botCount()),
+                """, update.chaseEnabled(), Math.max(0, update.botCount()),
                 Math.max(0, update.closeSeconds()), Math.max(0, update.cancelSeconds()), update.countdownVisible(), amount(update.rebateRate()),
                 amount(update.oddsRate()), amount(update.specialRebateRate()), amount(update.specialOddsRate()),
                 rebateMode, limit(update.totalLimit()), limit(update.positiveLimit()), limit(update.angleLimit()),
                 limit(update.strictLimit()), limit(update.tongLimit()), limit(update.carLimit()),
                 limit(update.specialLimit()), limit(update.oddEvenLimit()), limit(update.bigSmallLimit()),
                 limit(update.fanLimit()), limit(update.addLimit()), minStake, maxStake,
-                targetAgentId, update.expectedVersion(), scope.global());
+                targetAgentId, update.expectedVersion());
         if (changed != 1) {
             throw BusinessException.conflict("MACHINE_CONFIG_VERSION_CONFLICT", "机器配置已被其他操作者修改，请刷新后重试");
         }
@@ -202,8 +242,7 @@ public class PlayerDeskAdminService {
                         + update.specialOddsRate() + ",rebateRate=" + update.rebateRate() + ",specialRebateRate="
                         + update.specialRebateRate() + ",rebateMode=" + rebateMode + ",closeSeconds="
                         + update.closeSeconds() + ",cancelSeconds=" + update.cancelSeconds()
-                        + ",countdownVisible=" + update.countdownVisible() + ",boardOpen="
-                        + update.boardOpen(), null, Instant.now());
+                        + ",countdownVisible=" + update.countdownVisible(), null, Instant.now());
         return machineConfig(operator, targetAgentId);
     }
 
@@ -230,6 +269,10 @@ public class PlayerDeskAdminService {
         return value == null ? BigDecimal.ZERO : value;
     }
 
+    private static Instant instant(java.sql.Timestamp value) {
+        return value == null ? null : value.toInstant();
+    }
+
     private static BigDecimal limit(BigDecimal value) {
         BigDecimal normalized = value == null ? BigDecimal.ZERO : value;
         if (normalized.signum() < 0 || normalized.scale() > 2
@@ -240,7 +283,8 @@ public class PlayerDeskAdminService {
     }
 
     /** 机器级配置的读模型（BY220 {@code robot.php} 顶部状态栏与底部控制区）。 */
-    public record MachineConfig(long machineId, String machineCode, String machineName, boolean boardOpen,
+    public record MachineConfig(long machineId, String machineCode, String machineName,
+                                boolean manualBettingOpen, boolean robotManage,
                                 boolean chaseEnabled, boolean countdownVisible, int botLimit, int closeSeconds, int cancelSeconds,
                                 BigDecimal rebateRate, BigDecimal oddsRate, BigDecimal specialRebateRate,
                                 BigDecimal specialOddsRate, String rebateMode, BigDecimal totalLimit,
@@ -248,11 +292,11 @@ public class PlayerDeskAdminService {
                                 BigDecimal tongLimit, BigDecimal carLimit, BigDecimal specialLimit,
                                 BigDecimal oddEvenLimit, BigDecimal bigSmallLimit, BigDecimal fanLimit,
                                 BigDecimal addLimit, BigDecimal playerMinStake, BigDecimal playerMaxStake,
-                                int configVersion, boolean configEditable) {
+                                int configVersion) {
     }
 
     /** 机器级配置的写模型；字段与读模型一一对应。 */
-    public record MachineConfigUpdate(boolean boardOpen, boolean chaseEnabled, int botCount, int closeSeconds,
+    public record MachineConfigUpdate(boolean chaseEnabled, int botCount, int closeSeconds,
                                       int cancelSeconds, boolean countdownVisible, BigDecimal rebateRate, BigDecimal oddsRate,
                                       BigDecimal specialRebateRate, BigDecimal specialOddsRate, String rebateMode,
                                       BigDecimal totalLimit, BigDecimal positiveLimit, BigDecimal angleLimit,
@@ -260,6 +304,12 @@ public class PlayerDeskAdminService {
                                       BigDecimal specialLimit, BigDecimal oddEvenLimit, BigDecimal bigSmallLimit,
                                       BigDecimal fanLimit, BigDecimal addLimit, BigDecimal playerMinStake,
                                       BigDecimal playerMaxStake, Integer expectedVersion) {
+    }
+
+    public record MachineBettingState(boolean manualBettingOpen) {
+    }
+
+    private record ManualBettingStateRow(boolean manualBettingOpen, String status, Instant expiresAt) {
     }
 
     @Transactional(readOnly = true)

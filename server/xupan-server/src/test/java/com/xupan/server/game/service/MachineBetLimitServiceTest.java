@@ -61,7 +61,7 @@ class MachineBetLimitServiceTest {
     }
 
     private static MachineBettingConfig config(String total, String fan) {
-        return new MachineBettingConfig(new BigDecimal("95"), new BigDecimal("18"), 0, 0, true,
+        return new MachineBettingConfig(new BigDecimal("95"), new BigDecimal("18"), 0, 0,
                 MachineBettingConfig.SINGLE, BigDecimal.ZERO, BigDecimal.ZERO, 3, 1,
                 new MachineBettingConfig.BettingLimits(new BigDecimal(total), BigDecimal.ZERO,
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,

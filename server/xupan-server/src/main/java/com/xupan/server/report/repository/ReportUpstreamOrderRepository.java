@@ -312,7 +312,7 @@ public class ReportUpstreamOrderRepository {
     public boolean isReportableBet(long betId, long agentId) {
         List<ReportEligibility> rows = jdbc.query("""
                 SELECT b.settlement_status, b.settled_at, i.status AS issue_status,
-                       i.phase AS issue_phase, i.draw_ends_at, a.board_open, a.close_seconds
+                       i.phase AS issue_phase, i.draw_ends_at, a.close_seconds
                   FROM game_bet b
                   JOIN demo_user_account u ON u.id = b.user_id
                   JOIN agent a ON a.id = COALESCE(u.agent_id, b.agent_id_snapshot)
@@ -321,15 +321,14 @@ public class ReportUpstreamOrderRepository {
                  FOR UPDATE
                 """, (rs, rowNum) -> new ReportEligibility(rs.getString("settlement_status"),
                 rs.getTimestamp("settled_at"), rs.getString("issue_status"), rs.getString("issue_phase"),
-                rs.getTimestamp("draw_ends_at"), rs.getBoolean("board_open"), rs.getInt("close_seconds")),
+                rs.getTimestamp("draw_ends_at"), rs.getInt("close_seconds")),
                 betId, agentId);
         if (rows.isEmpty()) {
             return false;
         }
         ReportEligibility row = rows.getFirst();
         if (!"PENDING".equals(row.settlementStatus()) || row.settledAt() != null
-                || !"OPEN".equals(row.issueStatus()) || !"BETTING".equals(row.issuePhase())
-                || !row.boardOpen()) {
+                || !"OPEN".equals(row.issueStatus()) || !"BETTING".equals(row.issuePhase())) {
             return false;
         }
         return row.closeSeconds() <= 0 || row.drawEndsAt() == null
@@ -371,7 +370,7 @@ public class ReportUpstreamOrderRepository {
                 + "   AND ag.deleted_at IS NULL AND ag.status = 'ACTIVE' AND ag.system_owned = FALSE\n"
                 + "   AND b.center_report_deleted_at IS NULL\n"
                 + "   AND (o.id IS NULL OR NOT (o.report_type = 'CENTER' AND o.status IN ('PENDING', 'TIMEOUT')))\n"
-                + "   AND ag.report_auto = TRUE AND ag.board_open = TRUE\n"
+                + "   AND ag.report_auto = TRUE\n"
                 + "   AND b.settlement_status = 'PENDING' AND b.settled_at IS NULL\n"
                 + "   AND gi.status = 'OPEN' AND gi.phase = 'BETTING'\n"
                 + "   AND EXISTS (SELECT 1 FROM center_machine_session s\n"
@@ -577,7 +576,7 @@ public class ReportUpstreamOrderRepository {
     }
 
     private record ReportEligibility(String settlementStatus, Timestamp settledAt, String issueStatus,
-                                     String issuePhase, Timestamp drawEndsAt, boolean boardOpen,
+                                     String issuePhase, Timestamp drawEndsAt,
                                      int closeSeconds) {
     }
 

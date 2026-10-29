@@ -61,7 +61,7 @@ class ManualDrawBetRaceIntegrationTest {
         long accountId = wallets.ensureWalletForUser(userId, "手动开奖并发测试玩家");
         jdbc.update("""
                 INSERT INTO agent (agent_code, display_name, account_user_id, system_owned, status, bot_count,
-                                   odds_rate, special_odds_rate, board_open, rebate_rate, special_rebate_rate,
+                                   odds_rate, special_odds_rate, manual_betting_open, rebate_rate, special_rebate_rate,
                                    rebate_mode, total_limit, fan_limit, player_min_stake, player_max_stake)
                 VALUES ('MANUAL-DRAW-RACE', '手动开奖并发测试机器', ?, FALSE, 'ACTIVE', 0,
                         95, 18, TRUE, 5, 1, 'SINGLE', 10000, 10000, 1, 5000)

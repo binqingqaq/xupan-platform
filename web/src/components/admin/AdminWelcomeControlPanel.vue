@@ -171,6 +171,9 @@ const machineConsole: MachineConfigConsoleHandle | null = props.machineConsole ?
 const configLevel = computed<MachineConfigLevel>(() => machineConsole?.level ?? 'UNAVAILABLE')
 const machineConfig = computed<MachineConfigView | null>(() => machineConsole?.config ?? null)
 const machineSaving = computed(() => machineConsole?.saving ?? false)
+const machineLoading = computed(() => machineConsole?.loading ?? false)
+const machineConfigReadOnly = computed(() => configLevel.value === 'MACHINE'
+  && machineConfig.value !== null && !machineConfig.value.robotManage)
 /** GLOBAL=全部机器时的全局配置；MACHINE 下完全不使用。 */
 const globalConfig = ref<BettingConfigView | null>(null)
 const globalDraft = ref<BettingDisplayDraft>({ displayOdds: '', specialOdds: '', specialRebate: '' })
@@ -210,7 +213,9 @@ async function loadGlobalConfig() {
 
 // 机器配置变化（首次加载 / 保存回读 / 切换机器）后同步草稿，界面始终显示服务端当前值。
 watch(machineConfig, next => {
-  if (next) machineDraft.value = createMachineOddsDraft(next)
+  machineDraft.value = next
+    ? createMachineOddsDraft(next)
+    : { oddsRate: '', specialOddsRate: '', specialRebateRate: '', rebateMode: 'SINGLE' }
 }, { immediate: true })
 
 // 身份范围可能在挂载后才返回，这里按最终层级决定读机器配置还是全局配置。
@@ -219,15 +224,6 @@ watch(configLevel, level => {
   if (level === 'GLOBAL') void loadGlobalConfig()
 }, { immediate: true })
 
-const boardStatusText = computed(() => {
-  if (configLevel.value === 'MACHINE') {
-    const current = machineConfig.value
-    if (!current) return '—'
-    return current.boardOpen ? '开盘' : '闭盘'
-  }
-  return configLevel.value === 'GLOBAL' ? '开盘' : '—'
-})
-
 // 机器级栏目在"全部机器"下没有可写对象：必须禁用并说明，不能继续伪装成已生效。
 const machineOnlyNotice = computed(() => {
   if (configLevel.value === 'GLOBAL') return MACHINE_ONLY_FIELD_HINT
@@ -235,15 +231,15 @@ const machineOnlyNotice = computed(() => {
   return ''
 })
 
-const displayDisabled = computed(() => savingDisplay.value || machineSaving.value
-  || configLevel.value === 'UNAVAILABLE'
-  || (configLevel.value === 'MACHINE' && (machineConfig.value === null || machineConfig.value.configEditable === false)))
+const displayDisabled = computed(() => savingDisplay.value || machineSaving.value || machineLoading.value
+  || configLevel.value === 'UNAVAILABLE' || (configLevel.value === 'MACHINE' && machineConfig.value === null))
 
-const rebateModeDisabled = computed(() => displayDisabled.value || configLevel.value !== 'MACHINE')
+const rebateModeDisabled = computed(() => savingDisplay.value || machineSaving.value || machineLoading.value
+  || configLevel.value !== 'MACHINE' || machineConfig.value === null)
 
 const limitsDisabled = computed(() => savingLimits.value
   || configLevel.value === 'UNAVAILABLE'
-  || (configLevel.value === 'MACHINE' && (machineConfig.value === null || machineConfig.value.configEditable === false)))
+  || (configLevel.value === 'MACHINE' && (machineConfig.value === null || !machineConfig.value.robotManage)))
 
 function activeOddsDraft(): { oddsRate: string; specialOddsRate: string; specialRebateRate: string } {
   return configLevel.value === 'MACHINE'
@@ -494,8 +490,6 @@ onMounted(() => {
   </div>
 
   <section v-if="part !== 'welcome'" class="admin-game-control-bar" aria-label="状态与赔率配置区域">
-    <span class="game-control-label">当前状态：</span>
-    <span class="game-control-value game-control-status">{{ boardStatusText }}</span>
     <label class="game-control-label game-control-label-bold" for="admin-display-odds">赔率：</label>
     <input
       id="admin-display-odds"
@@ -505,12 +499,14 @@ onMounted(() => {
       inputmode="numeric"
       autocomplete="off"
       :disabled="displayDisabled"
+      :readonly="machineConfigReadOnly"
       @change="commitDisplay"
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
     />
-    <span class="game-control-label">限额：</span>
-      <button v-if="machineConfig?.configEditable !== false"
+    <template v-if="configLevel !== 'MACHINE' || machineConfig?.robotManage">
+      <span class="game-control-label">限额：</span>
+      <button
       class="game-control-limit-button"
       type="button"
       aria-haspopup="dialog"
@@ -518,7 +514,8 @@ onMounted(() => {
       @click="openLimits"
     >
       设置
-    </button>
+      </button>
+    </template>
     <label class="game-control-label game-control-label-bold" for="admin-special-odds">特码赔率：</label>
     <input
       id="admin-special-odds"
@@ -528,6 +525,7 @@ onMounted(() => {
       inputmode="decimal"
       autocomplete="off"
       :disabled="displayDisabled"
+      :readonly="machineConfigReadOnly"
       @change="commitDisplay"
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
@@ -541,6 +539,7 @@ onMounted(() => {
       inputmode="numeric"
       autocomplete="off"
       :disabled="displayDisabled"
+      :readonly="machineConfigReadOnly"
       @change="commitDisplay"
       @keyup.enter="commitDisplay"
       @blur="commitDisplay"
@@ -557,8 +556,9 @@ onMounted(() => {
       <option value="SINGLE">单边</option>
       <option value="DOUBLE">双边</option>
     </select>
-    <span v-if="machineOnlyNotice" class="game-control-hint">{{ machineOnlyNotice }}</span>
-    <span v-else-if="machineConfig?.configEditable === false" class="game-control-hint">超级管理员已关闭本机配置修改权限</span>
+    <span v-if="machineLoading" class="game-control-hint">正在读取机器配置</span>
+    <span v-else-if="machineConsole?.error" class="game-control-error" role="alert">{{ machineConsole.error }}</span>
+    <span v-else-if="machineOnlyNotice" class="game-control-hint">{{ machineOnlyNotice }}</span>
     <span v-if="notice" class="game-control-notice" role="status">{{ notice }}</span>
     <span v-if="error" class="game-control-error" role="alert">{{ error }}</span>
   </section>

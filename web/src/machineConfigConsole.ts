@@ -213,7 +213,6 @@ export function machineConfigPayload(
   patch: MachineConfigUpdatePatch = {},
 ): MachineConfigUpdateRequest {
   return {
-    boardOpen: config.boardOpen,
     expectedVersion: config.configVersion ?? 1,
     chaseEnabled: config.chaseEnabled,
     botCount: config.botLimit,
@@ -272,25 +271,31 @@ export function createMachineConfigConsoleStore(
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
+  let requestSequence = 0
   const level = computed<MachineConfigLevel>(() => resolveMachineConfigLevel(getScope(), getMachineId()))
   const targetId = computed<number | null>(() => resolveMachineConfigTargetId(getScope(), getMachineId()))
 
   async function reload(): Promise<void> {
+    const requestId = ++requestSequence
     const target = targetId.value
     if (level.value !== 'MACHINE' || target === null) {
       config.value = null
       error.value = ''
+      loading.value = false
       return
     }
+    config.value = null
     loading.value = true
     error.value = ''
     try {
-      config.value = await api.getMachineConfig(target)
+      const loaded = await api.getMachineConfig(target)
+      if (requestId === requestSequence && targetId.value === target) config.value = loaded
     } catch (cause) {
-      config.value = null
-      error.value = apiErrorMessage(cause, '机器配置加载失败，请刷新重试')
+      if (requestId === requestSequence && targetId.value === target) {
+        error.value = apiErrorMessage(cause, '机器配置加载失败，请刷新重试')
+      }
     } finally {
-      loading.value = false
+      if (requestId === requestSequence) loading.value = false
     }
   }
 
@@ -299,10 +304,6 @@ export function createMachineConfigConsoleStore(
     const target = targetId.value
     if (!current || target === null || level.value !== 'MACHINE') {
       error.value = '机器配置尚未加载，请先刷新后再保存'
-      return false
-    }
-    if (current.configEditable === false) {
-      error.value = '该机器已关闭代理配置权限'
       return false
     }
     if (saving.value) return false
@@ -333,6 +334,9 @@ export function createMachineConfigConsoleStore(
     error,
     reload,
     save,
-    stop,
+    stop: () => {
+      requestSequence++
+      stop()
+    },
   }) as unknown as MachineConfigConsoleHandle
 }

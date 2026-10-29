@@ -528,10 +528,12 @@ export type MachineRebateMode = 'SINGLE' | 'DOUBLE'
 export interface MachineConfigView {
   machineId: number
   configVersion?: number
-  configEditable?: boolean
   machineCode: string
   machineName: string
-  boardOpen: boolean
+  /** BY220 `x_robot.isOpen`：机器手动下注开关，与当前期次阶段无关。 */
+  manualBettingOpen: boolean
+  /** BY220 xiugai：仅控制代理界面是否开放赔率/返水/封盘/取消编辑及限额入口。 */
+  robotManage: boolean
   chaseEnabled: boolean
   /** 托上限（`agent.bot_count`）；写接口的字段名是 `botCount`，读模型返回 `botLimit`。 */
   botLimit: number
@@ -563,6 +565,10 @@ export interface MachineConfigView {
   playerMaxStake: number
 }
 
+export interface MachineBettingStateView {
+  manualBettingOpen: boolean
+}
+
 /**
  * 机器级配置写模型，字段与后端 `MachineConfigRequest` 一一对应。
  *
@@ -572,7 +578,6 @@ export interface MachineConfigView {
 export interface MachineConfigUpdateRequest {
   machineId?: number
   expectedVersion: number
-  boardOpen: boolean
   chaseEnabled: boolean
   botCount: number
   closeSeconds: number

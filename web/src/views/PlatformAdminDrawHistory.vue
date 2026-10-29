@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import { ElMessageBox } from 'element-plus'
+import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { GameCatalogItem } from '../types'
 import type { DrawHistoryBet, DrawHistoryItem } from '../types/platformAdmin'
@@ -14,7 +15,6 @@ const issueNumber = ref('')
 const loading = ref(false)
 const forcing = ref(false)
 const error = ref('')
-const feedback = ref('')
 const currentUser = ref('超级管理员')
 const canForceSettle = ref(false)
 const canSupplement = ref(false)
@@ -32,7 +32,7 @@ const savingDraft = ref(false)
 const confirmingDraw = ref(false)
 
 async function load() { loading.value = true; error.value = ''; try { const page = await api.listDrawHistory({ gameCode: selectedGameCode.value, issueNumber: issueNumber.value.trim() || undefined, pageSize: 100 }); rows.value = page.items } catch (cause) { error.value = apiErrorMessage(cause, '开奖历史加载失败') } finally { loading.value = false } }
-async function showBets(row: DrawHistoryItem) { selectedIssue.value = row.issueNumber; betsOpen.value = true; bets.value = []; try { bets.value = await api.listDrawHistoryBets(row.gameCode, row.issueNumber) } catch (cause) { error.value = apiErrorMessage(cause, '投注记录加载失败') } }
+async function showBets(row: DrawHistoryItem) { selectedIssue.value = row.issueNumber; betsOpen.value = true; bets.value = []; try { bets.value = await api.listDrawHistoryBets(row.gameCode, row.issueNumber) } catch (cause) { adminNotice.error(apiErrorMessage(cause, '投注记录加载失败')) } }
 function editDraft(row: DrawHistoryItem) {
   draftTarget.value = row
   draftNumbers.value = row.balls.map(value => value >= 1 && value <= 20 ? value : null)
@@ -46,15 +46,15 @@ function readDraftNumbers(): number[] | null {
 async function saveDraft() {
   const target = draftTarget.value
   const numbers = readDraftNumbers()
-  if (!target || !numbers) { error.value = '请输入 8 个 1 到 20 的开奖号码'; return }
-  savingDraft.value = true; error.value = ''; feedback.value = ''
+  if (!target || !numbers) { adminNotice.warning('请输入 8 个 1 到 20 的开奖号码'); return }
+  savingDraft.value = true; error.value = ''
   try {
     const result = await api.updateDrawDraft(target.gameCode, target.issueNumber, numbers)
     draftSaved.value = true
     draftTarget.value = { ...target, balls: result.numbers, drawResultVersion: result.resultVersion }
-    feedback.value = result.message
+    adminNotice.success(result.message)
     await load()
-  } catch (cause) { error.value = apiErrorMessage(cause, '开奖草稿保存失败') }
+  } catch (cause) { adminNotice.error(apiErrorMessage(cause, '开奖草稿保存失败')) }
   finally { savingDraft.value = false }
 }
 async function confirmDraft() {
@@ -66,13 +66,13 @@ async function confirmDraft() {
       '确认开奖结果', { type: 'warning', confirmButtonText: '确认并结算', cancelButtonText: '返回修改', closeOnClickModal: false },
     )
   } catch { return }
-  confirmingDraw.value = true; error.value = ''; feedback.value = ''
+  confirmingDraw.value = true; error.value = ''
   try {
     const result = await api.confirmDrawResult(target.gameCode, target.issueNumber)
-    feedback.value = `${result.message}（本地 ${result.localOrders} 条，中心 ${result.centerOrders} 条）`
+    adminNotice.success(`${result.message}（本地 ${result.localOrders} 条，中心 ${result.centerOrders} 条）`)
     draftOpen.value = false
     await load()
-  } catch (cause) { error.value = apiErrorMessage(cause, '开奖确认失败') }
+  } catch (cause) { adminNotice.error(apiErrorMessage(cause, '开奖确认失败')) }
   finally { confirmingDraw.value = false }
 }
 async function forceSettleIssue(row: DrawHistoryItem) {
@@ -80,45 +80,45 @@ async function forceSettleIssue(row: DrawHistoryItem) {
   try {
     await ElMessageBox.confirm('按已确认的开奖结果补齐本地玩家与中心订单中尚未完成的结算。', '补齐结算确认', { type: 'warning', confirmButtonText: '继续', cancelButtonText: '取消', closeOnClickModal: false })
   } catch { return }
-  forcing.value = true; error.value = ''; feedback.value = ''
-  try { const result = await api.forceSettleDrawIssue(row.gameCode, row.issueNumber); feedback.value = result.message; await load() }
-  catch (cause) { error.value = apiErrorMessage(cause, '强制结算失败') }
+  forcing.value = true; error.value = ''
+  try { const result = await api.forceSettleDrawIssue(row.gameCode, row.issueNumber); adminNotice.success(result.message); await load() }
+  catch (cause) { adminNotice.error(apiErrorMessage(cause, '强制结算失败')) }
   finally { forcing.value = false }
 }
 async function supplement() {
   if (supplementing.value) return
   const numbers = supplementNumbers.value.split(/[,，\s]+/).map(Number).filter(Number.isFinite)
   if (!supplementIssue.value.trim() || numbers.length !== 8 || numbers.some(value => value < 1 || value > 20)) {
-    error.value = '补期需要期号和 8 个 1 到 20 的开奖号码'
+    adminNotice.warning('补期需要期号和 8 个 1 到 20 的开奖号码')
     return
   }
   try {
     await ElMessageBox.confirm('确定补录并确认[' + supplementIssue.value.trim() + ']开奖结果吗?确认后会自动结算玩家注单和中心订单。', '补录确认', { type: 'warning', confirmButtonText: '补录并结算', cancelButtonText: '取消', closeOnClickModal: false })
   } catch { return }
-  supplementing.value = true; error.value = ''; feedback.value = ''
+  supplementing.value = true; error.value = ''
   try {
     const result = await api.supplementDrawHistory({
       gameCode: selectedGameCode.value, issueNumber: supplementIssue.value.trim(), numbers,
       openedAt: supplementOpenedAt.value ? new Date(supplementOpenedAt.value).toISOString() : null,
     })
-    feedback.value = result.message
+    adminNotice.success(result.message)
     supplementIssue.value = ''; supplementNumbers.value = ''; supplementOpenedAt.value = ''
     await load()
-  } catch (cause) { error.value = apiErrorMessage(cause, '补期失败') }
+  } catch (cause) { adminNotice.error(apiErrorMessage(cause, '补期失败')) }
   finally { supplementing.value = false }
 }
 async function forceSettleAll() {
   if (forcing.value) return
-  forcing.value = true; error.value = ''; feedback.value = ''
+  forcing.value = true; error.value = ''
   try {
     const preview = await api.forceSettleAllDrawHistory({ confirm: 'FORCE_SETTLE_ALL', preview: true })
     await ElMessageBox.confirm('预检完成：' + preview.histories + ' 期、' + preview.orders + ' 条订单，确定强制结算全部吗?', '批量强制结算确认', { type: 'warning', confirmButtonText: '确定结算', cancelButtonText: '取消', closeOnClickModal: false })
     const result = await api.forceSettleAllDrawHistory({ confirm: 'FORCE_SETTLE_ALL', preview: false })
-    feedback.value = result.message
+    adminNotice.success(result.message)
     await load()
   } catch (cause) {
     if (cause === 'cancel' || cause === 'close') return
-    error.value = apiErrorMessage(cause, '强制结算全部失败')
+    adminNotice.error(apiErrorMessage(cause, '强制结算全部失败'))
   }
   finally { forcing.value = false }
 }
@@ -161,7 +161,6 @@ onMounted(async () => {
       </el-form>
 
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
-      <el-alert v-if="feedback" type="success" :title="feedback" :closable="false" />
       <el-skeleton v-if="loading" :rows="6" animated />
       <el-table scrollbar-always-on v-else :data="rows" row-key="issueNumber" stripe border empty-text="暂无数据">
         <el-table-column prop="gameName" label="彩种名称" min-width="120" />
