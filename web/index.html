@@ -6,6 +6,53 @@
     <meta name="theme-color" content="#17222f" />
     <link rel="icon" type="image/x-icon" href="/display/picture/favicon.ico" />
     <title>奥巴AI</title>
+    <script>
+      (() => {
+        const path = window.location.pathname.replace(/\/+$/, '') || '/'
+        const titles = {
+          '/platform-admin': 'XUPAN 超级管理后台',
+          '/platform-admin/login': 'XUPAN 超级管理后台',
+          '/platform-admin/sub-accounts': '子账号',
+          '/platform-admin/machines': '机器管理',
+          '/platform-admin/agents': '代理组织管理',
+          '/platform-admin/reports': '报表统计',
+          '/platform-admin/draw-history': '开奖历史',
+          '/platform-admin/unsettled-orders': '未结订单',
+          '/platform-admin/order-corrections': '订单改单',
+          '/platform-admin/online-players': '在线玩家',
+          '/platform-admin/settings': '设置',
+          '/platform-admin/center': '中心上游',
+          '/platform-admin/report-networks': '网盘设置',
+          '/platform-admin/games': '游戏设置',
+          '/platform-admin/password': '修改密码',
+          '/platform-admin/stash': 'AI模型房间管理',
+          '/platform-admin/operations': 'AI模型房间管理',
+          '/platform-admin/users': 'AI模型房间管理',
+          '/platform-admin/robots': 'AI模型房间管理',
+          '/hby019-demo/console': 'AI模型房间管理',
+          '/hby019-demo': 'AI模型登录页',
+          '/hby019-demo/login': 'AI模型登录页',
+          '/hby019-demo/showdetails': '积分记录与对账',
+          '/console/login': '机器账号登录',
+          '/console': 'AI模型房间管理',
+          '/agent': 'AI模型房间管理',
+          '/admin': 'XUPAN 超级管理后台',
+          '/': '公开大厅',
+          '/login': '机器账号登录',
+          '/player-login': '公开大厅',
+          '/room': '公开大厅',
+        }
+        let title = titles[path]
+        if (path.startsWith('/platform-admin/')) title ||= 'XUPAN 超级管理后台'
+        if (path.startsWith('/hby019-demo/console/') || path.startsWith('/console/') || path.startsWith('/agent/')) {
+          title = 'AI模型房间管理'
+        }
+        if (path.startsWith('/console/login/')) title = '机器账号登录'
+        if (path.startsWith('/admin/')) title = 'XUPAN 超级管理后台'
+        if (path.startsWith('/33/')) title = '公开大厅'
+        if (title) document.title = title
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -167,6 +167,48 @@ public class CenterUpstreamAccountRepository {
                 rs.getBigDecimal("upstream_unsettled")), accountId).stream().findFirst();
     }
 
+    public Optional<DeletionContext> lockAccountForGroupDeletion(long groupId) {
+        return jdbc.query("""
+                SELECT id, agent_group_id, agent_code, status, available_balance,
+                       frozen_balance, upstream_unsettled
+                  FROM center_agent WHERE agent_group_id = ? FOR UPDATE
+                """, (rs, rowNum) -> new DeletionContext(rs.getLong("id"),
+                rs.getLong("agent_group_id"), rs.getString("agent_code"), rs.getString("status"),
+                rs.getBigDecimal("available_balance"), rs.getBigDecimal("frozen_balance"),
+                rs.getBigDecimal("upstream_unsettled")), groupId).stream().findFirst();
+    }
+
+    public boolean hasCrossGroupReferences(long accountId, long groupId) {
+        return exists("SELECT EXISTS(SELECT 1 FROM agent WHERE center_agent_id = ? "
+                + "AND (group_id IS NULL OR group_id <> ?))", accountId, groupId)
+                || exists("""
+                        SELECT EXISTS(SELECT 1 FROM center_machine_session s
+                          JOIN agent a ON a.id = s.machine_agent_id
+                         WHERE s.center_agent_id = ? AND (a.group_id IS NULL OR a.group_id <> ?))
+                        """, accountId, groupId)
+                || exists("""
+                        SELECT EXISTS(SELECT 1 FROM report_upstream_order r
+                          JOIN agent a ON a.id = r.agent_id
+                         WHERE r.center_agent_id = ? AND (a.group_id IS NULL OR a.group_id <> ?))
+                        """, accountId, groupId)
+                || exists("""
+                        SELECT EXISTS(SELECT 1 FROM center_order o
+                          JOIN agent a ON a.id = o.local_agent_id
+                         WHERE o.center_agent_id = ? AND (a.group_id IS NULL OR a.group_id <> ?))
+                        """, accountId, groupId)
+                || exists("""
+                        SELECT EXISTS(SELECT 1 FROM center_reconciliation_disposition d
+                          JOIN game_bet b ON b.id = d.bet_id
+                          JOIN demo_user_account u ON u.id = b.user_id
+                          JOIN agent a ON a.id = u.agent_id
+                         WHERE d.center_agent_id = ? AND (a.group_id IS NULL OR a.group_id <> ?))
+                        """, accountId, groupId);
+    }
+
+    private boolean exists(String sql, long accountId, long groupId) {
+        return Boolean.TRUE.equals(jdbc.queryForObject(sql, Boolean.class, accountId, groupId));
+    }
+
     public long countUnownedCenterAttempts(long groupId) {
         Long count = jdbc.queryForObject("""
                 SELECT COUNT(*)

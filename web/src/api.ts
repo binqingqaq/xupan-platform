@@ -318,6 +318,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   // 上分与下分互斥（BY220 虽有 setInc/setDec 两段，但同时提交语义不明确，后端按 400 拒绝）
   if (error.code === 'SUB_ACCOUNT_SCORE_ADJUST_INVALID') return '上分与下分不能同时提交'
   if (error.code === 'SUB_ACCOUNT_USERNAME_EXISTS') return '子账号用户名已存在'
+  if (error.code === 'CENTER_ACCOUNT_CROSS_GROUP_REFERENCE') return '关联中心账号存在其他子账号的数据引用，请先核对归属'
   if (error.code === 'MACHINE_SCORE_INSUFFICIENT') return '机器积分不足以退回子账号'
   // 阶段 1 积分精度收口：代理账本侧超精度统一 400，两个错误码同时承载「不能为负数」与
   // 「最多两位小数」两种语义（后端 message 区分），这里按 message 是否含「负数」二选一。

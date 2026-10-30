@@ -13,6 +13,7 @@ import './styles.css'
 import './styles/display-draw-board.css'
 import './styles/admin-retro.css'
 import './styles/platform-admin-element.css'
+import 'element-plus/theme-chalk/el-message-box.css'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -72,10 +73,10 @@ const router = createRouter({
     { path: '/platform-admin/report-networks', component: () => import('./views/PlatformAdminReportNetworks.vue'), meta: { requiresAuth: true, requiredPermission: 'REPORT_NETWORK_READ', title: '网盘设置' } },
     { path: '/platform-admin/games', component: () => import('./views/PlatformAdminGames.vue'), meta: { requiresAuth: true, requiredPermission: 'GAME_SETTINGS_READ', title: '游戏设置' } },
     { path: '/platform-admin/password', component: () => import('./views/PlatformAdminPassword.vue'), meta: { requiresAuth: true, requiredPermission: 'PLATFORM_PASSWORD_MANAGE', title: '修改密码' } },
-    { path: '/player-login', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
-    { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '奥巴AI' } },
+    { path: '/player-login', component: PlayerLinkLoginView, meta: { title: '公开大厅' } },
+    { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '公开大厅' } },
     { path: '/forbidden', component: ForbiddenView, meta: { title: 'AI模型房间管理' } },
-    { path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '奥巴AI' } },
+    { path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '公开大厅' } },
     // 已收敛：`/agent` 曾是重复实现出来的代理后台。用户 2026-10-02 确认代理后台唯一入口是 `/console`
     // （BY220 `robot.php` 语义：机器账号登录、按机器隔离），旧地址保留自动跳转兼容。
     { path: '/agent', redirect: '/console' },

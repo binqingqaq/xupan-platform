@@ -35,6 +35,7 @@ import type { PublicPlatformSettings } from '../types/platformAdmin'
 import type { RobotDrawPayload } from '../robotDrawMessage'
 
 const ROOM_CODE = 'main'
+const DRAWING_BALL_NUMBERS = Array.from({ length: 40 }, (_, index) => index % 20 + 1)
 type MessageType = 'user' | 'robot' | 'system' | 'result'
 
 interface RoomMessage {
@@ -134,6 +135,7 @@ const voiceEnabled = ref(false)
 const selectedBallNumber = ref(8)
 let keyboardBulmaLink: HTMLLinkElement | null = null
 let gameRefreshTimer: number | undefined
+let gameLoadSequence = 0
 let chatRefreshTimer: number | undefined
 let adminNoticeTimer: number | undefined
 let countdownTimer: number | undefined
@@ -173,6 +175,15 @@ const oddsCards: OddsCard[] = [
 const ballNumbers = computed(() => {
   const game = current.value
   if (!game) return []
+  if (game.phase === 'DRAWING') {
+    return game.balls.map((ball, index) => ({
+      ...ball,
+      number: null,
+      fan: null,
+      parity: null,
+      size: null,
+    }))
+  }
   if (game.phase !== 'SETTLED') {
     if (game.previousBalls?.length) return game.previousBalls
     return (game.balls ?? []).map((ball) => ({ ...ball, number: null, fan: null, parity: null, size: null }))
@@ -180,10 +191,10 @@ const ballNumbers = computed(() => {
   return game.balls ?? []
 })
 const selectedGameLabel = computed(() => gameCatalog.value.find(game => game.gameCode === selectedGameCode.value)?.displayName || selectedGameCode.value)
-const showingPreviousBalls = computed(() => current.value?.phase !== 'SETTLED' && Boolean(current.value?.previousBalls?.length))
+const showingPreviousBalls = computed(() => current.value?.phase === 'BETTING' && Boolean(current.value?.previousBalls?.length))
 const ballNumbersLabel = computed(() => showingPreviousBalls.value
   ? '上期开奖号码（当前期暂未开奖，仅作参考）'
-  : '当前期开奖号码')
+  : current.value?.phase === 'DRAWING' ? '本期开奖中，八个号码同步滚动' : '当前期开奖号码')
 const issueNumber = computed(() => current.value?.issueNumber || '00000000')
 const displayIssueNumber = computed(() => {
   const match = issueNumber.value.match(/(\d+)$/)
@@ -205,6 +216,10 @@ const countdown = computed(() => {
   return `${minutes}:${seconds}`
 })
 const phaseLabel = computed(() => current.value?.phase === 'DRAWING' ? '开奖中' : current.value?.phase === 'BETTING' ? countdown.value : '已结')
+
+function drawingRollOffset(ballNumber: number): string {
+  return `${-((ballNumber * 3) % 20) * 25}px`
+}
 const chatConnectionLabel = computed(() => {
   switch (chatConnectionState.value) {
     case 'REQUESTING_TICKET': return '正在准备实时连接...'
@@ -705,7 +720,9 @@ async function pollChatMessages() {
 }
 
 async function loadGame() {
+  const requestSequence = ++gameLoadSequence
   const [next, nextWallet] = await Promise.all([api.current(selectedGameCode.value), api.getMyWallet()])
+  if (requestSequence !== gameLoadSequence) return
   current.value = next
   wallet.value = nextWallet
   serverOffsetMs.value = Date.now() - Date.parse(next.serverNow)
@@ -733,7 +750,6 @@ async function load() {
     authenticated.value = true
     const platformConfig = await api.getPublicPlatformSettings()
     platformSettings.value = platformConfig
-    document.title = platformConfig.siteTitle
     interfaceMode.value = platformConfig.keyboardMode ? 'ui2' : 'ui1'
     keyboardOpen.value = platformConfig.keyboardMode
 
@@ -1273,8 +1289,13 @@ onUnmounted(() => {
       </div>
       <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar" :aria-label="ballNumbersLabel">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
-        <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === selectedBallNumber }" :aria-label="`${ball.ballNumber}球 ${ball.number ?? '未开奖'}`">
-          {{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}
+        <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === selectedBallNumber }" :aria-label="current?.phase === 'DRAWING' ? `${ball.ballNumber}球，开奖滚动中` : `${ball.ballNumber}球 ${ball.number ?? '未开奖'}`">
+          <span v-if="current?.phase === 'DRAWING'" class="reference-ball-roll-window" aria-hidden="true">
+            <span class="reference-ball-roll-track" :style="{ '--roll-offset': drawingRollOffset(ball.ballNumber) }">
+              <span v-for="(number, index) in DRAWING_BALL_NUMBERS" :key="`${ball.ballNumber}-${index}`" class="reference-ball-roll-value">{{ String(number).padStart(2, '0') }}</span>
+            </span>
+          </span>
+          <template v-else>{{ ball.number === null ? '--' : String(ball.number).padStart(2, '0') }}</template>
         </span>
         <span class="reference-countdown" :class="{ 'is-drawing': current?.phase === 'DRAWING' }">{{ phaseLabel }}</span>
         <button class="collapse-button" :class="{ expanded: historyOpen }" type="button" :aria-expanded="historyOpen" aria-label="展开历史开奖记录" title="展开历史开奖记录" @click="toggleHistory"><span class="collapse-chevron" aria-hidden="true"></span></button>

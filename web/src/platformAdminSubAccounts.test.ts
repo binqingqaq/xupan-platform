@@ -1,4 +1,5 @@
 import { createApp, nextTick } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminSubAccounts from './views/PlatformAdminSubAccounts.vue'
 import { api } from './api'
@@ -107,6 +108,21 @@ describe('platform admin sub accounts', () => {
     ]) {
       expect(payload).not.toHaveProperty(field)
     }
+  })
+
+  it('warns about center data before deleting a sub account', async () => {
+    const confirm = vi.spyOn(ElMessageBox, 'confirm').mockResolvedValue({ action: 'confirm', value: '' } as never)
+    await mountSubAccounts()
+    const buttons = Array.from(container?.querySelectorAll<HTMLButtonElement>('tbody tr button') ?? [])
+    buttons.find(button => button.textContent?.trim() === '删除')?.click()
+    await settle()
+
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining('关联的中心账号和上报数据将一并永久删除'),
+      '确认删除',
+      expect.objectContaining({ type: 'warning', confirmButtonText: '删除' }),
+    )
+    expect(api.deleteSubAccount).toHaveBeenCalledWith(1)
   })
 
   /**

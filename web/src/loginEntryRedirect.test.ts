@@ -154,7 +154,7 @@ describe('路由 → 入口映射', () => {
   it('restores the player session inside the room without routing the room through a staff gate', () => {
     const routerSource = readFileSync(resolve(process.cwd(), 'src/main.ts'), 'utf8')
     const roomSource = readFileSync(resolve(process.cwd(), 'src/views/UserRoom.vue'), 'utf8')
-    expect(routerSource).toContain("{ path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '奥巴AI' } }")
+    expect(routerSource).toContain("{ path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '公开大厅' } }")
     expect(roomSource).toContain("await restoreSession('PLAYER')")
     expect(roomSource).toContain('class="player-session-loading"')
     expect(roomSource).toContain("import { Loading } from '@element-plus/icons-vue'")
@@ -162,6 +162,20 @@ describe('路由 → 入口映射', () => {
     expect(roomSource).toContain('background: #fff;')
     expect(roomSource).toContain('正在恢复玩家会话')
     expect(roomSource).toContain('session-expired')
+  })
+})
+
+describe('玩家开奖号码滚动', () => {
+  it('DRAWING 时渲染同步纵向号码带，结算后恢复服务端号码', () => {
+    const roomSource = readFileSync(resolve(process.cwd(), 'src/views/UserRoom.vue'), 'utf8')
+    const styleSource = readFileSync(resolve(process.cwd(), 'src/styles.css'), 'utf8')
+
+    expect(roomSource).toContain("if (game.phase === 'DRAWING')")
+    expect(roomSource).toContain('length: 40')
+    expect(roomSource).toContain('class="reference-ball-roll-track"')
+    expect(roomSource).toContain('game.balls ?? []')
+    expect(styleSource).toContain('animation: reference-ball-roll 750ms linear infinite')
+    expect(styleSource).toContain('translateY(calc(var(--roll-offset) - 500px))')
   })
 })
 

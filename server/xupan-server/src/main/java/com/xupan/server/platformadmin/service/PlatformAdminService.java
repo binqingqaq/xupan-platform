@@ -405,9 +405,14 @@ public class PlatformAdminService {
         findSubAccount(id);
         String groupCode = jdbc.queryForObject(
                 "SELECT group_code FROM agent_group WHERE id = ?", String.class, id);
-        long purgedMachines = accountPurgeService.purgeSubAccount(id);
+        AccountPurgeService.SubAccountPurgeResult purged = accountPurgeService.purgeSubAccount(id);
+        var center = purged.centerAccount();
         audit(operator, "SUB_ACCOUNT_MANAGE", "DELETE", "/api/admin/sub-accounts/" + id, id,
-                "physical delete sub-account code=" + groupCode + ",purgedMachines=" + purgedMachines);
+                "physical delete sub-account code=" + groupCode + ",purgedMachines=" + purged.machines()
+                        + ",purgedPlayers=" + purged.players()
+                        + (center == null ? ",centerAccountId=none"
+                        : ",centerAccountId=" + center.accountId() + ",centerUsername=" + center.username()
+                                + center.auditCounts()));
     }
 
     private void applyMachine(MachineInput input, long id, Long fromGroupId, Long groupId, long operator,

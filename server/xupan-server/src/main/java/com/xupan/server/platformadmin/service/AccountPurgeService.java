@@ -1,5 +1,6 @@
 package com.xupan.server.platformadmin.service;
 
+import com.xupan.server.center.service.CenterUpstreamAccountService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -18,8 +19,8 @@ import java.util.List;
  * 并且一直干扰列表和报表，所以这里全部改为物理删除。</p>
  *
  * <p><b>删除顺序：</b>先删引用方再删被引用方。玩家侧：注单改单记录 → 机器人行为与动作 →
- * 余额流水 → 注单 → 玩家账号行 → 登录账号；机器侧：上报订单 → 玩家 → 机器积分流水 →
- * 机器彩种配置 → 机器行 → 登录账号。顺序错会撞外键。</p>
+ * 余额流水 → 注单 → 玩家账号行 → 登录账号；机器侧：中心机器会话 → 玩家与上报订单 →
+ * 机器积分流水 → 机器彩种配置 → 机器行 → 登录账号。顺序错会撞外键。</p>
  *
  * <p><b>唯一保留的两类数据：</b>①{@code sys_operation_log}／{@code sys_login_log} 等审计行本身保留，
  * 只把「操作者／创建人」外键置空（审计是项目基线要求，删了就没有追责依据，且摘要文本里本来就有用户名）；
@@ -29,13 +30,19 @@ import java.util.List;
 public class AccountPurgeService {
 
     private final JdbcTemplate jdbc;
+    private final CenterUpstreamAccountService centerAccountService;
 
-    public AccountPurgeService(JdbcTemplate jdbc) {
+    public AccountPurgeService(JdbcTemplate jdbc, CenterUpstreamAccountService centerAccountService) {
         this.jdbc = jdbc;
+        this.centerAccountService = centerAccountService;
     }
 
     /** 一条玩家/托账号（{@code demo_user_account.id} 与其登录账号 {@code sys_user.id}，后者可能为空）。 */
     private record PlayerRef(long accountId, Long sysUserId) {}
+    private record GroupRef(long id, Long sysUserId) {}
+
+    public record SubAccountPurgeResult(long machines, long players,
+                                        CenterUpstreamAccountService.PurgeResult centerAccount) {}
 
     /**
      * 物理删除一个机器账号：名下的玩家/托、上报订单、机器积分流水、彩种配置、机器行和登录账号。
@@ -49,6 +56,7 @@ public class AccountPurgeService {
         List<PlayerRef> players = jdbc.query("""
                 SELECT id, sys_user_id FROM demo_user_account WHERE agent_id = ?
                 """, (rs, n) -> new PlayerRef(rs.getLong("id"), rs.getObject("sys_user_id", Long.class)), agentId);
+        jdbc.update("DELETE FROM center_machine_session WHERE machine_agent_id = ?", agentId);
         for (PlayerRef player : players) {
             purgePlayer(player.accountId(), player.sysUserId());
         }
@@ -66,23 +74,75 @@ public class AccountPurgeService {
     /**
      * 物理删除一个子账号：连带其名下所有机器（BY220 {@code Users.php} 删除子账号会删掉其机器人）。
      *
-     * @return 被删除的机器数量
+     * @return 被删除的机器/玩家数量，以及联动清理的中心账号摘要
      */
     @Transactional
-    public long purgeSubAccount(long groupId) {
-        Long accountUserId = jdbc.query("SELECT sys_user_id FROM agent_group WHERE id = ?",
-                rs -> rs.next() ? rs.getObject("sys_user_id", Long.class) : null, groupId);
+    public SubAccountPurgeResult purgeSubAccount(long groupId) {
+        GroupRef group = jdbc.query("SELECT id, sys_user_id FROM agent_group WHERE id = ? FOR UPDATE",
+                (rs, n) -> new GroupRef(rs.getLong("id"), rs.getObject("sys_user_id", Long.class)), groupId)
+                .stream().findFirst()
+                .orElseThrow(() -> BusinessException.notFound("SUB_ACCOUNT_NOT_FOUND", "子账号不存在"));
+        if (hasForeignCenterData(groupId)) {
+            throw BusinessException.conflict("CENTER_ACCOUNT_CROSS_GROUP_REFERENCE",
+                    "子账号机器或注单存在其他子账号的中心数据引用，请先核对归属");
+        }
+        CenterUpstreamAccountService.PurgeResult centerAccount =
+                centerAccountService.purgeForSubAccountDeletion(groupId).orElse(null);
         List<Long> machineIds = jdbc.queryForList(
                 "SELECT id FROM agent WHERE group_id = ?", Long.class, groupId);
+        long purgedPlayers = 0;
         for (Long machineId : machineIds) {
-            purgeMachine(machineId);
+            purgedPlayers += purgeMachine(machineId);
         }
         jdbc.update("DELETE FROM agent_ledger WHERE group_id = ?", groupId);
         jdbc.update("DELETE FROM agent_group WHERE id = ?", groupId);
-        if (accountUserId != null && accountUserId > 0) {
-            purgeLoginAccount(accountUserId);
+        if (group.sysUserId() != null && group.sysUserId() > 0) {
+            purgeLoginAccount(group.sysUserId());
         }
-        return machineIds.size();
+        return new SubAccountPurgeResult(machineIds.size(), purgedPlayers, centerAccount);
+    }
+
+    private boolean hasForeignCenterData(long groupId) {
+        return exists("""
+                SELECT EXISTS(SELECT 1 FROM agent a JOIN center_agent c ON c.id = a.center_agent_id
+                 WHERE a.group_id = ? AND (c.agent_group_id IS NULL OR c.agent_group_id <> ?))
+                """, groupId, groupId)
+                || exists("""
+                SELECT EXISTS(SELECT 1 FROM center_machine_session s
+                  JOIN agent a ON a.id = s.machine_agent_id
+                  JOIN center_agent c ON c.id = s.center_agent_id
+                 WHERE a.group_id = ? AND (c.agent_group_id IS NULL OR c.agent_group_id <> ?))
+                """, groupId, groupId)
+                || exists("""
+                SELECT EXISTS(SELECT 1 FROM report_upstream_order r
+                  JOIN agent a ON a.id = r.agent_id
+                  JOIN center_agent c ON c.id = r.center_agent_id
+                 WHERE a.group_id = ? AND (c.agent_group_id IS NULL OR c.agent_group_id <> ?))
+                """, groupId, groupId)
+                || exists("""
+                SELECT EXISTS(SELECT 1 FROM center_order o
+                  JOIN center_agent c ON c.id = o.center_agent_id
+                  LEFT JOIN agent source ON source.id = o.local_agent_id
+                  LEFT JOIN game_bet b ON b.id = o.local_bet_id
+                  LEFT JOIN demo_user_account u ON u.id = b.user_id
+                  LEFT JOIN agent bet_agent ON bet_agent.id = u.agent_id
+                 WHERE (source.group_id = ? OR bet_agent.group_id = ?)
+                   AND (c.agent_group_id IS NULL OR c.agent_group_id <> ?))
+                """, groupId, groupId, groupId)
+                || exists("""
+                SELECT EXISTS(SELECT 1 FROM center_reconciliation_disposition d
+                  JOIN game_bet b ON b.id = d.bet_id
+                  JOIN demo_user_account u ON u.id = b.user_id
+                  JOIN agent a ON a.id = u.agent_id
+                  JOIN center_agent c ON c.id = d.center_agent_id
+                 WHERE a.group_id = ? AND (c.agent_group_id IS NULL OR c.agent_group_id <> ?))
+                """, groupId, groupId);
+    }
+
+    private boolean exists(String sql, long... parameters) {
+        Object[] args = new Object[parameters.length];
+        for (int i = 0; i < parameters.length; i++) args[i] = parameters[i];
+        return Boolean.TRUE.equals(jdbc.queryForObject(sql, Boolean.class, args));
     }
 
     /**
@@ -93,6 +153,10 @@ public class AccountPurgeService {
      */
     @Transactional
     public void purgePlayer(long accountId, Long sysUserId) {
+        jdbc.update("""
+                DELETE FROM center_reconciliation_disposition
+                 WHERE bet_id IN (SELECT id FROM game_bet WHERE user_id = ?)
+                """, accountId);
         jdbc.update("DELETE FROM game_bet_edit_record WHERE account_id = ?", accountId);
         jdbc.update("""
                 DELETE FROM game_bet_edit_record
@@ -180,8 +244,8 @@ public class AccountPurgeService {
     /**
      * 「删除全量账号」：物理删除除执行者与平台直属主机器之外的所有账号（BY220 {@code Gd.php::userDels}）。
      *
-     * <p>顺序：上报订单（引用注单）→ 全部玩家/托 → 全部机器（保留 {@code system_owned}）→
-     * 全部子账号 → 其余登录账号。平台直属主机器的**玩家同样会被删除**，与 BY220
+     * <p>顺序：先删子账号及其中心账号、机器、玩家，再删未分组玩家与机器（保留 {@code system_owned}）→
+     * 其余登录账号。直属主机器的玩家同样会被删除，与 BY220
      * {@code db('rbuser')->where('id','>',0)->delete()} 一致。</p>
      *
      * @return 被删除的账号与业务实体总数
@@ -189,6 +253,11 @@ public class AccountPurgeService {
     @Transactional
     public long purgeEverythingExcept(long operatorUserId) {
         long deleted = 0;
+        List<Long> groupIds = jdbc.queryForList("SELECT id FROM agent_group ORDER BY id", Long.class);
+        for (Long groupId : groupIds) {
+            SubAccountPurgeResult group = purgeSubAccount(groupId);
+            deleted += 1 + group.machines() + group.players();
+        }
         // 1. 上报订单引用注单，先清空
         deleted += jdbc.update("DELETE FROM report_upstream_order");
         // 2. 全部玩家/托（含历史数据里 sys_user_id 为空的账号行），但绝不动执行者本人：
@@ -210,12 +279,6 @@ public class AccountPurgeService {
             deleted += purgeMachine(machineId);
         }
         deleted += machineIds.size();
-        // 4. 全部子账号
-        List<Long> groupIds = jdbc.queryForList("SELECT id FROM agent_group", Long.class);
-        for (Long groupId : groupIds) {
-            purgeSubAccount(groupId);
-        }
-        deleted += groupIds.size();
         // 5. 其余登录账号（其它管理员、运营等），保留执行者，避免把自己删掉
         List<Long> userIds = jdbc.queryForList(
                 "SELECT id FROM sys_user WHERE id <> ?", Long.class, operatorUserId);

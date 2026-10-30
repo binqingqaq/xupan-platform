@@ -162,16 +162,46 @@ public class CenterUpstreamAccountService {
                     "该代理子账号存在无法确认中心账号归属的历史报网记录，请先核对后再删除");
         }
 
+        PurgeResult result = purgeAccountData(account, true);
+
+        audit(operatorUserId, "DELETE", ACCOUNT_PATH + "/" + accountId, Long.toString(accountId),
+                "SUCCESS", null,
+                "reason=" + normalizedReason + ",username=" + account.username()
+                        + ",groupId=" + account.groupId() + result.auditCounts()
+                        + ",machineBalancesChanged=false", null);
+    }
+
+    /** Caller holds the target group lock and has authorized deletion of the entire sub-account. */
+    @Transactional
+    public Optional<PurgeResult> purgeForSubAccountDeletion(long groupId) {
+        Optional<CenterUpstreamAccountRepository.DeletionContext> account =
+                repository.lockAccountForGroupDeletion(groupId);
+        if (account.isEmpty()) {
+            return Optional.empty();
+        }
+        if (repository.hasCrossGroupReferences(account.get().accountId(), groupId)) {
+            throw BusinessException.conflict("CENTER_ACCOUNT_CROSS_GROUP_REFERENCE",
+                    "中心账号存在其他子账号的机器或订单引用，请先核对归属");
+        }
+        return Optional.of(purgeAccountData(account.get(), false));
+    }
+
+    private PurgeResult purgeAccountData(CenterUpstreamAccountRepository.DeletionContext account,
+                                        boolean preserveLocalData) {
+        long accountId = account.accountId();
         repository.updateStatus(accountId, "DISABLED");
         int machineConfigs = repository.clearMachineCenterConfig(accountId, account.groupId());
         int machineSessions = repository.deleteMachineSessions(accountId);
-        int markedPlayerBets = repository.markBetsWithOnlyDeletedAccountAttempts(accountId);
+        int markedPlayerBets = preserveLocalData
+                ? repository.markBetsWithOnlyDeletedAccountAttempts(accountId) : 0;
         int reportAttempts = repository.deleteReportAttempts(accountId);
 
         List<Long> orderIds = repository.findCenterOrderIds(accountId);
         int detachedMachineLedgerRows = 0;
-        for (Long orderId : orderIds) {
-            detachedMachineLedgerRows += repository.detachMachineLedgerOrderReference(orderId, accountId);
+        if (preserveLocalData) {
+            for (Long orderId : orderIds) {
+                detachedMachineLedgerRows += repository.detachMachineLedgerOrderReference(orderId, accountId);
+            }
         }
 
         int orderDispositions = repository.deleteCenterOrderDispositions(accountId);
@@ -183,19 +213,24 @@ public class CenterUpstreamAccountService {
         if (deleted != 1) {
             throw BusinessException.conflict("CENTER_ACCOUNT_DELETE_CONFLICT", "中心账号状态已变化，删除未完成");
         }
+        return new PurgeResult(accountId, account.username(), centerOrders, centerLedgerRows, reportAttempts,
+                machineSessions, markedPlayerBets, orderDispositions, reconciliationDispositions,
+                riskHits, machineConfigs, detachedMachineLedgerRows);
+    }
 
-        audit(operatorUserId, "DELETE", ACCOUNT_PATH + "/" + accountId, Long.toString(accountId),
-                "SUCCESS", null,
-                "reason=" + normalizedReason + ",username=" + account.username()
-                        + ",groupId=" + account.groupId() + ",deletedCenterOrders=" + centerOrders
-                        + ",deletedCenterLedgerRows=" + centerLedgerRows
-                        + ",deletedReportAttempts=" + reportAttempts + ",deletedMachineSessions=" + machineSessions
-                        + ",markedPlayerBetsNotToRereport=" + markedPlayerBets
-                        + ",deletedOrderDispositions=" + orderDispositions
-                        + ",deletedReconciliationDispositions=" + reconciliationDispositions
-                        + ",deletedRiskHits=" + riskHits + ",unlinkedMachineConfigs=" + machineConfigs
-                        + ",detachedMachineLedgerRows=" + detachedMachineLedgerRows
-                        + ",machineBalancesChanged=false", null);
+    public record PurgeResult(long accountId, String username, int centerOrders, int centerLedgerRows,
+                              int reportAttempts, int machineSessions, int markedPlayerBets,
+                              int orderDispositions, int reconciliationDispositions, int riskHits,
+                              int machineConfigs, int detachedMachineLedgerRows) {
+        public String auditCounts() {
+            return ",deletedCenterOrders=" + centerOrders + ",deletedCenterLedgerRows=" + centerLedgerRows
+                    + ",deletedReportAttempts=" + reportAttempts + ",deletedMachineSessions=" + machineSessions
+                    + ",markedPlayerBetsNotToRereport=" + markedPlayerBets
+                    + ",deletedOrderDispositions=" + orderDispositions
+                    + ",deletedReconciliationDispositions=" + reconciliationDispositions
+                    + ",deletedRiskHits=" + riskHits + ",unlinkedMachineConfigs=" + machineConfigs
+                    + ",detachedMachineLedgerRows=" + detachedMachineLedgerRows;
+        }
     }
 
     @Transactional(readOnly = true)

@@ -61,8 +61,12 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid #485fc7; outli
 .reference-issuebar { display: flex; align-items: center; justify-content: space-around; height: 35px; overflow: hidden; border-bottom: 1px solid #d1d1d1; white-space: nowrap; }
 .reference-room.account-open .reference-issuebar { position: relative; z-index: 90; }
 .reference-issue-number { flex: 0 0 auto; width: auto; margin-right: 5px; padding-left: 0; color: #363636; font-size: 14px; line-height: 35px; text-align: center; }
-.reference-ball { flex: 0 0 25px; width: 25px; height: 25px; margin-left: 2px; border: 0; border-radius: 50%; background: #0092dd; color: #fff; font-size: 14px; font-weight: 700; line-height: 25px; padding: 0; text-align: center; }
+.reference-ball { position: relative; flex: 0 0 25px; width: 25px; height: 25px; margin-left: 2px; overflow: hidden; border: 0; border-radius: 50%; background: #0092dd; color: #fff; font-size: 14px; font-weight: 700; line-height: 25px; padding: 0; text-align: center; }
 .reference-ball.is-red { background: #f00; }
+.reference-ball-roll-window { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+.reference-ball-roll-track { position: absolute; top: 0; left: 0; display: block; transform: translateY(var(--roll-offset)); animation: reference-ball-roll 750ms linear infinite; }
+.reference-ball-roll-value { display: block; width: 25px; height: 25px; line-height: 25px; }
+@keyframes reference-ball-roll { to { transform: translateY(calc(var(--roll-offset) - 500px)); } }
 .reference-ball.is-selected { box-shadow: 0 0 0 2px rgba(0, 126, 229, .38); }
 .reference-countdown { flex: 0 0 50px; width: 50px; margin-left: 5px; padding: 0; color: #f00; font-size: 14px; font-weight: 700; line-height: 35px; text-align: left; }
 .reference-countdown.is-drawing { color: var(--reference-red); }

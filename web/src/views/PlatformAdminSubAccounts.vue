@@ -102,7 +102,7 @@ async function submit() {
 }
 async function remove(row: SubAccount) {
   try {
-    await ElMessageBox.confirm(`确定将[${row.username}]删除么?`, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', closeOnClickModal: false })
+    await ElMessageBox.confirm(`确定删除子账号「${row.username}」？其名下机器、玩家，以及关联的中心账号和上报数据将一并永久删除。`, '确认删除', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', closeOnClickModal: false })
   } catch { return }
   busy.value = true
   error.value = ''
