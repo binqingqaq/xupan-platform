@@ -7,7 +7,8 @@ import java.util.List;
 public enum RobotDrawComponent {
     DRAW_SUMMARY,
     DRAW_HISTORY,
-    WINNER_LIST;
+    WINNER_LIST,
+    TOTAL_BOARD;
 
     public static List<RobotDrawComponent> defaults() {
         return Arrays.stream(values()).sorted(Comparator.comparingInt(RobotDrawComponent::defaultOrder))

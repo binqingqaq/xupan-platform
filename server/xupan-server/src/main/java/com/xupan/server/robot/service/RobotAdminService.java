@@ -413,7 +413,7 @@ public class RobotAdminService {
     private static List<RobotDrawComponentConfig> normalizeDrawComponents(
             List<DrawComponentUpdate> updates) {
         if (updates == null || updates.size() != RobotDrawComponent.values().length) {
-            throw BusinessException.badRequest("ROBOT_DRAW_COMPONENT_INVALID", "必须提供三段配置");
+            throw BusinessException.badRequest("ROBOT_DRAW_COMPONENT_INVALID", "必须提供四段配置");
         }
         List<RobotDrawComponentConfig> configs = updates.stream().map(update -> {
             if (update == null || update.component() == null || update.component().isBlank()) {

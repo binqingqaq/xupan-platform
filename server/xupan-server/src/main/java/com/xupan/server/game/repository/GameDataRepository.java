@@ -455,6 +455,12 @@ public class GameDataRepository {
         return rows.isEmpty() ? MachineBettingConfig.DEFAULT : rows.get(0);
     }
 
+    public int findMachineCloseSeconds(long agentId) {
+        Integer seconds = jdbcTemplate.queryForObject(
+                "SELECT COALESCE(close_seconds, 0) FROM agent WHERE id = ?", Integer.class, agentId);
+        return seconds == null ? 0 : seconds;
+    }
+
     /**
      * 在下注事务中锁定玩家所属机器的手动开盘状态行。
      * 开关更新也锁定 agent 行，保证关盘提交后不会再有先前读到“开盘”的新注单提交。
@@ -752,51 +758,86 @@ public class GameDataRepository {
 
     public List<BetAuditRecord> findBetAuditByIssue(String issueNumber) {
         return jdbcTemplate.query("""
-                SELECT b.id, COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
-                       b.play_type, b.parameters_text, b.stake
+                SELECT b.id, COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
+                       b.ball_number, b.play_type, b.parameters_text, b.stake
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
                  WHERE b.issue_number = ?
                  ORDER BY b.id
                 """, (rs, rowNum) -> new BetAuditRecord(
-                rs.getLong("id"), rs.getString("display_name"),
+                rs.getLong("id"), rs.getString("display_name"), rs.getInt("ball_number"),
                 PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake")), issueNumber);
     }
 
     public List<BetAuditRecord> findBetAuditByIssueAndAgent(String issueNumber, long agentId) {
-        if (issueNumber == null || issueNumber.isBlank() || agentId <= 0) return List.of();
+        return findBetAuditByGameIssueAndAgent(DEFAULT_GAME_CODE, issueNumber, agentId);
+    }
+
+    public List<BetAuditRecord> findBetAuditByGameIssueAndAgent(String gameCode, String issueNumber, long agentId) {
+        if (gameCode == null || gameCode.isBlank() || issueNumber == null || issueNumber.isBlank()
+                || agentId <= 0) return List.of();
         return jdbcTemplate.query("""
-                SELECT b.id, COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
-                       b.play_type, b.parameters_text, b.stake
+                SELECT b.id, COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
+                       b.ball_number, b.play_type, b.parameters_text, b.stake
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE b.issue_number = ?
+                 WHERE b.game_code = ? AND b.issue_number = ?
                    AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
                    AND b.settlement_status <> 'CANCELED'
                  ORDER BY b.id
                 """, (rs, rowNum) -> new BetAuditRecord(
-                rs.getLong("id"), rs.getString("display_name"),
+                rs.getLong("id"), rs.getString("display_name"), rs.getInt("ball_number"),
                 PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake")),
-                issueNumber.trim(), agentId);
+                gameCode.trim(), issueNumber.trim(), agentId);
     }
 
     public List<WinnerBetAuditRecord> findWinningBetAuditByIssueAndAgent(String issueNumber, long agentId) {
-        if (issueNumber == null || issueNumber.isBlank() || agentId <= 0) return List.of();
+        return findWinningBetAuditByGameIssueAndAgent(DEFAULT_GAME_CODE, issueNumber, agentId);
+    }
+
+    public List<WinnerBetAuditRecord> findWinningBetAuditByGameIssueAndAgent(
+            String gameCode, String issueNumber, long agentId) {
+        if (gameCode == null || gameCode.isBlank() || issueNumber == null || issueNumber.isBlank()
+                || agentId <= 0) return List.of();
         return jdbcTemplate.query("""
-                SELECT b.id, COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                SELECT b.id, COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
                        b.ball_number, b.play_type, b.parameters_text, b.stake, b.net_profit
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
-                 WHERE b.issue_number = ? AND b.settlement_status = 'WIN'
+                 WHERE b.game_code = ? AND b.issue_number = ? AND b.settlement_status = 'WIN'
                    AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
                  ORDER BY b.id
                 """, (rs, rowNum) -> new WinnerBetAuditRecord(rs.getLong("id"),
                 rs.getString("display_name"), rs.getInt("ball_number"),
                 PlayType.valueOf(rs.getString("play_type")),
                 parseParameters(rs.getString("parameters_text")), rs.getBigDecimal("stake"),
-                rs.getBigDecimal("net_profit")), issueNumber.trim(), agentId);
+                rs.getBigDecimal("net_profit")), gameCode.trim(), issueNumber.trim(), agentId);
+    }
+
+    public List<IssuePlayerTotal> findIssuePlayerTotalsByAgent(String issueNumber, long agentId, int limit) {
+        if (issueNumber == null || issueNumber.isBlank() || agentId <= 0 || limit < 1 || limit > 100) {
+            throw new IllegalArgumentException("本期机器积分榜查询参数无效");
+        }
+        return jdbcTemplate.query("""
+                SELECT b.user_id,
+                       COALESCE(MAX(b.player_name_snapshot), MAX(a.display_name), '匿名用户') AS display_name,
+                       COALESCE(SUM(b.stake), 0) AS turnover,
+                       COALESCE(SUM(b.net_profit), 0) AS net_profit
+                  FROM game_bet b
+                  LEFT JOIN demo_user_account a ON a.id = b.user_id
+                 WHERE b.game_code = 'AU8' AND b.issue_number = ?
+                   AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
+                   AND b.settlement_status IN ('WIN', 'LOSE', 'DRAW')
+                   AND b.settled_at IS NOT NULL
+                 GROUP BY b.user_id
+                 ORDER BY net_profit DESC, b.user_id
+                 LIMIT ?
+                """, (rs, rowNum) -> new IssuePlayerTotal(
+                rs.getLong("user_id"), rs.getString("display_name"),
+                rs.getBigDecimal("turnover"), rs.getBigDecimal("net_profit")),
+                issueNumber.trim(), agentId, limit);
     }
 
     public List<BetRecord> findBetsByAccountId(long accountId, SettlementStatus status, int limit) {
@@ -1040,8 +1081,12 @@ public class GameDataRepository {
         }
     }
 
-    public record BetAuditRecord(long id, String displayName, PlayType playType,
+    public record BetAuditRecord(long id, String displayName, int ballNumber, PlayType playType,
                                  List<Integer> parameters, BigDecimal stake) {
+    }
+
+    public record IssuePlayerTotal(long userId, String displayName,
+                                   BigDecimal turnover, BigDecimal netProfit) {
     }
 
     public record WinnerBetAuditRecord(long id, String displayName, int ballNumber, PlayType playType,

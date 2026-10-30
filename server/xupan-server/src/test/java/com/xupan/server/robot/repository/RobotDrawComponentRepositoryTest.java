@@ -47,17 +47,19 @@ class RobotDrawComponentRepositoryTest {
                 .containsExactly(
                         org.assertj.core.groups.Tuple.tuple(RobotDrawComponent.DRAW_SUMMARY, true, 1),
                         org.assertj.core.groups.Tuple.tuple(RobotDrawComponent.DRAW_HISTORY, true, 2),
-                        org.assertj.core.groups.Tuple.tuple(RobotDrawComponent.WINNER_LIST, true, 3));
+                        org.assertj.core.groups.Tuple.tuple(RobotDrawComponent.WINNER_LIST, true, 3),
+                        org.assertj.core.groups.Tuple.tuple(RobotDrawComponent.TOTAL_BOARD, true, 4));
 
         repository.replaceAll(robotId, List.of(
                 new RobotDrawComponentConfig(RobotDrawComponent.WINNER_LIST, false, 1),
                 new RobotDrawComponentConfig(RobotDrawComponent.DRAW_SUMMARY, true, 2),
-                new RobotDrawComponentConfig(RobotDrawComponent.DRAW_HISTORY, true, 3)));
+                new RobotDrawComponentConfig(RobotDrawComponent.DRAW_HISTORY, true, 3),
+                new RobotDrawComponentConfig(RobotDrawComponent.TOTAL_BOARD, false, 4)));
 
         assertThat(repository.findEnabledOrdered(robotId)).extracting(RobotDrawComponentConfig::component)
                 .containsExactly(RobotDrawComponent.DRAW_SUMMARY, RobotDrawComponent.DRAW_HISTORY);
         assertThat(repository.findAll(robotId)).extracting(RobotDrawComponentConfig::component)
                 .containsExactly(RobotDrawComponent.WINNER_LIST, RobotDrawComponent.DRAW_SUMMARY,
-                        RobotDrawComponent.DRAW_HISTORY);
+                        RobotDrawComponent.DRAW_HISTORY, RobotDrawComponent.TOTAL_BOARD);
     }
 }

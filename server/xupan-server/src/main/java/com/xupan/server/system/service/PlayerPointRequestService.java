@@ -103,8 +103,8 @@ public class PlayerPointRequestService {
         if (!repository.markReviewed(request.id(), "APPROVED", operatorUserId, reviewReason, Instant.now())) {
             throw new IllegalStateException("积分申请审批状态更新失败");
         }
-        chatMessageService.publishPointRequestApproved(request.id(), request.sourceMessageId(),
-                request.displayName(), request.requestType(), request.amount(), Instant.now());
+        chatMessageService.enqueuePointRequestApproved(request.id(), request.sourceMessageId(),
+                request.displayName(), request.requestType(), request.amount(), change.playerBalance(), Instant.now());
         auditRepository.record(operatorUserId, "USER_MANAGE", "POST",
                 "/api/admin/player-desk/point-requests/" + request.id() + "/approve",
                 Long.toString(request.id()), "SUCCESS", null,
@@ -125,9 +125,13 @@ public class PlayerPointRequestService {
         if (!repository.markReviewed(request.id(), "REJECTED", operatorUserId, reviewReason, Instant.now())) {
             throw new IllegalStateException("积分申请审批状态更新失败");
         }
-        if ("DOWN".equals(request.requestType())) {
-            refundDownRequestHold(request, operatorUserId);
-        }
+        boolean downAmountRefunded = "DOWN".equals(request.requestType())
+                && refundDownRequestHold(request, operatorUserId);
+        BigDecimal balanceAfter = downAmountRefunded
+                ? walletService.getForAdmin(request.userId()).balance() : null;
+        chatMessageService.enqueuePointRequestRejected(request.id(), request.sourceMessageId(),
+                request.displayName(), request.requestType(), request.amount(), downAmountRefunded,
+                balanceAfter, Instant.now());
         auditRepository.record(operatorUserId, "USER_MANAGE", "POST",
                 "/api/admin/player-desk/point-requests/" + request.id() + "/reject",
                 Long.toString(request.id()), "SUCCESS", null,
@@ -183,14 +187,15 @@ public class PlayerPointRequestService {
      * 若照样退回，等于凭空给玩家加钱。因此这里**先确认预扣流水存在**才退回；不存在则只把申请单
      * 置为 REJECTED，余额与流水都不动。</p>
      */
-    private void refundDownRequestHold(PlayerPointRequestRepository.Request request, long operatorUserId) {
+    private boolean refundDownRequestHold(PlayerPointRequestRepository.Request request, long operatorUserId) {
         if (walletService.findLedgerByIdempotencyKey(
                 PlayerPointRequestRepository.holdIdempotencyKey(request.id())).isEmpty()) {
-            return;
+            return false;
         }
         walletService.refundForPointRequest(operatorUserId, request.userId(), request.amount(),
                 "下分申请拒绝退回（聊天指令）：" + request.displayName(),
                 PlayerPointRequestRepository.refundIdempotencyKey(request.id()));
+        return true;
     }
 
     /** 范围外的积分申请按“不存在”处理，避免通过 403 暴露跨机器数据存在性。 */

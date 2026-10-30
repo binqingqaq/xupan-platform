@@ -96,6 +96,7 @@ public final class DataRetentionScheduler {
                 "SELECT id FROM test_player_action WHERE created_at < ? AND status IN ('SUCCEEDED', 'SKIPPED') ORDER BY created_at, id LIMIT ?",
                 chatCutoff));
         deleted.put("chat_robot_dispatch", deleteTerminalRobotDispatches(chatCutoff));
+        deleted.put("robot_notice_intent", deleteTerminalRobotNotices(chatCutoff));
         deleted.put("game_issue_event", deleteBatches("game_issue_event",
                 "SELECT e.id FROM game_issue_event e WHERE e.created_at < ? AND e.event_type IN "
                         + SUPPORTED_ROBOT_EVENTS + " AND NOT EXISTS (SELECT 1 FROM chat_robot_dispatch d WHERE d.game_event_id = e.id) "
@@ -171,6 +172,29 @@ public final class DataRetentionScheduler {
         }
         return total;
     }
+
+    private int deleteTerminalRobotNotices(Instant cutoff) {
+        int total = 0;
+        for (int batch = 0; batch < maxBatchesPerTable; batch++) {
+            Integer deleted = transactions.execute(status -> {
+                List<Long> ids = selectIds("""
+                        SELECT id FROM robot_notice_intent WHERE created_at < ?
+                          AND status IN ('PUBLISHED', 'SKIPPED') ORDER BY created_at, id LIMIT ?
+                        FOR UPDATE
+                        """, cutoff);
+                if (ids.isEmpty()) return 0;
+                String in = placeholders(ids.size());
+                int detachedMessages = jdbc.update(
+                        "UPDATE robot_notice_intent SET message_id = NULL WHERE id IN (" + in + ")", ids.toArray());
+                return jdbc.update("DELETE FROM robot_notice_intent WHERE id IN (" + in + ")", ids.toArray());
+            });
+            int count = deleted == null ? 0 : deleted;
+            total += count;
+            if (count < batchSize) break;
+        }
+        return total;
+    }
+
 
     private BetCleanupCounts deleteSettledBets(Instant cutoff) {
         String select = """

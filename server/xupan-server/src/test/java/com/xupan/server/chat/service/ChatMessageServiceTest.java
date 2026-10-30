@@ -27,6 +27,7 @@ import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.robot.domain.ChatRobot;
 import com.xupan.server.robot.domain.RobotStatus;
 import com.xupan.server.robot.repository.RobotRepository;
+import com.xupan.server.robot.service.RobotNoticeIntentService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
@@ -82,6 +83,8 @@ class ChatMessageServiceTest {
     @Mock
     private RobotRepository robotRepository;
     @Mock
+    private RobotNoticeIntentService robotNoticeIntentService;
+    @Mock
     private VirtualWalletService walletService;
     @Mock
     private ApplicationEventPublisher eventPublisher;
@@ -94,6 +97,7 @@ class ChatMessageServiceTest {
                 outboxRepository, muteRepository, readCursorRepository, new ChatContentPolicy(),
                 gameDataRepository, new ObjectMapper(), eventPublisher, gameService,
                 new ChatMessageProperties(), robotRepository, walletService, null);
+        service.setRobotNoticeIntentService(robotNoticeIntentService);
         lenient().when(userRepository.findById(USER_ID)).thenReturn(Optional.of(activeUser()));
         lenient().when(userRepository.findPlayerAgentId(USER_ID)).thenReturn(Optional.of(44L));
         lenient().when(userRepository.findPlayerAgentIdByAccountId(1L)).thenReturn(Optional.of(44L));
@@ -161,7 +165,7 @@ class ChatMessageServiceTest {
                 eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
                 eq(44L), eq(NOW));
         assertThat(feedback.getValue()).isEqualTo("@用户甲  下注未成功"
-                + "\n@用户甲  下注 23/10 已拒绝：超过角限额1000，剩余可下0");
+                + "\n@用户甲  下注 23/10.00 已拒绝：超过角限额1000，剩余可下0");
     }
 
     @Test
@@ -186,7 +190,7 @@ class ChatMessageServiceTest {
                 eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
                 eq(44L), eq(NOW));
         assertThat(feedback.getValue()).isEqualTo("@用户甲  下注未成功"
-                + "\n@用户甲  下注 1番100 已拒绝：超过番限额20，剩余可下20");
+                + "\n@用户甲  下注 1番100.00 已拒绝：超过番限额20，剩余可下20");
     }
 
     @Test
@@ -216,7 +220,8 @@ class ChatMessageServiceTest {
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
                 eq("3000000"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
                 eq(44L), eq(NOW));
-        assertThat(feedback.getValue()).isEqualTo("@用户甲  攻击成功，使用粮草10, 剩余粮草：990");
+        assertThat(feedback.getValue()).isEqualTo(
+                "@用户甲，第3000000期攻击成功，使用积分10.00，剩余积分：990.00");
     }
 
     @Test
@@ -255,7 +260,7 @@ class ChatMessageServiceTest {
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
                 eq("UNKNOWN"), anyString(), balance.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
                 eq(44L), eq(NOW));
-        assertThat(balance.getValue()).isEqualTo("@用户甲   剩余粮草：990");
+        assertThat(balance.getValue()).isEqualTo("@用户甲，剩余积分：990.00");
 
         when(messageRepository.findByClientMessageId(1L, USER_ID, "rules-1"))
                 .thenReturn(Optional.empty());
@@ -266,6 +271,51 @@ class ChatMessageServiceTest {
 
         verify(messageRepository, times(1)).insertRobotMessage(anyLong(), anyLong(), anyLong(),
                 anyString(), anyString(), anyString(), anyString(), anyString(), any(), any(), any());
+    }
+
+    @Test
+    void invalidPointRequestGetsSpecificRobotFeedbackWithoutCreatingRequest() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "invalid-down"))
+                .thenReturn(Optional.empty());
+        when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "invalid-down",
+                44L, "下100.001", NOW)).thenReturn(message(23L, 1L, "下100.001"));
+
+        service.sendUserMessage(USER_ID, "main", "invalid-down", "下100.001", NOW);
+
+        ArgumentCaptor<String> feedback = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), feedback.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
+                eq(44L), eq(NOW));
+        assertThat(feedback.getValue()).contains("下分金额格式无效").contains("最多两位小数");
+    }
+
+    @Test
+    void trendCommandPublishesMachineScopedStructuredHistoryCard() {
+        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+        when(muteRepository.isMuted(1L, USER_ID, NOW)).thenReturn(false);
+        when(messageRepository.findByClientMessageId(1L, USER_ID, "trend-1")).thenReturn(Optional.empty());
+        when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
+        when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "trend-1", 44L, "走势", NOW))
+                .thenReturn(message(24L, 1L, "走势"));
+        when(gameDataRepository.findSettledIssues("AU8", 15)).thenReturn(List.of(
+                new GameDataRepository.IssueRecord("3000000", "CLOSED", "SETTLED",
+                        List.of(1, 2, 3, 4, 5, 6, 7, 8), NOW, NOW, NOW, NOW)));
+        when(gameDataRepository.findLatestSettledBlock("AU8", 60)).thenReturn(List.of(
+                new GameDataRepository.IssueRecord("3000000", "CLOSED", "SETTLED",
+                        List.of(1, 2, 3, 4, 5, 6, 7, 8), NOW, NOW, NOW, NOW)));
+
+        service.sendUserMessage(USER_ID, "main", "trend-1", "走势", NOW);
+
+        ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
+                eq("UNKNOWN"), anyString(), content.capture(), payload.capture(),
+                eq(ChatMessageVisibility.MACHINE), eq(44L), eq(NOW));
+        assertThat(content.getValue()).contains("近期开奖走势");
+        assertThat(payload.getValue()).contains("DRAW_HISTORY", "routeItems", "3000000");
     }
 
     @Test
@@ -287,7 +337,7 @@ class ChatMessageServiceTest {
         verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
                 eq("UNKNOWN"), anyString(), content.capture(), anyString(), eq(ChatMessageVisibility.MACHINE),
                 eq(44L), eq(NOW));
-        assertThat(content.getValue()).isEqualTo("@用户甲, 余额不足!");
+        assertThat(content.getValue()).isEqualTo("@用户甲, 积分不足，本次下注未提交!");
     }
 
     @Test
@@ -312,21 +362,22 @@ class ChatMessageServiceTest {
     }
 
     @Test
-    void publishesSettlementFeedbackWithCommittedWalletBalance() {
-        when(roomRepository.findByCodeForUpdate("main")).thenReturn(Optional.of(MAIN));
+    void storesSettlementFeedbackIntentWithBalanceSnapshot() {
         when(walletService.getByAccountId(1L)).thenReturn(
                 new com.xupan.server.game.domain.VirtualWallet(1L, USER_ID, "USER-A", "用户甲",
                         new java.math.BigDecimal("128.50"), "ACTIVE"));
 
-        service.publishSettlementFeedback(new BetSettlementCompletedEvent(41L, 1L, "3000000",
+        service.enqueueSettlementFeedback(new BetSettlementCompletedEvent(41L, 1L, "3000000",
                 SettlementStatus.WIN, new java.math.BigDecimal("10.00"),
-                new java.math.BigDecimal("28.50"), new java.math.BigDecimal("38.50")));
+                new java.math.BigDecimal("28.50"), new java.math.BigDecimal("38.50"),
+                new java.math.BigDecimal("128.50")));
 
         ArgumentCaptor<String> content = ArgumentCaptor.forClass(String.class);
-        verify(messageRepository).insertRobotMessage(anyLong(), anyLong(), eq(900001L), eq("机器人"),
-                eq("3000000"), eq("CHAT-SETTLEMENT-41-WIN"), content.capture(), anyString(),
-                eq(ChatMessageVisibility.MACHINE), eq(44L), any());
-        assertThat(content.getValue()).isEqualTo("@用户甲, 第3000000期中奖，返还粮草38.5, 当前粮草：128.5");
+        verify(robotNoticeIntentService).enqueue(eq("BET_SETTLEMENT_WIN"), eq("GAME_BET"), eq("41"),
+                eq("AU8"), eq("3000000"), eq(ChatMessageVisibility.MACHINE), eq(44L),
+                eq("BET_SETTLEMENT_WIN"), eq((Long) null), content.capture(),
+                eq("CHAT-SETTLEMENT-41-WIN"), any());
+        assertThat(content.getValue()).isEqualTo("@用户甲，第3000000期中奖，返还积分38.50，结算后余额128.50积分。");
     }
 
     @Test

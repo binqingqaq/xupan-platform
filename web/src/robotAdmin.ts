@@ -78,20 +78,22 @@ export function validateTemplateDraft(_eventType: RobotEventType, templateText: 
   return errors
 }
 
-const DRAW_COMPONENT_TYPES: readonly RobotDrawComponentType[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST']
+const DRAW_COMPONENT_TYPES: readonly RobotDrawComponentType[] = [
+  'DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST', 'TOTAL_BOARD',
+]
 
 export function validateRobotDrawComponents(components: RobotDrawComponentConfig[]): string[] {
   const errors: string[] = []
   if (components.length !== DRAW_COMPONENT_TYPES.length) {
-    errors.push('开奖组件配置必须包含摘要、历史结果和获胜名单三段')
+    errors.push('开奖组件配置必须包含摘要、历史结果、获胜名单和本期积分榜四段')
   }
   const componentSet = new Set(components.map(item => item.component))
   if (componentSet.size !== components.length || DRAW_COMPONENT_TYPES.some(type => !componentSet.has(type))) {
-    errors.push('开奖组件配置必须包含三类不同组件')
+    errors.push('开奖组件配置必须包含四类不同组件')
   }
   const orders = components.map(item => item.order)
-  if (orders.some(order => !Number.isInteger(order) || order < 1 || order > 3) || new Set(orders).size !== orders.length) {
-    errors.push('开奖组件顺序必须是唯一的 1-3')
+  if (orders.some(order => !Number.isInteger(order) || order < 1 || order > 4) || new Set(orders).size !== orders.length) {
+    errors.push('开奖组件顺序必须是唯一的 1-4')
   }
   if (components.some(item => typeof item.enabled !== 'boolean')) {
     errors.push('开奖组件启用状态不合法')

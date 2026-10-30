@@ -7,6 +7,7 @@ import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.chat.repository.PlayerPointRequestRepository;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.service.VirtualWalletService;
+import com.xupan.server.robot.service.RobotNoticeDispatchService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,6 +76,9 @@ class PlayerPointOperationControllerTest {
 
     @Autowired
     private ChatMessageService chatMessageService;
+
+    @Autowired
+    private RobotNoticeDispatchService noticeDispatchService;
 
     private long adminId;
     private long machineId;
@@ -239,6 +243,9 @@ class PlayerPointOperationControllerTest {
                         .header("Authorization", bearer(machineToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("APPROVED"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent WHERE id=? AND deleted_at IS NULL",
+                Integer.class, machineId)).isEqualTo(1);
+        noticeDispatchService.dispatchDue(Instant.now().plusSeconds(5), 100);
 
         assertThat(machineScore()).isEqualByComparingTo("970.00");
         assertThat(balanceOf(normalAccountId)).isEqualByComparingTo("105.00");
@@ -248,7 +255,8 @@ class PlayerPointOperationControllerTest {
         assertThat(machineLedgerCount()).isEqualTo(1L);
         assertThat(requestStatus(requestId)).isEqualTo("APPROVED");
         assertThat(approvedFeedbackCount(requestId)).isEqualTo(1);
-        assertThat(approvedFeedbackContent(requestId)).isEqualTo("@普通积分玩家，成功上分30");
+        assertThat(approvedFeedbackContent(requestId))
+                .isEqualTo("@普通积分玩家，成功上分30.00积分，剩余积分105.00");
 
         mockMvc.perform(post("/api/admin/player-desk/point-requests/" + requestId + "/approve")
                         .contentType("application/json").content("{\"reason\":\"重复同意\"}")
@@ -496,12 +504,17 @@ class PlayerPointOperationControllerTest {
                         .header("Authorization", bearer(playerToken)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("WALLET_INSUFFICIENT_BALANCE"))
-                .andExpect(jsonPath("$.message").value("您当前积分不足100"));
+                .andExpect(jsonPath("$.message").value("您当前积分不足100.00"));
 
         assertThat(balanceOf(normalAccountId)).as("拒绝创建时余额不变").isEqualByComparingTo("75.00");
         assertThat(ledgerCount(normalAccountId)).as("拒绝创建时不写任何流水").isEqualTo(ledgerBefore);
         assertThat(count("SELECT COUNT(*) FROM player_point_request WHERE user_id=? AND client_message_id=?",
                 userId(NORMAL), "chat-down-insufficient-1")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM chat_message WHERE sender_id=? AND client_message_id=? "
+                + "AND content='下100'", userId(NORMAL), "chat-down-insufficient-1")).isEqualTo(1);
+        assertThat(count("SELECT COUNT(*) FROM chat_message WHERE sender_type='ROBOT' "
+                + "AND content='@普通积分玩家，下分申请未提交：积分不足，本次需要100.00积分。' "
+                + "AND visibility='MACHINE' AND agent_id=?", machineId)).isEqualTo(1);
     }
 
     /**

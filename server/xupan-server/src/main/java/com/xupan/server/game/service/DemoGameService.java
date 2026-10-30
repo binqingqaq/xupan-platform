@@ -349,14 +349,17 @@ public class DemoGameService {
                 throw new IllegalStateException("注单已经结算或不存在");
             }
             BigDecimal payout = payout(pending.settlement());
+            BigDecimal balanceAfter;
             if (payout.signum() > 0) {
                 long settlementUserId = walletService.getByAccountId(pending.accountId()).userId();
-                walletService.creditForSettlement(settlementUserId, pending.betId(), issue.issueNumber(), payout,
-                        "开奖结算：" + issue.issueNumber());
+                balanceAfter = walletService.creditForSettlement(settlementUserId, pending.betId(),
+                        issue.issueNumber(), payout, "开奖结算：" + issue.issueNumber()).wallet().balance();
+            } else {
+                balanceAfter = walletService.getByAccountId(pending.accountId()).balance();
             }
             eventPublisher.publishEvent(new BetSettlementCompletedEvent(
                     pending.betId(), pending.accountId(), issue.issueNumber(), pending.settlement().status(),
-                    pending.settlement().stake(), pending.settlement().netProfit(), payout));
+                    pending.settlement().stake(), pending.settlement().netProfit(), payout, balanceAfter));
         }
         CenterSettlementService.SettlementSummary centerSummary = centerSettlementService.settleIssue(
                 GameDataRepository.DEFAULT_GAME_CODE, issue.issueNumber(), results,

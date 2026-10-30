@@ -7,7 +7,9 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 
 @Repository
 public class RobotDrawComponentRepository {
@@ -28,10 +30,16 @@ public class RobotDrawComponentRepository {
                 """, (rs, rowNum) -> new RobotDrawComponentConfig(
                 RobotDrawComponent.fromDatabaseValue(rs.getString("component")),
                 rs.getBoolean("enabled"), rs.getInt("display_order")), robotId);
-        if (rows.isEmpty()) {
-            return defaults();
+        Map<RobotDrawComponent, RobotDrawComponentConfig> configured = new EnumMap<>(RobotDrawComponent.class);
+        rows.forEach(row -> configured.put(row.component(), row));
+        for (RobotDrawComponent component : RobotDrawComponent.values()) {
+            configured.putIfAbsent(component, new RobotDrawComponentConfig(
+                    component, true, component.defaultOrder()));
         }
-        return rows;
+        return configured.values().stream()
+                .sorted(Comparator.comparingInt(RobotDrawComponentConfig::order)
+                        .thenComparing(config -> config.component().name()))
+                .toList();
     }
 
     public List<RobotDrawComponentConfig> findEnabledOrdered(long robotId) {
@@ -56,7 +64,7 @@ public class RobotDrawComponentRepository {
         requireTransaction("replaceAll");
         validateRobotId(robotId);
         if (configs == null || configs.size() != RobotDrawComponent.values().length) {
-            throw new IllegalArgumentException("ROBOT_DRAW_COMPONENT_INVALID: 必须提供三段配置");
+            throw new IllegalArgumentException("ROBOT_DRAW_COMPONENT_INVALID: 必须提供四段配置");
         }
         if (configs.stream().anyMatch(config -> config == null || config.component() == null
                 || config.order() < 1 || config.order() > configs.size())
@@ -76,13 +84,6 @@ public class RobotDrawComponentRepository {
                     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                     """, robotId, config.component().name(), config.enabled(), config.order());
         }
-    }
-
-    private static List<RobotDrawComponentConfig> defaults() {
-        return RobotDrawComponent.defaults().stream()
-                .map(component -> new RobotDrawComponentConfig(component, true,
-                        component.defaultOrder()))
-                .toList();
     }
 
     private static void validateRobotId(long robotId) {

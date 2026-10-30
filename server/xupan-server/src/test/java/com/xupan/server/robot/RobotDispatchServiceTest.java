@@ -106,7 +106,7 @@ class RobotDispatchServiceTest {
     }
 
     @Test
-    void drawResultPublishesThreeStructuredMessagesFromGameIssue() {
+    void drawResultPublishesFourStructuredMessagesFromGameIssue() {
         insertSettledIssue("draw-structured");
         long eventId = insertEvent("draw-structured", "DRAW_RESULT", "开奖文案不含号码");
 
@@ -114,7 +114,7 @@ class RobotDispatchServiceTest {
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_message WHERE issue_number = ? AND message_type = 'ROBOT'",
-                Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(3);
+                Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(4);
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM chat_message
                  WHERE issue_number = ? AND message_type = 'ROBOT' AND visibility = 'PUBLIC'
@@ -123,26 +123,28 @@ class RobotDispatchServiceTest {
                 SELECT COUNT(*) FROM chat_message
                  WHERE issue_number = ? AND message_type = 'ROBOT' AND visibility = 'MACHINE'
                    AND agent_id = (SELECT id FROM agent WHERE agent_code = ?)
-                """, Integer.class, ISSUE_PREFIX + "draw-structured", MACHINE_CODE)).isEqualTo(1);
+                """, Integer.class, ISSUE_PREFIX + "draw-structured", MACHINE_CODE)).isEqualTo(2);
         assertThat(jdbcTemplate.queryForList("""
                 SELECT payload_json
                   FROM chat_message
                  WHERE issue_number = ? AND message_type = 'ROBOT'
                  ORDER BY sequence_no
                 """, String.class, ISSUE_PREFIX + "draw-structured"))
-                .hasSize(3)
+                .hasSize(4)
                 .allSatisfy(payload -> assertThat(payload).contains("xupan.chat-payload.v1"));
         assertThat(jdbcTemplate.queryForList("""
                 SELECT payload_json FROM chat_message
                  WHERE issue_number = ? AND message_type = 'ROBOT'
                 """, String.class, ISSUE_PREFIX + "draw-structured"))
-                .anyMatch(payload -> payload.contains("DRAW_SUMMARY") && payload.contains("1,2,3"))
+                .anyMatch(payload -> payload.contains("DRAW_SUMMARY") && payload.contains("ballResults"))
                 .anyMatch(payload -> payload.contains("DRAW_HISTORY") && payload.contains("routeItems"))
                 .anyMatch(payload -> payload.contains("WINNER_LIST")
-                        && payload.contains("暂无获胜记录"));
+                        && payload.contains("暂无获胜记录"))
+                .anyMatch(payload -> payload.contains("TOTAL_BOARD")
+                        && payload.contains("本期暂无已结注单"));
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(DISTINCT idempotency_key) FROM chat_message WHERE issue_number = ?",
-                Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(3);
+                Integer.class, ISSUE_PREFIX + "draw-structured")).isEqualTo(4);
         assertThat(dispatchRepository.findByGameEventId(eventId)).get()
                 .extracting(d -> d.status(), d -> d.messageId())
                 .satisfies(values -> {
@@ -166,7 +168,7 @@ class RobotDispatchServiceTest {
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM chat_message WHERE issue_number = ? AND message_type = 'ROBOT'",
-                Integer.class, ISSUE_PREFIX + "draw-disabled-winner")).isEqualTo(2);
+                Integer.class, ISSUE_PREFIX + "draw-disabled-winner")).isEqualTo(3);
         assertThat(jdbcTemplate.queryForList("""
                 SELECT payload_json FROM chat_message
                  WHERE issue_number = ? AND message_type = 'ROBOT'
@@ -195,7 +197,8 @@ class RobotDispatchServiceTest {
                    AND agent_id = (SELECT id FROM agent WHERE agent_code = ?)
                    AND content LIKE '%核对列表%'
                  """, String.class, ISSUE_PREFIX + "audit-total", MACHINE_CODE);
-        assertThat(audit).contains("核对列表:(30.5)");
+        assertThat(audit).contains("核对列表:(30.50)")
+                .contains("第1球/1番10");
         // 占位实现会产生一个四位随机数字，这里同时确认没有退化成哈希
         assertThat(audit).doesNotContain(String.format("%04d",
                 Math.floorMod((ISSUE_PREFIX + "audit-total").hashCode(), 10000)));
@@ -213,7 +216,7 @@ class RobotDispatchServiceTest {
                    AND agent_id = (SELECT id FROM agent WHERE agent_code = ?)
                    AND content LIKE '%核对列表%'
                 """, String.class, ISSUE_PREFIX + "audit-empty", MACHINE_CODE);
-        assertThat(audit).contains("核对列表:(0)");
+        assertThat(audit).contains("核对列表:(0.00)");
     }
 
     private long insertAuditAccount() {
@@ -253,6 +256,9 @@ class RobotDispatchServiceTest {
     }
 
     private void clean() {
+        jdbcTemplate.update("DELETE FROM chat_robot_dispatch WHERE message_id IN (SELECT id FROM chat_message "
+                        + "WHERE issue_number LIKE ? OR agent_id IN (SELECT id FROM agent WHERE agent_code = ?))",
+                ISSUE_PREFIX + "%", MACHINE_CODE);
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch WHERE issue_number LIKE ?",
                 ISSUE_PREFIX + "%");
         jdbcTemplate.update("DELETE FROM chat_outbox WHERE message_id IN (SELECT id FROM chat_message "

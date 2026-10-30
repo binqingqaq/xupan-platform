@@ -34,11 +34,12 @@ const dispatchStatusLabels: Record<RobotDispatchStatus, string> = {
   PUBLISHED: '已发布',
   SKIPPED: '已跳过',
 }
-const drawComponentTypes: RobotDrawComponentType[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST']
+const drawComponentTypes: RobotDrawComponentType[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST', 'TOTAL_BOARD']
 const drawComponentLabels: Record<RobotDrawComponentType, string> = {
   DRAW_SUMMARY: '开奖摘要',
   DRAW_HISTORY: '历史结果',
   WINNER_LIST: '获胜名单',
+  TOTAL_BOARD: '本期积分榜',
 }
 
 type DispatchFilters = {

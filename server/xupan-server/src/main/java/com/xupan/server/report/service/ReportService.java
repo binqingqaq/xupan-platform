@@ -2,14 +2,17 @@ package com.xupan.server.report.service;
 
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.service.PermissionService;
-import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.center.service.CenterUpstreamAccountService;
+import com.xupan.server.game.domain.BetCommandFormatter;
+import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.report.domain.ReportCommand;
 import com.xupan.server.report.domain.ReportOutcome;
 import com.xupan.server.report.repository.ReportFailureCancellationRepository;
 import com.xupan.server.report.repository.ReportConfigRepository;
 import com.xupan.server.report.repository.ReportUpstreamOrderRepository;
+import com.xupan.server.robot.service.RobotNoticeIntentService;
 import com.xupan.server.system.service.PlayerDeskScopeService;
 import com.xupan.server.web.BusinessException;
 import org.slf4j.Logger;
@@ -97,7 +100,7 @@ public class ReportService {
     private final CenterUpstreamAccountService centerAccountService;
     private final ReportFailureCancellationRepository cancellationRepository;
     private final VirtualWalletService walletService;
-    private final ChatMessageService chatMessageService;
+    private final RobotNoticeIntentService robotNotices;
     /** Resolves the authenticated machine's account user for the center session lookup. */
     private final JdbcTemplate jdbc;
     /** 自动重报的次数上限；达到后转 MANUAL 人工处置（P0-2）。 */
@@ -113,7 +116,7 @@ public class ReportService {
                          CenterReportAdapter centerReportAdapter,
                          CenterUpstreamAccountService centerAccountService,
                          ReportFailureCancellationRepository cancellationRepository, VirtualWalletService walletService,
-                         ChatMessageService chatMessageService,
+                         RobotNoticeIntentService robotNotices,
                          JdbcTemplate jdbc,
                          PlatformTransactionManager transactionManager,
                          @Value("${xupan.report.retry.max-attempts:5}") int retryMaxAttempts,
@@ -127,7 +130,7 @@ public class ReportService {
         this.centerAccountService = centerAccountService;
         this.cancellationRepository = cancellationRepository;
         this.walletService = walletService;
-        this.chatMessageService = chatMessageService;
+        this.robotNotices = robotNotices;
         this.jdbc = jdbc;
         this.dispatchTransaction = new TransactionTemplate(transactionManager);
         this.dispatchTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -312,6 +315,17 @@ public class ReportService {
         }
         orderRepository.insertLocalDisposition(betId, attempt.id(), targetAgentId, attempt.centerAgentId(),
                 centerOutcome, decision, reason, operator, decidedAt);
+        if ("REFUND_CANCEL_LOCAL".equals(decision)) {
+            String playerName = bet.displayName() == null || bet.displayName().isBlank()
+                    ? "玩家" : bet.displayName().replace('\r', ' ').replace('\n', ' ').trim();
+            String content = "@" + playerName + "，第" + bet.issueNumber()
+                    + "期本地注单已取消，返还积分"
+                    + bet.stake().setScale(2, java.math.RoundingMode.HALF_UP) + "。";
+            robotNotices.enqueue("CENTER_LOCAL_REFUND_CANCEL", "CENTER_LOCAL_DISPOSITION",
+                    Long.toString(betId), "AU8", bet.issueNumber(), ChatMessageVisibility.MACHINE,
+                    targetAgentId, "CENTER_LOCAL_REFUND_CANCEL", content,
+                    "CENTER-LOCAL-DISPOSITION-" + betId, decidedAt);
+        }
         auditRepository.record(operator, AUDIT_ACTION, "POST",
                 "/api/admin/player-desk/report/orders/" + betId + "/local-disposition",
                 Long.toString(betId), "SUCCESS", null,
@@ -688,21 +702,36 @@ public class ReportService {
         walletService.refundForCancellation(bet.sysUserId(), bet.betId(), bet.accountId(),
                 bet.issueNumber(), bet.stake());
         cancellationRepository.markAttemptRefunded(attemptId, refundedAt);
-        // BY220 失败退单会发一条"注单取消"房间提示（common.php:1635 addMsg）。
-        // 反馈失败不能影响退款结果，因此单独兜住异常；幂等键保证重复处理不重复发消息。
-        try {
-            chatMessageService.publishRobotNotice("main", bet.issueNumber(),
-                    "CHAT-REPORT-WITHDRAW-" + bet.betId(),
-                    "@" + bet.betId() + " 注单取消（上报失败自动退单）", bet.agentId(), Instant.now());
-        } catch (RuntimeException feedbackFailure) {
-            log.warn("失败退单的聊天室取消反馈写入失败 betId={} {}", bet.betId(),
-                    feedbackFailure.getMessage());
-        }
+        String originalBet = originalBetText(bet);
+        String playerName = bet.displayName() == null || bet.displayName().isBlank()
+                ? "玩家" : bet.displayName().replace('\r', ' ').replace('\n', ' ').trim();
+        String content = "@" + playerName + "，第" + bet.issueNumber() + "期\"" + originalBet
+                + "\"因上报失败已取消，返还积分"
+                + bet.stake().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString() + "。";
+        robotNotices.enqueue("REPORT_FAILURE_WITHDRAW", "GAME_BET", Long.toString(bet.betId()),
+                "AU8", bet.issueNumber(), ChatMessageVisibility.MACHINE, bet.agentId(),
+                "REPORT_FAILURE_WITHDRAW", content, "CHAT-REPORT-WITHDRAW-" + bet.betId(), refundedAt);
         auditRepository.record(null, AUDIT_ACTION, "POST", "/api/admin/player-desk/report/withdraw",
                 Long.toString(bet.betId()), "SUCCESS", null,
                 "machineId=" + bet.agentId() + ",reason=REPORT_FAILED,refunded=" + bet.stake()
                         + ",betPreserved=true", null, refundedAt);
         return true;
+    }
+
+    private static String originalBetText(ReportUpstreamOrderRepository.BetRow bet) {
+        try {
+            List<Integer> parameters = parseParameters(bet.parametersText());
+            return "第" + bet.ballNumber() + "球/" + BetCommandFormatter.format(
+                    PlayType.valueOf(bet.playType()), parameters, bet.stake());
+        } catch (RuntimeException invalidSnapshot) {
+            return "原注单内容不可还原";
+        }
+    }
+
+    private static List<Integer> parseParameters(String value) {
+        if (value == null || value.isBlank()) return List.of();
+        return java.util.Arrays.stream(value.split(","))
+                .map(String::trim).map(Integer::parseInt).toList();
     }
 
     private static String mapOutcome(ReportOutcome outcome) {

@@ -105,15 +105,16 @@ describe('robot admin pure functions', () => {
     expect(parseRobotDrawPayload(JSON.stringify({ schema: 'xupan.chat-payload.v1', component: 'UNKNOWN', issueNumber: '1', data: {} }))).toBeNull()
   })
 
-  it('validates the three draw component slots and unique display order', () => {
+  it('validates the four draw component slots and unique display order', () => {
     const valid = [
       { component: 'DRAW_SUMMARY' as const, enabled: true, order: 1 },
       { component: 'DRAW_HISTORY' as const, enabled: false, order: 2 },
       { component: 'WINNER_LIST' as const, enabled: true, order: 3 },
+      { component: 'TOTAL_BOARD' as const, enabled: true, order: 4 },
     ]
     expect(validateRobotDrawComponents(valid)).toEqual([])
-    expect(validateRobotDrawComponents(valid.map(item => ({ ...item, order: 1 })))).toContain('开奖组件顺序必须是唯一的 1-3')
-    expect(validateRobotDrawComponents(valid.slice(0, 2))).toContain('开奖组件配置必须包含摘要、历史结果和获胜名单三段')
+    expect(validateRobotDrawComponents(valid.map(item => ({ ...item, order: 1 })))).toContain('开奖组件顺序必须是唯一的 1-4')
+    expect(validateRobotDrawComponents(valid.slice(0, 2))).toContain('开奖组件配置必须包含摘要、历史结果、获胜名单和本期积分榜四段')
   })
 })
 

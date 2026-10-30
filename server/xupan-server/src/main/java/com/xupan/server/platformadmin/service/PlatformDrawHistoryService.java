@@ -403,13 +403,16 @@ public class PlatformDrawHistoryService {
                 throw BusinessException.conflict("DRAW_HISTORY_FORCE_CONFLICT", "注单已被其他操作结算，请刷新后重试");
             }
             BigDecimal payout = settlement.stake().add(settlement.netProfit());
+            BigDecimal balanceAfter;
             if (payout.signum() > 0) {
-                walletService.creditForSettlement(bet.sysUserId(), bet.id(), history.issueNumber(), payout,
-                        "强制结算：" + history.issueNumber());
+                balanceAfter = walletService.creditForSettlement(bet.sysUserId(), bet.id(), history.issueNumber(),
+                        payout, "强制结算：" + history.issueNumber()).wallet().balance();
+            } else {
+                balanceAfter = walletService.getByAccountId(bet.accountId()).balance();
             }
             eventPublisher.publishEvent(new BetSettlementCompletedEvent(bet.id(), bet.accountId(),
                     history.issueNumber(), settlement.status(), settlement.stake(),
-                    settlement.netProfit(), payout));
+                    settlement.netProfit(), payout, balanceAfter));
             settled++;
         }
         List<BallResult> ballResults = history.numbers().stream().map(BallResult::fromNumber).toList();

@@ -1,6 +1,6 @@
 import type { ChatMessage } from './types'
 
-const DRAW_RESULT_COMPONENTS = new Set(['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST'])
+const DRAW_RESULT_COMPONENTS = new Set(['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST', 'TOTAL_BOARD'])
 
 type TimestampMessage = Pick<ChatMessage, 'messageType' | 'senderType' | 'payloadJson'>
 

@@ -41,8 +41,9 @@ public class ReportUpstreamOrderRepository {
 
     private static final String BET_COLUMNS = """
             SELECT b.id, b.user_id, a.sys_user_id,
+                   COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
                    COALESCE(a.agent_id, b.agent_id_snapshot) AS agent_id,
-                   b.issue_number, b.play_type, b.parameters_text,
+                   b.issue_number, b.ball_number, b.play_type, b.parameters_text,
                    b.stake, b.odds_snapshot, b.settlement_status, %s AS report_status,
                    o.id AS order_id, o.response_code
               FROM game_bet b
@@ -53,7 +54,7 @@ public class ReportUpstreamOrderRepository {
     private static final String ORDER_COLUMNS = """
             SELECT b.id, b.bet_code, b.user_id,
                    COALESCE(a.member_code, b.player_code_snapshot) AS member_code,
-                   COALESCE(a.display_name, b.player_name_snapshot) AS display_name,
+                   COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
                    b.issue_number, b.ball_number,
                    b.play_type, b.parameters_text, b.stake, b.odds_snapshot, b.settlement_status,
                    %s AS report_status,
@@ -169,6 +170,7 @@ public class ReportUpstreamOrderRepository {
     public Optional<LocalDispositionBet> findDispositionBetForUpdate(long betId, long agentId) {
         return jdbc.query("""
                 SELECT b.id, b.user_id, a.sys_user_id,
+                       COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
                        COALESCE(a.agent_id, b.agent_id_snapshot) AS agent_id,
                        b.issue_number, b.stake, b.settlement_status, b.settled_at
                   FROM game_bet b
@@ -176,7 +178,8 @@ public class ReportUpstreamOrderRepository {
                  WHERE b.id = ? AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
                  FOR UPDATE
                 """, (rs, rowNum) -> new LocalDispositionBet(rs.getLong("id"), rs.getLong("user_id"),
-                rs.getLong("sys_user_id"), rs.getLong("agent_id"), rs.getString("issue_number"),
+                rs.getLong("sys_user_id"), rs.getString("display_name"), rs.getLong("agent_id"),
+                rs.getString("issue_number"),
                 rs.getBigDecimal("stake"), rs.getString("settlement_status"),
                 instant(rs.getTimestamp("settled_at"))), betId, agentId).stream().findFirst();
     }
@@ -539,7 +542,8 @@ public class ReportUpstreamOrderRepository {
 
     private static BetRow betRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("sys_user_id"),
-                rs.getLong("agent_id"), rs.getString("issue_number"), rs.getString("play_type"),
+                rs.getString("display_name"), rs.getLong("agent_id"), rs.getString("issue_number"),
+                rs.getInt("ball_number"), rs.getString("play_type"),
                 rs.getString("parameters_text"), rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"),
                 rs.getString("report_status"), rs.getString("settlement_status"), rs.getString("response_code"));
     }
@@ -555,7 +559,7 @@ public class ReportUpstreamOrderRepository {
                              Instant sentAt, Instant resolvedAt, Instant createdAt, Instant nextRetryAt) {
     }
 
-    public record LocalDispositionBet(long betId, long accountId, long sysUserId, long agentId,
+    public record LocalDispositionBet(long betId, long accountId, long sysUserId, String displayName, long agentId,
                                       String issueNumber, BigDecimal stake, String settlementStatus,
                                       Instant settledAt) {
     }
@@ -566,7 +570,8 @@ public class ReportUpstreamOrderRepository {
     }
 
     /** 注单快照 + 派生上报状态。 */
-    public record BetRow(long betId, long accountId, long sysUserId, long agentId, String issueNumber,
+    public record BetRow(long betId, long accountId, long sysUserId, String displayName,
+                         long agentId, String issueNumber, int ballNumber,
                          String playType, String parametersText, BigDecimal stake, BigDecimal odds,
                          String reportStatus, String settlementStatus, String responseCode) {
     }

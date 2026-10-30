@@ -44,6 +44,24 @@ public class AgentRepository {
         return id;
     }
 
+    public List<MachineCloseSchedule> findAu8MachineCloseSchedules() {
+        return jdbc.query("""
+                SELECT a.id, a.close_seconds, COALESCE(a.manual_betting_open, TRUE) manual_betting_open
+                  FROM agent a
+                 WHERE a.status = 'ACTIVE' AND a.deleted_at IS NULL AND a.system_owned = FALSE
+                   AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6))
+                   AND EXISTS (SELECT 1 FROM agent_game g WHERE g.agent_id = a.id AND g.game_code = 'AU8')
+                 ORDER BY a.id
+                """, (rs, rowNum) -> new MachineCloseSchedule(rs.getLong("id"),
+                rs.getInt("close_seconds"), rs.getBoolean("manual_betting_open")));
+    }
+
+    public boolean lockMachineForNotice(long agentId) {
+        return !jdbc.query("SELECT id FROM agent WHERE id = ? AND status = 'ACTIVE' "
+                        + "AND deleted_at IS NULL AND system_owned = FALSE FOR UPDATE",
+                (rs, rowNum) -> rs.getLong(1), agentId).isEmpty();
+    }
+
     public List<AgentGroup> findGroups() {
         return jdbc.query("""
                 SELECT id, group_code, display_name, status, created_by, created_at, updated_at
@@ -396,6 +414,21 @@ public class AgentRepository {
                            String groupDisplayName, Long accountUserId, String accountUsername,
                            boolean systemOwned, String status, long normalCount, long botCount,
                            BigDecimal totalBalance, Instant createdAt, Instant updatedAt) {
+    }
+
+    public record MachineCloseSchedule(long agentId, int closeSeconds, boolean manualBettingOpen) {}
+
+    public Optional<MachineCloseSchedule> findAu8MachineCloseSchedule(long agentId) {
+        return jdbc.query("""
+                SELECT a.id, a.close_seconds, COALESCE(a.manual_betting_open, TRUE) manual_betting_open
+                  FROM agent a
+                 WHERE a.id = ? AND a.status = 'ACTIVE' AND a.deleted_at IS NULL
+                   AND a.system_owned = FALSE
+                   AND (a.expires_at IS NULL OR a.expires_at > CURRENT_TIMESTAMP(6))
+                   AND EXISTS (SELECT 1 FROM agent_game g WHERE g.agent_id = a.id AND g.game_code = 'AU8')
+                """, (rs, rowNum) -> new MachineCloseSchedule(rs.getLong("id"),
+                rs.getInt("close_seconds"), rs.getBoolean("manual_betting_open")), agentId)
+                .stream().findFirst();
     }
 
     public record PlayerAssignmentRow(long userId, String displayName, String memberCode, String playerKind,

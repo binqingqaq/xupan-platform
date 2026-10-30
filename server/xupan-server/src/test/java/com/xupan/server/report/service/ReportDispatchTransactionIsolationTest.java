@@ -3,7 +3,7 @@ package com.xupan.server.report.service;
 import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.center.service.CenterUpstreamAccountService;
-import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.robot.service.RobotNoticeIntentService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.report.domain.ReportCommand;
 import com.xupan.server.report.domain.ReportOutcome;
@@ -49,7 +49,7 @@ class ReportDispatchTransactionIsolationTest {
         ReportFailureCancellationRepository cancellationRepository =
                 mock(ReportFailureCancellationRepository.class);
         VirtualWalletService walletService = mock(VirtualWalletService.class);
-        ChatMessageService chatMessageService = mock(ChatMessageService.class);
+        RobotNoticeIntentService robotNotices = mock(RobotNoticeIntentService.class);
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:report-dispatch-isolation;DB_CLOSE_DELAY=-1", "sa", "");
@@ -57,7 +57,7 @@ class ReportDispatchTransactionIsolationTest {
 
         ReportService service = new ReportService(configRepository, orderRepository, scopeService,
                 permissionService, auditRepository, adapter, accountService, cancellationRepository,
-                walletService, chatMessageService, jdbc, transactionManager, 5, "30s,2m,10m,1h");
+                walletService, robotNotices, jdbc, transactionManager, 5, "30s,2m,10m,1h");
 
         ReportUpstreamOrderRepository.BetRow first = bet(101L);
         ReportUpstreamOrderRepository.BetRow second = bet(102L);
@@ -112,14 +112,14 @@ class ReportDispatchTransactionIsolationTest {
         ReportFailureCancellationRepository cancellationRepository =
                 mock(ReportFailureCancellationRepository.class);
         VirtualWalletService walletService = mock(VirtualWalletService.class);
-        ChatMessageService chatMessageService = mock(ChatMessageService.class);
+        RobotNoticeIntentService robotNotices = mock(RobotNoticeIntentService.class);
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:report-recovery-cas;DB_CLOSE_DELAY=-1", "sa", "");
         DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
         ReportService service = new ReportService(configRepository, orderRepository, scopeService,
                 permissionService, auditRepository, adapter, accountService, cancellationRepository,
-                walletService, chatMessageService, jdbc, transactionManager, 5, "30s,2m,10m,1h");
+                walletService, robotNotices, jdbc, transactionManager, 5, "30s,2m,10m,1h");
 
         ReportUpstreamOrderRepository.BetRow bet = bet(101L);
         ReportUpstreamOrderRepository.AttemptRow pending = new ReportUpstreamOrderRepository.AttemptRow(
@@ -156,14 +156,14 @@ class ReportDispatchTransactionIsolationTest {
         ReportFailureCancellationRepository cancellationRepository =
                 mock(ReportFailureCancellationRepository.class);
         VirtualWalletService walletService = mock(VirtualWalletService.class);
-        ChatMessageService chatMessageService = mock(ChatMessageService.class);
+        RobotNoticeIntentService robotNotices = mock(RobotNoticeIntentService.class);
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
         DriverManagerDataSource dataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:report-retry-count;DB_CLOSE_DELAY=-1", "sa", "");
         DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
         ReportService service = new ReportService(configRepository, orderRepository, scopeService,
                 permissionService, auditRepository, adapter, accountService, cancellationRepository,
-                walletService, chatMessageService, jdbc, transactionManager, 5, "30s,2m,10m,1h");
+                walletService, robotNotices, jdbc, transactionManager, 5, "30s,2m,10m,1h");
 
         ReportUpstreamOrderRepository.BetRow bet = bet(101L);
         ReportConfigRepository.ReportConfigRow config = new ReportConfigRepository.ReportConfigRow(
@@ -189,8 +189,8 @@ class ReportDispatchTransactionIsolationTest {
     }
 
     private static ReportUpstreamOrderRepository.BetRow bet(long betId) {
-        return new ReportUpstreamOrderRepository.BetRow(betId, 1L, 2L, 20L, "39999901",
-                "FAN", "1", new BigDecimal("100.00"), new BigDecimal("3.850"),
+        return new ReportUpstreamOrderRepository.BetRow(betId, 1L, 2L, "测试玩家", 20L,
+                "39999901", 1, "FAN", "1", new BigDecimal("100.00"), new BigDecimal("3.850"),
                 "PENDING", "PENDING", null);
     }
 }

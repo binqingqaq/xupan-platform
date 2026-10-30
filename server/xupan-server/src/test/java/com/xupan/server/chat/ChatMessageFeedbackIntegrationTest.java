@@ -9,10 +9,14 @@ import com.xupan.server.game.service.BetLimitExceededException;
 import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.PlayerBetLock;
 import com.xupan.server.game.service.VirtualWalletService;
+import com.xupan.server.robot.service.RobotNoticeDispatchService;
 import com.xupan.server.game.web.PlaceBetRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -36,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @TestPropertySource(properties = "xupan.automation.enabled=false")
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class ChatMessageFeedbackIntegrationTest {
 
     private static final String USERNAME = "chat-feedback-integration";
@@ -56,6 +61,8 @@ class ChatMessageFeedbackIntegrationTest {
     private DemoGameService gameService;
     @Autowired
     private PlayerBetLock playerBetLock;
+    @Autowired
+    private RobotNoticeDispatchService noticeDispatchService;
 
     private long userId;
     private long accountId;
@@ -79,7 +86,7 @@ class ChatMessageFeedbackIntegrationTest {
         configureMachine();
         jdbcTemplate.update("DELETE FROM chat_robot_dispatch");
         jdbcTemplate.update("DELETE FROM game_issue_event");
-        jdbcTemplate.update("DELETE FROM game_issue");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE draw_confirmed_by IS NULL");
     }
 
     @AfterEach
@@ -89,6 +96,7 @@ class ChatMessageFeedbackIntegrationTest {
     }
 
     @Test
+    @Order(1)
     void concurrentChatBetsCannotBreakTheSamePlayerQuota() throws Exception {
         walletService.grant(userId, userId, new BigDecimal("1000.00"), "并发限额测试充值",
                 "CHAT-FEEDBACK-GRANT-CONCURRENT");
@@ -117,6 +125,7 @@ class ChatMessageFeedbackIntegrationTest {
     }
 
     @Test
+    @Order(2)
     void concurrentDirectBetsCannotBreakTheSamePlayerQuota() throws Exception {
         walletService.grant(userId, userId, new BigDecimal("1000.00"), "并发直连接口测试充值",
                 "CHAT-FEEDBACK-GRANT-CONCURRENT-DIRECT");
@@ -165,6 +174,7 @@ class ChatMessageFeedbackIntegrationTest {
     }
 
     @Test
+    @Order(3)
     void batchBetOverLimitIsRejectedAtomicallyAndExplainsTheQuota() {
         walletService.grant(userId, userId, new BigDecimal("100.00"), "批量限额测试充值",
                 "CHAT-FEEDBACK-GRANT-LIMIT-1");
@@ -178,12 +188,13 @@ class ChatMessageFeedbackIntegrationTest {
                 accountId)).isZero();
         assertThat(balance()).isEqualByComparingTo("100.00");
         String feedback = "@" + DISPLAY_NAME + "  下注未成功"
-                + "\n@" + DISPLAY_NAME + "  下注 1番10 已拒绝：超过番限额15，剩余可下5";
+                + "\n@" + DISPLAY_NAME + "  下注 1番10.00 已拒绝：超过番限额15，剩余可下5";
         assertThat(robotContents()).as("机器人消息内容").contains(feedback);
         assertThat(robotOutbox(feedback)).isEqualTo(1);
     }
 
     @Test
+    @Order(4)
     void batchBetRejectedOnlyByQuotaKeepsInputWithoutBetOrDebit() {
         walletService.grant(userId, userId, new BigDecimal("100.00"), "全量限额测试充值",
                 "CHAT-FEEDBACK-GRANT-LIMIT-2");
@@ -196,12 +207,13 @@ class ChatMessageFeedbackIntegrationTest {
         assertThat(count("SELECT COUNT(*) FROM game_bet WHERE user_id = ?", accountId)).isZero();
         assertThat(balance()).isEqualByComparingTo("100.00");
         String feedback = "@" + DISPLAY_NAME + "  下注未成功"
-                + "\n@" + DISPLAY_NAME + "  下注 1番100 已拒绝：超过番限额15，剩余可下15";
+                + "\n@" + DISPLAY_NAME + "  下注 1番100.00 已拒绝：超过番限额15，剩余可下15";
         assertThat(robotContents()).as("机器人消息内容").contains(feedback);
         assertThat(robotOutbox(feedback)).isEqualTo(1);
     }
 
     @Test
+    @Order(5)
     void insufficientBetKeepsInputAndFeedbackButLeavesNoBetOrDebit() {
         ChatMessage message = messageService.sendUserMessage(userId, "main", "feedback-insufficient-1",
                 "1番100", Instant.now());
@@ -210,11 +222,12 @@ class ChatMessageFeedbackIntegrationTest {
         assertThat(message.messageType().name()).isEqualTo("USER_CHAT");
         assertThat(count("SELECT COUNT(*) FROM game_bet WHERE user_id = ?", accountId)).isZero();
         assertThat(balance()).isEqualByComparingTo("0.00");
-        assertThat(robotContent("@" + DISPLAY_NAME + ", 余额不足!")).isEqualTo(1);
-        assertThat(robotOutbox("@" + DISPLAY_NAME + ", 余额不足!")).isEqualTo(1);
+        assertThat(robotContent("@" + DISPLAY_NAME + ", 积分不足，本次下注未提交!")).isEqualTo(1);
+        assertThat(robotOutbox("@" + DISPLAY_NAME + ", 积分不足，本次下注未提交!")).isEqualTo(1);
     }
 
     @Test
+    @Order(6)
     void acceptedBetDebitsWalletAndPersistsSuccessFeedback() {
         walletService.grant(userId, userId, new BigDecimal("100.00"), "聊天下注测试充值",
                 "CHAT-FEEDBACK-GRANT-1");
@@ -228,24 +241,35 @@ class ChatMessageFeedbackIntegrationTest {
         assertThat(balance()).isEqualByComparingTo("90.00");
         assertThat(robotContents())
                 .as("机器人消息内容")
-                .contains("@" + DISPLAY_NAME + "  攻击成功，使用粮草10, 剩余粮草：90");
-        assertThat(robotOutbox("@" + DISPLAY_NAME + "  攻击成功，使用粮草10, 剩余粮草：90"))
+                .contains("@" + DISPLAY_NAME + "，第3000000期攻击成功，使用积分10.00，剩余积分：90.00");
+        assertThat(robotOutbox("@" + DISPLAY_NAME + "，第3000000期攻击成功，使用积分10.00，剩余积分：90.00"))
                 .isEqualTo(1);
     }
 
     @Test
+    @Order(7)
     void drawSettlesBetCreditsWalletAndPublishesSettlementFeedback() {
         walletService.grant(userId, userId, new BigDecimal("100.00"), "开奖结算测试充值",
                 "CHAT-FEEDBACK-GRANT-SETTLEMENT");
 
         messageService.sendUserMessage(userId, "main", "feedback-settlement-1",
                 "1番10", Instant.now());
-        gameService.draw(userId, List.of(1, 2, 3, 4, 5, 6, 7, 8));
+        String issueNumber = jdbcTemplate.queryForObject(
+                "SELECT issue_number FROM game_bet WHERE user_id=? ORDER BY id DESC LIMIT 1",
+                String.class, accountId);
+        jdbcTemplate.update("UPDATE game_issue SET status='SETTLED', phase='SETTLED' "
+                + "WHERE game_code='AU8' AND phase IN ('BETTING', 'DRAWING') AND issue_number<>?", issueNumber);
+        jdbcTemplate.update("UPDATE game_issue SET status='CLOSED', phase='DRAWING' "
+                + "WHERE game_code='AU8' AND issue_number=?", issueNumber);
+        long stableOperatorId = ensureDrawOperator();
+        gameService.draw(stableOperatorId, List.of(1, 2, 3, 4, 5, 6, 7, 8));
+        noticeDispatchService.dispatchDue(Instant.now().plusSeconds(5), 100);
 
         assertThat(count("SELECT COUNT(*) FROM game_bet WHERE user_id = ? AND settlement_status = 'WIN'",
                 accountId)).isEqualTo(1);
         assertThat(balance()).isEqualByComparingTo("128.50");
-        assertThat(robotContent("@" + DISPLAY_NAME + ", 第3000000期中奖，返还粮草38.5, 当前粮草：128.5"))
+        assertThat(robotContent("@" + DISPLAY_NAME + "，第" + issueNumber
+                + "期中奖，返还积分38.50，结算后余额128.50积分。"))
                 .isEqualTo(1);
         assertThat(count("SELECT COUNT(*) FROM demo_balance_ledger WHERE user_id = ? "
                 + "AND operation_type = 'SETTLEMENT_CREDIT'", accountId)).isEqualTo(1);
@@ -254,6 +278,36 @@ class ChatMessageFeedbackIntegrationTest {
     private BigDecimal balance() {
         return jdbcTemplate.queryForObject(
                 "SELECT balance FROM demo_user_account WHERE id = ?", BigDecimal.class, accountId);
+    }
+
+    private long ensureDrawOperator() {
+        List<Long> userIds = jdbcTemplate.queryForList(
+                "SELECT id FROM sys_user WHERE username = 'chat-feedback-draw-actor'", Long.class);
+        long operatorId;
+        if (userIds.isEmpty()) {
+            operatorId = userRepository.insert("chat-feedback-draw-actor", "开奖集成测试操作者",
+                    passwordPolicy.encode(PASSWORD), "ACTIVE");
+            userRepository.assignRole(operatorId, "USER");
+        } else {
+            operatorId = userIds.get(0);
+        }
+        long accountId = walletService.ensureWalletForUser(operatorId, "开奖集成测试操作者");
+        Integer machineCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM agent WHERE agent_code='CHAT-FEEDBACK-DRAW-MACHINE'", Integer.class);
+        if (machineCount == null || machineCount == 0) {
+            jdbcTemplate.update("""
+                    INSERT INTO agent
+                        (agent_code, display_name, account_user_id, system_owned, status,
+                         odds_rate, special_odds_rate)
+                    VALUES ('CHAT-FEEDBACK-DRAW-MACHINE', '开奖集成测试机器', ?, TRUE,
+                            'DISABLED', 95, 18)
+                    """, operatorId);
+            long machineId = jdbcTemplate.queryForObject(
+                    "SELECT id FROM agent WHERE agent_code='CHAT-FEEDBACK-DRAW-MACHINE'", Long.class);
+            jdbcTemplate.update("INSERT INTO agent_game (agent_id, game_code) VALUES (?, 'AU8')", machineId);
+            jdbcTemplate.update("UPDATE demo_user_account SET agent_id=? WHERE id=?", machineId, accountId);
+        }
+        return operatorId;
     }
 
     private int robotContent(String content) {
@@ -309,6 +363,13 @@ class ChatMessageFeedbackIntegrationTest {
     }
 
     private void clean() {
+        jdbcTemplate.update("DELETE FROM chat_robot_dispatch WHERE message_id IN (SELECT id FROM chat_message "
+                        + "WHERE sender_id IN (SELECT id FROM sys_user WHERE username = ?) "
+                        + "OR issue_number IN (SELECT issue_number FROM game_issue_event "
+                        + "WHERE game_code='AU8' AND issue_number LIKE '3000000%'))", USERNAME);
+        jdbcTemplate.update("DELETE FROM chat_robot_dispatch WHERE issue_number IN "
+                + "(SELECT issue_number FROM game_issue WHERE draw_confirmed_by IN "
+                + "(SELECT id FROM sys_user WHERE username = ?))", USERNAME);
         jdbcTemplate.update("DELETE FROM chat_outbox WHERE message_id IN "
                 + "(SELECT id FROM chat_message WHERE sender_type = 'ROBOT' "
                 + "AND content LIKE ?)", "@" + DISPLAY_NAME + "%");

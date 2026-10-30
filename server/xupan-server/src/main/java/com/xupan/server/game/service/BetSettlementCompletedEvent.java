@@ -12,11 +12,13 @@ public record BetSettlementCompletedEvent(
         SettlementStatus status,
         BigDecimal stake,
         BigDecimal netProfit,
-        BigDecimal returnAmount
+        BigDecimal returnAmount,
+        BigDecimal balanceAfter
 ) {
     public BetSettlementCompletedEvent {
         if (betId <= 0 || accountId <= 0 || issueNumber == null || issueNumber.isBlank()
-                || status == null || stake == null || netProfit == null || returnAmount == null) {
+                || status == null || stake == null || netProfit == null || returnAmount == null
+                || balanceAfter == null) {
             throw new IllegalArgumentException("结算反馈事件参数无效");
         }
     }

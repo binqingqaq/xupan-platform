@@ -1,4 +1,11 @@
-export type RobotDrawComponent = 'DRAW_SUMMARY' | 'DRAW_HISTORY' | 'WINNER_LIST'
+export type RobotDrawComponent = 'DRAW_SUMMARY' | 'DRAW_HISTORY' | 'WINNER_LIST' | 'TOTAL_BOARD'
+
+export interface BallResultItem {
+  number: number
+  fan: number
+  parity: 'ODD' | 'EVEN'
+  size: 'BIG' | 'SMALL'
+}
 
 export interface DrawSummaryPayload {
   schema: 'xupan.chat-payload.v1'
@@ -6,6 +13,7 @@ export interface DrawSummaryPayload {
   issueNumber: string
   data: {
     numbers: number[]
+    ballResults?: BallResultItem[]
     settledAt: string
   }
 }
@@ -47,9 +55,26 @@ export interface WinnerListPayload {
   }
 }
 
-export type RobotDrawPayload = DrawSummaryPayload | DrawHistoryPayload | WinnerListPayload
+export interface TotalBoardItem {
+  maskedUser: string
+  turnover: number
+  netProfit: number
+}
 
-const COMPONENTS: readonly RobotDrawComponent[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST']
+export interface TotalBoardPayload {
+  schema: 'xupan.chat-payload.v1'
+  component: 'TOTAL_BOARD'
+  issueNumber: string
+  data: {
+    items: TotalBoardItem[]
+    emptyMessage?: string
+    settledAt?: string
+  }
+}
+
+export type RobotDrawPayload = DrawSummaryPayload | DrawHistoryPayload | WinnerListPayload | TotalBoardPayload
+
+const COMPONENTS: readonly RobotDrawComponent[] = ['DRAW_SUMMARY', 'DRAW_HISTORY', 'WINNER_LIST', 'TOTAL_BOARD']
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -96,6 +121,21 @@ function isWinnerItem(value: unknown): value is WinnerItem {
     && Number.isFinite(value.netProfit)
 }
 
+function isBallResultItem(value: unknown): value is BallResultItem {
+  return isRecord(value)
+    && typeof value.number === 'number' && Number.isFinite(value.number)
+    && typeof value.fan === 'number' && Number.isFinite(value.fan)
+    && (value.parity === 'ODD' || value.parity === 'EVEN')
+    && (value.size === 'BIG' || value.size === 'SMALL')
+}
+
+function isTotalBoardItem(value: unknown): value is TotalBoardItem {
+  return isRecord(value)
+    && isText(value.maskedUser)
+    && typeof value.turnover === 'number' && Number.isFinite(value.turnover)
+    && typeof value.netProfit === 'number' && Number.isFinite(value.netProfit)
+}
+
 export function parseRobotDrawPayload(payloadJson: string | null | undefined): RobotDrawPayload | null {
   if (!payloadJson || typeof payloadJson !== 'string') return null
   let value: unknown
@@ -108,8 +148,17 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
 
   if (value.component === 'DRAW_SUMMARY') {
     const data = value.data
+    const ballResults = data.ballResults
     return isNumberArray(data.numbers) && isText(data.settledAt)
-      ? { schema: value.schema, component: value.component, issueNumber: value.issueNumber, data: { numbers: data.numbers, settledAt: data.settledAt } }
+      && (ballResults === undefined || (Array.isArray(ballResults)
+        && ballResults.length === 8 && ballResults.every(isBallResultItem)))
+      ? {
+        schema: value.schema,
+        component: value.component,
+        issueNumber: value.issueNumber,
+        data: { numbers: data.numbers, settledAt: data.settledAt,
+          ...(Array.isArray(ballResults) ? { ballResults } : {}) },
+      }
       : null
   }
 
@@ -129,13 +178,31 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
   }
 
   const data = value.data
-  const hasResult = data.numbers === undefined && data.settledAt === undefined
-    ? true
-    : isNumberArray(data.numbers) && isText(data.settledAt)
+  if (value.component === 'WINNER_LIST') {
+    const hasResult = data.numbers === undefined && data.settledAt === undefined
+      ? true
+      : isNumberArray(data.numbers) && isText(data.settledAt)
+    return Array.isArray(data.items)
+      && data.items.every(isWinnerItem)
+      && hasResult
+      && (data.emptyMessage === undefined || typeof data.emptyMessage === 'string')
+      ? {
+        schema: value.schema,
+        component: value.component,
+        issueNumber: value.issueNumber,
+        data: {
+          items: data.items,
+          ...(typeof data.emptyMessage === 'string' ? { emptyMessage: data.emptyMessage } : {}),
+          ...(isNumberArray(data.numbers) ? { numbers: data.numbers } : {}),
+          ...(isText(data.settledAt) ? { settledAt: data.settledAt } : {}),
+        },
+      }
+      : null
+  }
   return Array.isArray(data.items)
-    && data.items.every(isWinnerItem)
-    && hasResult
+    && data.items.every(isTotalBoardItem)
     && (data.emptyMessage === undefined || typeof data.emptyMessage === 'string')
+    && (data.settledAt === undefined || isText(data.settledAt))
     ? {
       schema: value.schema,
       component: value.component,
@@ -143,7 +210,6 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
       data: {
         items: data.items,
         ...(typeof data.emptyMessage === 'string' ? { emptyMessage: data.emptyMessage } : {}),
-        ...(isNumberArray(data.numbers) ? { numbers: data.numbers } : {}),
         ...(isText(data.settledAt) ? { settledAt: data.settledAt } : {}),
       },
     }
@@ -151,5 +217,5 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
 }
 
 export function formatDrawMoney(value: number): string {
-  return `¥${value.toFixed(2)}`
+  return value.toFixed(2) + '积分'
 }

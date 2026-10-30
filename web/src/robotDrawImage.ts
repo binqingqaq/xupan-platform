@@ -45,6 +45,10 @@ function fanOf(number: number) {
   return number % 4 || 4
 }
 
+function resultAttributeText(result: { fan: number; parity: string; size: string }): string {
+  return (result.size === 'BIG' ? '大' : '小') + (result.parity === 'EVEN' ? '双' : '单')
+}
+
 function ball(number: number, x: number, y: number, radius: number, last = false) {
   const fill = last ? '#f1010a' : '#008edd'
   return `<circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}"/><text x="${x}" y="${y + radius * .35}" fill="#fff" font-family="${FONT}" font-size="${Math.max(12, radius * .78)}" font-weight="700" text-anchor="middle">${displayNumber(number)}</text>`
@@ -57,8 +61,12 @@ function svgDocument(width: number, height: number, body: string) {
 
 function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMMARY' }>): RobotDrawImage {
   const width = 960
-  const height = 238
+  const height = 252
   const numbers = payload.data.numbers
+  const ballResults = payload.data.ballResults ?? numbers.map(number => ({
+    number, fan: fanOf(number), parity: number % 2 === 0 ? 'EVEN' : 'ODD',
+    size: number >= 11 ? 'BIG' : 'SMALL',
+  }))
   const xPositions = numbers.map((_, index) => 74 + index * 116)
   const fan = fanOf(numbers[7])
   const body = `
@@ -68,12 +76,13 @@ function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMM
     <rect x="790" y="34" width="135" height="111" fill="#f1010a"/>
     <text x="857.5" y="106" fill="#fff" font-family="${FONT}" font-size="48" font-weight="700" text-anchor="middle">${fan}番</text>
     ${numbers.map((number, index) => ball(number, xPositions[index], 192, 24, index === 7)).join('')}
+    ${numbers.map((_, index) => '<text x="' + xPositions[index] + '" y="228" fill="#444" font-family="' + FONT + '" font-size="13" text-anchor="middle">' + resultAttributeText(ballResults[index]) + '</text>').join('')}
   `
   return {
     dataUrl: svgDocument(width, height, body),
     width,
     height,
-    alt: `第${payload.issueNumber}期开奖，号码${numbers.map(displayNumber).join('、')}，${fan}番，开奖时间${formatDate(payload.data.settledAt)}`,
+    alt: `第${payload.issueNumber}期开奖，号码${numbers.map(displayNumber).join('、')}，${fan}番，球位属性${ballResults.map(resultAttributeText).join('、')}，开奖时间${formatDate(payload.data.settledAt)}`,
   }
 }
 
@@ -139,7 +148,7 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
     : 156 + Math.max(payload.data.items.length, 1) * lineHeight
   const lines = payload.data.items.length
     ? payload.data.items.map((item, index) => exactResult
-      ? `<text x="28" y="${166 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">(${escapeXml(item.maskedUser)})　"${escapeXml(item.betText || item.playType)}"　盆:${item.netProfit.toFixed(1)}</text>`
+      ? `<text x="28" y="${166 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">(${escapeXml(item.maskedUser)})　"${escapeXml(item.betText || item.playType)}"　净盈:${formatDrawMoney(item.netProfit)}</text>`
       : `<text x="28" y="${130 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
     : `<text x="28" y="${exactResult ? 166 : 130}" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
   const resultLine = exactResult
@@ -172,5 +181,23 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
 export function renderRobotDrawImage(payload: RobotDrawPayload): RobotDrawImage {
   if (payload.component === 'DRAW_SUMMARY') return summaryImage(payload)
   if (payload.component === 'DRAW_HISTORY') return historyImage(payload)
-  return winnerImage(payload)
+  if (payload.component === 'WINNER_LIST') return winnerImage(payload)
+  const width = 960
+  const lineHeight = 34
+  const height = 108 + Math.max(payload.data.items.length, 1) * lineHeight + 28
+  const rows = payload.data.items.length
+    ? payload.data.items.map((item, index) => `<text x="28" y="${88 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">(${escapeXml(item.maskedUser)})　下注积分：${formatDrawMoney(item.turnover)}　净盈：${formatDrawMoney(item.netProfit)}</text>`).join('')
+    : `<text x="28" y="88" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无已结注单')}</text>`
+  const body = `
+    <text x="28" y="42" fill="#111" font-family="${FONT}" font-size="22" font-weight="700">第${escapeXml(payload.issueNumber)}期本机积分榜</text>
+    <line x1="28" y1="56" x2="932" y2="56" stroke="#c7cdd1" stroke-width="1"/>
+    ${rows}
+    <text x="28" y="${height - 12}" fill="#666" font-family="${FONT}" font-size="13">仅统计本机本期已结注单</text>
+  `
+  return {
+    dataUrl: svgDocument(width, height, body),
+    width,
+    height,
+    alt: `第${payload.issueNumber}期本机积分榜，${payload.data.items.map(item => `${item.maskedUser}下注${formatDrawMoney(item.turnover)}净盈${formatDrawMoney(item.netProfit)}`).join('；') || (payload.data.emptyMessage || '本期暂无已结注单')}`,
+  }
 }

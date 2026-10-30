@@ -159,7 +159,8 @@ public class 自动轮期服务 {
         }
 
         if (BETTING.equals(issue.phase())) {
-            if (!now.isBefore(issue.bettingEndsAt().minusSeconds(30))) {
+            if (!GameDataRepository.DEFAULT_GAME_CODE.equals(gameCode)
+                    && !now.isBefore(issue.bettingEndsAt().minusSeconds(30))) {
                 eventRepository.appendOnce(gameCode, issue.issueNumber(), "BETTING_WARNING",
                         "离封盘还剩30秒！\n20秒以内下注容易失败退单!", now);
             }
@@ -213,15 +214,19 @@ public class 自动轮期服务 {
                             results.get(bet.ballNumber() - 1));
                     if (gameRepository.settleBetOnce(bet.id(), settlement)) {
                         BigDecimal payout = payout(settlement);
+                        BigDecimal balanceAfter;
                         if (payout.signum() > 0) {
                             long settlementUserId = walletService.getByAccountId(bet.accountId()).userId();
-                            walletService.creditForSettlement(settlementUserId, bet.id(), issue.issueNumber(), payout,
-                                    "开奖结算：" + issue.issueNumber());
+                            balanceAfter = walletService.creditForSettlement(settlementUserId, bet.id(),
+                                    issue.issueNumber(), payout, "开奖结算：" + issue.issueNumber())
+                                    .wallet().balance();
+                        } else {
+                            balanceAfter = walletService.getByAccountId(bet.accountId()).balance();
                         }
                         if (eventPublisher != null) {
                             eventPublisher.publishEvent(new BetSettlementCompletedEvent(
                                     bet.id(), bet.accountId(), issue.issueNumber(), settlement.status(),
-                                    settlement.stake(), settlement.netProfit(), payout));
+                                    settlement.stake(), settlement.netProfit(), payout, balanceAfter));
                         }
                     }
                 });

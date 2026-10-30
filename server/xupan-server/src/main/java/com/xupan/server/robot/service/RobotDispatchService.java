@@ -4,6 +4,7 @@ import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.domain.BallResult;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.robot.domain.RobotDrawComponent;
 import com.xupan.server.robot.domain.RobotDrawComponentConfig;
@@ -54,6 +55,7 @@ public class RobotDispatchService {
     private final TransactionTemplate transactionTemplate;
     private final RobotDrawComponentRepository drawComponentRepository;
     private final GameDataRepository gameDataRepository;
+    private final RobotNoticeIntentService noticeIntents;
     private final int unscheduledEventRetentionDays;
 
     public RobotDispatchService(RobotDispatchRepository dispatchRepository,
@@ -69,6 +71,7 @@ public class RobotDispatchService {
                                 TransactionTemplate transactionTemplate,
                                 RobotDrawComponentRepository drawComponentRepository,
                                 GameDataRepository gameDataRepository,
+                                RobotNoticeIntentService noticeIntents,
                                 @Value("${xupan.retention.chat-days:5}") int unscheduledEventRetentionDays) {
         this.dispatchRepository = dispatchRepository;
         this.robotRepository = robotRepository;
@@ -86,6 +89,7 @@ public class RobotDispatchService {
             throw new IllegalArgumentException("机器人旧事件保留天数必须为正数");
         }
         this.gameDataRepository = gameDataRepository;
+        this.noticeIntents = noticeIntents;
         this.unscheduledEventRetentionDays = unscheduledEventRetentionDays;
     }
 
@@ -229,6 +233,28 @@ public class RobotDispatchService {
         String auditKey = idempotency.idempotencyKey(event.id()) + "-audit";
         ChatMessage latest = publicAnnouncement;
         for (Long agentId : chatMessageService.activeMachineIds()) {
+            int closeSeconds = gameDataRepository.findMachineCloseSeconds(agentId);
+            GameDataRepository.IssueRecord issue = gameDataRepository.findIssueByIssueNumber(event.issueNumber())
+                    .orElse(null);
+            boolean earlyMachineClose = issue != null && closeSeconds > 0 && issue.drawEndsAt() != null
+                    && issue.bettingEndsAt() != null
+                    && issue.drawEndsAt().minusSeconds(closeSeconds).isBefore(issue.bettingEndsAt());
+            if (earlyMachineClose) {
+                String sourceId = event.issueNumber() + ":" + agentId;
+                String stopKey = "MACHINE-CLOSE-STOP-" + event.issueNumber() + "-" + agentId;
+                String machineAuditKey = "MACHINE-CLOSE-AUDIT-" + event.issueNumber() + "-" + agentId;
+                if (!noticeIntents.exists(machineAuditKey)) {
+                    noticeIntents.enqueue("MACHINE_BETTING_CLOSED", "GAME_ISSUE_MACHINE", sourceId,
+                            GameDataRepository.DEFAULT_GAME_CODE, event.issueNumber(),
+                            ChatMessageVisibility.MACHINE, agentId, "MACHINE_BETTING_CLOSED",
+                            event.issueNumber() + "期本机已停止下注", stopKey, now);
+                    noticeIntents.enqueue("MACHINE_BETTING_AUDIT", "GAME_ISSUE_MACHINE", sourceId,
+                            GameDataRepository.DEFAULT_GAME_CODE, event.issueNumber(),
+                            ChatMessageVisibility.MACHINE, agentId, "MACHINE_BETTING_AUDIT",
+                            bettingAuditText(event.issueNumber(), agentId), machineAuditKey, now);
+                }
+                continue;
+            }
             latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
                     event.issueNumber(), machineKey(auditKey, agentId), bettingAuditText(event.issueNumber(), agentId),
                     payload(dispatch, robot, template, event), ChatMessageVisibility.MACHINE, agentId, now);
@@ -247,31 +273,29 @@ public class RobotDispatchService {
     private String bettingAuditText(String issueNumber, long agentId) {
         Map<String, List<String>> grouped = new LinkedHashMap<>();
         BigDecimal total = BigDecimal.ZERO;
-        for (GameDataRepository.BetAuditRecord bet : gameDataRepository.findBetAuditByIssueAndAgent(issueNumber, agentId)) {
+        for (GameDataRepository.BetAuditRecord bet : gameDataRepository.findBetAuditByGameIssueAndAgent(
+                GameDataRepository.DEFAULT_GAME_CODE, issueNumber, agentId)) {
             grouped.computeIfAbsent(normalizeDisplayName(bet.displayName()), ignored -> new ArrayList<>())
-                    .add(formatBetText(bet.playType(), bet.parameters(), bet.stake()));
+                    .add("第" + bet.ballNumber() + "球/" + formatBetText(
+                            bet.playType(), bet.parameters(), bet.stake()));
             if (bet.stake() != null) {
                 total = total.add(bet.stake());
             }
         }
         StringBuilder content = new StringBuilder("-----------\n")
                 .append(issueNumber).append('\n')
-                .append("核对列表:(").append(plainAmount(total))
+                .append("核对列表:(").append(formatAmount(total))
                 .append(")\n");
         grouped.forEach((name, bets) -> content.append('(').append(name).append(") \"")
                 .append(String.join("，", bets)).append("\"\n"));
         return content.append("-----------\n")
-                .append("不在核对列表无效,在核对列表的以开奖前是否公告退单为准!")
+                .append("以核对列表及开奖前已公告退单为准；不在列表内的注单无效。")
                 .toString();
     }
 
-    /** 金额去掉多余的零（25.00 → 25），与注单文本里的金额写法保持一致。 */
-    private static String plainAmount(BigDecimal amount) {
-        BigDecimal value = amount == null ? BigDecimal.ZERO : amount;
-        if (value.signum() == 0) {
-            return "0";
-        }
-        return value.stripTrailingZeros().toPlainString();
+    private static String formatAmount(BigDecimal amount) {
+        return (amount == null ? BigDecimal.ZERO : amount)
+                .setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
     }
 
     private static String normalizeDisplayName(String displayName) {
@@ -282,7 +306,7 @@ public class RobotDispatchService {
     }
 
     private static String formatBetText(PlayType playType, List<Integer> parameters, BigDecimal stake) {
-        String amount = stake.stripTrailingZeros().toPlainString();
+        String amount = formatAmount(stake);
         String values = parameters.stream().map(String::valueOf).collect(Collectors.joining());
         return switch (playType) {
             case FAN -> values + "番" + amount;
@@ -355,7 +379,8 @@ public class RobotDispatchService {
         for (RobotDrawComponentConfig config : drawComponentRepository.findEnabledOrdered(robot.id())) {
             String component = config.component().name();
             String baseKey = idempotency.idempotencyKey(event.id(), config.component());
-            if (config.component() == RobotDrawComponent.WINNER_LIST) {
+            if (config.component() == RobotDrawComponent.WINNER_LIST
+                    || config.component() == RobotDrawComponent.TOTAL_BOARD) {
                 for (Long agentId : chatMessageService.activeMachineIds()) {
                     String componentPayload = structuredPayload(component, event.issueNumber(), issue, agentId);
                     latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
@@ -381,6 +406,7 @@ public class RobotDispatchService {
                     historyItems(gameDataRepository.findSettledIssues(15)),
                     historyItems(gameDataRepository.findLatestSettledBlock(60)));
             case WINNER_LIST -> winnerData(issueNumber, currentIssue, agentId);
+            case TOTAL_BOARD -> totalBoardData(issueNumber, currentIssue, agentId);
         };
         try {
             return objectMapper.writeValueAsString(new StructuredPayload(
@@ -396,13 +422,31 @@ public class RobotDispatchService {
             throw BusinessException.badRequest("ROBOT_DRAW_SCOPE_INVALID", "中奖名单缺少机器范围");
         }
         for (GameDataRepository.WinnerBetAuditRecord winner :
-                gameDataRepository.findWinningBetAuditByIssueAndAgent(issueNumber, agentId)) {
+                gameDataRepository.findWinningBetAuditByGameIssueAndAgent(
+                        GameDataRepository.DEFAULT_GAME_CODE, issueNumber, agentId)) {
             String betText = formatBetText(winner.playType(), winner.parameters(), winner.stake());
             items.add(new WinnerItem(normalizeDisplayName(winner.displayName()), winner.ballNumber(),
                     winner.playType().name(), betText, winner.stake(), winner.netProfit()));
         }
         return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null,
                 issue.numbers(), issue.settledAt());
+    }
+
+    private TotalBoardData totalBoardData(String issueNumber, GameDataRepository.IssueRecord issue, Long agentId) {
+        if (agentId == null) {
+            throw BusinessException.badRequest("ROBOT_DRAW_SCOPE_INVALID", "本期积分榜缺少机器范围");
+        }
+        List<TotalBoardItem> items = gameDataRepository.findIssuePlayerTotalsByAgent(issueNumber, agentId, 30)
+                .stream()
+                .map(row -> new TotalBoardItem(maskPlayerName(row.displayName()), row.turnover(), row.netProfit()))
+                .toList();
+        return new TotalBoardData(items, items.isEmpty() ? "本期暂无已结注单" : null, issue.settledAt());
+    }
+
+    private static String maskPlayerName(String value) {
+        String name = normalizeDisplayName(value);
+        if (name.length() <= 1) return "*";
+        return name.substring(0, 1) + "*".repeat(Math.min(4, name.length() - 1));
     }
 
     private static String machineKey(String baseKey, long agentId) {
@@ -446,7 +490,10 @@ public class RobotDispatchService {
     private record StructuredPayload(String schema, String component, String issueNumber, Object data) {
     }
 
-    private record DrawSummaryData(List<Integer> numbers, Instant settledAt) {
+    private record DrawSummaryData(List<Integer> numbers, List<BallResult> ballResults, Instant settledAt) {
+        private DrawSummaryData(List<Integer> numbers, Instant settledAt) {
+            this(numbers, numbers.stream().map(BallResult::fromNumber).toList(), settledAt);
+        }
     }
 
     private record DrawHistoryData(List<DrawHistoryItem> items, List<DrawHistoryItem> routeItems) {
@@ -457,6 +504,12 @@ public class RobotDispatchService {
 
     private record WinnerListData(List<WinnerItem> items, String emptyMessage,
                                   List<Integer> numbers, Instant settledAt) {
+    }
+
+    private record TotalBoardData(List<TotalBoardItem> items, String emptyMessage, Instant settledAt) {
+    }
+
+    private record TotalBoardItem(String maskedUser, BigDecimal turnover, BigDecimal netProfit) {
     }
 
     private record WinnerItem(String maskedUser, int ballNumber, String playType,

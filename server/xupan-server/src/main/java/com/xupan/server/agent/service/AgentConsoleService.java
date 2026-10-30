@@ -10,6 +10,7 @@ import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.BetFlowMetricsCalculator;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.playerauth.service.PlayerLinkAuthenticationService;
+import com.xupan.server.robot.service.RobotNoticeIntentService;
 import com.xupan.server.system.repository.PlayerDeskRepository;
 import com.xupan.server.system.service.TestPlayerAdminService;
 import com.xupan.server.system.service.UserAdminService;
@@ -27,6 +28,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 
 @Service
 public class AgentConsoleService {
@@ -45,6 +47,7 @@ public class AgentConsoleService {
     private final PlayerDeskRepository playerDeskRepository;
     private final VirtualWalletService walletService;
     private final JdbcTemplate jdbc;
+    private final RobotNoticeIntentService robotNotices;
 
     public AgentConsoleService(AgentRepository agentRepository, AgentLedgerService agentLedgerService,
                                 PermissionService permissionService,
@@ -53,7 +56,8 @@ public class AgentConsoleService {
                                PlayerLinkAuthenticationService playerLinkAuthenticationService,
                                PlayerDeskRepository playerDeskRepository,
                                VirtualWalletService walletService,
-                               JdbcTemplate jdbc) {
+                               JdbcTemplate jdbc,
+                               RobotNoticeIntentService robotNotices) {
         this.agentRepository = agentRepository;
         this.agentLedgerService = agentLedgerService;
         this.permissionService = permissionService;
@@ -63,6 +67,7 @@ public class AgentConsoleService {
         this.playerDeskRepository = playerDeskRepository;
         this.walletService = walletService;
         this.jdbc = jdbc;
+        this.robotNotices = robotNotices;
     }
 
     @Transactional(readOnly = true)
@@ -136,8 +141,25 @@ public class AgentConsoleService {
                                    BigDecimal amount, String idempotencyKey) {
         requirePlayerManage(accountUserId);
         Agent agent = requireActiveAgent(accountUserId);
-        return changeScoreForAgent(accountUserId, agent.id(), playerUserId, direction, amount, idempotencyKey,
+        AgentRepository.AgentPlayerRow player = requirePlayer(agent.id(), playerUserId);
+        ScoreChange result = changeScoreForAgent(accountUserId, agent.id(), playerUserId, direction, amount, idempotencyKey,
                 AgentLedgerService.INSUFFICIENT_MACHINE_SCORE_MESSAGE);
+        String action = "TOP_UP".equals(result.direction()) ? "上分" : "下分";
+        String content = "@" + player.displayName() + "，成功" + action + MoneyAmounts.rounded(result.amount())
+                + "积分，剩余积分" + MoneyAmounts.rounded(result.playerBalance()) + "。";
+        String noticeKey = RobotNoticeIntentService.stableKey("AGENT-SCORE", idempotencyKey);
+        robotNotices.enqueue("AGENT_SCORE_" + result.direction(), "AGENT_SCORE", noticeKey,
+                "AU8", currentIssueNumber(), ChatMessageVisibility.MACHINE, agent.id(),
+                "AGENT_SCORE_" + result.direction(), content, noticeKey, Instant.now());
+        return result;
+    }
+
+    private String currentIssueNumber() {
+        return jdbc.query("""
+                SELECT issue_number FROM game_issue
+                 WHERE game_code = 'AU8' AND phase IN ('BETTING', 'DRAWING')
+                 ORDER BY id DESC LIMIT 1
+                """, rs -> rs.next() ? rs.getString(1) : "UNKNOWN");
     }
 
     /**

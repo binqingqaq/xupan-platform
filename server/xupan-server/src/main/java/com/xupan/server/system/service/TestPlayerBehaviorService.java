@@ -1,6 +1,7 @@
 package com.xupan.server.system.service;
 
 import com.xupan.server.chat.service.ChatMessageService;
+import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.BetTextParser;
@@ -10,6 +11,7 @@ import com.xupan.server.game.domain.WalletOperationResult;
 import com.xupan.server.game.service.自动轮期服务;
 import com.xupan.server.system.domain.TestPlayerBehaviorMode;
 import com.xupan.server.system.repository.PlayerDeskRepository;
+import com.xupan.server.robot.service.RobotNoticeIntentService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -49,17 +51,20 @@ public class TestPlayerBehaviorService {
     private final ChatMessageService chatMessageService;
     private final GameBettingConfigService bettingConfigService;
     private final VirtualWalletService walletService;
+    private final RobotNoticeIntentService robotNotices;
 
     public TestPlayerBehaviorService(JdbcTemplate jdbc, PlayerDeskRepository repository,
                                      GameDataRepository gameRepository, ChatMessageService chatMessageService,
                                      GameBettingConfigService bettingConfigService,
-                                     VirtualWalletService walletService) {
+                                     VirtualWalletService walletService,
+                                     RobotNoticeIntentService robotNotices) {
         this.jdbc = jdbc;
         this.repository = repository;
         this.gameRepository = gameRepository;
         this.chatMessageService = chatMessageService;
         this.bettingConfigService = bettingConfigService;
         this.walletService = walletService;
+        this.robotNotices = robotNotices;
     }
 
     @Transactional
@@ -320,13 +325,18 @@ public class TestPlayerBehaviorService {
         if ("AUTO_UP".equals(action.actionType())) {
             operation = walletService.grant(operatorUserId, userId, amount, "托自动上分：" + name,
                     "AUTO-UP-" + actionId);
-            chatMessageService.publishRobotNotice("main", action.issueNumber(), "BOT-AUTO-UP-DONE-" + actionId,
-                    "@" + name + ", 成功上分" + money(amount) + ", 剩" + money(operation.wallet().balance()), agentId, Instant.now());
+            robotNotices.enqueue("BOT_AUTO_SCORE_TOP_UP", "BOT_ACTION", Long.toString(actionId), "AU8",
+                    action.issueNumber(), ChatMessageVisibility.MACHINE, agentId, "BOT_AUTO_TOP_UP",
+                    "@" + name + "，成功上分" + money(amount) + "积分，剩余积分" + money(operation.wallet().balance()) + "。",
+                    "BOT-AUTO-UP-DONE-" + actionId, Instant.now());
         } else {
             operation = walletService.adjust(operatorUserId, userId, amount.negate(), "托自动下分：" + name,
                     "AUTO-DOWN-" + actionId);
-            chatMessageService.publishRobotNotice("main", action.issueNumber(), "BOT-AUTO-DOWN-DONE-" + actionId,
-                    "@" + name + ", 成功下分" + money(amount) + ", 剩" + money(operation.wallet().balance()), agentId, Instant.now());
+            robotNotices.enqueue("BOT_AUTO_SCORE_DOWN", "BOT_ACTION", Long.toString(actionId), "AU8",
+                    action.issueNumber(), ChatMessageVisibility.MACHINE, agentId, "BOT_AUTO_DOWN",
+                    "@" + name + "，成功下分" + money(amount) + "积分，剩余积分"
+                            + money(operation.wallet().balance()) + "。",
+                    "BOT-AUTO-DOWN-DONE-" + actionId, Instant.now());
         }
         jdbc.update("UPDATE test_player_action SET status='SUCCEEDED', error_code=NULL, error_message=NULL, lease_until=NULL, updated_at=CURRENT_TIMESTAMP(6) WHERE id=?", actionId);
         return loadAction(actionId);
@@ -343,7 +353,7 @@ public class TestPlayerBehaviorService {
     }
 
     private static String money(BigDecimal amount) {
-        return amount.stripTrailingZeros().toPlainString();
+        return amount.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
     private long machineOperatorUserId(long userId) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderRobotDrawImage } from './robotDrawImage'
+import { formatDrawMoney, parseRobotDrawPayload } from './robotDrawMessage'
 
 describe('renderRobotDrawImage', () => {
   it('creates a self-contained summary image without a selectable text payload', () => {
@@ -15,6 +16,7 @@ describe('renderRobotDrawImage', () => {
     expect(svg).toContain('<svg')
     expect(svg).toContain('3000001')
     expect(svg).toContain('18')
+    expect(svg).toContain('大双')
     expect(svg).not.toMatch(/<(image|use)\b/)
     expect(svg).not.toMatch(/(?:href|xlink:href)="https?:\/\//)
     expect(svg).not.toContain('fill="#f5f5f7"')
@@ -70,5 +72,27 @@ describe('renderRobotDrawImage', () => {
     expect(svg).toContain('fill="#5b92f5"')
     expect(svg).toContain('fill="#ff4550"')
     expect(svg).not.toContain('fill="#45c68a"')
+  })
+
+  it('renders a machine scoped total board as virtual points without currency symbols', () => {
+    const payload = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1',
+      component: 'TOTAL_BOARD',
+      issueNumber: '3000001',
+      data: { items: [{ maskedUser: '张*', turnover: 120, netProfit: 30.5 }] },
+    }))
+    expect(payload?.component).toBe('TOTAL_BOARD')
+    const image = renderRobotDrawImage(payload!)
+    const svg = decodeURIComponent(image.dataUrl.slice(image.dataUrl.indexOf(',') + 1))
+    expect(svg).toContain('本机积分榜')
+    expect(svg).toContain('张*')
+    expect(svg).toContain('120.00积分')
+    expect(svg).toContain('30.50积分')
+    expect(svg).not.toContain('¥')
+  })
+
+  it('formats displayed money with two decimals and virtual points', () => {
+    expect(formatDrawMoney(12)).toBe('12.00积分')
+    expect(formatDrawMoney(3.5)).toBe('3.50积分')
   })
 })

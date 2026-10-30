@@ -28,7 +28,9 @@ import com.xupan.server.game.service.DemoGameService;
 import com.xupan.server.game.service.VirtualWalletService;
 import com.xupan.server.game.web.PlaceBetRequest;
 import com.xupan.server.robot.domain.ChatRobot;
+import com.xupan.server.robot.domain.RobotDrawComponent;
 import com.xupan.server.robot.repository.RobotRepository;
+import com.xupan.server.robot.service.RobotNoticeIntentService;
 import com.xupan.server.web.BusinessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.ApplicationEventPublisher;
@@ -58,6 +60,7 @@ import java.util.regex.Pattern;
 public class ChatMessageService {
 
     private static final Pattern SELECTED_BALL_PREFIX = Pattern.compile("^第\\s*([1-8])\\s*球\\s*/\\s*(.*)$", Pattern.DOTALL);
+    private static final Pattern POINT_REQUEST_SHAPE = Pattern.compile("^[上下][0-9]+(?:\\.[0-9]+)?$");
 
     private final UserRepository userRepository;
     private final PermissionService permissionService;
@@ -77,6 +80,7 @@ public class ChatMessageService {
     private final TransactionTemplate transactionTemplate;
     private PlayerPointRequestRepository pointRequestRepository;
     private PlayerBetSummaryRepository playerBetSummaryRepository;
+    private RobotNoticeIntentService noticeIntentService;
 
     private static final String FEEDBACK_ROBOT_CODE = "issue-helper";
     private static final String ROOM_CODE = "main";
@@ -129,6 +133,11 @@ public class ChatMessageService {
     @Autowired(required = false)
     public void setPlayerBetSummaryRepository(PlayerBetSummaryRepository repository) {
         this.playerBetSummaryRepository = repository;
+    }
+
+    @Autowired(required = false)
+    public void setRobotNoticeIntentService(RobotNoticeIntentService service) {
+        this.noticeIntentService = service;
     }
 
     /** Compatibility constructor for focused chat unit tests that do not exercise betting. */
@@ -237,6 +246,12 @@ public class ChatMessageService {
             // Persist the original input and its public feedback in a fresh transaction afterwards.
             return inTransaction(() -> persistRejectedBet(userId, roomCode, clientMessageId, content, gameCode, now,
                     rejected.cause()));
+        } catch (PointRequestRejectedException rejected) {
+            inTransaction(() -> persistRejectedPointRequest(userId, roomCode, clientMessageId,
+                    content, now, rejected));
+            String action = rejected.commandType() == ChatCommandParser.Type.DOWN ? "下分" : "上分";
+            throw BusinessException.badRequest("WALLET_INSUFFICIENT_BALANCE", "您当前积分不足"
+                    + formatMoney(rejected.amount()));
         }
     }
 
@@ -274,6 +289,18 @@ public class ChatMessageService {
                     user.displayName(), clientId, agentId, normalizedContent, now);
             publishUserMessage(message, now);
             return processCommand(userId, roomCode, clientId, user, message, command.get(), now);
+        }
+
+        if (looksLikeInvalidPointRequest(commandContent)) {
+            long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+            ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
+                    user.displayName(), clientId, agentId, normalizedContent, now);
+            publishUserMessage(message, now);
+            String action = commandContent.startsWith("上") ? "上分" : "下分";
+            publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
+                    "POINT_REQUEST_INVALID", "@" + user.displayName() + "，" + action
+                            + "金额格式无效，请输入大于零且最多两位小数的积分。", now);
+            return new ChatMessageSendOutcome(message, false);
         }
 
         BetTextParser.ParseResult parsedBet = BetTextParser.parse(commandContent, selectedBallNumber);
@@ -322,8 +349,8 @@ public class ChatMessageService {
                     .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
             String remainingBalance = formatMoney(walletService.getForCurrentUser(userId).balance());
             publishFeedback(roomCode, firstBet.issueNumber(), clientId, message.id(),
-                    "BET_ACCEPTED", "@" + user.displayName() + "  攻击成功，使用粮草"
-                            + formatMoney(totalStake) + ", 剩余粮草：" + remainingBalance
+                    "BET_ACCEPTED", "@" + user.displayName() + "，第" + firstBet.issueNumber()
+                            + "期攻击成功，使用积分" + formatMoney(totalStake) + "，剩余积分：" + remainingBalance
                             + limitRejectionLines(user.displayName(), rejectedBets), now);
             return new ChatMessageSendOutcome(message, false);
         }
@@ -334,6 +361,11 @@ public class ChatMessageService {
         publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(),
                 "INVALID_COMMAND", "@" + user.displayName() + ", 指令格式不正确!", now);
         return new ChatMessageSendOutcome(message, false);
+    }
+
+    private static boolean looksLikeInvalidPointRequest(String content) {
+        return content != null && POINT_REQUEST_SHAPE.matcher(content.trim()).matches()
+                && ChatCommandParser.parse(content.trim()).isEmpty();
     }
 
     private ChatMessageSendOutcome processCommand(long userId, String roomCode, String clientId,
@@ -347,7 +379,7 @@ public class ChatMessageService {
             case BALANCE -> {
                 VirtualWallet balance = currentBalance(userId);
                 publishFeedback(roomCode, issueNumber, clientId, source.id(), "BALANCE",
-                        "@" + user.displayName() + "   剩余粮草：" + formatMoney(balance.balance()), now);
+                        "@" + user.displayName() + "，剩余积分：" + formatMoney(balance.balance()), now);
             }
             case DAILY_SUMMARY -> {
                 VirtualWallet balance = currentBalance(userId);
@@ -360,19 +392,17 @@ public class ChatMessageService {
                 long issues = gameDataRepository.countBetIssues(balance.accountId(),
                         range.fromInclusive(), range.toExclusive());
                 publishFeedback(roomCode, issueNumber, clientId, source.id(), "DAILY_SUMMARY",
-                        "@" + user.displayName() + " 累计今日流水：" + formatMoney(statistics.turnover())
-                                + "，盈亏：" + formatMoney(statistics.netProfit()) + "，期数：" + issues, now);
+                        "@" + user.displayName() + "，今日累计下注积分：" + formatMoney(statistics.turnover())
+                                + "\n今日已结盈亏：" + formatMoney(statistics.netProfit())
+                                + "\n下注期数：" + issues, now);
             }
             case HISTORY -> {
-                List<GameDataRepository.IssueRecord> settled = gameDataRepository.findLatestSettledBlock(5);
-                StringBuilder history = new StringBuilder("@").append(user.displayName()).append(" 历史：");
-                if (settled.isEmpty()) history.append("暂无开奖");
-                else for (int i = 0; i < settled.size(); i++) {
-                    if (i > 0) history.append("；");
-                    GameDataRepository.IssueRecord row = settled.get(i);
-                    history.append(row.issueNumber()).append("期 ").append(row.numbers());
-                }
-                publishFeedback(roomCode, issueNumber, clientId, source.id(), "HISTORY", history.toString(), now);
+                publishDrawHistoryFeedback(roomCode, issueNumber, clientId, source.id(),
+                        user.displayName(), false, now);
+            }
+            case TREND -> {
+                publishDrawHistoryFeedback(roomCode, issueNumber, clientId, source.id(),
+                        user.displayName(), true, now);
             }
             case TOP_UP, DOWN -> processPointRequest(userId, roomCode, clientId, user, source, command, now);
             case CANCEL -> processCancellation(userId, roomCode, clientId, user, source, now);
@@ -406,28 +436,29 @@ public class ChatMessageService {
             throw new IllegalStateException("上下分申请服务未配置");
         }
         boolean downRequest = command.type() == ChatCommandParser.Type.DOWN;
-        java.math.BigDecimal balanceBefore = currentBalance(userId).balance();
-        if (downRequest && balanceBefore.compareTo(command.amount()) < 0) {
-            throw BusinessException.badRequest("WALLET_INSUFFICIENT_BALANCE",
-                    "您当前积分不足" + formatMoney(command.amount()));
+        try {
+            java.math.BigDecimal balanceBefore = currentBalance(userId).balance();
+            if (downRequest && balanceBefore.compareTo(command.amount()) < 0) {
+                throw BusinessException.badRequest("WALLET_INSUFFICIENT_BALANCE", "下分申请积分不足");
+            }
+            PlayerPointRequestRepository.Request request = pointRequestRepository.insertPending(userId,
+                    command.type().name(), command.amount(), clientId, source.id(), now);
+            java.math.BigDecimal balanceAfter = balanceBefore;
+            if (downRequest) {
+                balanceAfter = walletService.holdForPointRequest(userId, command.amount(),
+                        "下分申请预扣（聊天指令）：" + user.displayName(),
+                        PlayerPointRequestRepository.holdIdempotencyKey(request.id())).wallet().balance();
+            }
+            String action = downRequest ? "下分" : "上分";
+            String content = "@" + user.displayName() + "，" + action + "申请"
+                    + formatMoney(command.amount()) + "积分已提交，待审批。";
+            if (downRequest) content += "本次已扣除申请积分，剩余" + formatMoney(balanceAfter) + "积分。";
+            publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "POINT_REQUEST_CREATED",
+                    content, now);
+        } catch (BusinessException exception) {
+            if (!"WALLET_INSUFFICIENT_BALANCE".equals(exception.code())) throw exception;
+            throw new PointRequestRejectedException(command.type(), command.amount());
         }
-        PlayerPointRequestRepository.Request request = pointRequestRepository.insertPending(userId,
-                command.type().name(), command.amount(), clientId, source.id(), now);
-        java.math.BigDecimal balanceAfter = balanceBefore;
-        if (downRequest) {
-            // 幂等：客户端消息重发时 insertPending 会返回同一条申请，预扣按申请编号命中同一幂等键重放，
-            // 不会第二次扣钱（uk_demo_balance_ledger_idempotency 兜底）。
-            balanceAfter = walletService.holdForPointRequest(userId, command.amount(),
-                    "下分申请预扣（聊天指令）：" + user.displayName(),
-                    PlayerPointRequestRepository.holdIdempotencyKey(request.id())).wallet().balance();
-        }
-        String action = command.type() == ChatCommandParser.Type.TOP_UP ? "上分" : "下分";
-        String content = "@" + user.displayName() + " " + action + formatMoney(command.amount()) + "，待审批！";
-        if (downRequest) {
-            content += "，剩余" + formatMoney(balanceAfter);
-        }
-        publishFeedback(roomCode, feedbackIssueNumber(), clientId, source.id(), "POINT_REQUEST_CREATED",
-                content, now);
     }
 
     private void processCancellation(long userId, String roomCode, String clientId, UserAccount user,
@@ -452,8 +483,8 @@ public class ChatMessageService {
             GameDataRepository.BetRecord bet = item.bet();
             content.append('\n').append('@').append(displayName).append(" 取消 ")
                     .append(formatBetText(bet.playType(), bet.parameters(), bet.stake()))
-                    .append("，返回").append(formatMoney(bet.stake()))
-                    .append("，剩余粮草").append(formatMoney(item.balanceAfter()));
+                    .append("，返还积分").append(formatMoney(bet.stake()))
+                    .append("，剩余积分").append(formatMoney(item.balanceAfter()));
         }
         return content.toString();
     }
@@ -487,6 +518,28 @@ public class ChatMessageService {
         return new ChatMessageSendOutcome(message, false);
     }
 
+    private ChatMessageSendOutcome persistRejectedPointRequest(long userId, String roomCode,
+                                                               String clientMessageId, String content,
+                                                               Instant now, PointRequestRejectedException rejected) {
+        requirePositiveUser(userId);
+        UserAccount user = requireActiveUser(userId);
+        long agentId = requireMachineAgentId(userId);
+        String clientId = contentPolicy.requireClientMessageId(clientMessageId);
+        String normalizedContent = contentPolicy.normalize(content);
+        ChatRoom room = requireRoomForUpdate(roomCode);
+        Optional<ChatMessage> existing = messageRepository.findByClientMessageId(room.id(), userId, clientId);
+        if (existing.isPresent()) return new ChatMessageSendOutcome(existing.get(), true);
+        long sequence = roomRepository.allocateNextSequence(room.id(), room.nextSequenceNo());
+        ChatMessage message = messageRepository.insertUserMessage(room.id(), sequence, userId,
+                user.displayName(), clientId, agentId, normalizedContent, now);
+        publishUserMessage(message, now);
+        String action = rejected.commandType() == ChatCommandParser.Type.DOWN ? "下分" : "上分";
+        publishFeedback(roomCode, feedbackIssueNumber(), clientId, message.id(), "POINT_REQUEST_REJECTED",
+                "@" + user.displayName() + "，" + action + "申请未提交：积分不足，本次需要"
+                        + formatMoney(rejected.amount()) + "积分。", now);
+        return new ChatMessageSendOutcome(message, false);
+    }
+
     private void publishUserMessage(ChatMessage message, Instant createdAt) {
         outboxRepository.insertMessageCreatedOutbox(message.id(), outboxPayload(message), createdAt);
         eventPublisher.publishEvent(new ChatMessageCreatedEvent(message));
@@ -508,11 +561,42 @@ public class ChatMessageService {
                 agentId, createdAt);
     }
 
-    /** Publishes the room reply for an approved chat point request exactly once. */
+    private void publishDrawHistoryFeedback(String roomCode, String issueNumber, String clientMessageId,
+                                            long sourceMessageId, String displayName, boolean trend,
+                                            Instant now) {
+        List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues("AU8", 15);
+        List<GameDataRepository.IssueRecord> routes = gameDataRepository.findLatestSettledBlock("AU8", 60);
+        String component = RobotDrawComponent.DRAW_HISTORY.name();
+        String feedbackType = trend ? "TREND" : "HISTORY";
+        String queryIssue = issueNumber == null || issueNumber.isBlank() ? "UNKNOWN" : issueNumber;
+        try {
+            String payload = objectMapper.writeValueAsString(new StructuredRobotDrawPayload(
+                    "xupan.chat-payload.v1", component, queryIssue,
+                    new RobotDrawHistoryData(issues.stream().map(issue -> new RobotDrawHistoryItem(
+                            issue.issueNumber(), issue.numbers(), issue.settledAt().toString())).toList(),
+                            routes.stream().map(issue -> new RobotDrawHistoryItem(
+                                    issue.issueNumber(), issue.numbers(), issue.settledAt().toString())).toList())));
+            ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
+                    .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
+            long agentId = messageRepository.findMachineAgentId(sourceMessageId)
+                    .orElseThrow(() -> new IllegalStateException("查询反馈来源消息缺少机器归属"));
+            String content = issues.isEmpty() ? "@" + displayName + "，暂无已开奖历史。"
+                    : "@" + displayName + "，" + (trend ? "近期开奖走势" : "最近开奖历史") + "。";
+            String key = feedbackIdempotencyKey(roomCode, sourceMessageId,
+                    clientMessageId + "-" + feedbackType);
+            publishRobotMessage(robot.id(), robot.displayName(), roomCode, queryIssue, key,
+                    content, payload, ChatMessageVisibility.MACHINE, agentId, now);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("生成机器人查询卡片失败", exception);
+        }
+    }
+
+    /** Adds the approval message intent to the same transaction as the request and wallet changes. */
     @Transactional
-    public ChatMessage publishPointRequestApproved(long requestId, long sourceMessageId,
-                                                   String displayName, String requestType,
-                                                   java.math.BigDecimal amount, Instant createdAt) {
+    public void enqueuePointRequestApproved(long requestId, long sourceMessageId,
+                                            String displayName, String requestType,
+                                            java.math.BigDecimal amount,
+                                            java.math.BigDecimal balanceAfter, Instant createdAt) {
         if (requestId <= 0 || sourceMessageId <= 0 || amount == null || amount.signum() <= 0) {
             throw new IllegalArgumentException("积分申请反馈参数无效");
         }
@@ -521,15 +605,63 @@ public class ChatMessageService {
             case "DOWN" -> "下分";
             default -> throw new IllegalArgumentException("积分申请类型无效");
         };
-        ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
-                .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
         long agentId = messageRepository.findMachineAgentId(sourceMessageId)
                 .orElseThrow(() -> new IllegalStateException("积分申请来源消息缺少机器归属"));
-        String content = "@" + requireRobotName(displayName) + "，成功" + action + formatMoney(amount);
-        String payload = feedbackPayload(sourceMessageId, "POINT_REQUEST_APPROVED");
-        return publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE, feedbackIssueNumber(),
-                "POINT-REQUEST-APPROVED:" + requestId, content, payload,
-                ChatMessageVisibility.MACHINE, agentId, createdAt == null ? Instant.now() : createdAt);
+        String content = "@" + requireRobotName(displayName) + "，成功" + action
+                + formatMoney(amount) + "积分";
+        if ("TOP_UP".equals(requestType) && balanceAfter != null) {
+            content += "，剩余积分" + formatMoney(balanceAfter);
+        }
+        enqueueBusinessNotice("POINT_REQUEST_APPROVED", "POINT_REQUEST", Long.toString(requestId),
+                feedbackIssueNumber(), agentId, "POINT_REQUEST_APPROVED", sourceMessageId, content,
+                "POINT-REQUEST-APPROVED:" + requestId, createdAt);
+    }
+
+    @Transactional
+    public void enqueuePointRequestRejected(long requestId, long sourceMessageId, String displayName,
+                                            String requestType, java.math.BigDecimal amount,
+                                            boolean downAmountRefunded,
+                                            java.math.BigDecimal balanceAfter, Instant createdAt) {
+        if (requestId <= 0 || sourceMessageId <= 0 || amount == null || amount.signum() <= 0) {
+            throw new IllegalArgumentException("积分申请反馈参数无效");
+        }
+        String action = switch (requestType) {
+            case "TOP_UP" -> "上分";
+            case "DOWN" -> "下分";
+            default -> throw new IllegalArgumentException("积分申请类型无效");
+        };
+        long agentId = messageRepository.findMachineAgentId(sourceMessageId)
+                .orElseThrow(() -> new IllegalStateException("积分申请来源消息缺少机器归属"));
+        String content = "@" + requireRobotName(displayName) + "，" + action + "申请"
+                + formatMoney(amount) + "积分未通过";
+        String feedbackType = "POINT_REQUEST_REJECTED";
+        if ("DOWN".equals(requestType) && downAmountRefunded) {
+            content += "，已退回预扣积分" + formatMoney(amount);
+            if (balanceAfter != null) content += "，当前剩余积分" + formatMoney(balanceAfter);
+            feedbackType = "POINT_REQUEST_REJECTED_REFUNDED";
+        }
+        enqueueBusinessNotice(feedbackType, "POINT_REQUEST", Long.toString(requestId),
+                feedbackIssueNumber(), agentId, feedbackType, sourceMessageId,
+                content + "。", "POINT-REQUEST-REJECTED:" + requestId, createdAt);
+    }
+
+    public void enqueueMachineBusinessNotice(String eventCode, String sourceType, String sourceId,
+                                             String issueNumber, long agentId, String feedbackType,
+                                             String content, String idempotencyKey, Instant createdAt) {
+        enqueueBusinessNotice(eventCode, sourceType, sourceId, issueNumber, agentId, feedbackType,
+                null, content, idempotencyKey, createdAt);
+    }
+
+    private void enqueueBusinessNotice(String eventCode, String sourceType, String sourceId,
+                                       String issueNumber, long agentId, String feedbackType,
+                                       Long sourceMessageId, String content, String idempotencyKey,
+                                       Instant createdAt) {
+        if (noticeIntentService == null) {
+            throw new IllegalStateException("机器人通知意图服务未配置");
+        }
+        noticeIntentService.enqueue(eventCode, sourceType, sourceId, "AU8", issueNumber,
+                ChatMessageVisibility.MACHINE, agentId, feedbackType, sourceMessageId,
+                content, idempotencyKey, createdAt == null ? Instant.now() : createdAt);
     }
 
     private String feedbackPayload(long sourceMessageId, String feedbackType) {
@@ -613,7 +745,9 @@ public class ChatMessageService {
     private static String rejectedFeedback(String displayName, BusinessException exception) {
         String prefix = "@" + displayName + ", ";
         return switch (exception.code()) {
-            case "WALLET_INSUFFICIENT_BALANCE" -> prefix + "余额不足!";
+            case "WALLET_INSUFFICIENT_BALANCE" -> prefix + "积分不足，本次下注未提交!";
+            case "GAME_MACHINE_MANUALLY_CLOSED" -> prefix + "本机已停止下注!";
+            case "GAME_MACHINE_CLOSED" -> prefix + "本机已到封盘时间，下注无效!";
             case "GAME_BETTING_CLOSED" -> exception.publicMessage().contains("正在开奖")
                     ? prefix + "当前正在开奖，下注无效!"
                     : prefix + "当前已封盘，下注无效!";
@@ -633,27 +767,25 @@ public class ChatMessageService {
     }
 
     private static String formatMoney(java.math.BigDecimal value) {
-        return value.stripTrailingZeros().toPlainString();
+        return value.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
     }
 
     private record DayRange(Instant fromInclusive, Instant toExclusive) {
     }
 
-    private static String settlementFeedback(String displayName,
-                                             java.math.BigDecimal balance,
-                                             BetSettlementCompletedEvent event) {
-        String prefix = "@" + displayName + ", ";
-        String currentBalance = formatMoney(balance);
+    private static String settlementFeedback(String displayName, BetSettlementCompletedEvent event) {
+        String prefix = "@" + displayName + "，";
+        String currentBalance = formatMoney(event.balanceAfter());
         return switch (event.status()) {
-            case WIN -> prefix + "第" + event.issueNumber() + "期中奖，返还粮草"
-                    + formatMoney(event.returnAmount()) + ", 当前粮草：" + currentBalance;
-            case DRAW -> prefix + "第" + event.issueNumber() + "期和局，返还粮草"
-                    + formatMoney(event.returnAmount()) + ", 当前粮草：" + currentBalance;
-            case LOSE -> prefix + "第" + event.issueNumber() + "期未中奖，使用粮草"
-                    + formatMoney(event.stake()) + ", 当前粮草：" + currentBalance;
-            case PENDING -> prefix + "第" + event.issueNumber() + "期结算处理中!";
-            case CANCELED -> prefix + "第" + event.issueNumber() + "期注单已撤销，返还粮草"
-                    + formatMoney(event.returnAmount()) + ", 当前粮草：" + currentBalance;
+            case WIN -> prefix + "第" + event.issueNumber() + "期中奖，返还积分"
+                    + formatMoney(event.returnAmount()) + "，结算后余额" + currentBalance + "积分。";
+            case DRAW -> prefix + "第" + event.issueNumber() + "期和局，返还积分"
+                    + formatMoney(event.returnAmount()) + "，结算后余额" + currentBalance + "积分。";
+            case LOSE -> prefix + "第" + event.issueNumber() + "期未中奖，本注已扣积分"
+                    + formatMoney(event.stake()) + "，结算后余额" + currentBalance + "积分。";
+            case PENDING -> prefix + "第" + event.issueNumber() + "期结算处理中。";
+            case CANCELED -> prefix + "第" + event.issueNumber() + "期注单已取消，返还积分"
+                    + formatMoney(event.returnAmount()) + "，结算后余额" + currentBalance + "积分。";
         };
     }
 
@@ -764,20 +896,19 @@ public class ChatMessageService {
                 createdAt == null ? Instant.now() : createdAt);
     }
 
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
-    public void publishSettlementFeedback(BetSettlementCompletedEvent event) {        if (event == null || walletService == null || robotRepository == null) {
+    @Transactional
+    public void enqueueSettlementFeedback(BetSettlementCompletedEvent event) {
+        if (event == null || walletService == null || noticeIntentService == null) {
             throw new IllegalArgumentException("结算反馈参数或服务未配置");
         }
         var wallet = walletService.getByAccountId(event.accountId());
         long agentId = userRepository.findPlayerAgentIdByAccountId(event.accountId())
                 .orElseThrow(() -> new IllegalStateException("结算反馈玩家缺少机器归属"));
-        ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
-                .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
-        String content = settlementFeedback(wallet.displayName(), wallet.balance(), event);
+        String content = settlementFeedback(wallet.displayName(), event);
         String key = "CHAT-SETTLEMENT-" + event.betId() + "-" + event.status().name();
-        publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE, event.issueNumber(), key,
-                content, settlementFeedbackPayload(event), ChatMessageVisibility.MACHINE,
-                agentId, Instant.now());
+        noticeIntentService.enqueue("BET_SETTLEMENT_" + event.status().name(), "GAME_BET",
+                Long.toString(event.betId()), "AU8", event.issueNumber(), ChatMessageVisibility.MACHINE,
+                agentId, "BET_SETTLEMENT_" + event.status().name(), null, content, key, Instant.now());
     }
 
     @Transactional
@@ -958,6 +1089,17 @@ public class ChatMessageService {
     private record FeedbackPayload(String eventType, String feedbackType, long sourceMessageId) {
     }
 
+    private record StructuredRobotDrawPayload(String schema, String component, String issueNumber,
+                                              Object data) {
+    }
+
+    private record RobotDrawHistoryData(List<RobotDrawHistoryItem> items,
+                                        List<RobotDrawHistoryItem> routeItems) {
+    }
+
+    private record RobotDrawHistoryItem(String issueNumber, List<Integer> numbers, String settledAt) {
+    }
+
     private record SettlementFeedbackPayload(String eventType, long betId, String status,
                                              String issueNumber, java.math.BigDecimal returnAmount,
                                              java.math.BigDecimal netProfit) {
@@ -973,6 +1115,26 @@ public class ChatMessageService {
 
         private BusinessException cause() {
             return cause;
+        }
+    }
+
+    private static final class PointRequestRejectedException extends RuntimeException {
+        private final ChatCommandParser.Type commandType;
+        private final java.math.BigDecimal amount;
+
+        private PointRequestRejectedException(ChatCommandParser.Type commandType,
+                                              java.math.BigDecimal amount) {
+            super("WALLET_INSUFFICIENT_BALANCE");
+            this.commandType = commandType;
+            this.amount = amount;
+        }
+
+        private ChatCommandParser.Type commandType() {
+            return commandType;
+        }
+
+        private java.math.BigDecimal amount() {
+            return amount;
         }
     }
 }
