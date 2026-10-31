@@ -17,6 +17,7 @@ const editorOpen = ref(false)
 const detail = ref<OrderCorrectionDetail | null>(null)
 const command = ref('')
 const ballNumber = ref(1)
+const correctionBallCount = computed(() => detail.value?.ballCount ?? 7)
 const idempotencyKey = ref('')
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
 
@@ -121,9 +122,9 @@ onMounted(async () => {
         <el-form-item label="指令" class="wide"><el-input v-model="command" required /></el-form-item>
         <el-form-item label="球" class="wide">
           <el-radio-group v-model="ballNumber">
-            <el-radio-button v-for="number in 8" :key="number" :value="number">{{ number }}</el-radio-button>
+          <el-radio-button v-for="number in correctionBallCount" :key="number" :value="number">{{ number }}</el-radio-button>
           </el-radio-group>
-          <small class="form-hint">支持第1至8球；开奖后按订单所选球位结算。</small>
+          <small class="form-hint">支持第1至{{ correctionBallCount }}球；开奖后按订单所属期次的球位规则结算。</small>
         </el-form-item>
       </el-form>
       <template #footer>

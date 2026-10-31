@@ -22,6 +22,7 @@ const props = defineProps<{
   fontBold: boolean
   loading: boolean
   error: string
+  maxBallNumber?: number
   rows: AccountPanelRow[]
   issueLabel: (value: string) => string
   betText: (bet: BetView) => string
@@ -58,8 +59,8 @@ function currentState() {
     rows: props.rows.map(({ bet, colorIndex, expanded }) => ({
       id: bet.id,
       issue: props.issueLabel(bet.issueNumber),
-      ball: `第${bet.ballNumber}球`,
-      text: props.betText(bet),
+      ball: bet.ballNumber > (props.maxBallNumber ?? 8) ? '历史订单' : `第${bet.ballNumber}球`,
+      text: bet.ballNumber > (props.maxBallNumber ?? 8) ? '历史订单' : props.betText(bet),
       result: props.betResult(bet),
       resultColor: bet.settlementStatus !== 'PENDING',
       refunded: bet.settlementStatus === 'CANCELED',
@@ -117,6 +118,7 @@ watch(() => [
   props.tab,
   props.fontSize,
   props.fontBold,
+  props.maxBallNumber,
   props.loading,
   props.error,
   props.rows,

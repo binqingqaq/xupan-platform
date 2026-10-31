@@ -564,8 +564,18 @@ public class ChatMessageService {
     private void publishDrawHistoryFeedback(String roomCode, String issueNumber, String clientMessageId,
                                             long sourceMessageId, String displayName, boolean trend,
                                             Instant now) {
-        List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues("AU8", 15);
-        List<GameDataRepository.IssueRecord> routes = gameDataRepository.findLatestSettledBlock("AU8", 60);
+        int activeBallCount = gameDataRepository.findCurrentIssue()
+                .or(() -> gameDataRepository.findLatestIssue())
+                .map(GameDataRepository.IssueRecord::ballCount)
+                .orElse(8);
+        List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues("AU8", 15).stream()
+                .filter(issue -> issue.ballCount() == activeBallCount
+                        && issue.numbers().size() == activeBallCount)
+                .toList();
+        List<GameDataRepository.IssueRecord> routes = gameDataRepository.findLatestSettledBlock("AU8", 60).stream()
+                .filter(issue -> issue.ballCount() == activeBallCount
+                        && issue.numbers().size() == activeBallCount)
+                .toList();
         String component = RobotDrawComponent.DRAW_HISTORY.name();
         String feedbackType = trend ? "TREND" : "HISTORY";
         String queryIssue = issueNumber == null || issueNumber.isBlank() ? "UNKNOWN" : issueNumber;

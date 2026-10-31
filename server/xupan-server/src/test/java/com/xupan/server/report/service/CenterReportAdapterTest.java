@@ -83,8 +83,8 @@ class CenterReportAdapterTest {
         // K28 is deliberately first; the persisted AU8 bet must determine the center order game.
         jdbc.update("INSERT INTO agent_game (agent_id, game_code) VALUES (?, 'K28')", machineId);
         jdbc.update("INSERT INTO agent_game (agent_id, game_code) VALUES (?, 'AU8')", machineId);
-        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase) "
-                + "VALUES ('AU8', ?, 'OPEN', 'BETTING')", ISSUE);
+        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                + "VALUES ('AU8', ?, 'OPEN', 'BETTING', 8)", ISSUE);
 
         long playerUserId = userRepository.insert(PLAYER_USER, "适配器测试玩家", passwordPolicy.encode(PASSWORD),
                 "ACTIVE");
@@ -115,8 +115,8 @@ class CenterReportAdapterTest {
                 String.class, "BET-" + betId)).isEqualTo("AU8");
         assertThat(jdbc.queryForObject("SELECT game_code FROM agent_game WHERE agent_id = ? ORDER BY game_code LIMIT 1",
                 String.class, machineId)).isEqualTo("AU8");
-        assertThat(availableBalance()).isEqualByComparingTo("900.00");
-        assertThat(frozenBalance()).isEqualByComparingTo("100.00");
+        assertThat(availableBalance()).isEqualByComparingTo("715.00");
+        assertThat(frozenBalance()).isEqualByComparingTo("285.00");
     }
 
     @Test
@@ -125,7 +125,7 @@ class CenterReportAdapterTest {
         assertThat(adapter.submit(command(true))).isEqualTo(ReportOutcome.ACCEPTED);
 
         assertThat(centerOrderCount()).isEqualTo(1L);
-        assertThat(frozenBalance()).isEqualByComparingTo("100.00");
+        assertThat(frozenBalance()).isEqualByComparingTo("285.00");
     }
 
     @Test
@@ -149,13 +149,14 @@ class CenterReportAdapterTest {
 
     @Test
     void insufficientAvailableQuotaIsAnExplicitRejection() {
+        jdbc.update("UPDATE center_agent SET available_balance = 100.00 WHERE id = ?", centerAgentId);
         assertThat(gateway.submit(machineId, betId, ISSUE, "FAN", "1", new BigDecimal("5000.00"),
                 new BigDecimal("3.850"))).isEqualTo(ReportOutcome.REJECTED);
 
         assertThat(centerOrderCount()).isEqualTo(1L);
         assertThat(frozenBalance()).isEqualByComparingTo("0.00");
         assertThat(jdbc.queryForObject("SELECT reject_code FROM center_order WHERE agent_order_no = ?",
-                String.class, "BET-" + betId)).isEqualTo("CENTER_AVAILABLE_INSUFFICIENT");
+                String.class, "BET-" + betId)).isEqualTo("CENTER_RISK_CAPACITY_INSUFFICIENT");
     }
 
     @Test

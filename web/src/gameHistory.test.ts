@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { toHistoryRows } from './gameHistory'
 
 function ball(number: number, fan: number, size: string, parity: string) {
-  return { ballNumber: 8, number, fan, size, parity }
+  return { ballNumber: 1, number, fan, size, parity }
 }
 
 describe('toHistoryRows', () => {
@@ -34,5 +34,21 @@ describe('toHistoryRows', () => {
 
   it('returns an empty list when there are no settled issues', () => {
     expect(toHistoryRows([])).toEqual([])
+  })
+
+  it('uses the seventh ball as the terminal result for seven-ball issues', () => {
+    const row = toHistoryRows([{
+      issueNumber: '3014479',
+      settledAt: '2026-10-31T11:05:40Z',
+      ballCount: 7,
+      balls: [
+        ball(1, 1, '小', '单'), ball(2, 2, '小', '双'), ball(3, 3, '小', '单'),
+        ball(4, 4, '小', '双'), ball(5, 1, '小', '单'), ball(6, 2, '小', '双'),
+        ball(18, 2, '大', '双'),
+      ],
+    }])[0]
+
+    expect(row?.numbers).toHaveLength(7)
+    expect(row).toMatchObject({ fan: '2', size: '大', parity: '双' })
   })
 })

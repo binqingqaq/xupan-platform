@@ -24,6 +24,41 @@ describe('renderRobotDrawImage', () => {
     expect(image.width).toBeGreaterThan(image.height)
   })
 
+  it('parses and renders a seven-ball result using the seventh ball terminal attributes', () => {
+    const payload = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1',
+      component: 'DRAW_SUMMARY',
+      issueNumber: '3014479',
+      data: {
+        numbers: [1, 2, 3, 4, 5, 6, 18],
+        ballResults: [1, 2, 3, 4, 1, 2, 2].map((fan, index) => ({
+          number: [1, 2, 3, 4, 5, 6, 18][index],
+          fan,
+          parity: index === 6 ? 'EVEN' : 'ODD',
+          size: index === 6 ? 'BIG' : 'SMALL',
+        })),
+        settledAt: '2026-10-31T11:05:40Z',
+      },
+    }), 7)
+
+    expect(payload?.component).toBe('DRAW_SUMMARY')
+    const image = renderRobotDrawImage(payload!)
+    const svg = decodeURIComponent(image.dataUrl.slice(image.dataUrl.indexOf(',') + 1))
+    expect((svg.match(/<circle /g) ?? [])).toHaveLength(7)
+    expect(svg).toContain('2番')
+    expect(image.alt).toContain('18')
+  })
+
+  it('rejects an eight-ball result when the active issue has seven balls', () => {
+    const payload = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1',
+      component: 'DRAW_SUMMARY',
+      issueNumber: '3014478',
+      data: { numbers: [1, 2, 3, 4, 5, 6, 7, 18], settledAt: '2026-10-31T11:00:00Z' },
+    }), 7)
+    expect(payload).toBeNull()
+  })
+
   it('escapes user-facing winner content inside the image document', () => {
     const image = renderRobotDrawImage({
       schema: 'xupan.chat-payload.v1',

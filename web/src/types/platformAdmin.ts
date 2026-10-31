@@ -199,6 +199,7 @@ export interface DrawHistoryItem {
   gameName: string
   issueNumber: string
   balls: number[]
+  ballCount?: number
   phase: string
   openedAt: string | null
   settledAt: string | null
@@ -226,6 +227,7 @@ export interface DrawHistoryDraftResult {
   gameCode: string
   issueNumber: string
   numbers: number[]
+  ballCount?: number
   resultVersion: number
   message: string
 }
@@ -309,6 +311,7 @@ export interface OrderCorrectionDetail {
   id: number
   issueNumber: string
   ballNumber: number
+  ballCount?: number
   machineName: string
   playerName: string
   command: string
@@ -457,6 +460,7 @@ export interface GameSettings {
   gameCode: string
   displayName: string
   ballIndexes: string
+  nextIssueBallCount?: number
   drawSourceUrl: string | null
   sortOrder: number
   algorithm: 'SUM' | 'CONCAT'
@@ -482,6 +486,8 @@ export interface GameSettingsInput {
   gameCode: string
   displayName: string
   ballIndexes: string
+  nextIssueBallCount?: number
+  ballRuleChangeReason?: string
   drawSourceUrl: string | null
   sortOrder: number
   algorithm: 'SUM' | 'CONCAT'

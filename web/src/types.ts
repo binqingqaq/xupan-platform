@@ -25,6 +25,7 @@ export interface GameHistoryView {
   issueNumber: string
   balls: BallView[]
   settledAt: string
+  ballCount?: number
 }
 
 export interface OddsView {
@@ -122,6 +123,7 @@ export interface ChatMessage {
   senderName: string
   avatarKey: string | null
   content: string
+  issueNumber?: string | null
   payloadJson: string | null
   status: ChatMessageStatus
   createdAt: string
@@ -475,10 +477,12 @@ export interface BetBoardDrawHistory {
   status: string
   settledAt: string
   balls: BetBoardDrawBall[]
+  ballCount?: number
 }
 
 export interface BetBoardView {
   issueNumber: string | null
+  ballCount?: number
   phase: 'BETTING' | 'DRAWING' | 'SETTLED' | string | null
   serverNow: string
   phaseEndsAt: string | null
@@ -809,11 +813,15 @@ export interface GameCatalogItem {
   gameCode: string
   displayName: string
   sortOrder: number
+  nextIssueBallCount?: number
+  activeIssueBallCount?: number
+  firstSevenIssueNumber?: string | null
 }
 
 export interface GameView {
   gameCode: string
   issueNumber: string
+  ballCount?: number
   status: 'OPEN' | 'CLOSED'
   phase: 'BETTING' | 'DRAWING' | 'SETTLED'
   balls: BallView[]

@@ -3,6 +3,7 @@ package com.xupan.server.platformadmin.web;
 import com.jayway.jsonpath.JsonPath;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
+import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.platformadmin.service.GameSettingsService;
 import com.xupan.server.platformadmin.service.PlatformOnlinePlayerService;
 import org.junit.jupiter.api.AfterEach;
@@ -59,6 +60,9 @@ class PlatformAdminResourceControllerTest {
 
     @Autowired
     private GameSettingsService gameSettingsService;
+
+    @Autowired
+    private GameDataRepository gameDataRepository;
 
     @BeforeEach
     void setUp() {
@@ -769,12 +773,14 @@ class PlatformAdminResourceControllerTest {
                 """, playerUserId, machineId);
         long accountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        String issueNumber = "39999979";
+        insertBallCountIssue(issueNumber, 8);
         long betId = insertAndReturnId("""
                 INSERT INTO game_bet
                     (user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
                      stake, odds_snapshot)
-                VALUES (?, 'PLATFORM_TEST_UNSETTLED_BET', '3006154', 1, 'FAN', '1', 100.00, 3.850)
-                """, accountId);
+                VALUES (?, 'PLATFORM_TEST_UNSETTLED_BET', ?, 1, 'FAN', '1', 100.00, 3.850)
+                """, accountId, issueNumber);
 
         String token = login(ADMIN, PASSWORD);
         mockMvc.perform(get("/api/admin/unsettled-orders").header("Authorization", bearer(token)))
@@ -815,6 +821,75 @@ class PlatformAdminResourceControllerTest {
                 SELECT COUNT(*) FROM sys_operation_log
                  WHERE permission_code = 'UNSETTLED_ORDER_DELETE' AND resource_id = ?
                 """, Long.class, Long.toString(betId))).isEqualTo(1);
+    }
+
+    @Test
+    void unsettledOrdersHideLegacyEightBallRecordsOnceSevenBallIssuesBegin() throws Exception {
+        long groupId = insertAndReturnId("""
+                INSERT INTO agent_group (group_code, display_name, status, username)
+                VALUES ('PLATFORM_TEST_UNSETTLED_RULE_GROUP', '球数兼容测试组', 'ACTIVE', 'platform_test_unsettled_rule')
+                """);
+        long machineId = insertAndReturnId("""
+                INSERT INTO agent (agent_code, display_name, group_id, system_owned, status)
+                VALUES ('PLATFORM_TEST_UNSETTLED_RULE_MACHINE', '球数兼容测试机器', ?, TRUE, 'ACTIVE')
+                """, groupId);
+        long playerUserId = userRepository.insert("platform-admin-test-ball-count-player", "球数兼容测试玩家",
+                passwordPolicy.encode(PASSWORD), "ACTIVE");
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account
+                    (user_code, display_name, balance, status, sys_user_id, agent_id,
+                     identity_type, player_kind, member_code)
+                VALUES ('PLATFORM_TEST_BALL_COUNT_PLAYER', '球数兼容测试玩家', 1000.00, 'ACTIVE', ?, ?,
+                        'REAL', 'NORMAL', 'V-BALL-COUNT-001')
+                """, playerUserId, machineId);
+        long accountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        String legacyIssue = "39999980";
+        String sevenIssue = "39999981";
+        insertBallCountIssue(legacyIssue, 8);
+        long legacyBetId = insertBallCountBet(accountId, "PLATFORM_TEST_BALL_COUNT_OLD_BET", legacyIssue, 8);
+
+        String token = login(ADMIN, PASSWORD);
+        mockMvc.perform(get("/api/admin/unsettled-orders").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(legacyBetId));
+
+        insertBallCountIssue(sevenIssue, 7);
+        long sevenBetId = insertBallCountBet(accountId, "PLATFORM_TEST_BALL_COUNT_NEW_BET", sevenIssue, 7);
+        mockMvc.perform(get("/api/admin/unsettled-orders").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].id").value(sevenBetId))
+                .andExpect(jsonPath("$.items[0].issueNumber").value(sevenIssue));
+
+        mockMvc.perform(delete("/api/admin/unsettled-orders/" + legacyBetId)
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("UNSETTLED_ORDER_NOT_FOUND"));
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM game_bet WHERE id = ?",
+                Long.class, legacyBetId)).isEqualTo(1L);
+    }
+
+    private void insertBallCountIssue(String issueNumber, int ballCount) {
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count,
+                     opened_at, issue_started_at, betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, 'OPEN', 'BETTING', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 180 SECOND),
+                        DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 300 SECOND))
+                """, issueNumber, ballCount);
+    }
+
+    private long insertBallCountBet(long accountId, String betCode, String issueNumber, int ballNumber) {
+        jdbcTemplate.update("""
+                INSERT INTO game_bet
+                    (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
+                     play_type, parameters_text, stake, odds_snapshot)
+                VALUES ('AU8', ?, ?, ?, ?, ?, 'FAN', '1', 10.00, 3.850)
+                """, accountId, betCode, betCode, issueNumber, ballNumber);
+        return jdbcTemplate.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
     }
 
     @Test
@@ -1327,6 +1402,81 @@ class PlatformAdminResourceControllerTest {
                 SELECT COUNT(*) FROM report_network WHERE id = ? AND deleted_at IS NULL
                 """, Long.class, id)).isZero();
     }
+    @Test
+    void changesFutureAu8BallCountAtAnIssueBoundaryAndDoesNotSwitchCurrentIssue() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+        String legacyIssue = "399998765";
+        String nextIssue = "399998766";
+        Instant startedAt = Instant.now().plusSeconds(3600);
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at,
+                     betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, 'OPEN', 'BETTING', 8, ?, ?, ?, ?)
+                """, legacyIssue, Timestamp.from(startedAt), Timestamp.from(startedAt),
+                Timestamp.from(startedAt.plusSeconds(180)), Timestamp.from(startedAt.plusSeconds(300)));
+
+        MvcResult before = mockMvc.perform(get("/api/admin/game-settings/1")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nextIssueBallCount").value(8))
+                .andReturn();
+        long version = ((Number) JsonPath.read(before.getResponse().getContentAsString(), "$.version")).longValue();
+        String sevenBallBody = """
+                {"gameCode":"AU8","displayName":"澳8七球测试","ballIndexes":"1,2,3,4,5,6,7",
+                 "drawSourceUrl":null,"sortOrder":1,"algorithm":"SUM","playPrefix":null,
+                 "switchEnabled":false,"specialEnabled":true,"specialModel":"MODEL_ONE",
+                 "keyboardEnabled":true,"status":"ACTIVE","nextIssueBallCount":7,
+                 "ballRuleChangeReason":"BALL_COUNT_CUTOVER_TEST",
+                 "oddsAte":0,"oddsAdx":0,"oddsBte":0,"oddsBdx":0,
+                 "oddsCte":0,"oddsCdx":0,"oddsDte":0,"oddsDdx":0}
+                """;
+        mockMvc.perform(put("/api/admin/game-settings/1").param("version", Long.toString(version))
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(sevenBallBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.nextIssueBallCount").value(7))
+                .andExpect(jsonPath("$.ballIndexes").value("1,2,3,4,5,6,7"));
+
+        assertThat(jdbcTemplate.queryForObject("SELECT ball_count FROM game_issue WHERE game_code='AU8' AND issue_number=?",
+                Integer.class, legacyIssue)).isEqualTo(8);
+        assertThat(jdbcTemplate.queryForObject("SELECT effective_issue_number FROM game_ball_rule_change "
+                        + "WHERE game_code='AU8' AND reason='BALL_COUNT_CUTOVER_TEST'",
+                String.class)).isEqualTo(nextIssue);
+        mockMvc.perform(get("/api/demo/game/catalog"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].nextIssueBallCount").value(7))
+                .andExpect(jsonPath("$[0].activeIssueBallCount").value(8))
+                .andExpect(jsonPath("$[0].firstSevenIssueNumber").isEmpty());
+
+        jdbcTemplate.update("UPDATE game_issue SET phase='SETTLED', status='CLOSED', settled_at=CURRENT_TIMESTAMP "
+                + "WHERE game_code='AU8' AND issue_number=?", legacyIssue);
+        gameDataRepository.saveBettingIssue("AU8", nextIssue, startedAt.plusSeconds(300));
+        assertThat(jdbcTemplate.queryForObject("SELECT ball_count FROM game_issue WHERE game_code='AU8' AND issue_number=?",
+                Integer.class, nextIssue)).isEqualTo(7);
+        mockMvc.perform(get("/api/demo/game/catalog"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].activeIssueBallCount").value(7))
+                .andExpect(jsonPath("$[0].firstSevenIssueNumber").value(nextIssue));
+
+        MvcResult after = mockMvc.perform(get("/api/admin/game-settings/1")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk()).andReturn();
+        long nextVersion = ((Number) JsonPath.read(after.getResponse().getContentAsString(), "$.version")).longValue();
+        String eightBallBody = sevenBallBody.replace("澳8七球测试", "澳8测试彩种")
+                .replace("1,2,3,4,5,6,7", "1,2,3,4,5,6,7,8")
+                .replace("\"nextIssueBallCount\":7", "\"nextIssueBallCount\":8")
+                .replace("BALL_COUNT_CUTOVER_TEST", "BALL_COUNT_REVERT_TEST");
+        mockMvc.perform(put("/api/admin/game-settings/1").param("version", Long.toString(nextVersion))
+                        .header("Authorization", bearer(token)).contentType("application/json")
+                        .content(eightBallBody))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("GAME_BALL_COUNT_REVERT_FORBIDDEN"));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT next_issue_ball_count FROM game_definition WHERE game_code='AU8'", Integer.class))
+                .isEqualTo(7);
+    }
+
     @Test
     void managesMultipleGameDefinitionsAndRouteOdds() throws Exception {
         String token = login(ADMIN, PASSWORD);
@@ -2273,12 +2423,15 @@ class PlatformAdminResourceControllerTest {
     }
 
     private void clean() {
+        jdbcTemplate.update("DELETE FROM game_ball_rule_change WHERE reason IN "
+                + "('BALL_COUNT_CUTOVER_TEST', 'BALL_COUNT_REVERT_TEST')");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number IN ('399998765', '399998766')");
         jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number = 'CLEAR-CONFIRMED-ISSUE'");
         jdbcTemplate.update("DELETE FROM report_network WHERE network_code LIKE 'platform_test_%'");
         jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'PLATFORM_TEST_%')");
         jdbcTemplate.update("UPDATE game_route_odds SET special_odds = 0, big_small_odds = 0 WHERE game_id = 1");
         jdbcTemplate.update("UPDATE game_definition SET game_code = 'AU8', display_name = '澳8番摊', "
-                + "ball_indexes = '1,2,3,4,5,6,7,8', draw_source_url = NULL, sort_order = 1, "
+                + "ball_indexes = '1,2,3,4,5,6,7,8', next_issue_ball_count = 8, draw_source_url = NULL, sort_order = 1, "
                 + "algorithm = 'SUM', play_prefix = NULL, switch_enabled = FALSE, special_enabled = TRUE, "
                 + "special_model = 'MODEL_ONE', keyboard_enabled = TRUE, status = 'ACTIVE', updated_by = NULL WHERE id = 1");
         jdbcTemplate.update("UPDATE platform_setting SET site_title = '公开大厅', announcement = NULL, "

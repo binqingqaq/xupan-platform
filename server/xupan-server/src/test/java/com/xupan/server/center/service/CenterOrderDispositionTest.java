@@ -15,6 +15,7 @@ import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,6 +40,8 @@ class CenterOrderDispositionTest {
     private static final String GROUP_CODE = "DISPOSITION_GROUP";
     private static final String MACHINE_CODE = "DISPOSITION_MACHINE";
     private static final String MACHINE_USER = "disposition_machine_user";
+    private static final String ISSUE_NUMBER = "8" + String.format("%07d",
+            Math.floorMod(UUID.randomUUID().hashCode(), 10_000_000));
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -73,6 +76,13 @@ class CenterOrderDispositionTest {
                 """, AGENT_CODE, "disposition_upstream", "b".repeat(64), groupId);
         centerAgentId = jdbc.queryForObject(
                 "SELECT id FROM center_agent WHERE agent_code = ?", Long.class, AGENT_CODE);
+        if (jdbc.queryForObject("SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number=?",
+                Integer.class, ISSUE_NUMBER) == 0) {
+            jdbc.update("""
+                    INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                    VALUES ('AU8', ?, 'OPEN', 'BETTING', 8)
+                    """, ISSUE_NUMBER);
+        }
     }
 
     @AfterEach
@@ -298,7 +308,7 @@ class CenterOrderDispositionTest {
         long betId = insertBet(orderNo, amount);
         if ("ACCEPTED".equals(status)) {
             CenterOrderService.Accepted accepted = orderService.accept(centerAgentId, orderNo, betId, machineId,
-                    "AU8", "39999401", "FAN", "1", new BigDecimal("3.850"), amount);
+                    "AU8", ISSUE_NUMBER, "FAN", "1", new BigDecimal("3.850"), amount);
             assertThat(accepted.status()).as("接单应成功，拒绝原因=%s", accepted.rejectCode())
                     .isEqualTo("ACCEPTED");
             return accepted.orderId();
@@ -308,8 +318,8 @@ class CenterOrderDispositionTest {
                     (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code, issue_number,
                      ball_number, play_type, play_text, odds, amount, risk_amount, risk_policy_version,
                      status, frozen_amount, settle_amount)
-                VALUES (?, ?, ?, ?, 'AU8', '39999401', 1, 'FAN', 'params=1', 3.850, ?, ?, 1, ?, ?, ?)
-                """, centerAgentId, orderNo, betId, machineId, amount,
+                VALUES (?, ?, ?, ?, 'AU8', ?, 1, 'FAN', 'params=1', 3.850, ?, ?, 1, ?, ?, ?)
+                """, centerAgentId, orderNo, betId, machineId, ISSUE_NUMBER, amount,
                 amount.multiply(new BigDecimal("2.85")).setScale(2), status, frozen,
                 "SETTLED".equals(status) ? settledAmount : null);
         return jdbc.queryForObject("SELECT id FROM center_order WHERE agent_order_no = ?",
@@ -322,8 +332,8 @@ class CenterOrderDispositionTest {
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, machine_id_snapshot, agent_id_snapshot)
-                VALUES ('AU8', NULL, ?, ?, '39999401', 1, 'FAN', '1', ?, 3.850, ?, ?)
-                """, betCode, betCode, amount, machineId, machineId);
+                VALUES ('AU8', NULL, ?, ?, ?, 1, 'FAN', '1', ?, 3.850, ?, ?)
+                """, betCode, betCode, ISSUE_NUMBER, amount, machineId, machineId);
         return jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
     }
 
@@ -341,6 +351,8 @@ class CenterOrderDispositionTest {
                 + "(SELECT id FROM center_agent WHERE agent_code = ?)", AGENT_CODE);
         jdbc.update("DELETE FROM game_bet WHERE machine_id_snapshot IN "
                 + "(SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
+        jdbc.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number=? AND draw_confirmed_at IS NULL",
+                ISSUE_NUMBER);
         jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN "
                 + "(SELECT id FROM agent WHERE agent_code = ?)", MACHINE_CODE);
         jdbc.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);

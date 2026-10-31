@@ -2,6 +2,7 @@ package com.xupan.server.game.service;
 
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
+import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.web.PlaceBetRequest;
@@ -19,6 +20,7 @@ import org.springframework.test.context.TestPropertySource;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -63,11 +65,15 @@ class AgentBettingPolicyIntegrationTest {
     private long userId;
     private long accountId;
     private long machineId;
+    private String testIssueNumber;
 
     @BeforeEach
     void setUp() {
         clean();
-        userId = userRepository.insert(USERNAME, DISPLAY_NAME, passwordPolicy.encode(PASSWORD), "ACTIVE");
+        userId = userRepository.findByUsername(USERNAME)
+                .map(UserAccount::id)
+                .orElseGet(() -> userRepository.insert(USERNAME, DISPLAY_NAME,
+                        passwordPolicy.encode(PASSWORD), "ACTIVE"));
         userRepository.assignRole(userId, "USER");
         accountId = walletService.ensureWalletForUser(userId, DISPLAY_NAME);
         jdbc.update("""
@@ -78,9 +84,15 @@ class AgentBettingPolicyIntegrationTest {
         jdbc.update("UPDATE demo_user_account SET agent_id = ? WHERE id = ?", machineId, accountId);
         walletService.grant(userId, userId, new BigDecimal("10000.00"), "机器赔率测试上分", "AGENT-ODDS-GRANT");
         applyGenerousBettingLimits();
-        jdbc.update("DELETE FROM game_bet");
-        jdbc.update("DELETE FROM game_issue_event");
-        jdbc.update("DELETE FROM game_issue");
+        testIssueNumber = "AGENT-ODDS-IT-" + UUID.randomUUID().toString().replace("-", "");
+        jdbc.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at,
+                     betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, 'OPEN', 'BETTING', 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 180 SECOND),
+                        DATE_ADD(CURRENT_TIMESTAMP, INTERVAL 300 SECOND))
+                """, testIssueNumber);
     }
 
     @AfterEach
@@ -221,6 +233,7 @@ class AgentBettingPolicyIntegrationTest {
             placeBet(PlayType.SPECIAL, List.of(12), new BigDecimal("100.00"), "special-e2e-snapshot");
             jdbc.update("UPDATE agent SET special_odds_rate = 5, special_rebate_rate = 0.50 WHERE id = ?", machineId);
 
+            markIssueDrawing();
             gameService.draw(userId, List.of(12, 1, 2, 3, 4, 5, 6, 7));
 
             assertThat(jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id = ?",
@@ -260,6 +273,7 @@ class AgentBettingPolicyIntegrationTest {
 
         placeBet(PlayType.CAR, List.of(1, 2, 3), new BigDecimal("100.00"), "car-e2e-exact-third");
         jdbc.update("UPDATE agent SET odds_rate = 20 WHERE id = ?", machineId);
+        markIssueDrawing();
         gameService.draw(userId, List.of(18, 1, 2, 3, 4, 5, 6, 7));
 
         assertThat(jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id = ?",
@@ -290,6 +304,7 @@ class AgentBettingPolicyIntegrationTest {
 
         try {
             placeBet(PlayType.SPECIAL, List.of(12), new BigDecimal("100.00"), "special-miss-no-rebate");
+            markIssueDrawing();
             gameService.draw(userId, List.of(11, 1, 2, 3, 4, 5, 6, 7));
 
             assertThat(jdbc.queryForObject("SELECT balance FROM demo_user_account WHERE id = ?",
@@ -333,6 +348,7 @@ class AgentBettingPolicyIntegrationTest {
         try {
             placeBet(PlayType.SPECIAL, List.of(12, 18), new BigDecimal("200.00"), "special-combo-one-win");
             jdbc.update("UPDATE agent SET special_odds_rate = 5, special_rebate_rate = 0.50 WHERE id = ?", machineId);
+            markIssueDrawing();
             gameService.draw(userId, List.of(12, 1, 2, 3, 4, 5, 6, 7));
 
             assertThat(jdbc.queryForObject("SELECT total_stake FROM game_bet_batch WHERE idempotency_key = ?",
@@ -760,6 +776,11 @@ class AgentBettingPolicyIntegrationTest {
                 """, new BigDecimal(oddsRate), fanLimit, peerMachineId);
     }
 
+    private void markIssueDrawing() {
+        jdbc.update("UPDATE game_issue SET phase='DRAWING', status='CLOSED' "
+                + "WHERE game_code='AU8' AND issue_number=?", testIssueNumber);
+    }
+
     private void configureMachine(int oddsRate, int specialOddsRate, int closeSeconds, int cancelSeconds,
                                   boolean boardOpen) {
         jdbc.update("""
@@ -777,14 +798,25 @@ class AgentBettingPolicyIntegrationTest {
     }
 
     private void clean() {
-        jdbc.update("DELETE FROM auth_ws_ticket");
-        jdbc.update("DELETE FROM auth_session");
-        jdbc.update("DELETE FROM sys_operation_log");
-        jdbc.update("DELETE FROM demo_balance_ledger");
-        jdbc.update("DELETE FROM game_bet");
-        jdbc.update("DELETE FROM game_bet_batch");
-        jdbc.update("DELETE FROM game_issue_event");
-        jdbc.update("DELETE FROM game_issue");
+        Object[] usernames = {USERNAME, PEER_USERNAME, SAME_MACHINE_USERNAME, OTHER_MACHINE_USERNAME,
+                "agent-odds-quota-bot"};
+        jdbc.update("DELETE FROM auth_ws_ticket WHERE user_id IN (SELECT id FROM sys_user "
+                + "WHERE username IN (?, ?, ?, ?, ?))", usernames);
+        jdbc.update("DELETE FROM auth_session WHERE user_id IN (SELECT id FROM sys_user "
+                + "WHERE username IN (?, ?, ?, ?, ?))", usernames);
+        jdbc.update("DELETE FROM sys_operation_log WHERE operator_user_id IN (SELECT id FROM sys_user "
+                + "WHERE username IN (?, ?, ?, ?, ?))", usernames);
+        jdbc.update("DELETE FROM demo_balance_ledger WHERE user_id IN (SELECT id FROM demo_user_account "
+                + "WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?, ?)))", usernames);
+        jdbc.update("DELETE FROM game_bet WHERE user_id IN (SELECT id FROM demo_user_account "
+                + "WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?, ?)))", usernames);
+        jdbc.update("DELETE FROM game_bet_batch WHERE account_id IN (SELECT id FROM demo_user_account "
+                + "WHERE sys_user_id IN (SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?, ?)))", usernames);
+        jdbc.update("DELETE FROM game_issue_event WHERE issue_number LIKE 'AGENT-ODDS-IT-%'");
+        jdbc.update("DELETE FROM game_issue_event WHERE game_code = ?", OTHER_GAME_CODE);
+        jdbc.update("DELETE FROM game_issue WHERE game_code = ?", OTHER_GAME_CODE);
+        jdbc.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number LIKE 'AGENT-ODDS-IT-%' "
+                + "AND draw_confirmed_at IS NULL");
         jdbc.update("DELETE FROM game_definition WHERE game_code = ?", OTHER_GAME_CODE);
         jdbc.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?, ?))",
@@ -794,9 +826,11 @@ class AgentBettingPolicyIntegrationTest {
                 + "('MACHINE-ODDS-TEST', 'MACHINE-ODDS-TEST-B', 'MACHINE-ODDS-TEST-C'))");
         jdbc.update("DELETE FROM agent WHERE agent_code IN ('MACHINE-ODDS-TEST', 'MACHINE-ODDS-TEST-B', 'MACHINE-ODDS-TEST-C')");
         jdbc.update("DELETE FROM sys_user_role WHERE user_id IN "
-                + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?, ?))",
-                USERNAME, PEER_USERNAME, SAME_MACHINE_USERNAME, OTHER_MACHINE_USERNAME, "agent-odds-quota-bot");
-        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?, ?, ?)",
-                USERNAME, PEER_USERNAME, SAME_MACHINE_USERNAME, OTHER_MACHINE_USERNAME, "agent-odds-quota-bot");
+                        + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?, ?) "
+                        + "AND id NOT IN (SELECT draw_confirmed_by FROM game_issue WHERE draw_confirmed_by IS NOT NULL))",
+                usernames);
+        jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?, ?, ?) "
+                        + "AND id NOT IN (SELECT draw_confirmed_by FROM game_issue WHERE draw_confirmed_by IS NOT NULL)",
+                usernames);
     }
 }

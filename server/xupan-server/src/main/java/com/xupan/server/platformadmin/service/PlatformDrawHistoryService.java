@@ -32,6 +32,7 @@ public class PlatformDrawHistoryService {
 
     private final JdbcTemplate jdbc;
     private final PermissionService permissionService;
+    private final GameDataRepository gameDataRepository;
     private final SettlementService settlementService;
     private final VirtualWalletService walletService;
     private final CenterSettlementService centerSettlementService;
@@ -39,6 +40,7 @@ public class PlatformDrawHistoryService {
     private final ApplicationEventPublisher eventPublisher;
 
     public PlatformDrawHistoryService(JdbcTemplate jdbc, PermissionService permissionService,
+                                      GameDataRepository gameDataRepository,
                                       SettlementService settlementService,
                                       VirtualWalletService walletService,
                                       CenterSettlementService centerSettlementService,
@@ -46,6 +48,7 @@ public class PlatformDrawHistoryService {
                                       ApplicationEventPublisher eventPublisher) {
         this.jdbc = jdbc;
         this.permissionService = permissionService;
+        this.gameDataRepository = gameDataRepository;
         this.settlementService = settlementService;
         this.walletService = walletService;
         this.centerSettlementService = centerSettlementService;
@@ -62,7 +65,9 @@ public class PlatformDrawHistoryService {
         String normalizedGameCode = normalizeGameCode(gameCode);
         String keyword = issueNumber == null || issueNumber.isBlank() ? null : issueNumber.trim();
         StringBuilder where = new StringBuilder(
-                " WHERE (i.number_1 IS NOT NULL OR i.phase = 'DRAWING') AND i.game_code = ?");
+                " WHERE (i.number_1 IS NOT NULL OR i.phase = 'DRAWING') AND i.game_code = ?"
+                        + " AND (NOT EXISTS (SELECT 1 FROM game_issue seven "
+                        + "WHERE seven.game_code=i.game_code AND seven.ball_count=7) OR i.ball_count=7)");
         List<Object> args = new ArrayList<>();
         args.add(normalizedGameCode);
         if (keyword != null) { where.append(" AND issue_number LIKE ?"); args.add("%" + keyword + "%"); }
@@ -70,7 +75,7 @@ public class PlatformDrawHistoryService {
         List<Object> pageArgs = new ArrayList<>(args);
         pageArgs.add(pageSize); pageArgs.add((long)(page - 1) * pageSize);
         List<HistoryRow> items = jdbc.query("""
-                SELECT i.game_code, d.display_name AS game_name,
+                SELECT i.game_code, d.display_name AS game_name, i.ball_count,
                        i.issue_number, i.number_1, i.number_2, i.number_3, i.number_4,
                        i.number_5, i.number_6, i.number_7, i.number_8,
                        i.phase, i.opened_at, i.settled_at, i.draw_confirmed_at, i.draw_result_version,
@@ -90,9 +95,7 @@ public class PlatformDrawHistoryService {
                   JOIN game_definition d ON d.game_code = i.game_code
                 """ + where + " ORDER BY i.id DESC LIMIT ? OFFSET ?",
                 (rs, n) -> new HistoryRow(rs.getString("game_code"), rs.getString("game_name"),
-                        rs.getString("issue_number"), List.of(
-                        rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                        rs.getString("issue_number"), rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("opened_at")), instant(rs.getTimestamp("settled_at")),
                         instant(rs.getTimestamp("draw_confirmed_at")), rs.getInt("draw_result_version"),
                         rs.getLong("bet_count"), rs.getLong("pending_bet_count"),
@@ -220,7 +223,6 @@ public class PlatformDrawHistoryService {
         require(operator, SUPPLEMENT_PERMISSION, "DRAW_HISTORY_SUPPLEMENT_FORBIDDEN", "没有补期权限");
         String normalizedGameCode = normalizeGameCode(gameCode);
         String normalizedIssue = requiredIssue(issueNumber);
-        List<Integer> normalizedNumbers = validateNumbers(numbers);
         Instant normalizedOpenedAt = openedAt == null ? Instant.now() : openedAt;
         if (!normalizedOpenedAt.isBefore(Instant.now())) {
             throw BusinessException.badRequest("DRAW_SUPPLEMENT_NOT_HISTORICAL", "补期只能用于过去的期号");
@@ -235,22 +237,26 @@ public class PlatformDrawHistoryService {
         }
         HistoryTarget existing = lockExistingHistory(normalizedGameCode, normalizedIssue);
         boolean created = existing == null;
+        int ballCount = created
+                ? gameDataRepository.ballCountForIssue(normalizedGameCode, normalizedIssue)
+                : existing.ballCount();
+        List<Integer> normalizedNumbers = validateNumbers(numbers, ballCount);
         if (existing != null && ("BETTING".equals(existing.phase()) || "DRAWING".equals(existing.phase()))) {
             throw BusinessException.conflict("DRAW_SUPPLEMENT_ACTIVE_ISSUE", "当前期不能通过补期入口直接开奖");
         }
-        if (existing != null && existing.numbers().stream().anyMatch(value -> value > 0)) {
+        if (existing != null && existing.numbers().stream().anyMatch(value -> value != null && value > 0)) {
             throw BusinessException.conflict("DRAW_HISTORY_ALREADY_DRAWN", "此期数已经有开奖号码");
         }
+        List<Integer> columns = paddedNumbers(normalizedNumbers);
         if (created) {
             jdbc.update("""
                     INSERT INTO game_issue
-                        (game_code, issue_number, status, phase, number_1, number_2, number_3, number_4,
+                        (game_code, issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
                          number_5, number_6, number_7, number_8, issue_started_at, opened_at,
                          closed_at, settled_at, draw_result_version, draw_confirmed_at, draw_confirmed_by)
-                    VALUES (?, ?, 'CLOSED', 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                    """, normalizedGameCode, normalizedIssue, normalizedNumbers.get(0), normalizedNumbers.get(1),
-                    normalizedNumbers.get(2), normalizedNumbers.get(3), normalizedNumbers.get(4),
-                    normalizedNumbers.get(5), normalizedNumbers.get(6), normalizedNumbers.get(7),
+                    VALUES (?, ?, 'CLOSED', 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    """, normalizedGameCode, normalizedIssue, ballCount, columns.get(0), columns.get(1),
+                    columns.get(2), columns.get(3), columns.get(4), columns.get(5), columns.get(6), columns.get(7),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
                     Timestamp.from(normalizedOpenedAt), operator);
@@ -263,9 +269,8 @@ public class PlatformDrawHistoryService {
                            settled_at=COALESCE(settled_at, ?), draw_result_version=draw_result_version + 1,
                            draw_confirmed_at=?, draw_confirmed_by=?, updated_at=CURRENT_TIMESTAMP
                      WHERE game_code=? AND issue_number=? AND number_1 IS NULL AND draw_confirmed_at IS NULL
-                    """, normalizedNumbers.get(0), normalizedNumbers.get(1), normalizedNumbers.get(2),
-                    normalizedNumbers.get(3), normalizedNumbers.get(4), normalizedNumbers.get(5),
-                    normalizedNumbers.get(6), normalizedNumbers.get(7), Timestamp.from(normalizedOpenedAt),
+                    """, columns.get(0), columns.get(1), columns.get(2), columns.get(3), columns.get(4),
+                    columns.get(5), columns.get(6), columns.get(7), Timestamp.from(normalizedOpenedAt),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
                     Timestamp.from(normalizedOpenedAt), operator, normalizedGameCode, normalizedIssue);
             if (updated != 1) {
@@ -291,7 +296,6 @@ public class PlatformDrawHistoryService {
         require(operator, SUPPLEMENT_PERMISSION, "DRAW_HISTORY_SUPPLEMENT_FORBIDDEN", "没有开奖编辑权限");
         String normalizedGameCode = normalizeGameCode(gameCode);
         String normalizedIssue = requiredIssue(issueNumber);
-        List<Integer> normalizedNumbers = validateNumbers(numbers);
         HistoryTarget existing = lockExistingHistory(normalizedGameCode, normalizedIssue);
         if (existing == null) {
             throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
@@ -302,14 +306,15 @@ public class PlatformDrawHistoryService {
         if (!"DRAWING".equals(existing.phase()) && !"CLOSED".equals(existing.phase())) {
             throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
         }
+        List<Integer> normalizedNumbers = validateNumbers(numbers, existing.ballCount());
+        List<Integer> columns = paddedNumbers(normalizedNumbers);
         int updated = jdbc.update("""
                 UPDATE game_issue
                    SET number_1=?, number_2=?, number_3=?, number_4=?, number_5=?, number_6=?, number_7=?, number_8=?,
                        draw_result_version=draw_result_version + 1, updated_at=CURRENT_TIMESTAMP
                  WHERE game_code=? AND issue_number=? AND draw_confirmed_at IS NULL
-                """, normalizedNumbers.get(0), normalizedNumbers.get(1), normalizedNumbers.get(2),
-                normalizedNumbers.get(3), normalizedNumbers.get(4), normalizedNumbers.get(5),
-                normalizedNumbers.get(6), normalizedNumbers.get(7), normalizedGameCode, normalizedIssue);
+                """, columns.get(0), columns.get(1), columns.get(2), columns.get(3), columns.get(4),
+                columns.get(5), columns.get(6), columns.get(7), normalizedGameCode, normalizedIssue);
         if (updated != 1) {
             throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
         }
@@ -336,7 +341,7 @@ public class PlatformDrawHistoryService {
             throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
         }
         if (draft.drawConfirmedAt() != null) {
-            List<Integer> numbers = validateNumbers(draft.numbers());
+            List<Integer> numbers = validateNumbers(draft.numbers(), draft.ballCount());
             SettlementCounts recovered = settleLockedHistory(draft);
             return new ConfirmationSummary(normalizedGameCode, normalizedIssue, draft.resultVersion(),
                     draft.drawConfirmedAt(), recovered.localOrders(), recovered.centerOrders(),
@@ -345,7 +350,7 @@ public class PlatformDrawHistoryService {
         if (!"DRAWING".equals(draft.phase()) && !"CLOSED".equals(draft.phase())) {
             throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
         }
-        List<Integer> numbers = validateNumbers(draft.numbers());
+        List<Integer> numbers = validateNumbers(draft.numbers(), draft.ballCount());
         Instant confirmedAt = Instant.now();
         int updated = jdbc.update("""
                 UPDATE game_issue
@@ -430,14 +435,13 @@ public class PlatformDrawHistoryService {
     private HistoryTarget lockExistingHistory(String gameCode, String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
                 SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8, phase,
+                       number_5, number_6, number_7, number_8, ball_count, phase,
                        draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE game_code=? AND issue_number=?
                    FOR UPDATE
-                """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"), List.of(
-                        rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"),
+                        rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
                         rs.getInt("draw_result_version")),
                 gameCode, issueNumber);
@@ -468,26 +472,44 @@ public class PlatformDrawHistoryService {
         return issueNumber.trim();
     }
 
-    private static List<Integer> validateNumbers(List<Integer> numbers) {
-        if (numbers == null || numbers.size() != 8
+    private static List<Integer> validateNumbers(List<Integer> numbers, int expectedCount) {
+        if ((expectedCount != 7 && expectedCount != 8) || numbers == null || numbers.size() != expectedCount
                 || numbers.stream().anyMatch(value -> value == null || value < 1 || value > 20)) {
-            throw BusinessException.badRequest("DRAW_HISTORY_NUMBERS_INVALID", "开奖号码必须是 8 个 1 到 20 的数字");
+            throw BusinessException.badRequest("DRAW_HISTORY_NUMBERS_INVALID",
+                    "开奖号码数量必须与该期配置的 " + expectedCount + " 球一致，且每球为 1 到 20");
         }
         return List.copyOf(numbers);
+    }
+
+    private static List<Integer> paddedNumbers(List<Integer> numbers) {
+        List<Integer> columns = new ArrayList<>(8);
+        columns.addAll(numbers);
+        while (columns.size() < 8) columns.add(null);
+        return columns;
+    }
+
+    private static List<Integer> readNumbers(java.sql.ResultSet rs, int ballCount) throws java.sql.SQLException {
+        if (ballCount != 7 && ballCount != 8) {
+            throw new IllegalStateException("开奖期次球数无效");
+        }
+        List<Integer> numbers = new ArrayList<>(ballCount);
+        for (int index = 1; index <= ballCount; index++) {
+            numbers.add(rs.getObject("number_" + index, Integer.class));
+        }
+        return java.util.Collections.unmodifiableList(numbers);
     }
 
     private HistoryTarget lockHistory(String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
                 SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8, phase,
+                       number_5, number_6, number_7, number_8, ball_count, phase,
                        draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE issue_number=?
                  ORDER BY game_code
                    FOR UPDATE
-                """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"), List.of(
-                        rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"),
+                        rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
                         rs.getInt("draw_result_version")),
                 issueNumber);
@@ -509,14 +531,13 @@ public class PlatformDrawHistoryService {
     private HistoryTarget lockHistory(String gameCode, String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
                 SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
-                       number_5, number_6, number_7, number_8, phase,
+                       number_5, number_6, number_7, number_8, ball_count, phase,
                        draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE game_code=? AND issue_number=?
                    FOR UPDATE
-                """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"), List.of(
-                        rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"), rs.getInt("number_4"),
-                        rs.getInt("number_5"), rs.getInt("number_6"), rs.getInt("number_7"), rs.getInt("number_8")),
+                """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"),
+                        rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
                         rs.getInt("draw_result_version")),
                 gameCode, issueNumber);
@@ -585,7 +606,7 @@ public class PlatformDrawHistoryService {
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
 
     public record Page(List<HistoryRow> items, int page, int pageSize, long total) {}
-    public record HistoryRow(String gameCode, String gameName, String issueNumber, List<Integer> balls,
+    public record HistoryRow(String gameCode, String gameName, String issueNumber, int ballCount, List<Integer> balls,
                              String phase, Instant openedAt, Instant settledAt,
                              Instant drawConfirmedAt, int drawResultVersion,
                              long betCount, long pendingBetCount, long pendingCenterOrderCount) {}
@@ -599,7 +620,7 @@ public class PlatformDrawHistoryService {
     public record ConfirmationSummary(String gameCode, String issueNumber, int resultVersion,
                                       Instant confirmedAt, int localOrders, int centerOrders, String message) {}
     private record IssueKey(String gameCode, String issueNumber) {}
-    private record HistoryTarget(String gameCode, String issueNumber, List<Integer> numbers,
+    private record HistoryTarget(String gameCode, String issueNumber, int ballCount, List<Integer> numbers,
                                  String phase, Instant drawConfirmedAt, int resultVersion) {}
     private record SettlementCounts(int localOrders, int centerOrders) {
         int totalOrders() { return localOrders + centerOrders; }

@@ -81,12 +81,12 @@ public class CenterSettlementService {
     @Transactional
     public SettlementSummary settleIssue(String gameCode, String issueNumber, List<BallResult> ballResults,
                                          String drawNumbers, int limit) {
-        if (ballResults == null || ballResults.size() < 8
-                || ballResults.subList(0, Math.min(8, ballResults.size())).stream().anyMatch(value -> value == null)) {
-            throw BusinessException.badRequest("CENTER_DRAW_RESULTS_INVALID", "必须提供完整的 8 个开奖球结果");
-        }
-        List<BallResult> snapshot = List.copyOf(ballResults.subList(0, 8));
         ConfirmedDraw draw = confirmedDraw(gameCode, issueNumber);
+        if (ballResults == null || ballResults.size() != draw.results().size()
+                || ballResults.stream().anyMatch(value -> value == null)) {
+            throw BusinessException.badRequest("CENTER_DRAW_RESULTS_INVALID", "调用方开奖球数与该期球数不一致");
+        }
+        List<BallResult> snapshot = List.copyOf(ballResults);
         if (!snapshot.equals(draw.results())) {
             throw BusinessException.conflict("CENTER_DRAW_RESULT_MISMATCH",
                     "调用方开奖结果与已确认并锁定的开奖记录不一致");
@@ -112,12 +112,12 @@ public class CenterSettlementService {
         BigDecimal agentLoseTotal = BigDecimal.ZERO.setScale(2);
 
         for (CenterOrderRepository.OrderRow order : orders) {
-            BallResult result = order.ballNumber() == null || order.ballNumber() < 1 || order.ballNumber() > 8
-                    ? null : draw.results().get(order.ballNumber() - 1);
-            if (result == null) {
-                skipped++;
-                continue;
+            if (order.ballNumber() == null || order.ballNumber() < 1
+                    || order.ballNumber() > draw.results().size()) {
+                throw BusinessException.conflict("CENTER_ORDER_BALL_OUT_OF_RANGE",
+                        "中心订单球位超出该期已确认开奖结果范围");
             }
+            BallResult result = draw.results().get(order.ballNumber() - 1);
             SettledOrder one = settleOrder(order, result, draw.numbersText());
             if (one == null) {
                 skipped++;

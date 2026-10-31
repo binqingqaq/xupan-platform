@@ -41,7 +41,7 @@ public class BetBoardService {
                 .or(() -> gameRepository.findLatestIssue())
                 .orElse(null);
         if (issue == null) {
-            return new Board(null, null, Instant.now(), null, 0, 0, money("0"),
+            return new Board(null, 0, null, Instant.now(), null, 0, 0, money("0"),
                     money("0"), List.of(), List.of());
         }
 
@@ -50,9 +50,10 @@ public class BetBoardService {
                 .map(BetBoardService::toItem)
                 .toList();
         List<DrawHistory> history = gameRepository.findSettledIssues(HISTORY_SIZE).stream()
+                .filter(settledIssue -> settledIssue.ballCount() == issue.ballCount())
                 .map(BetBoardService::toHistory)
                 .toList();
-        return new Board(issue.issueNumber(), issue.phase(), Instant.now(), phaseEndsAt(issue),
+        return new Board(issue.issueNumber(), issue.ballCount(), issue.phase(), Instant.now(), phaseEndsAt(issue),
                 summary.normal().count(), summary.bot().count(),
                 money(summary.normal().totalStake()), money(summary.bot().totalStake()),
                 items, history);
@@ -165,7 +166,7 @@ public class BetBoardService {
         return value == null ? BigDecimal.ZERO.setScale(2) : value.setScale(2);
     }
 
-    public record Board(String issueNumber, String phase, Instant serverNow, Instant phaseEndsAt,
+    public record Board(String issueNumber, int ballCount, String phase, Instant serverNow, Instant phaseEndsAt,
                         long normalCount, long botCount, BigDecimal normalStake, BigDecimal botStake,
                         List<BetItem> items, List<DrawHistory> history) {
     }

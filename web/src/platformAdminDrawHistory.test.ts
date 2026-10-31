@@ -148,4 +148,34 @@ describe('platform admin draw history', () => {
       gameCode: 'AU8', issueNumber: '39999948', numbers: [1, 2, 3, 4, 5, 6, 7, 18],
     }))
   })
+
+  it('hides archived eight-ball rows and exposes only seven-ball entries after cutover', async () => {
+    vi.mocked(api.getGameCatalog).mockResolvedValue([
+      { gameCode: 'AU8', displayName: '七球番摊', sortOrder: 1, nextIssueBallCount: 7, activeIssueBallCount: 7 },
+    ] as never)
+    vi.mocked(api.listDrawHistory).mockResolvedValue({
+      items: [
+        { gameCode: 'AU8', gameName: '七球番摊', issueNumber: '39999947', balls: [1, 2, 3, 4, 5, 6, 7], ballCount: 7,
+          phase: 'DRAWING', openedAt: null, settledAt: null, drawConfirmedAt: null, drawResultVersion: 0,
+          betCount: 0, pendingBetCount: 0, pendingCenterOrderCount: 0 },
+        { gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999946', balls: [1, 2, 3, 4, 5, 6, 7, 18], ballCount: 8,
+          phase: 'SETTLED', openedAt: null, settledAt: '2026-10-02T01:00:00Z', drawConfirmedAt: '2026-10-02T01:00:00Z',
+          drawResultVersion: 1, betCount: 0, pendingBetCount: 0, pendingCenterOrderCount: 0 },
+      ], page: 1, pageSize: 100, total: 2,
+    } as never)
+
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminDrawHistory)
+    app.mount(container)
+    await settleOperations()
+
+    const visibleBallCells = container.querySelectorAll('tbody .el-tag.ball')
+    expect(visibleBallCells).toHaveLength(7)
+    expect(container.textContent).not.toContain('39999946')
+    operationButton('编辑开奖草稿', container).click()
+    await settleOperations()
+    expect(container.querySelectorAll('.el-dialog .el-form-item__label')).toHaveLength(7)
+    expect(container.querySelector('.el-dialog')?.textContent).not.toContain('第 8 球')
+  })
 })

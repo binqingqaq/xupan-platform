@@ -30,6 +30,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -48,6 +49,7 @@ class CenterOrderControllerTest {
     private static final String PASSWORD = "CenterOrderPassword123";
     private static final String GROUP_CODE = "CENTER_ORDER_GROUP";
     private static final String CENTER_USERNAME = "center_order_account";
+    private String issuePrefix;
 
     @Autowired
     private MockMvc mockMvc;
@@ -83,8 +85,10 @@ class CenterOrderControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         clean();
-        adminId = userRepository.insert(ADMIN, "中心订单管理员",
-                new BCryptPasswordEncoder().encode(PASSWORD), "ACTIVE");
+        issuePrefix = "8" + String.format("%07d", Math.floorMod(UUID.randomUUID().hashCode(), 10_000_000));
+        adminId = userRepository.findByUsername(ADMIN).map(user -> user.id()).orElseGet(() ->
+                userRepository.insert(ADMIN, "中心订单管理员",
+                        new BCryptPasswordEncoder().encode(PASSWORD), "ACTIVE"));
         userRepository.assignRole(adminId, "ADMIN");
         adminToken = login(ADMIN, PASSWORD);
         jdbc.update("INSERT INTO agent_group (group_code, display_name, status, created_by) "
@@ -105,7 +109,7 @@ class CenterOrderControllerTest {
 
     @Test
     void acceptsOrderAndFreezesCenterCredit() throws Exception {
-        CenterOrderService.Accepted accepted = accept("ORD-1001", "FAN", "3.850", "100", "39999001");
+        CenterOrderService.Accepted accepted = accept("ORD-1001", "FAN", "3.850", "100", issue("01"));
 
         assertThat(accepted.status()).isEqualTo("ACCEPTED");
         assertThat(accepted.duplicate()).isFalse();
@@ -127,8 +131,8 @@ class CenterOrderControllerTest {
 
     @Test
     void duplicateReportIsIdempotentAndDoesNotFreezeTwice() {
-        CenterOrderService.Accepted first = accept("ORD-1002", "FAN", "3.850", "100", "39999002");
-        CenterOrderService.Accepted replay = accept("ORD-1002", "FAN", "3.850", "100", "39999002");
+        CenterOrderService.Accepted first = accept("ORD-1002", "FAN", "3.850", "100", issue("02"));
+        CenterOrderService.Accepted replay = accept("ORD-1002", "FAN", "3.850", "100", issue("02"));
 
         assertThat(first.duplicate()).isFalse();
         assertThat(replay.status()).isEqualTo("ACCEPTED");
@@ -145,9 +149,9 @@ class CenterOrderControllerTest {
     void rejectsInvalidOrdersWithReasonAndDoesNotFreezeCredit() {
         assertThat(accept("ORD-2001", "FAN", "3.850", "100", "ABC").rejectCode())
                 .isEqualTo("CENTER_ISSUE_INVALID");
-        assertThat(accept("ORD-2002", "NOT_A_PLAY", "3.850", "100", "39999003").rejectCode())
+        assertThat(accept("ORD-2002", "NOT_A_PLAY", "3.850", "100", issue("03")).rejectCode())
                 .isEqualTo("CENTER_PLAY_TYPE_INVALID");
-        assertThat(accept("ORD-2003", "FAN", "3.850", "200000", "39999006").rejectCode())
+        assertThat(accept("ORD-2003", "FAN", "3.850", "200000", issue("06")).rejectCode())
                 .isEqualTo("CENTER_AMOUNT_LIMIT_EXCEEDED");
         assertThat(countOrders("REJECTED")).isEqualTo(3L);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM center_agent_ledger "
@@ -158,7 +162,7 @@ class CenterOrderControllerTest {
     void rejectsWhenAvailableCreditIsInsufficient() {
         jdbc.update("UPDATE center_agent SET available_balance = 50.00 WHERE id = ?", centerAgentId);
 
-        CenterOrderService.Accepted rejected = accept("ORD-3001", "FAN", "3.850", "100", "39999007");
+        CenterOrderService.Accepted rejected = accept("ORD-3001", "FAN", "3.850", "100", issue("07"));
 
         assertThat(rejected.status()).isEqualTo("REJECTED");
         assertThat(rejected.rejectCode()).isEqualTo("CENTER_RISK_CAPACITY_INSUFFICIENT");
@@ -187,7 +191,7 @@ class CenterOrderControllerTest {
 
     @Test
     void adminCanReadOrdersAndSummaryAfterServiceAcceptance() throws Exception {
-        accept("ORD-6001", "FAN", "3.850", "100", "39999012");
+        accept("ORD-6001", "FAN", "3.850", "100", issue("12"));
 
         mockMvc.perform(get("/api/admin/center/agents/orders").header("Authorization", bearer(adminToken)))
                 .andExpect(status().isOk())
@@ -205,7 +209,7 @@ class CenterOrderControllerTest {
 
     @Test
     void acceptsOrderWithoutOptionalPlayText() {
-        long betId = insertBet("ORD-7001", "FAN", "1", "3.85", "100", "39999020");
+        long betId = insertBet("ORD-7001", "FAN", "1", "3.85", "100", issue("20"));
         CenterOrderService.Accepted accepted = centerOrderService.accept(centerAgentId, "ORD-7001", betId,
                 machineId, "K28", "000000", "NOT_A_PLAY", null,
                 new BigDecimal("99.99"), new BigDecimal("999"));
@@ -213,14 +217,14 @@ class CenterOrderControllerTest {
         assertThat(accepted.status()).isEqualTo("ACCEPTED");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM center_order "
                         + "WHERE agent_order_no = 'ORD-7001' AND play_text = 'params=1' "
-                        + "AND game_code = 'AU8' AND issue_number = '39999020' "
-                        + "AND amount = 100.00 AND odds = 3.8500", Long.class))
+                        + "AND game_code = 'AU8' AND issue_number = ? "
+                        + "AND amount = 100.00 AND odds = 3.8500", Long.class, issue("20")))
                 .isEqualTo(1L);
     }
 
     @Test
     void calculatesMaximumNetRiskFromPersistedBetSnapshot() {
-        long betId = insertBet("ORD-RISK-95", "FAN", "1", "1.950", "100", "39999030");
+        long betId = insertBet("ORD-RISK-95", "FAN", "1", "1.950", "100", issue("30"));
 
         CenterOrderService.Accepted accepted = centerOrderService.accept(centerAgentId, "ORD-RISK-95", betId,
                 machineId, "K28", "000000", "FAN", "1", new BigDecimal("9.999"),
@@ -244,7 +248,7 @@ class CenterOrderControllerTest {
     void centerRiskIsReservedBeforeMachineSupplementAndReportReplayDoesNotReserveTwice() {
         setCenterAvailable("20.00");
         setMachineScore("100.00");
-        long betId = insertBet("ORD-RISK-SPLIT", "FAN", "1", "1.950", "100", "39999031");
+        long betId = insertBet("ORD-RISK-SPLIT", "FAN", "1", "1.950", "100", issue("31"));
 
         CenterOrderService.Accepted first = centerOrderService.accept(centerAgentId, "ORD-RISK-SPLIT", betId,
                 machineId, "K28", "000000", "FAN", null, BigDecimal.ONE, BigDecimal.ONE);
@@ -268,7 +272,7 @@ class CenterOrderControllerTest {
         setCenterAvailable("20.00");
         setMachineScore("100.00");
         CenterOrderService.Accepted accepted = accept("ORD-RISK-REFUND", "FAN", "1.950", "100",
-                "39999037");
+                issue("37"));
 
         CenterOrderService.DispositionResult first = centerOrderService.dispose(accepted.orderId(), "REFUND",
                 "测试退回机器补足", "center-risk-refund-once", adminId);
@@ -290,7 +294,7 @@ class CenterOrderControllerTest {
         setCenterAvailable("20.00");
         setMachineScore("74.99");
 
-        CenterOrderService.Accepted rejected = accept("ORD-RISK-SHORT", "FAN", "1.950", "100", "39999032");
+        CenterOrderService.Accepted rejected = accept("ORD-RISK-SHORT", "FAN", "1.950", "100", issue("32"));
 
         assertThat(rejected.status()).isEqualTo("REJECTED");
         assertThat(rejected.rejectCode()).isEqualTo("CENTER_RISK_CAPACITY_INSUFFICIENT");
@@ -309,17 +313,17 @@ class CenterOrderControllerTest {
     void winConsumesReservedRiskAndRepeatedSettlementDoesNotWriteAdditionalLedgerEntries() {
         setCenterAvailable("20.00");
         setMachineScore("100.00");
-        ensureConfirmedIssue("39999033", 1);
+        ensureConfirmedIssue(issue("33"), 1);
         CenterOrderService.Accepted accepted = accept("ORD-RISK-SETTLE-WIN", "FAN", "1.950", "100",
-                "39999033");
+                issue("33"));
         List<BallResult> results = ballResults(1);
 
         CenterSettlementService.SettlementSummary first = centerSettlementService.settleIssue(
-                "AU8", "39999033", results, "1,1,1,1,1,1,1,1", 100);
+                "AU8", issue("33"), results, "1,1,1,1,1,1,1,1", 100);
         long centerLedgerAfterFirst = countCenterOrderLedger(accepted.orderId());
         long machineLedgerAfterFirst = countMachineOrderLedger(accepted.orderId());
         CenterSettlementService.SettlementSummary replay = centerSettlementService.settleIssue(
-                "AU8", "39999033", results, "1,1,1,1,1,1,1,1", 100);
+                "AU8", issue("33"), results, "1,1,1,1,1,1,1,1", 100);
 
         assertThat(first.settledCount()).isEqualTo(1);
         assertThat(first.orders().getFirst().settleResult()).isEqualTo("AGENT_WIN");
@@ -336,12 +340,12 @@ class CenterOrderControllerTest {
 
     @Test
     void losingBetCreditsStakeToCenterAndReleasesItsRiskReservation() {
-        ensureConfirmedIssue("39999034", 2);
+        ensureConfirmedIssue(issue("34"), 2);
         CenterOrderService.Accepted accepted = accept("ORD-RISK-SETTLE-LOSE", "FAN", "1.950", "100",
-                "39999034");
+                issue("34"));
 
         CenterSettlementService.SettlementSummary summary = centerSettlementService.settleIssue(
-                "AU8", "39999034", ballResults(2), "2,2,2,2,2,2,2,2", 100);
+                "AU8", issue("34"), ballResults(2), "2,2,2,2,2,2,2,2", 100);
 
         assertThat(summary.settledCount()).isEqualTo(1);
         assertThat(summary.orders().getFirst().settleResult()).isEqualTo("AGENT_LOSE");
@@ -355,9 +359,9 @@ class CenterOrderControllerTest {
 
     @Test
     void settlementSelectsTheResultByEachOrdersStoredBallNumber() {
-        ensureConfirmedIssue("39999038", List.of(1, 2, 3, 4, 5, 6, 7, 8));
-        long firstBetId = insertBet("ORD-RISK-BALL-1", "FAN", "1", "1.950", "100", "39999038", 1);
-        long secondBetId = insertBet("ORD-RISK-BALL-2", "FAN", "2", "1.950", "100", "39999038", 2);
+        ensureConfirmedIssue(issue("38"), List.of(1, 2, 3, 4, 5, 6, 7, 8));
+        long firstBetId = insertBet("ORD-RISK-BALL-1", "FAN", "1", "1.950", "100", issue("38"), 1);
+        long secondBetId = insertBet("ORD-RISK-BALL-2", "FAN", "2", "1.950", "100", issue("38"), 2);
         CenterOrderService.Accepted firstOrder = centerOrderService.accept(centerAgentId, "ORD-RISK-BALL-1",
                 firstBetId, machineId, "ignored", "ignored", "FAN", "ignored", BigDecimal.ONE, BigDecimal.ONE);
         CenterOrderService.Accepted secondOrder = centerOrderService.accept(centerAgentId, "ORD-RISK-BALL-2",
@@ -367,7 +371,7 @@ class CenterOrderControllerTest {
                 BallResult.fromNumber(6), BallResult.fromNumber(7), BallResult.fromNumber(8));
 
         CenterSettlementService.SettlementSummary summary = centerSettlementService.settleIssue(
-                "AU8", "39999038", results, "1,2,3,4,5,6,7,8", 100);
+                "AU8", issue("38"), results, "1,2,3,4,5,6,7,8", 100);
 
         assertThat(summary.settledCount()).isEqualTo(2);
         assertThat(summary.orders()).extracting(CenterSettlementService.SettledOrder::settleResult)
@@ -380,11 +384,11 @@ class CenterOrderControllerTest {
 
     @Test
     void rejectsSettlementNumbersThatDifferFromTheLockedDraw() {
-        ensureConfirmedIssue("39999035", 1);
-        accept("ORD-RISK-SETTLE-MISMATCH", "FAN", "1.950", "100", "39999035");
+        ensureConfirmedIssue(issue("35"), 1);
+        accept("ORD-RISK-SETTLE-MISMATCH", "FAN", "1.950", "100", issue("35"));
 
         assertThatThrownBy(() -> centerSettlementService.settleIssue(
-                "AU8", "39999035", ballResults(2), "2,2,2,2,2,2,2,2", 100))
+                "AU8", issue("35"), ballResults(2), "2,2,2,2,2,2,2,2", 100))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("CENTER_DRAW_RESULT_MISMATCH");
         assertThat(jdbc.queryForObject("SELECT status FROM center_order WHERE agent_order_no = ?",
@@ -394,8 +398,8 @@ class CenterOrderControllerTest {
     @Test
     void concurrentOrdersCannotReserveTheSameCenterRiskTwice() throws Exception {
         setCenterAvailable("95.00");
-        long firstBetId = insertBet("ORD-RISK-CONCURRENT-1", "FAN", "1", "1.950", "100", "39999035");
-        long secondBetId = insertBet("ORD-RISK-CONCURRENT-2", "FAN", "1", "1.950", "100", "39999035");
+        long firstBetId = insertBet("ORD-RISK-CONCURRENT-1", "FAN", "1", "1.950", "100", issue("35"));
+        long secondBetId = insertBet("ORD-RISK-CONCURRENT-2", "FAN", "1", "1.950", "100", issue("35"));
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch start = new CountDownLatch(1);
         ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -510,6 +514,7 @@ class CenterOrderControllerTest {
 
     private long insertBet(String orderNo, String playType, String parameters, String odds,
                            String amount, String issueNumber, int ballNumber) {
+        ensureOpenIssue("AU8", issueNumber);
         String betCode = "CENTER_ORDER_BET_" + (++betSequence);
         jdbc.update("""
                 INSERT INTO game_bet
@@ -519,6 +524,23 @@ class CenterOrderControllerTest {
                 """, betCode, betCode, issueNumber, ballNumber, playType, parameters, new BigDecimal(amount),
                 new BigDecimal(odds), machineId, machineId);
         return jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
+    }
+
+    private String issue(String suffix) {
+        return issuePrefix + suffix;
+    }
+
+    private void ensureOpenIssue(String gameCode, String issueNumber) {
+        Long count = jdbc.queryForObject("SELECT COUNT(*) FROM game_issue WHERE game_code=? AND issue_number=?",
+                Long.class, gameCode, issueNumber);
+        if (count != null && count > 0) return;
+        jdbc.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at,
+                     betting_ends_at, draw_ends_at)
+                VALUES (?, ?, 'OPEN', 'BETTING', 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, gameCode, issueNumber);
     }
 
     private long countOrders(String state) {
@@ -552,13 +574,13 @@ class CenterOrderControllerTest {
         jdbc.update("DELETE FROM center_agent WHERE agent_code = ?", CENTER_USERNAME);
         jdbc.update("DELETE FROM game_bet WHERE machine_id_snapshot IN "
                 + "(SELECT id FROM agent WHERE agent_code = 'CENTER_ORDER_MACHINE')");
-        jdbc.update("DELETE FROM chat_robot_dispatch WHERE game_event_id IN "
-                + "(SELECT id FROM game_issue_event WHERE issue_number IN "
-                + "('39999033','39999034','39999035','39999038'))");
-        jdbc.update("DELETE FROM game_issue_event WHERE issue_number IN "
-                + "('39999033','39999034','39999035','39999038')");
-        jdbc.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number IN "
-                + "('39999033','39999034','39999035','39999038')");
+        if (issuePrefix != null) {
+            jdbc.update("DELETE FROM chat_robot_dispatch WHERE game_event_id IN "
+                    + "(SELECT id FROM game_issue_event WHERE issue_number LIKE ?)", issuePrefix + "%");
+            jdbc.update("DELETE FROM game_issue_event WHERE issue_number LIKE ?", issuePrefix + "%");
+            jdbc.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number LIKE ? "
+                    + "AND draw_confirmed_at IS NULL", issuePrefix + "%");
+        }
         jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN "
                 + "(SELECT id FROM agent WHERE agent_code = 'CENTER_ORDER_MACHINE')");
         jdbc.update("DELETE FROM agent WHERE agent_code = 'CENTER_ORDER_MACHINE'");
@@ -567,7 +589,6 @@ class CenterOrderControllerTest {
         jdbc.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", ADMIN);
         jdbc.update("DELETE FROM auth_session WHERE user_id IN (SELECT id FROM sys_user WHERE username = ?)", ADMIN);
-        jdbc.update("DELETE FROM sys_user_role WHERE user_id IN (SELECT id FROM sys_user WHERE username = ?)", ADMIN);
-        jdbc.update("DELETE FROM sys_user WHERE username = ?", ADMIN);
+        // Confirmed game issues keep their draw_confirmed_by identity by design.
     }
 }

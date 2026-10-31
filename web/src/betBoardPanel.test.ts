@@ -124,4 +124,37 @@ describe('bet board panel', () => {
     app.unmount()
     container.remove()
   })
+
+  it('shows seven history columns and omits archived eight-ball rows after cutover', async () => {
+    vi.mocked(api.getBetBoard).mockResolvedValue({
+      ...currentBoard,
+      ballCount: 7,
+      history: [
+        { issueNumber: '3014479', status: '已开奖', settledAt: '2026-10-31T11:00:00Z', ballCount: 7,
+          balls: Array.from({ length: 7 }, (_, index) => ({ position: index + 1, number: index + 1, fan: (index % 4) + 1 })) },
+        { issueNumber: '3014478', status: '已开奖', settledAt: '2026-10-31T10:55:00Z', ballCount: 8,
+          balls: Array.from({ length: 8 }, (_, index) => ({ position: index + 1, number: index + 1, fan: (index % 4) + 1 })) },
+      ],
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const app = createApp(BetBoardPanel)
+    app.mount(container)
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+
+    const drawTab = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+      .find(button => button.textContent?.includes('开奖'))
+    drawTab?.click()
+    await nextTick()
+    expect(container.querySelector('.bet-board-draw-title')?.textContent).toContain('7 球开奖')
+    expect(container.querySelectorAll('.bet-board-table-header span')).toHaveLength(9)
+    expect(container.querySelectorAll('.bet-board-table-row')).toHaveLength(1)
+    expect(container.querySelector('.bet-board-table-row')?.textContent).not.toContain('3014478')
+
+    app.unmount()
+    container.remove()
+  })
 })

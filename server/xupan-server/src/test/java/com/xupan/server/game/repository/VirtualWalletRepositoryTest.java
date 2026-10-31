@@ -51,6 +51,8 @@ class VirtualWalletRepositoryTest {
         jdbcTemplate.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE user_code LIKE 'WALLET-REPO-%')");
         jdbcTemplate.update("DELETE FROM game_bet WHERE bet_code LIKE 'WALLET-REPO-%'");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number IN "
+                + "('WALLET-ISSUE-1', 'WALLET-DISABLED-ISSUE')");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE user_code LIKE 'WALLET-REPO-%'");
         jdbcTemplate.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'wallet-repo-test-%')");
@@ -272,6 +274,15 @@ class VirtualWalletRepositoryTest {
 
     private void insertBet(long accountId, String betCode, String issueNumber,
                            String requestIdempotencyKey, String stake) {
+        Integer issueCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number=?",
+                Integer.class, issueNumber);
+        if (issueCount == null || issueCount == 0) {
+            jdbcTemplate.update("""
+                    INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                    VALUES ('AU8', ?, 'CLOSED', 'SETTLED', 8)
+                    """, issueNumber);
+        }
         jdbcTemplate.update("""
                 INSERT INTO game_bet
                     (user_id, bet_code, issue_number, ball_number, play_type, parameters_text,

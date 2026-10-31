@@ -54,6 +54,10 @@ async function resubmitBet(betId: number) {
 }
 
 const activeKind = computed<'NORMAL' | 'BOT'>(() => activeTab.value === 'BOT' ? 'BOT' : 'NORMAL')
+const visibleBallCount = computed(() => board.value?.ballCount ?? board.value?.history[0]?.balls.length ?? 8)
+const visibleDrawHistory = computed(() => (board.value?.history ?? []).filter(history =>
+  (history.ballCount ?? history.balls.length) === visibleBallCount.value
+  && history.balls.length === visibleBallCount.value))
 const activeCount = computed(() => activeTab.value === 'BOT'
   ? board.value?.botCount ?? 0
   : board.value?.normalCount ?? 0)
@@ -146,17 +150,17 @@ onBeforeUnmount(() => {
 
       <div v-else class="bet-board-draw" role="tabpanel">
         <div class="bet-board-draw-title">
-          <strong>澳8番摊/8球</strong>
+          <strong>{{ visibleBallCount }} 球开奖</strong>
           <span>倒计时：{{ countdown }}</span>
         </div>
         <div class="bet-board-table" role="table" aria-label="最近18期开奖">
           <div class="bet-board-table-header" role="row">
             <span>期号</span>
-            <span v-for="position in 8" :key="position">{{ position }}</span>
+            <span v-for="position in visibleBallCount" :key="position">{{ position }}</span>
             <span>状态</span>
           </div>
-          <div v-if="!board?.history.length" class="bet-board-state">暂无开奖记录</div>
-          <div v-for="history in board?.history ?? []" :key="history.issueNumber" class="bet-board-table-row" role="row">
+          <div v-if="!visibleDrawHistory.length" class="bet-board-state">暂无开奖记录</div>
+          <div v-for="history in visibleDrawHistory" :key="history.issueNumber" class="bet-board-table-row" role="row">
             <span class="bet-board-history-issue">{{ history.issueNumber }}</span>
             <span v-for="ball in history.balls" :key="`${history.issueNumber}-${ball.position}`" :class="['bet-board-fan', betBoardFanClass(ball.fan)]" :title="`号码 ${ball.number}`">{{ ball.fan }}</span>
             <span class="bet-board-history-status">{{ history.status }}</span>

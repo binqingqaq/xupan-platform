@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import { api, apiErrorMessage, ApiError, getAuthAudience, pointRequestErrorMessage, restoreSession } from '../api'
 import Hby019AccountPanelFrame from '../components/Hby019AccountPanelFrame.vue'
@@ -8,6 +8,7 @@ import QuickBetPanel from '../components/QuickBetPanel.vue'
 import { toHistoryRows } from '../gameHistory'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { shouldShowRobotTimestamp } from '../chatMessageTime'
+import { isSevenBallCutover } from '../chatBallRule'
 import { ChatSocket } from '../services/chatSocket'
 import { isPointRequestCommand, submissionAffectsAccount } from '../chatSubmission'
 import { DEFAULT_QUICK_BET_AMOUNTS } from '../quickBet'
@@ -132,7 +133,7 @@ const settingAmounts = ref(DEFAULT_QUICK_BET_AMOUNTS.map(String))
 const quickBetScrollTop = ref(0)
 const keyboardFlat = ref(true)
 const voiceEnabled = ref(false)
-const selectedBallNumber = ref(8)
+const selectedBallNumber = ref(7)
 let keyboardBulmaLink: HTMLLinkElement | null = null
 let gameRefreshTimer: number | undefined
 let gameLoadSequence = 0
@@ -172,11 +173,30 @@ const oddsCards: OddsCard[] = [
   { label: '特', hint: '特码', playType: 'SPECIAL', tone: 'green' },
 ]
 
+const currentBallCount = computed(() => {
+  const game = current.value
+  if (!game) return 7
+  return game.ballCount ?? (game.balls.length === 7 ? 7 : 8)
+})
+const firstSevenIssueNumber = computed(() => gameCatalog.value.find(game => game.gameCode === 'AU8')?.firstSevenIssueNumber ?? null)
+watch(currentBallCount, count => {
+  if (selectedBallNumber.value > count) selectedBallNumber.value = count
+  if (selectedBallNumber.value < 1) selectedBallNumber.value = 1
+}, { immediate: true })
+watch(currentBallCount, (count, previousCount) => {
+  if (selectedGameCode.value !== 'AU8' || !isSevenBallCutover(previousCount, count)) return
+  const wasAwayFromBottom = chatAwayFromBottom.value
+  const previousScrollTop = messageScroll.value?.scrollTop ?? 0
+  chatUnread.value = 0
+  void loadChatHistory({ preserveScroll: wasAwayFromBottom, preserveCurrentMessages: true, scrollTop: previousScrollTop })
+})
+
 const ballNumbers = computed(() => {
   const game = current.value
   if (!game) return []
+  const issueBalls = game.balls.slice(0, currentBallCount.value)
   if (game.phase === 'DRAWING') {
-    return game.balls.map((ball, index) => ({
+    return issueBalls.map((ball, index) => ({
       ...ball,
       number: null,
       fan: null,
@@ -185,16 +205,18 @@ const ballNumbers = computed(() => {
     }))
   }
   if (game.phase !== 'SETTLED') {
-    if (game.previousBalls?.length) return game.previousBalls
-    return (game.balls ?? []).map((ball) => ({ ...ball, number: null, fan: null, parity: null, size: null }))
+    if (game.previousBalls?.length === currentBallCount.value) return game.previousBalls
+    return issueBalls.map((ball) => ({ ...ball, number: null, fan: null, parity: null, size: null }))
   }
-  return game.balls ?? []
+  return issueBalls
 })
 const selectedGameLabel = computed(() => gameCatalog.value.find(game => game.gameCode === selectedGameCode.value)?.displayName || selectedGameCode.value)
-const showingPreviousBalls = computed(() => current.value?.phase === 'BETTING' && Boolean(current.value?.previousBalls?.length))
+const showingPreviousBalls = computed(() => current.value?.phase === 'BETTING'
+  && current.value?.previousBalls?.length === currentBallCount.value
+  && currentBallCount.value > 0)
 const ballNumbersLabel = computed(() => showingPreviousBalls.value
   ? '上期开奖号码（当前期暂未开奖，仅作参考）'
-  : current.value?.phase === 'DRAWING' ? '本期开奖中，八个号码同步滚动' : '当前期开奖号码')
+  : current.value?.phase === 'DRAWING' ? `本期开奖中，${currentBallCount.value}个号码同步滚动` : '当前期开奖号码')
 const issueNumber = computed(() => current.value?.issueNumber || '00000000')
 const displayIssueNumber = computed(() => {
   const match = issueNumber.value.match(/(\d+)$/)
@@ -232,7 +254,8 @@ const chatConnectionLabel = computed(() => {
   }
 })
 
-const historyRows = computed(() => toHistoryRows(current.value?.history ?? []))
+const historyRows = computed(() => toHistoryRows((current.value?.history ?? []).filter(row =>
+  (row.ballCount ?? row.balls.length) === currentBallCount.value)))
 const currentBets = computed(() => current.value?.bets ?? [])
 const quickPendingCount = computed(() => currentBets.value
   .filter(bet => bet.settlementStatus === 'PENDING').length)
@@ -267,8 +290,14 @@ function accountBetResultClass(bet: BetView) {
 }
 
 function accountBetText(bet: BetView) {
+  if (bet.ballNumber > currentBallCount.value) return '历史订单'
   const amount = Number(bet.stake).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
   return `第${bet.ballNumber}球/${formatBetParameters(bet)}${playTypeLabel(bet.playType)}/${amount}`
+}
+
+function playerBetSummary(bet: BetView) {
+  if (bet.ballNumber > currentBallCount.value) return '历史订单'
+  return `${formatBetParameters(bet)}${playTypeLabel(bet.playType)} · 第${bet.ballNumber}球`
 }
 
 function accountIssueLabel(value: string) {
@@ -330,9 +359,47 @@ function ledgerOperationLabel(operationType: string) {
   return operationType
 }
 
+function issuePrecedesSevenBallCutover(issueNumber: string, boundary: string): boolean {
+  const issueDigits = issueNumber.match(/(\d+)$/)?.[1]
+  const boundaryDigits = boundary.match(/(\d+)$/)?.[1]
+  if (!issueDigits || !boundaryDigits) return false
+  const left = issueDigits.replace(/^0+(?=\d)/, '')
+  const right = boundaryDigits.replace(/^0+(?=\d)/, '')
+  return left.length !== right.length ? left.length < right.length : left < right
+}
+
+function payloadContainsEightBallResult(payloadJson: string | null): boolean {
+  const payload = parseRobotDrawPayload(payloadJson)
+  if (!payload) return false
+  if (payload.component === 'DRAW_SUMMARY') return payload.data.numbers.length === 8
+  if (payload.component === 'DRAW_HISTORY') {
+    return [...payload.data.items, ...(payload.data.routeItems ?? [])].some(item => item.numbers.length === 8)
+  }
+  if (payload.component === 'WINNER_LIST') return payload.data.numbers?.length === 8
+  return false
+}
+
+function hidePreSevenMessage(message: ChatMessage): boolean {
+  if (selectedGameCode.value !== 'AU8' || currentBallCount.value !== 7) return false
+  const boundary = firstSevenIssueNumber.value
+  if (boundary && message.issueNumber && issuePrecedesSevenBallCutover(message.issueNumber, boundary)) return true
+  if (payloadContainsEightBallResult(message.payloadJson)) return true
+  if (!message.issueNumber && message.messageType === 'RESULT') return true
+  if (!message.issueNumber && message.payloadJson) {
+    try {
+      const payload: unknown = JSON.parse(message.payloadJson)
+      if (typeof payload === 'object' && payload !== null
+          && 'eventType' in payload && payload.eventType === 'DRAW_RESULT') return true
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
 const messages = computed<RoomMessage[]>(() => [
-  ...chatMessages.value.map(toRoomMessage),
-  ...adminNotices.value.map(toRoomMessage),
+  ...chatMessages.value.filter(message => !hidePreSevenMessage(message)).map(toRoomMessage),
+  ...adminNotices.value.filter(message => !hidePreSevenMessage(message)).map(toRoomMessage),
 ])
 const chatOldestSequence = computed(() => chatMessages.value[0]?.sequenceNo ?? null)
 const displayMessages = computed<RoomMessage[]>(() => {
@@ -371,7 +438,9 @@ function toRoomMessage(message: ChatMessage): RoomMessage {
     name: type === 'robot' ? '机器人' : message.senderName,
     avatarKey: type === 'robot' ? 'robot-default.png' : message.avatarKey,
     body: message.status === 'ACTIVE' ? message.content : '该消息已撤回',
-    drawPayload: type === 'robot' && message.status === 'ACTIVE' ? parseRobotDrawPayload(message.payloadJson) : null,
+    drawPayload: type === 'robot' && message.status === 'ACTIVE'
+      ? parseRobotDrawPayload(message.payloadJson, selectedGameCode.value === 'AU8' ? currentBallCount.value : undefined)
+      : null,
     time: formatMessageTime(message.createdAt),
     showTimestamp: shouldShowRobotTimestamp(message),
     mine: type === 'user' && message.senderId !== null && message.senderId === currentUser.value?.id,
@@ -529,7 +598,7 @@ async function saveChatReadCursor(sequence: number) {
   }
 }
 
-async function loadChatHistory() {
+async function loadChatHistory(options: { preserveScroll?: boolean; preserveCurrentMessages?: boolean; scrollTop?: number } = {}) {
   chatLoading.value = true
   try {
     const [nextRoom, page] = await Promise.all([
@@ -538,12 +607,16 @@ async function loadChatHistory() {
     ])
     room.value = nextRoom
     chatHistoryCutoff.value = chatHistoryCutoffMs(nextRoom.serverNow)
-    chatMessages.value = []
-    chatLastSequence.value = 0
-    chatReadCursorSaved.value = 0
+    if (!options.preserveCurrentMessages) {
+      chatMessages.value = []
+      chatLastSequence.value = 0
+      chatReadCursorSaved.value = 0
+    } else {
+      chatMessages.value = chatMessages.value.filter(message => !hidePreSevenMessage(message))
+    }
     chatHistoryExhausted.value = false
     const latestSequence = page.items.length ? page.items[page.items.length - 1].sequenceNo : 0
-    chatLastSequence.value = latestSequence
+    chatLastSequence.value = Math.max(chatLastSequence.value, latestSequence)
     const visibleItems = page.items.filter(message =>
       isWithinChatHistoryWindow(message.createdAt, chatHistoryCutoff.value))
     mergeChatMessages(visibleItems)
@@ -552,8 +625,14 @@ async function loadChatHistory() {
       || visibleItems.length === 0
     chatUnread.value = 0
     await nextTick()
-    scrollToBottom()
-    if (chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
+    if (options.preserveScroll && messageScroll.value) {
+      const maxScroll = Math.max(0, messageScroll.value.scrollHeight - messageScroll.value.clientHeight)
+      messageScroll.value.scrollTop = Math.min(Math.max(0, options.scrollTop ?? 0), maxScroll)
+      chatAwayFromBottom.value = !isNearChatBottom()
+    } else {
+      scrollToBottom()
+    }
+    if (!options.preserveScroll && chatLastSequence.value > 0) void saveChatReadCursor(chatLastSequence.value)
   } finally {
     chatLoading.value = false
   }
@@ -1331,6 +1410,7 @@ onUnmounted(() => {
       :font-bold="chatFontBold"
       :loading="accountPanelLoading"
       :error="accountPanelError"
+      :max-ball-number="currentBallCount"
       :rows="accountPanelRows"
       :expanded-rows="expandedAccountRows"
       :issue-label="accountIssueLabel"
@@ -1348,7 +1428,7 @@ onUnmounted(() => {
       <div class="history-panel-table">
         <div v-for="row in historyRows" :key="`panel-${row.issue}`" class="history-panel-row">
           <strong class="history-issue-number">{{ row.issue }}期</strong>
-          <span v-for="(number, index) in row.numbers" :key="`${row.issue}-${index}`" class="history-ball" :class="{ 'is-red': index === 7 }">{{ number }}</span>
+          <span v-for="(number, index) in row.numbers" :key="`${row.issue}-${index}`" class="history-ball" :class="{ 'is-red': index === row.numbers.length - 1 }">{{ number }}</span>
           <b class="history-result-fan">{{ row.fan }}番</b><b class="history-result-emphasis">{{ row.size }}</b><b class="history-result-emphasis">{{ row.parity }}</b>
         </div>
       </div>
@@ -1373,7 +1453,7 @@ onUnmounted(() => {
           </div>
           <div v-if="currentBets.length" class="bet-summary-list">
             <div v-for="bet in currentBets" :key="bet.id" class="bet-summary-row">
-              <span>{{ formatBetParameters(bet) }}{{ playTypeLabel(bet.playType) }} · 第1球 · {{ Number(bet.stake).toFixed(2) }}</span>
+              <span>{{ playerBetSummary(bet) }} · {{ Number(bet.stake).toFixed(2) }}</span>
               <strong :class="{ positive: Number(bet.netProfit ?? 0) > 0, negative: Number(bet.netProfit ?? 0) < 0 }">
                 {{ settlementStatusLabel(bet.settlementStatus) }}<template v-if="bet.netProfit !== null"> {{ signedMoney(Number(bet.netProfit)) }}</template>
               </strong>
@@ -1442,7 +1522,7 @@ onUnmounted(() => {
         ></textarea>
         <div v-if="selectedGameCode === 'AU8'" style="width:85px;text-align:center;background-color:#fff;height:32px;padding-left:0;border-radius:3px;border:1px solid #ccc;">
           <select id="changeQiu" v-model.number="selectedBallNumber" style="border:none;width:100%;display:block;height:100%;background:#fff;" aria-label="选择下注球号">
-            <option v-for="ballNumber in 8" :key="ballNumber" :value="ballNumber">第 {{ ballNumber }} 球</option>
+            <option v-for="ballNumber in currentBallCount" :key="ballNumber" :value="ballNumber">第 {{ ballNumber }} 球</option>
           </select>
         </div>
         <button

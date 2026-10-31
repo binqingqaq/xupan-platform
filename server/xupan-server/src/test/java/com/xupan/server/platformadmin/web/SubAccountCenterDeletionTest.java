@@ -379,31 +379,38 @@ class SubAccountCenterDeletionTest {
     }
 
     private long createBet(long playerId, String suffix) {
+        String issueNumber = "SCD" + suffix;
+        jdbc.update("""
+                INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                VALUES ('AU8', ?, 'CLOSED', 'SETTLED', 8)
+                """, issueNumber);
         jdbc.update("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, settlement_status)
-                VALUES ('AU8', ?, ?, ?, '3000001', 1, 'FAN', '1', 10, 3.850, 'PENDING')
-                """, playerId, "SCD-BET-" + suffix, "SCD-BET-KEY-" + suffix);
+                VALUES ('AU8', ?, ?, ?, ?, 1, 'FAN', '1', 10, 3.850, 'PENDING')
+                """, playerId, "SCD-BET-" + suffix, "SCD-BET-KEY-" + suffix, issueNumber);
         return jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class,
                 "SCD-BET-" + suffix);
     }
 
     private long createCenterOrder(long centerId, long machineId, long betId, String suffix, String status) {
+        String issueNumber = jdbc.queryForObject("SELECT issue_number FROM game_bet WHERE id = ?",
+                String.class, betId);
         jdbc.update("""
                 INSERT INTO center_order
-                    (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code,
+                    (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code, ball_number,
                      issue_number, play_type, play_text, odds, amount, status, frozen_amount,
                      risk_amount, risk_policy_version, machine_funded_amount,
                      settle_result, settle_amount, draw_numbers, accepted_at, settled_at)
-                VALUES (?, ?, ?, ?, 'AU8', '3000001', 'FAN', 'params=1', 3.850, 10,
+                VALUES (?, ?, ?, ?, 'AU8', 1, ?, 'FAN', 'params=1', 3.850, 10,
                         ?, 10, 200, 1, 100,
                         CASE WHEN ? = 'SETTLED' THEN 'AGENT_LOSE' ELSE NULL END,
                         CASE WHEN ? = 'SETTLED' THEN 10 ELSE NULL END,
                         CASE WHEN ? = 'SETTLED' THEN '1,2,3,4,5,6,7,8' ELSE NULL END,
                         CURRENT_TIMESTAMP,
                         CASE WHEN ? = 'SETTLED' THEN CURRENT_TIMESTAMP ELSE NULL END)
-                """, centerId, "SCD-ORDER-" + suffix, betId, machineId,
+                """, centerId, "SCD-ORDER-" + suffix, betId, machineId, issueNumber,
                 status, status, status, status, status);
         return jdbc.queryForObject("SELECT id FROM center_order WHERE agent_order_no = ?", Long.class,
                 "SCD-ORDER-" + suffix);

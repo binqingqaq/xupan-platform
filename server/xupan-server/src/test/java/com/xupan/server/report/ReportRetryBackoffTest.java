@@ -33,6 +33,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ReportRetryBackoffTest {
 
     private static final String REPORT_AGENT_CODE = "REPORT_BACKOFF_MACHINE";
+    private static final String REPORT_GROUP_CODE = "REPORT_BACKOFF_GROUP";
+    private static final String REPORT_CENTER_CODE = "REPORT_BACKOFF_CENTER";
+    private static final String ISSUE_NUMBER = "8" + String.format("%07d",
+            Math.floorMod(java.util.UUID.randomUUID().hashCode(), 10_000_000));
     private static final List<String> RETRY_STATUSES = List.of("PENDING", "REJECTED", "TIMEOUT");
 
     @Autowired
@@ -42,16 +46,33 @@ class ReportRetryBackoffTest {
 
     private long agentId;
     private long accountId;
+    private long groupId;
+    private long centerAgentId;
 
     @BeforeEach
     void setUp() {
         clean();
         long machineUserId = insertUser("report-backoff-machine");
+        groupId = insertAndReturnId("""
+                INSERT INTO agent_group (group_code, display_name, status)
+                VALUES (?, '退避测试子账号', 'ACTIVE')
+                """, REPORT_GROUP_CODE);
+        centerAgentId = insertAndReturnId("""
+                INSERT INTO center_agent
+                    (agent_code, agent_name, upstream_account, token_hash, token_prefix,
+                     status, agent_group_id, expires_at)
+                VALUES (?, '退避测试中心账号', ?, REPEAT('d', 64), 'backoff', 'ACTIVE', ?,
+                        '2099-12-31 23:59:59')
+                """, REPORT_CENTER_CODE, REPORT_CENTER_CODE + "_upstream", groupId);
         agentId = insertAndReturnId("""
                 INSERT INTO agent (agent_code, display_name, account_user_id, system_owned, status,
-                                   report_type, report_auto, report_online, report_withdraw)
-                VALUES (?, '退避测试机器', ?, FALSE, 'ACTIVE', 'K28', TRUE, TRUE, FALSE)
-                """, REPORT_AGENT_CODE, machineUserId);
+                                   group_id, center_agent_id, report_type, report_auto, report_online, report_withdraw)
+                VALUES (?, '退避测试机器', ?, FALSE, 'ACTIVE', ?, ?, 'CENTER', TRUE, TRUE, FALSE)
+                """, REPORT_AGENT_CODE, machineUserId, groupId, centerAgentId);
+        jdbc.update("""
+                INSERT INTO center_machine_session (center_agent_id, machine_agent_id, expires_at)
+                VALUES (?, ?, '2099-12-31 23:59:59')
+                """, centerAgentId, agentId);
         long playerUserId = insertUser("report-backoff-player");
         jdbc.update("""
                 INSERT INTO demo_user_account
@@ -62,6 +83,8 @@ class ReportRetryBackoffTest {
                 """, playerUserId, agentId);
         accountId = jdbc.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                + "VALUES ('AU8', ?, 'OPEN', 'BETTING', 8)", ISSUE_NUMBER);
     }
 
     @Test
@@ -164,8 +187,8 @@ class ReportRetryBackoffTest {
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, settlement_status)
-                VALUES ('AU8', ?, ?, ?, '39999601', 1, 'FAN', '1', 10.00, 3.850, 'PENDING')
-                """, accountId, betCode, betCode);
+                VALUES ('AU8', ?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850, 'PENDING')
+                """, accountId, betCode, betCode, ISSUE_NUMBER);
     }
 
     /** 直接插入一次上报尝试行；状态可为 REJECTED/TIMEOUT/MANUAL。 */
@@ -215,9 +238,15 @@ class ReportRetryBackoffTest {
                 + "(SELECT id FROM agent WHERE agent_code = ?)", REPORT_AGENT_CODE);
         jdbc.update("DELETE FROM game_bet WHERE user_id IN (SELECT id FROM demo_user_account "
                 + "WHERE agent_id IN (SELECT id FROM agent WHERE agent_code = ?))", REPORT_AGENT_CODE);
+        jdbc.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number=? AND draw_confirmed_at IS NULL",
+                ISSUE_NUMBER);
         jdbc.update("DELETE FROM demo_user_account WHERE agent_id IN "
                 + "(SELECT id FROM agent WHERE agent_code = ?)", REPORT_AGENT_CODE);
+        jdbc.update("DELETE FROM center_machine_session WHERE center_agent_id IN "
+                + "(SELECT id FROM center_agent WHERE agent_code = ?)", REPORT_CENTER_CODE);
         jdbc.update("DELETE FROM agent WHERE agent_code = ?", REPORT_AGENT_CODE);
+        jdbc.update("DELETE FROM center_agent WHERE agent_code = ?", REPORT_CENTER_CODE);
+        jdbc.update("DELETE FROM agent_group WHERE group_code = ?", REPORT_GROUP_CODE);
         jdbc.update("DELETE FROM sys_user WHERE username IN "
                 + "('report-backoff-machine', 'report-backoff-player')");
     }

@@ -86,9 +86,11 @@ while ((Get-Date) -lt $startDeadline) {
 }
 
 if (-not ($backendReady -and $frontendReady)) {
-    $backendLog = Join-Path $projectRoot 'var\logs\display-mobile-backend.err.log'
-    $frontendLog = Join-Path $projectRoot 'var\logs\local-frontend.err.log'
-    throw "服务未完全就绪（后端 UP=$backendReady，前端 HTTP 200=$frontendReady）。检查日志：$backendLog；$frontendLog"
+    $backendOutLog = Join-Path $projectRoot 'var\logs\display-mobile-backend.out.log'
+    $backendErrLog = Join-Path $projectRoot 'var\logs\display-mobile-backend.err.log'
+    $frontendOutLog = Join-Path $projectRoot 'var\logs\local-frontend.out.log'
+    $frontendErrLog = Join-Path $projectRoot 'var\logs\local-frontend.err.log'
+    throw "服务未完全就绪（后端 UP=$backendReady，前端 HTTP 200=$frontendReady）。检查标准输出/错误日志：$backendOutLog；$backendErrLog；$frontendOutLog；$frontendErrLog"
 }
 
 Write-Host '本地服务已启动并通过健康检查：'

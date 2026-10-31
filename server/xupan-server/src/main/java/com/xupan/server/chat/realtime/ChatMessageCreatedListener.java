@@ -1,5 +1,6 @@
 package com.xupan.server.chat.realtime;
 
+import com.xupan.server.chat.repository.ChatMessageRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -12,14 +13,18 @@ public class ChatMessageCreatedListener {
     private static final Logger log = LoggerFactory.getLogger(ChatMessageCreatedListener.class);
 
     private final ChatRealtimeBroadcaster broadcaster;
+    private final ChatMessageRepository messageRepository;
 
-    public ChatMessageCreatedListener(ChatRealtimeBroadcaster broadcaster) {
+    public ChatMessageCreatedListener(ChatRealtimeBroadcaster broadcaster,
+                                      ChatMessageRepository messageRepository) {
         this.broadcaster = broadcaster;
+        this.messageRepository = messageRepository;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onMessageCreated(ChatMessageCreatedEvent event) {
         try {
+            if (messageRepository.isLegacyEightBallMessage(event.message())) return;
             broadcaster.broadcast(event.message());
         } catch (RuntimeException exception) {
             log.error("聊天室消息提交后广播失败 stage=afterCommitBroadcast messageId={} roomCode={}",

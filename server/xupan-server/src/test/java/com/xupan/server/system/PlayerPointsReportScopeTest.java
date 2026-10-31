@@ -110,6 +110,13 @@ class PlayerPointsReportScopeTest {
         botAAccountId = createPlayer(BOT_A, "组内托", "BOT", machineAId);
         botBAccountId = createPlayer(BOT_B, "组外托", "BOT", machineBId);
 
+        Integer reportIssueCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number='20260921'", Integer.class);
+        if (reportIssueCount == null || reportIssueCount == 0) {
+            jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                    + "VALUES ('AU8', '20260921', 'CLOSED', 'SETTLED', 8)");
+        }
+
         // 组内普通玩家：注单 30（turnover）+ 上分 100 / 下分 25（topUp/down + pointOperations）
         insertBet(normalAAccountId, "PPRS-BET-A", "30.00", "12.00");
         insertLedger(normalAAccountId, "ADMIN_GRANT", "100.00", "0.00", "100.00", "A-UP");

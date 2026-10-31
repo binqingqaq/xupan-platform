@@ -42,14 +42,14 @@ public class RobotDispatchRepository {
     public List<UnscheduledGameEvent> findUnscheduledEvents(int limit) {
         validateLimit(limit);
         return jdbcTemplate.query("""
-                SELECT e.id, e.issue_number, e.event_type, e.message, e.created_at
+                SELECT e.id, e.game_code, e.issue_number, e.event_type, e.message, e.created_at
                   FROM game_issue_event e
                   LEFT JOIN chat_robot_dispatch d ON d.game_event_id = e.id
                  WHERE d.id IS NULL
                    AND e.event_type IN """ + SUPPORTED_EVENT_TYPES + """
                  ORDER BY e.id
                  LIMIT ?
-                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"),
+                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"), rs.getString("game_code"),
                 rs.getString("issue_number"), rs.getString("event_type"), rs.getString("message"),
                 instant(rs.getTimestamp("created_at"))), limit);
     }
@@ -59,7 +59,7 @@ public class RobotDispatchRepository {
         validateLimit(limit);
         Timestamp cutoff = Timestamp.from(requiredInstant(createdAfter, "createdAfter"));
         return jdbcTemplate.query("""
-                SELECT e.id, e.issue_number, e.event_type, e.message, e.created_at
+                SELECT e.id, e.game_code, e.issue_number, e.event_type, e.message, e.created_at
                   FROM game_issue_event e
                   LEFT JOIN chat_robot_dispatch d ON d.game_event_id = e.id
                  WHERE d.id IS NULL
@@ -67,7 +67,7 @@ public class RobotDispatchRepository {
                    AND e.created_at >= ?
                  ORDER BY e.id
                  LIMIT ?
-                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"),
+                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"), rs.getString("game_code"),
                 rs.getString("issue_number"), rs.getString("event_type"), rs.getString("message"),
                 instant(rs.getTimestamp("created_at"))), cutoff, limit);
     }
@@ -84,10 +84,10 @@ public class RobotDispatchRepository {
 
     public Optional<UnscheduledGameEvent> findGameEventById(long gameEventId) {
         return jdbcTemplate.query("""
-                SELECT id, issue_number, event_type, message, created_at
+                SELECT id, game_code, issue_number, event_type, message, created_at
                   FROM game_issue_event
                  WHERE id = ?
-                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"),
+                """, (rs, rowNum) -> new UnscheduledGameEvent(rs.getLong("id"), rs.getString("game_code"),
                 rs.getString("issue_number"), rs.getString("event_type"),
                 rs.getString("message"), instant(rs.getTimestamp("created_at"))), gameEventId)
                 .stream().findFirst();
@@ -370,7 +370,7 @@ public class RobotDispatchRepository {
         }
     }
 
-    public record UnscheduledGameEvent(long id, String issueNumber, String eventType,
+    public record UnscheduledGameEvent(long id, String gameCode, String issueNumber, String eventType,
                                       String message, Instant createdAt) {
     }
 }

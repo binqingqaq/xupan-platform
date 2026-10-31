@@ -226,6 +226,10 @@ function time(value: string | null | undefined) {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--'
 }
 
+function displayBetCommand(bet: AgentBetDetail) {
+  return bet.ballNumber > 7 ? '历史订单' : bet.command
+}
+
 onMounted(() => { void load() })
 </script>
 
@@ -346,7 +350,7 @@ onMounted(() => { void load() })
           <p v-if="detailLoading" class="agent-console-empty">正在加载...</p>
           <table v-else-if="detailTab === 'BETS'">
             <thead><tr><th>期号</th><th>内容</th><th>金额</th><th>赔率</th><th>状态</th><th>盈亏</th><th>时间</th></tr></thead>
-            <tbody><tr v-for="bet in betDetails" :key="bet.id"><td>{{ bet.issueNumber }}</td><td>{{ bet.command }}</td><td>{{ bet.stake.toFixed(2) }}</td><td>{{ bet.odds }}</td><td>{{ bet.settlementStatus }}</td><td>{{ bet.netProfit === null ? '--' : bet.netProfit.toFixed(2) }}</td><td>{{ time(bet.createdAt) }}</td></tr><tr v-if="betDetails.length===0"><td colspan="7">暂无注单</td></tr></tbody>
+            <tbody><tr v-for="bet in betDetails" :key="bet.id"><td>{{ bet.issueNumber }}</td><td>{{ displayBetCommand(bet) }}</td><td>{{ bet.stake.toFixed(2) }}</td><td>{{ bet.odds }}</td><td>{{ bet.settlementStatus }}</td><td>{{ bet.netProfit === null ? '--' : bet.netProfit.toFixed(2) }}</td><td>{{ time(bet.createdAt) }}</td></tr><tr v-if="betDetails.length===0"><td colspan="7">暂无注单</td></tr></tbody>
           </table>
           <table v-else>
             <thead><tr><th>类型</th><th>金额</th><th>变动前</th><th>变动后</th><th>原因</th><th>时间</th></tr></thead>

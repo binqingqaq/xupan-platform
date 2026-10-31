@@ -9,6 +9,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
@@ -20,6 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "xupan.automation.enabled=false",
         "spring.task.scheduling.enabled=false"
 })
+@Transactional
 class 自动轮期服务Test {
 
     private static final String AUTO_USER = "auto-wallet-test-user";
@@ -49,6 +51,8 @@ class 自动轮期服务Test {
         jdbcTemplate.update("DELETE FROM game_issue");
         jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'MULTI_%')");
         jdbcTemplate.update("DELETE FROM game_definition WHERE game_code LIKE 'MULTI_%'");
+        jdbcTemplate.update("UPDATE game_definition SET next_issue_ball_count=8, ball_indexes='1,2,3,4,5,6,7,8' "
+                + "WHERE game_code='AU8'");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", AUTO_USER);
         jdbcTemplate.update("DELETE FROM sys_operation_log WHERE operator_user_id IN "
@@ -110,6 +114,36 @@ class 自动轮期服务Test {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM game_issue_event WHERE issue_number = '3000000' AND event_type = 'DRAW_RESULT'", Integer.class))
                 .isEqualTo(1);
+    }
+
+    @Test
+    void newIssueUsesSevenBallRuleForPreviewFinalResultAndNextIssue() {
+        Instant start = Instant.parse("2026-01-01T00:00:00Z");
+        jdbcTemplate.update("UPDATE game_definition SET next_issue_ball_count=7, ball_indexes='1,2,3,4,5,6,7' "
+                + "WHERE game_code='AU8'");
+
+        automationService.advance(start);
+        GameDataRepository.IssueRecord first = gameRepository.findCurrentIssue().orElseThrow();
+        assertThat(first.issueNumber()).isEqualTo("3000000");
+        assertThat(first.ballCount()).isEqualTo(7);
+        assertThat(first.numbers()).hasSize(7).containsOnlyNulls();
+
+        automationService.advance(start.plusSeconds(180));
+        GameDataRepository.IssueRecord drawing = gameRepository.findCurrentIssue().orElseThrow();
+        assertThat(drawing.ballCount()).isEqualTo(7);
+        assertThat(automationService.previewNumbers(drawing, start.plusSeconds(181))).hasSize(7);
+
+        automationService.advance(start.plusSeconds(300));
+        GameDataRepository.IssueRecord settled = gameRepository.findLatestSettledIssue().orElseThrow();
+        assertThat(settled.issueNumber()).isEqualTo("3000000");
+        assertThat(settled.ballCount()).isEqualTo(7);
+        assertThat(settled.numbers()).hasSize(7).allSatisfy(number -> assertThat(number).isBetween(1, 20));
+        assertThat(jdbcTemplate.queryForObject("SELECT number_8 FROM game_issue WHERE game_code='AU8' "
+                + "AND issue_number='3000000'", Integer.class)).isNull();
+        assertThat(gameRepository.findCurrentIssue()).get().satisfies(next -> {
+            assertThat(next.issueNumber()).isEqualTo("3000001");
+            assertThat(next.ballCount()).isEqualTo(7);
+        });
     }
 
     @Test

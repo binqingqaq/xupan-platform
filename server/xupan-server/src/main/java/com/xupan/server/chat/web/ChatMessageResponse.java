@@ -18,7 +18,8 @@ public record ChatMessageResponse(
         String payloadJson,
         String status,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        String issueNumber
 ) {
 
     public static ChatMessageResponse from(ChatMessage message) {
@@ -30,13 +31,21 @@ public record ChatMessageResponse(
                 message.messageType().name(), message.senderType().name(), message.senderId(),
                 message.senderType() == ChatSenderType.ROBOT ? "机器人" : message.senderName(),
                 avatarKey, message.content(), message.payloadJson(), message.status().name(),
-                message.createdAt(), message.updatedAt());
+                message.createdAt(), message.updatedAt(), message.issueNumber());
     }
 
     public ChatMessageResponse(long id, long sequenceNo, String clientMessageId, String messageType,
                                String senderType, Long senderId, String senderName, String content,
                                String payloadJson, String status, Instant createdAt, Instant updatedAt) {
         this(id, sequenceNo, clientMessageId, messageType, senderType, senderId, senderName, null,
-                content, payloadJson, status, createdAt, updatedAt);
+                content, payloadJson, status, createdAt, updatedAt, null);
+    }
+
+    public ChatMessageResponse(long id, long sequenceNo, String clientMessageId, String messageType,
+                               String senderType, Long senderId, String senderName, String avatarKey,
+                               String content, String payloadJson, String status,
+                               Instant createdAt, Instant updatedAt) {
+        this(id, sequenceNo, clientMessageId, messageType, senderType, senderId, senderName, avatarKey,
+                content, payloadJson, status, createdAt, updatedAt, null);
     }
 }

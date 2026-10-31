@@ -54,13 +54,14 @@ class ChatProtocolTest {
     void encodesPersistedMessageProjectionAsServerEvent() {
         Instant now = Instant.parse("2026-09-11T00:00:00Z");
         ChatMessageResponse message = new ChatMessageResponse(1L, 2L, "m-1", ChatMessageType.USER_CHAT.name(),
-                ChatSenderType.USER.name(), 7L, "用户甲", "hello", null,
-                ChatMessageStatus.ACTIVE.name(), now, now);
+                ChatSenderType.USER.name(), 7L, "用户甲", null, "hello", null,
+                ChatMessageStatus.ACTIVE.name(), now, now, "3010001");
 
         String json = ChatProtocol.encode(objectMapper, ChatProtocol.messageCreated(message));
 
         assertThat(json).contains("\"type\":\"message.created\"", "\"sequenceNo\":2",
-                "\"senderId\":7", "\"content\":\"hello\"", "\"message\":{");
+                "\"senderId\":7", "\"content\":\"hello\"", "\"issueNumber\":\"3010001\"",
+                "\"message\":{");
     }
 
     @Test

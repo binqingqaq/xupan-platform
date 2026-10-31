@@ -10,6 +10,10 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.game.service.VirtualWalletService;
@@ -28,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "xupan.automation.enabled=false",
         "spring.task.scheduling.enabled=false"
 })
+@Transactional
 class DemoGameControllerTest {
 
     private static final String TEST_USERNAME = "game-test-admin";
@@ -49,6 +54,9 @@ class DemoGameControllerTest {
 
     @Autowired
     private VirtualWalletService walletService;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     private String accessToken;
     private long testUserId;
@@ -118,6 +126,11 @@ class DemoGameControllerTest {
                 .andExpect(status().isOk())
                 .andReturn();
         return com.jayway.jsonpath.JsonPath.read(result.getResponse().getContentAsString(), "$.accessToken");
+    }
+
+    private void markCurrentIssueDrawing() {
+        jdbcTemplate.update("UPDATE game_issue SET phase='DRAWING', status='CLOSED' "
+                + "WHERE game_code='AU8' AND phase='BETTING'");
     }
 
     private static org.springframework.test.web.servlet.request.RequestPostProcessor bearer(String token) {
@@ -213,6 +226,7 @@ class DemoGameControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.account.balance").value(985.00));
 
+        markCurrentIssueDrawing();
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
@@ -247,7 +261,8 @@ class DemoGameControllerTest {
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DRAW_RESULT_NOT_READY"));
 
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
@@ -262,6 +277,7 @@ class DemoGameControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.issueNumber").value("3000000"));
 
+        markCurrentIssueDrawing();
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,8]}"))
@@ -326,6 +342,7 @@ class DemoGameControllerTest {
         Long secondAccountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, secondUserId);
 
+        markCurrentIssueDrawing();
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
@@ -365,6 +382,7 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.ballNumber").value(2))
                 .andExpect(jsonPath("$.settlementStatus").value("PENDING"));
 
+        markCurrentIssueDrawing();
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[2,1,3,4,5,6,7,8]}"))
@@ -393,6 +411,9 @@ class DemoGameControllerTest {
                         .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],\"stake\":10.001,\"idempotencyKey\":\"BET-INVALID-SCALE\"}"))
                 .andExpect(status().isBadRequest());
 
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk());
+        markCurrentIssueDrawing();
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,21]}"))
@@ -403,6 +424,13 @@ class DemoGameControllerTest {
     void betSummaryMovesBetFromPendingToSettledAndKeepsTodayTotals() throws Exception {
         long accountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, testUserId);
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk());
+        jdbcTemplate.update("""
+                INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                VALUES ('AU8', 'OLD-ISSUE', 'CLOSED', 'SETTLED', 8),
+                       ('AU8', 'CANCELED-ISSUE', 'CLOSED', 'SETTLED', 8)
+                """);
         jdbcTemplate.update("""
                 INSERT INTO game_bet
                     (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
@@ -442,6 +470,7 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.statistics.pendingBetCount").value(1))
                 .andExpect(jsonPath("$.statistics.totalStake").value(30.00));
 
+        markCurrentIssueDrawing();
         mockMvc.perform(post("/api/demo/game/admin/draw").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,8]}"))
@@ -502,10 +531,13 @@ class DemoGameControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("WALLET_INSUFFICIENT_BALANCE"));
 
-        assertThat(jdbcTemplate.queryForObject(
+        TransactionTemplate independentRead = new TransactionTemplate(transactionManager);
+        independentRead.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        Integer persistedBetCount = independentRead.execute(status -> jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM game_bet WHERE user_id = "
                         + "(SELECT id FROM demo_user_account WHERE sys_user_id = ?)",
-                Integer.class, testUserId)).isZero();
+                Integer.class, testUserId));
+        assertThat(persistedBetCount).isZero();
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM demo_balance_ledger l
                  JOIN demo_user_account a ON a.id = l.user_id

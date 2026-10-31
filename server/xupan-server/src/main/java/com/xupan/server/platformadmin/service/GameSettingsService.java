@@ -1,14 +1,18 @@
 package com.xupan.server.platformadmin.service;
 
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.web.BusinessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Arrays;
@@ -27,10 +31,13 @@ public class GameSettingsService {
 
     private final JdbcTemplate jdbc;
     private final PermissionService permissionService;
+    private final GameDataRepository gameDataRepository;
 
-    public GameSettingsService(JdbcTemplate jdbc, PermissionService permissionService) {
+    public GameSettingsService(JdbcTemplate jdbc, PermissionService permissionService,
+                              GameDataRepository gameDataRepository) {
         this.jdbc = jdbc;
         this.permissionService = permissionService;
+        this.gameDataRepository = gameDataRepository;
     }
 
     @Transactional(readOnly = true)
@@ -48,12 +55,19 @@ public class GameSettingsService {
     @Transactional(readOnly = true)
     public List<GameCatalogItem> activeCatalog() {
         return jdbc.query("""
-                SELECT game_code, display_name, sort_order
-                  FROM game_definition
-                 WHERE status = 'ACTIVE' AND deleted_at IS NULL
-                 ORDER BY sort_order, id
+                SELECT g.game_code, g.display_name, g.sort_order, g.next_issue_ball_count,
+                       COALESCE((SELECT i.ball_count FROM game_issue i
+                                  WHERE i.game_code = g.game_code AND i.phase IN ('BETTING', 'DRAWING')
+                                  ORDER BY i.id DESC LIMIT 1), g.next_issue_ball_count) active_issue_ball_count,
+                       (SELECT i.issue_number FROM game_issue i
+                         WHERE i.game_code = g.game_code AND i.ball_count = 7
+                         ORDER BY i.id LIMIT 1) first_seven_issue_number
+                  FROM game_definition g
+                 WHERE g.status = 'ACTIVE' AND g.deleted_at IS NULL
+                 ORDER BY g.sort_order, g.id
                 """, (rs, rowNum) -> new GameCatalogItem(rs.getString("game_code"),
-                rs.getString("display_name"), rs.getInt("sort_order")));
+                rs.getString("display_name"), rs.getInt("sort_order"), rs.getInt("next_issue_ball_count"),
+                rs.getInt("active_issue_ball_count"), rs.getString("first_seven_issue_number")));
     }
 
     @Transactional(readOnly = true)
@@ -67,18 +81,19 @@ public class GameSettingsService {
     @Transactional
     public GameRow create(GameInput input, long operator) {
         requirePermission(operator, WRITE_PERMISSION);
-        ValidatedGame game = validate(input);
+        ValidatedGame game = validate(input, 8);
         if (existsByCode(game.gameCode(), null)) {
             throw BusinessException.conflict("GAME_SETTINGS_CODE_EXISTS", "彩种键名已存在");
         }
         long id = nextGameId();
         jdbc.update("""
                 INSERT INTO game_definition
-                    (id, game_code, display_name, ball_indexes, draw_source_url, sort_order,
+                    (id, game_code, display_name, ball_indexes, next_issue_ball_count, draw_source_url, sort_order,
                      algorithm, play_prefix, switch_enabled, special_enabled, special_model,
                      keyboard_enabled, status, version, created_by, updated_by, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """, id, game.gameCode(), game.displayName(), game.ballIndexes(), game.drawSourceUrl(),
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, id, game.gameCode(), game.displayName(), game.ballIndexes(), game.nextIssueBallCount(),
+                game.drawSourceUrl(),
                 game.sortOrder(), game.algorithm(), game.playPrefix(), game.switchEnabled(),
                 game.specialEnabled(), game.specialModel(), game.keyboardEnabled(), game.status(),
                 operator, operator);
@@ -90,25 +105,42 @@ public class GameSettingsService {
     @Transactional
     public GameRow update(long id, GameInput input, long expectedVersion, long operator) {
         requirePermission(operator, WRITE_PERMISSION);
-        GameRow current = requireGame(id);
+        GameRow current = requireGameForUpdate(id);
         if (current.version() != expectedVersion) {
             throw BusinessException.conflict("GAME_SETTINGS_CONCURRENT_UPDATE", "游戏设置已被其他操作修改，请刷新后重试");
         }
-        ValidatedGame game = validate(input);
+        ValidatedGame game = validate(input, current.nextIssueBallCount());
         if (!current.gameCode().equals(game.gameCode())) {
             throw BusinessException.badRequest("GAME_SETTINGS_CODE_IMMUTABLE", "彩种键名创建后不能修改");
+        }
+        if (GameDataRepository.DEFAULT_GAME_CODE.equals(game.gameCode())
+                && game.nextIssueBallCount() == 8
+                && gameDataRepository.firstSevenBallIssueNumber(game.gameCode()).isPresent()) {
+            throw BusinessException.conflict("GAME_BALL_COUNT_REVERT_FORBIDDEN",
+                    "AU8 已切换为七球，不能通过常规设置恢复八球");
         }
         if (existsByCode(game.gameCode(), id)) {
             throw BusinessException.conflict("GAME_SETTINGS_CODE_EXISTS", "彩种键名已存在");
         }
+        String ruleChangeReason = null;
+        String effectiveIssueNumber = null;
+        if (game.nextIssueBallCount() != current.nextIssueBallCount()) {
+            ruleChangeReason = required(input.ballRuleChangeReason(), "球数规则变更原因不能为空", 255);
+            effectiveIssueNumber = gameDataRepository.nextIssueNumberForUpdate(game.gameCode());
+            gameDataRepository.recordBallRuleChange(game.gameCode(), effectiveIssueNumber,
+                    current.nextIssueBallCount(), game.nextIssueBallCount(),
+                    ballRuleIdempotencyKey(game.gameCode(), effectiveIssueNumber, expectedVersion),
+                    ruleChangeReason, operator, Instant.now());
+        }
         int updated = jdbc.update("""
                 UPDATE game_definition
-                   SET game_code = ?, display_name = ?, ball_indexes = ?, draw_source_url = ?,
+                   SET game_code = ?, display_name = ?, ball_indexes = ?, next_issue_ball_count = ?, draw_source_url = ?,
                        sort_order = ?, algorithm = ?, play_prefix = ?, switch_enabled = ?,
                        special_enabled = ?, special_model = ?, keyboard_enabled = ?, status = ?,
                        version = version + 1, updated_by = ?, updated_at = ?
                  WHERE id = ? AND deleted_at IS NULL AND version = ?
-                """, game.gameCode(), game.displayName(), game.ballIndexes(), game.drawSourceUrl(),
+                """, game.gameCode(), game.displayName(), game.ballIndexes(), game.nextIssueBallCount(),
+                game.drawSourceUrl(),
                 game.sortOrder(), game.algorithm(), game.playPrefix(), game.switchEnabled(),
                 game.specialEnabled(), game.specialModel(), game.keyboardEnabled(), game.status(),
                 operator, Timestamp.from(Instant.now()), id, expectedVersion);
@@ -116,7 +148,11 @@ public class GameSettingsService {
             throw BusinessException.conflict("GAME_SETTINGS_CONCURRENT_UPDATE", "游戏设置已被其他操作修改，请刷新后重试");
         }
         applyRouteOdds(id, input);
-        audit(operator, "PUT", "/api/admin/game-settings/" + id, id, "update gameCode=" + game.gameCode());
+        String ballRuleAudit = effectiveIssueNumber == null ? ""
+                : ",effectiveIssue=" + effectiveIssueNumber + ",nextIssueBallCount="
+                + game.nextIssueBallCount() + ",reason=" + ruleChangeReason;
+        audit(operator, "PUT", "/api/admin/game-settings/" + id, id,
+                "update gameCode=" + game.gameCode() + ballRuleAudit);
         return requireGame(id);
     }
 
@@ -141,7 +177,7 @@ public class GameSettingsService {
 
     private List<GameRow> findGames() {
         return jdbc.query("""
-                SELECT id, game_code, display_name, ball_indexes, draw_source_url, sort_order,
+                SELECT id, game_code, display_name, ball_indexes, next_issue_ball_count, draw_source_url, sort_order,
                        algorithm, play_prefix, switch_enabled, special_enabled, special_model,
                        keyboard_enabled, status, version, updated_at
                   FROM game_definition
@@ -154,7 +190,7 @@ public class GameSettingsService {
 
     private GameRow requireGame(long id) {
         List<GameRow> rows = jdbc.query("""
-                SELECT id, game_code, display_name, ball_indexes, draw_source_url, sort_order,
+                SELECT id, game_code, display_name, ball_indexes, next_issue_ball_count, draw_source_url, sort_order,
                        algorithm, play_prefix, switch_enabled, special_enabled, special_model,
                        keyboard_enabled, status, version, updated_at
                   FROM game_definition
@@ -162,6 +198,22 @@ public class GameSettingsService {
                 """, (rs, rowNum) -> mapGame(rs), id);
         if (rows.isEmpty()) {
             throw BusinessException.notFound("GAME_SETTINGS_NOT_FOUND", "游戏设置不存在");
+        }
+        GameRow row = rows.get(0);
+        return withOdds(row, loadOdds(id));
+    }
+
+    private GameRow requireGameForUpdate(long id) {
+        List<GameRow> rows = jdbc.query("""
+                SELECT id, game_code, display_name, ball_indexes, next_issue_ball_count,
+                       draw_source_url, sort_order, algorithm, play_prefix, switch_enabled,
+                       special_enabled, special_model, keyboard_enabled, status, version, updated_at
+                  FROM game_definition
+                 WHERE id = ? AND deleted_at IS NULL
+                 FOR UPDATE
+                """, (rs, rowNum) -> mapGame(rs), id);
+        if (rows.isEmpty()) {
+            throw BusinessException.notFound("GAME_SETTINGS_NOT_FOUND", "彩种设置不存在");
         }
         GameRow row = rows.get(0);
         return withOdds(row, loadOdds(id));
@@ -179,7 +231,8 @@ public class GameSettingsService {
 
     private static GameRow mapGame(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new GameRow(rs.getLong("id"), rs.getString("game_code"), rs.getString("display_name"),
-                rs.getString("ball_indexes"), rs.getString("draw_source_url"), rs.getInt("sort_order"),
+                rs.getString("ball_indexes"), rs.getInt("next_issue_ball_count"),
+                rs.getString("draw_source_url"), rs.getInt("sort_order"),
                 rs.getString("algorithm"), rs.getString("play_prefix"), rs.getBoolean("switch_enabled"),
                 rs.getBoolean("special_enabled"), rs.getString("special_model"),
                 rs.getBoolean("keyboard_enabled"), rs.getString("status"), rs.getLong("version"),
@@ -187,7 +240,8 @@ public class GameSettingsService {
     }
 
     private static GameRow withOdds(GameRow row, Map<String, RouteOdds> odds) {
-        return new GameRow(row.id(), row.gameCode(), row.displayName(), row.ballIndexes(), row.drawSourceUrl(),
+        return new GameRow(row.id(), row.gameCode(), row.displayName(), row.ballIndexes(),
+                row.nextIssueBallCount(), row.drawSourceUrl(),
                 row.sortOrder(), row.algorithm(), row.playPrefix(), row.switchEnabled(), row.specialEnabled(),
                 row.specialModel(), row.keyboardEnabled(), row.status(), row.version(), row.updatedAt(),
                 value(odds, "A", true), value(odds, "A", false), value(odds, "B", true),
@@ -244,13 +298,18 @@ public class GameSettingsService {
         return value == null ? 0L : value;
     }
 
-    private ValidatedGame validate(GameInput input) {
+    private ValidatedGame validate(GameInput input, int fallbackBallCount) {
         String name = required(input.displayName(), "彩种名称不能为空", 128);
         String code = required(input.gameCode(), "彩种键名不能为空", 32).toUpperCase(Locale.ROOT);
         if (!code.matches("[A-Z0-9_-]+")) {
             throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "彩种键名只能包含字母、数字、下划线或短横线");
         }
-        String ballIndexes = normalizeBallIndexes(input.ballIndexes());
+        int nextIssueBallCount = input.nextIssueBallCount() == null
+                ? fallbackBallCount : input.nextIssueBallCount();
+        if (nextIssueBallCount != 7 && nextIssueBallCount != 8) {
+            throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "下一期球数只能是 7 或 8");
+        }
+        String ballIndexes = normalizeBallIndexes(input.ballIndexes(), nextIssueBallCount);
         String drawUrl = optionalUrl(input.drawSourceUrl());
         String algorithm = enumValue(input.algorithm(), Set.of("SUM", "CONCAT"), "算法无效");
         String specialModel = enumValue(input.specialModel(), Set.of("MODEL_ONE", "MODEL_TWO"), "特模型无效");
@@ -259,7 +318,7 @@ public class GameSettingsService {
             throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "排序必须是 0 到 100000");
         }
         String prefix = optional(input.playPrefix(), 32, "玩法前缀不能超过 32 个字符");
-        return new ValidatedGame(code, name, ballIndexes, drawUrl, input.sortOrder(), algorithm, prefix,
+        return new ValidatedGame(code, name, ballIndexes, nextIssueBallCount, drawUrl, input.sortOrder(), algorithm, prefix,
                 input.switchEnabled(), input.specialEnabled(), specialModel, input.keyboardEnabled(), status);
     }
 
@@ -278,7 +337,7 @@ public class GameSettingsService {
                 """, operator, WRITE_PERMISSION, method, path, Long.toString(resourceId), summary);
     }
 
-    private static String normalizeBallIndexes(String value) {
+    private static String normalizeBallIndexes(String value, int ballCount) {
         String raw = required(value, "开奖球号不能为空", 255);
         List<Integer> values;
         try {
@@ -289,8 +348,8 @@ public class GameSettingsService {
         }
         Set<Integer> unique = new LinkedHashSet<>(values);
         if (values.isEmpty() || unique.size() != values.size()
-                || values.stream().anyMatch(item -> item < 1 || item > 8)) {
-            throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "开奖球号只能是 1-8 且不能重复");
+                || values.stream().anyMatch(item -> item < 1 || item > ballCount)) {
+            throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "开奖球号必须在 1 到下一期球数之间且不能重复");
         }
         return values.stream().map(String::valueOf).reduce((left, right) -> left + "," + right).orElseThrow();
     }
@@ -347,23 +406,38 @@ public class GameSettingsService {
         return value == null ? null : value.toInstant();
     }
 
-    private record ValidatedGame(String gameCode, String displayName, String ballIndexes, String drawSourceUrl,
+    private static String ballRuleIdempotencyKey(String gameCode, String issueNumber, long version) {
+        try {
+            String source = gameCode + "\u0000" + issueNumber + "\u0000" + version;
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8));
+            return "GAME-BALL-RULE-" + java.util.HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("球数规则幂等键算法不可用", impossible);
+        }
+    }
+
+    private record ValidatedGame(String gameCode, String displayName, String ballIndexes,
+                                 int nextIssueBallCount, String drawSourceUrl,
                                  int sortOrder, String algorithm, String playPrefix, boolean switchEnabled,
                                  boolean specialEnabled, String specialModel, boolean keyboardEnabled,
                                  String status) {}
 
     private record RouteOdds(String routeCode, BigDecimal specialOdds, BigDecimal bigSmallOdds) {}
 
-    public record GameCatalogItem(String gameCode, String displayName, int sortOrder) {}
+    public record GameCatalogItem(String gameCode, String displayName, int sortOrder,
+                                  int nextIssueBallCount, int activeIssueBallCount,
+                                  String firstSevenIssueNumber) {}
 
     public record GameInput(String gameCode, String displayName, String ballIndexes, String drawSourceUrl,
                             int sortOrder, String algorithm, String playPrefix, boolean switchEnabled,
                             boolean specialEnabled, String specialModel, boolean keyboardEnabled,
-                            String status, BigDecimal oddsAte, BigDecimal oddsAdx,
+                            String status, Integer nextIssueBallCount, String ballRuleChangeReason,
+                            BigDecimal oddsAte, BigDecimal oddsAdx,
                             BigDecimal oddsBte, BigDecimal oddsBdx, BigDecimal oddsCte,
                             BigDecimal oddsCdx, BigDecimal oddsDte, BigDecimal oddsDdx) {}
 
     public record GameRow(long id, String gameCode, String displayName, String ballIndexes,
+                          int nextIssueBallCount,
                           String drawSourceUrl, int sortOrder, String algorithm, String playPrefix,
                           boolean switchEnabled, boolean specialEnabled, String specialModel,
                           boolean keyboardEnabled, String status, long version, Instant updatedAt,

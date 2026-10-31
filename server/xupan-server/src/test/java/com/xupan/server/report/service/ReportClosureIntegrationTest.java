@@ -88,8 +88,8 @@ class ReportClosureIntegrationTest {
         playerAccountId = walletService.ensureWalletForUser(playerUserId, "报网闭环玩家");
         jdbc.update("UPDATE demo_user_account SET agent_id = ?, balance = 100.00 WHERE id = ?",
                 machineId, playerAccountId);
-        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase) "
-                        + "VALUES ('AU8', ?, 'OPEN', 'BETTING')", ISSUE_NUMBER);
+        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                        + "VALUES ('AU8', ?, 'OPEN', 'BETTING', 8)", ISSUE_NUMBER);
     }
 
     @AfterEach
@@ -111,8 +111,8 @@ class ReportClosureIntegrationTest {
         assertThat(attemptCountOf(betId)).isEqualTo(1);
         assertThat(centerOrderStatus(betId)).isEqualTo("ACCEPTED");
         assertThat(centerOrderAmount(betId)).isEqualByComparingTo("10.00");
-        assertThat(centerAvailableBalance()).isEqualByComparingTo("4990.00");
-        assertThat(centerFrozenBalance()).isEqualByComparingTo("10.00");
+        assertThat(centerAvailableBalance()).isEqualByComparingTo("4971.50");
+        assertThat(centerFrozenBalance()).isEqualByComparingTo("28.50");
     }
 
     @Test

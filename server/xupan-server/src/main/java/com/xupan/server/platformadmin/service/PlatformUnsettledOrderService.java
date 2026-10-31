@@ -21,6 +21,20 @@ public class PlatformUnsettledOrderService {
 
     private static final String READ_PERMISSION = "UNSETTLED_ORDER_READ";
     private static final String DELETE_PERMISSION = "UNSETTLED_ORDER_DELETE";
+    private static final String VISIBLE_ISSUE_BALLS = """
+            AND (
+                NOT EXISTS (
+                    SELECT 1 FROM game_issue seven_issue
+                     WHERE seven_issue.game_code = b.game_code AND seven_issue.ball_count = 7
+                )
+                OR EXISTS (
+                    SELECT 1 FROM game_issue seven_issue
+                     WHERE seven_issue.game_code = b.game_code
+                       AND seven_issue.issue_number = b.issue_number
+                       AND seven_issue.ball_count = 7 AND b.ball_number BETWEEN 1 AND 7
+                )
+            )
+            """;
 
     private final JdbcTemplate jdbc;
     private final PermissionService permissionService;
@@ -48,7 +62,7 @@ public class PlatformUnsettledOrderService {
                   JOIN demo_user_account a ON a.id = b.user_id
                  WHERE b.settlement_status = 'PENDING'
                    AND a.player_kind = 'NORMAL'
-                """, Long.class);
+                """ + VISIBLE_ISSUE_BALLS, Long.class);
         List<Row> items = jdbc.query("""
                 SELECT b.id, b.issue_number, b.play_type, b.parameters_text, b.stake,
                        b.created_at, COALESCE(o.status, 'PENDING') AS report_status,
@@ -65,6 +79,7 @@ public class PlatformUnsettledOrderService {
                   LEFT JOIN agent_group g ON g.id = m.group_id
                  WHERE b.settlement_status = 'PENDING'
                    AND a.player_kind = 'NORMAL'
+                """ + VISIBLE_ISSUE_BALLS + """
                  ORDER BY b.created_at DESC, b.id DESC
                  LIMIT ? OFFSET ?
                 """, (rs, rowNum) -> new Row(
@@ -93,6 +108,7 @@ public class PlatformUnsettledOrderService {
                   JOIN demo_user_account a ON a.id = b.user_id
                  WHERE b.id = ?
                    AND a.player_kind = 'NORMAL'
+                """ + VISIBLE_ISSUE_BALLS + """
                    FOR UPDATE
                 """, rs -> rs.next() ? new CancellationTarget(
                 rs.getLong("id"), rs.getLong("user_id"), rs.getObject("sys_user_id", Long.class),

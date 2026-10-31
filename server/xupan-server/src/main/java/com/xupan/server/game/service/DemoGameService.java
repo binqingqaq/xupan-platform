@@ -105,10 +105,12 @@ public class DemoGameService {
                                long authenticatedUserId, boolean includeAllIssueBets) {
         List<BallView> ballViews = toBallViews(automationService.previewNumbers(issue, now));
         List<BallView> previousBallViews = repository.findLatestSettledIssue(gameCode)
+                .filter(previous -> previous.ballCount() == issue.ballCount())
                 .map(GameDataRepository.IssueRecord::numbers)
                 .map(DemoGameService::toBallViews)
                 .orElseGet(List::of);
         List<HistoryView> historyViews = repository.findSettledIssues(gameCode, 10).stream()
+                .filter(history -> history.ballCount() == issue.ballCount())
                 .map(DemoGameService::toHistoryView)
                 .toList();
         MachineBettingConfig machineConfig = repository.findMachineBettingConfig(
@@ -133,7 +135,8 @@ public class DemoGameService {
                 .map(DemoGameService::toBetView)
                 .toList();
         VirtualWallet wallet = walletService.getForCurrentUser(authenticatedUserId);
-        return new GameView(gameCode, issue.issueNumber(), issue.status(), issue.phase(), ballViews, previousBallViews,
+        return new GameView(gameCode, issue.issueNumber(), issue.status(), issue.phase(), issue.ballCount(),
+                ballViews, previousBallViews,
                 historyViews, oddsViews, displayOddsViews, betViews,
                 new AccountView(wallet.userCode(), wallet.displayName(), wallet.balance(), wallet.status()),
                 now, issue.bettingEndsAt(), issue.drawEndsAt(),
@@ -197,6 +200,10 @@ public class DemoGameService {
                 throw BusinessException.conflict("WALLET_IDEMPOTENCY_CONFLICT", "重複下注批次参数不一致");
             }
             return repository.findBetsByBatchId(priorBatch.get().id()).stream().map(DemoGameService::toBetView).toList();
+        }
+        if (requests.stream().anyMatch(request -> request.ballNumber() > issue.ballCount())) {
+            throw BusinessException.badRequest("GAME_BET_BALL_OUT_OF_RANGE",
+                    "本期只支持第 1 球至第 " + issue.ballCount() + " 球");
         }
         if (!自动轮期服务.BETTING.equals(issue.phase())) {
             String message = 自动轮期服务.DRAWING.equals(issue.phase())
@@ -326,8 +333,8 @@ public class DemoGameService {
         if (!自动轮期服务.DRAWING.equals(issue.phase())) {
             throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
         }
-        if (numbers == null || numbers.size() != 8) {
-            throw new IllegalArgumentException("必须提供 8 个开奖号码");
+        if (numbers == null || numbers.size() != issue.ballCount()) {
+            throw new IllegalArgumentException("本期必须提供 " + issue.ballCount() + " 个开奖号码");
         }
         List<BallResult> results = numbers.stream().map(BallResult::fromNumber).toList();
         List<PendingSettlement> settlements = repository.findBetsByIssue(issue.issueNumber()).stream()
@@ -463,9 +470,9 @@ public class DemoGameService {
     }
 
     private static List<BallView> toBallViews(List<Integer> numbers) {
-        List<BallView> ballViews = new ArrayList<>();
-        for (int index = 0; index < 8; index++) {
-            Integer number = numbers.size() == 8 ? numbers.get(index) : null;
+        List<BallView> ballViews = new ArrayList<>(numbers.size());
+        for (int index = 0; index < numbers.size(); index++) {
+            Integer number = numbers.get(index);
             if (number == null) {
                 ballViews.add(new BallView(index + 1, null, null, null, null));
                 continue;
@@ -513,7 +520,8 @@ public class DemoGameService {
         return parameters == null ? List.of() : List.copyOf(parameters);
     }
 
-    public record GameView(String gameCode, String issueNumber, String status, String phase, List<BallView> balls,
+    public record GameView(String gameCode, String issueNumber, String status, String phase, int ballCount,
+                           List<BallView> balls,
                            List<BallView> previousBalls, List<HistoryView> history, List<OddsView> odds,
                            List<DisplayOddsView> displayOdds, List<BetView> bets, AccountView account,
                            Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,

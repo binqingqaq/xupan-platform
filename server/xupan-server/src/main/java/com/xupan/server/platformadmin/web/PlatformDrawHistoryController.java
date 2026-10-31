@@ -119,12 +119,13 @@ public class PlatformDrawHistoryController {
         }
     }
 
-    public record HistoryResponse(String gameCode, String gameName, String issueNumber, List<Integer> balls,
+    public record HistoryResponse(String gameCode, String gameName, String issueNumber,
+                                  int ballCount, List<Integer> balls,
                                   String phase, Instant openedAt, Instant settledAt,
                                   Instant drawConfirmedAt, int drawResultVersion,
                                   long betCount, long pendingBetCount, long pendingCenterOrderCount) {
         static HistoryResponse from(PlatformDrawHistoryService.HistoryRow row) {
-            return new HistoryResponse(row.gameCode(), row.gameName(), row.issueNumber(), row.balls(),
+            return new HistoryResponse(row.gameCode(), row.gameName(), row.issueNumber(), row.ballCount(), row.balls(),
                     row.phase(), row.openedAt(), row.settledAt(), row.drawConfirmedAt(), row.drawResultVersion(),
                     row.betCount(), row.pendingBetCount(), row.pendingCenterOrderCount());
         }

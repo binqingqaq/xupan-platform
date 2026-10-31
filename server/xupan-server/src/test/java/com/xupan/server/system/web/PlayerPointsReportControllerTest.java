@@ -84,6 +84,13 @@ class PlayerPointsReportControllerTest {
         jdbc.update("UPDATE demo_user_account SET agent_id=? WHERE id IN (?, ?)",
                 machineId, normalAccountId, botAccountId);
 
+        Integer reportIssueCount = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number='20260921'", Integer.class);
+        if (reportIssueCount == null || reportIssueCount == 0) {
+            jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                    + "VALUES ('AU8', '20260921', 'CLOSED', 'SETTLED', 8)");
+        }
+
         insertLedger(normalAccountId, "ADMIN_GRANT", "100.00", "0.00", "100.00", "上分");
         insertLedger(normalAccountId, "ADMIN_ADJUST", "-25.00", "100.00", "75.00", "下分");
         jdbc.update("""

@@ -29,7 +29,7 @@ const balanceAmount = ref(100)
 const balanceReason = ref('首期余额分配')
 const idempotencyKey = ref(createIdempotencyKey())
 const lastOperation = ref<WalletOperationResponse | null>(null)
-const drawNumbers = ref<(number | null)[]>(Array(8).fill(null))
+const drawNumbers = ref<(number | null)[]>(Array(7).fill(null))
 const oddsDraft = ref<Partial<Record<PlayType, number>>>({})
 const loadError = ref('')
 const busy = ref(false)
@@ -38,6 +38,7 @@ const router = useRouter()
 const canManageWallet = computed(() => currentUser.value?.roles.includes('ADMIN') === true)
 const selectedUser = computed(() => users.value.find(user => user.id === selectedUserId.value))
 const statusText = computed(() => current.value?.status === 'OPEN' ? '开放下注' : '已开奖')
+const drawBallCount = computed(() => current.value?.ballCount ?? current.value?.balls.length ?? 7)
 
 function createIdempotencyKey() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return `wallet-${crypto.randomUUID()}`
@@ -138,12 +139,13 @@ async function submitWalletOperation() {
 }
 
 function randomNumbers() {
-  drawNumbers.value = Array.from({ length: 8 }, () => Math.floor(Math.random() * 20) + 1)
+  drawNumbers.value = Array.from({ length: drawBallCount.value }, () => Math.floor(Math.random() * 20) + 1)
 }
 
 async function draw() {
-  if (drawNumbers.value.some(number => !number || number < 1 || number > 20)) {
-    showFeedback('请完整填写 8 个 01-20 的开奖号码', 'error')
+  if (drawNumbers.value.length !== drawBallCount.value
+      || drawNumbers.value.some(number => !number || number < 1 || number > 20)) {
+    showFeedback(`请完整填写 ${drawBallCount.value} 个 01-20 的开奖号码`, 'error')
     return
   }
   busy.value = true
@@ -257,7 +259,7 @@ onMounted(load)
         </section>
 
         <section class="admin-section draw-section">
-          <div class="section-title"><div><span class="eyebrow">DRAW</span><h2>开奖控制</h2></div><span>01-20 · 共 8 球</span></div>
+          <div class="section-title"><div><span class="eyebrow">DRAW</span><h2>开奖控制</h2></div><span>01-20 · 共 {{ drawBallCount }} 球</span></div>
           <div class="draw-grid">
             <label v-for="(_, index) in drawNumbers" :key="index" :for="`draw-${index}`">第{{ index + 1 }}球<input :id="`draw-${index}`" v-model.number="drawNumbers[index]" type="number" min="1" max="20" placeholder="--" /></label>
           </div>
@@ -275,7 +277,7 @@ onMounted(load)
               <thead><tr><th>球位</th><th>玩法</th><th>参数</th><th>金额</th><th>状态</th><th>净盈亏</th></tr></thead>
               <tbody>
                 <tr v-for="bet in current?.bets || []" :key="bet.id">
-                  <td>第{{ bet.ballNumber }}球</td><td>{{ labels[bet.playType] }}</td><td>{{ bet.parameters.join(',') }}</td><td>{{ money(bet.stake) }}</td>
+                  <td>{{ bet.ballNumber > drawBallCount ? '历史订单' : `第${bet.ballNumber}球` }}</td><td>{{ labels[bet.playType] }}</td><td>{{ bet.parameters.join(',') }}</td><td>{{ money(bet.stake) }}</td>
                   <td><span class="status-tag" :class="`status-${bet.settlementStatus.toLowerCase()}`">{{ bet.settlementStatus }}</span></td><td>{{ bet.netProfit === null ? '--' : money(bet.netProfit) }}</td>
                 </tr>
               </tbody>

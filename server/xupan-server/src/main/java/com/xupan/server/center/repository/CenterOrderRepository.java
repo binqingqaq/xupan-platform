@@ -90,18 +90,30 @@ public class CenterOrderRepository {
 
     public Optional<List<Integer>> findConfirmedDrawNumbers(String gameCode, String issueNumber) {
         return jdbc.query("""
-                SELECT number_1, number_2, number_3, number_4, number_5, number_6, number_7, number_8
+                SELECT ball_count, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8
                   FROM game_issue
                  WHERE game_code = ? AND issue_number = ? AND draw_confirmed_at IS NOT NULL
                    AND number_1 BETWEEN 1 AND 20 AND number_2 BETWEEN 1 AND 20
                    AND number_3 BETWEEN 1 AND 20 AND number_4 BETWEEN 1 AND 20
                    AND number_5 BETWEEN 1 AND 20 AND number_6 BETWEEN 1 AND 20
-                   AND number_7 BETWEEN 1 AND 20 AND number_8 BETWEEN 1 AND 20
+                   AND number_7 BETWEEN 1 AND 20
+                   AND ((ball_count = 7 AND number_8 IS NULL)
+                     OR (ball_count = 8 AND number_8 BETWEEN 1 AND 20))
                  FOR UPDATE
-                """, (rs, rowNum) -> List.of(
-                rs.getInt("number_1"), rs.getInt("number_2"), rs.getInt("number_3"),
-                rs.getInt("number_4"), rs.getInt("number_5"), rs.getInt("number_6"),
-                rs.getInt("number_7"), rs.getInt("number_8")), gameCode, issueNumber)
+                """, (rs, rowNum) -> {
+            int ballCount = rs.getInt("ball_count");
+            if (ballCount != 7 && ballCount != 8) {
+                return List.<Integer>of();
+            }
+            List<Integer> numbers = new ArrayList<>(ballCount);
+            for (int index = 1; index <= ballCount; index++) {
+                Integer number = rs.getObject("number_" + index, Integer.class);
+                if (number == null) return List.<Integer>of();
+                numbers.add(number);
+            }
+            return List.copyOf(numbers);
+        }, gameCode, issueNumber)
                 .stream().findFirst();
     }
 
@@ -266,17 +278,20 @@ public class CenterOrderRepository {
     public Optional<LocalBetSnapshot> findLocalBetSnapshot(long centerAgentId, long localBetId,
                                                             long localAgentId) {
         return jdbc.query("""
-                SELECT b.id, b.game_code, b.issue_number, b.ball_number, b.play_type, b.parameters_text,
+                SELECT b.id, b.game_code, b.issue_number, b.ball_number, i.ball_count AS issue_ball_count,
+                       b.play_type, b.parameters_text,
                        b.stake, b.odds_snapshot, b.machine_odds_rate_snapshot, b.settlement_status,
                        m.id AS machine_id
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
+                  LEFT JOIN game_issue i ON i.game_code = b.game_code AND i.issue_number = b.issue_number
                   JOIN agent m ON m.id = COALESCE(b.machine_id_snapshot, b.agent_id_snapshot, a.agent_id)
                   JOIN center_agent c ON c.id = ? AND c.agent_group_id = m.group_id
                  WHERE b.id = ? AND m.id = ? AND m.status = 'ACTIVE' AND m.system_owned = FALSE
                    AND m.deleted_at IS NULL
                 """, (rs, rowNum) -> new LocalBetSnapshot(rs.getLong("id"), rs.getString("game_code"),
-                rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
+                rs.getString("issue_number"), rs.getInt("ball_number"),
+                rs.getObject("issue_ball_count", Integer.class), rs.getString("play_type"),
                 rs.getString("parameters_text"), rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"),
                 rs.getBigDecimal("machine_odds_rate_snapshot"), rs.getString("settlement_status"),
                 rs.getLong("machine_id")), centerAgentId, localBetId, localAgentId).stream().findFirst();
@@ -381,7 +396,8 @@ public class CenterOrderRepository {
                            Instant createdAt, Instant updatedAt) {
     }
 
-    public record LocalBetSnapshot(long betId, String gameCode, String issueNumber, int ballNumber, String playType,
+    public record LocalBetSnapshot(long betId, String gameCode, String issueNumber, int ballNumber,
+                                   Integer issueBallCount, String playType,
                                    String parametersText, BigDecimal stake, BigDecimal odds,
                                    BigDecimal machineOddsRateSnapshot, String settlementStatus, long machineId) {
     }

@@ -151,6 +151,8 @@ public class 自动轮期服务 {
 
     @Transactional
     public synchronized void advance(String gameCode, Instant now) {
+        // Use the same game-definition -> issue lock order as an explicit ball-count cutover.
+        gameRepository.nextIssueBallCountForUpdate(gameCode);
         GameDataRepository.IssueRecord issue = ensureCurrentIssue(gameCode, now);
         if (issue.bettingEndsAt() == null || issue.drawEndsAt() == null) {
             gameRepository.initializeSchedule(gameCode, issue.issueNumber(),
@@ -195,9 +197,9 @@ public class 自动轮期服务 {
 
     private void finalizeIssue(String gameCode, GameDataRepository.IssueRecord issue, Instant now) {
         List<Integer> existingNumbers = issue.numbers();
-        List<Integer> numbers = existingNumbers != null && existingNumbers.size() == 8
+        List<Integer> numbers = existingNumbers != null && existingNumbers.size() == issue.ballCount()
                 && existingNumbers.stream().allMatch(number -> number != null && number >= 1 && number <= 20)
-                ? existingNumbers : generateFinalNumbers();
+                ? existingNumbers : generateFinalNumbers(issue.ballCount());
         if (!gameRepository.saveFinalResult(gameCode, issue.issueNumber(), numbers, now)) {
             return;
         }
@@ -258,16 +260,23 @@ public class 自动轮期服务 {
         long tick = Math.max(0, Duration.between(issue.startedAt(), now).toSeconds());
         java.util.SplittableRandom previewRandom = new java.util.SplittableRandom(
                 issue.issueNumber().hashCode() * 31L + tick);
-        List<Integer> numbers = new ArrayList<>(8);
-        for (int index = 0; index < 8; index++) {
+        List<Integer> numbers = new ArrayList<>(issue.ballCount());
+        for (int index = 0; index < issue.ballCount(); index++) {
             numbers.add(previewRandom.nextInt(1, 21));
         }
         return numbers;
     }
 
     public List<Integer> generateFinalNumbers() {
-        List<Integer> numbers = new ArrayList<>(8);
-        for (int index = 0; index < 8; index++) {
+        return generateFinalNumbers(8);
+    }
+
+    public List<Integer> generateFinalNumbers(int ballCount) {
+        if (ballCount != 7 && ballCount != 8) {
+            throw new IllegalArgumentException("期次球数只能是 7 或 8");
+        }
+        List<Integer> numbers = new ArrayList<>(ballCount);
+        for (int index = 0; index < ballCount; index++) {
             numbers.add(RANDOM.nextInt(1, 21));
         }
         return numbers;
@@ -291,7 +300,7 @@ public class 自动轮期服务 {
         return issueNumber + "结果:\n" + numbers.stream()
                 .map(number -> String.format("%02d", number))
                 .reduce((left, right) -> left + "," + right).orElse("")
-                + " => " + fanText(numbers.get(7));
+                + " => " + fanText(numbers.get(numbers.size() - 1));
     }
 
     private static String fanText(int special) {

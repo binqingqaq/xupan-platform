@@ -138,6 +138,12 @@ public class CenterOrderService {
         if (!"PENDING".equals(bet.settlementStatus())) {
             throw BusinessException.conflict("CENTER_LOCAL_BET_NOT_PENDING", "只有未结算的本地注单可以上报");
         }
+        if (bet.issueBallCount() == null) {
+            throw BusinessException.conflict("CENTER_LOCAL_ISSUE_NOT_FOUND", "本地注单期次不存在，不能接收上报");
+        }
+        if (bet.ballNumber() < 1 || bet.ballNumber() > bet.issueBallCount()) {
+            throw BusinessException.conflict("CENTER_LOCAL_BALL_OUT_OF_RANGE", "本地注单球位超出该期允许范围");
+        }
 
         // 所有可变请求字段都以已落库注单为准，避免浏览器/调用方提交赔率、金额或玩法覆盖投注事实。
         gameCode = bet.gameCode();

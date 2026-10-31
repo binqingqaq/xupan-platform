@@ -12,21 +12,29 @@ const loading = ref(true)
 const error = ref('')
 let refreshTimer: number | undefined
 
-const lastDraw = computed<DrawHistoryItem | null>(() => history.value[0] ?? null)
-const historyRows = computed(() => history.value.slice(0, 15))
+const visibleBallCount = computed(() => {
+  const game = gameCatalog.value.find(item => item.gameCode === selectedGameCode.value)
+  return game?.activeIssueBallCount ?? game?.nextIssueBallCount ?? 8
+})
+const visibleHistory = computed(() => history.value.filter(row =>
+  (row.ballCount ?? row.balls.length) === visibleBallCount.value
+  && row.balls.length === visibleBallCount.value))
+const lastDraw = computed<DrawHistoryItem | null>(() => visibleHistory.value[0] ?? null)
+const historyRows = computed(() => visibleHistory.value.slice(0, 15))
 const routeRows = computed(() => {
-  const oldestFirst = [...history.value].reverse()
+  const oldestFirst = [...visibleHistory.value].reverse()
   const rows: Array<Array<{ issueNumber: string; fan: number }>> = []
   for (let index = 0; index < oldestFirst.length; index += 12) {
     rows.push(oldestFirst.slice(index, index + 12).map(row => ({
       issueNumber: row.issueNumber,
-      fan: row.balls[7] === undefined ? 0 : fan(row.balls[7]),
+      fan: row.balls.length === 0 ? 0 : fan(row.balls[row.balls.length - 1]!),
     })))
   }
   return rows
 })
 const specialFan = computed(() => {
-  const number = lastDraw.value?.balls?.[7]
+  const numbers = lastDraw.value?.balls
+  const number = numbers?.[numbers.length - 1]
   return typeof number === 'number' ? fan(number) : null
 })
 
@@ -40,7 +48,14 @@ function displayBall(number: number) { return String(number).padStart(2, '0') }
 async function load() {
   error.value = ''
   try {
-    const page = await api.listDrawHistory({ gameCode: selectedGameCode.value, pageSize: 48 })
+    const [catalog, page] = await Promise.all([
+      api.getGameCatalog(),
+      api.listDrawHistory({ gameCode: selectedGameCode.value, pageSize: 48 }),
+    ])
+    gameCatalog.value = catalog
+    if (catalog.length > 0 && !catalog.some(game => game.gameCode === selectedGameCode.value)) {
+      selectedGameCode.value = catalog[0]!.gameCode
+    }
     history.value = page.items
   } catch (cause) {
     error.value = apiErrorMessage(cause, '开奖信息加载失败')
@@ -49,10 +64,6 @@ async function load() {
 
 onMounted(async () => {
   document.title = 'XUPAN 超级管理后台'
-  gameCatalog.value = await api.getGameCatalog()
-  if (gameCatalog.value.length > 0 && !gameCatalog.value.some(game => game.gameCode === selectedGameCode.value)) {
-    selectedGameCode.value = gameCatalog.value[0]!.gameCode
-  }
   await load()
   refreshTimer = window.setInterval(load, 5000)
 })
@@ -91,7 +102,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
           <el-table-column label="期数" min-width="100"><template #default="{ row }">{{ issueTail(row.issueNumber) }}</template></el-table-column>
           <el-table-column label="时间" min-width="130"><template #default="{ row }">{{ formatShortTime(row.settledAt) }}</template></el-table-column>
           <el-table-column label="结果" min-width="360"><template #default="{ row }"><el-space class="platform-admin-history-balls" wrap><el-tag v-for="(number,index) in row.balls" :key="index" round>{{ displayBall(number) }}</el-tag></el-space></template></el-table-column>
-          <el-table-column label="番" width="100" align="center"><template #default="{ row }"><el-tag type="primary" effect="plain">{{ row.balls[7] !== undefined ? fan(row.balls[7]) : '--' }}番</el-tag></template></el-table-column>
+          <el-table-column label="番" width="100" align="center"><template #default="{ row }"><el-tag type="primary" effect="plain">{{ row.balls.length ? fan(row.balls[row.balls.length - 1]!) : '--' }}番</el-tag></template></el-table-column>
         </el-table>
         <el-skeleton v-else :rows="5" animated />
       </section>

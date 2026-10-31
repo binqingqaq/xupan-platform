@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import { ElMessageBox } from 'element-plus'
 import { adminNotice } from '../services/adminNotice'
@@ -26,27 +26,57 @@ const betsOpen = ref(false)
 const selectedIssue = ref('')
 const draftOpen = ref(false)
 const draftTarget = ref<DrawHistoryItem | null>(null)
-const draftNumbers = ref<Array<number | null>>(Array.from({ length: 8 }, () => null))
+const draftNumbers = ref<Array<number | null>>(Array.from({ length: 7 }, () => null))
 const draftSaved = ref(false)
 const savingDraft = ref(false)
 const confirmingDraw = ref(false)
+let refreshTimer: number | undefined
+const visibleBallCount = computed(() => {
+  const game = gameCatalog.value.find(item => item.gameCode === selectedGameCode.value)
+  return game?.activeIssueBallCount ?? game?.nextIssueBallCount ?? 8
+})
+const visibleRows = computed(() => rows.value.filter(row =>
+  (row.ballCount ?? row.balls.length) === visibleBallCount.value
+  && row.balls.length === visibleBallCount.value))
 
-async function load() { loading.value = true; error.value = ''; try { const page = await api.listDrawHistory({ gameCode: selectedGameCode.value, issueNumber: issueNumber.value.trim() || undefined, pageSize: 100 }); rows.value = page.items } catch (cause) { error.value = apiErrorMessage(cause, '开奖历史加载失败') } finally { loading.value = false } }
+async function load() {
+  loading.value = true
+  error.value = ''
+  try {
+    const [catalog, page] = await Promise.all([
+      api.getGameCatalog(),
+      api.listDrawHistory({ gameCode: selectedGameCode.value, issueNumber: issueNumber.value.trim() || undefined, pageSize: 100 }),
+    ])
+    gameCatalog.value = catalog
+    if (catalog.length > 0 && !catalog.some(game => game.gameCode === selectedGameCode.value)) {
+      selectedGameCode.value = catalog[0]!.gameCode
+    }
+    rows.value = page.items
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '开奖历史加载失败')
+  } finally {
+    loading.value = false
+  }
+}
 async function showBets(row: DrawHistoryItem) { selectedIssue.value = row.issueNumber; betsOpen.value = true; bets.value = []; try { bets.value = await api.listDrawHistoryBets(row.gameCode, row.issueNumber) } catch (cause) { adminNotice.error(apiErrorMessage(cause, '投注记录加载失败')) } }
 function editDraft(row: DrawHistoryItem) {
   draftTarget.value = row
-  draftNumbers.value = row.balls.map(value => value >= 1 && value <= 20 ? value : null)
+  draftNumbers.value = Array.from({ length: row.ballCount ?? row.balls.length }, (_, index) => {
+    const value = row.balls[index]
+    return value >= 1 && value <= 20 ? value : null
+  })
   draftSaved.value = false
   draftOpen.value = true
 }
 function readDraftNumbers(): number[] | null {
-  if (draftNumbers.value.length !== 8 || draftNumbers.value.some(value => value === null || value < 1 || value > 20)) return null
+  const expectedCount = draftTarget.value?.ballCount ?? draftTarget.value?.balls.length ?? visibleBallCount.value
+  if (draftNumbers.value.length !== expectedCount || draftNumbers.value.some(value => value === null || value < 1 || value > 20)) return null
   return draftNumbers.value as number[]
 }
 async function saveDraft() {
   const target = draftTarget.value
   const numbers = readDraftNumbers()
-  if (!target || !numbers) { adminNotice.warning('请输入 8 个 1 到 20 的开奖号码'); return }
+  if (!target || !numbers) { adminNotice.warning(`请输入 ${draftNumbers.value.length} 个 1 到 20 的开奖号码`); return }
   savingDraft.value = true; error.value = ''
   try {
     const result = await api.updateDrawDraft(target.gameCode, target.issueNumber, numbers)
@@ -62,7 +92,7 @@ async function confirmDraft() {
   if (!target || !draftSaved.value || confirmingDraw.value) return
   try {
     await ElMessageBox.confirm(
-      `确认 ${target.issueNumber} 的 8 个开奖号码？确认后不可修改，并会在同一事务中结算玩家注单与中心订单。`,
+      `确认 ${target.issueNumber} 的 ${draftNumbers.value.length} 个开奖号码？确认后不可修改，并会在同一事务中结算玩家注单与中心订单。`,
       '确认开奖结果', { type: 'warning', confirmButtonText: '确认并结算', cancelButtonText: '返回修改', closeOnClickModal: false },
     )
   } catch { return }
@@ -88,8 +118,8 @@ async function forceSettleIssue(row: DrawHistoryItem) {
 async function supplement() {
   if (supplementing.value) return
   const numbers = supplementNumbers.value.split(/[,，\s]+/).map(Number).filter(Number.isFinite)
-  if (!supplementIssue.value.trim() || numbers.length !== 8 || numbers.some(value => value < 1 || value > 20)) {
-    adminNotice.warning('补期需要期号和 8 个 1 到 20 的开奖号码')
+  if (!supplementIssue.value.trim() || numbers.length !== visibleBallCount.value || numbers.some(value => value < 1 || value > 20)) {
+    adminNotice.warning(`补期需要期号和 ${visibleBallCount.value} 个 1 到 20 的开奖号码`)
     return
   }
   try {
@@ -129,12 +159,10 @@ onMounted(async () => {
   currentUser.value = me.displayName || '超级管理员'
   canForceSettle.value = me.permissions.includes('DRAW_HISTORY_FORCE_SETTLE')
   canSupplement.value = me.permissions.includes('DRAW_HISTORY_SUPPLEMENT')
-  gameCatalog.value = await api.getGameCatalog()
-  if (gameCatalog.value.length > 0 && !gameCatalog.value.some(game => game.gameCode === selectedGameCode.value)) {
-    selectedGameCode.value = gameCatalog.value[0]!.gameCode
-  }
   await load()
+  refreshTimer = window.setInterval(() => { void load() }, 10000)
 })
+onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(refreshTimer) })
 </script>
 
 <template>
@@ -155,14 +183,14 @@ onMounted(async () => {
 
       <el-form inline class="filters supplement-form">
         <el-form-item label="补期期号"><el-input v-model="supplementIssue" /></el-form-item>
-        <el-form-item label="开奖号码"><el-input v-model="supplementNumbers" placeholder="8个开奖号码，逗号分隔" /></el-form-item>
+        <el-form-item label="开奖号码"><el-input v-model="supplementNumbers" :placeholder="`${visibleBallCount} 个开奖号码，逗号分隔`" /></el-form-item>
         <el-form-item label="开奖时间"><el-date-picker v-model="supplementOpenedAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" /></el-form-item>
         <el-form-item><el-button type="primary" :disabled="!canSupplement" :loading="supplementing" @click="supplement">补期并确认</el-button></el-form-item>
       </el-form>
 
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-skeleton v-if="loading" :rows="6" animated />
-      <el-table scrollbar-always-on v-else :data="rows" row-key="issueNumber" stripe border empty-text="暂无数据">
+      <el-table scrollbar-always-on v-else :data="visibleRows" row-key="issueNumber" stripe border empty-text="暂无数据">
         <el-table-column prop="gameName" label="彩种名称" min-width="120" />
         <el-table-column prop="issueNumber" label="期号" min-width="130" />
         <el-table-column label="开奖球号" min-width="300"><template #default="{ row }"><el-space wrap><el-tag v-for="(number,index) in row.balls" :key="index" class="ball" round>{{ number > 0 ? ball(number) : '--' }}</el-tag></el-space></template></el-table-column>

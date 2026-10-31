@@ -242,6 +242,10 @@ class DataRetentionSchedulerTest {
 
     private long insertBet(String code, long accountId, String status, Instant settledAt) {
         jdbc.update("""
+                INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                VALUES ('AU8', ?, 'CLOSED', 'SETTLED', 8)
+                """, "ret-" + code);
+        jdbc.update("""
                 INSERT INTO game_bet
                     (bet_code, issue_number, user_id, ball_number, play_type, parameters_text,
                      stake, odds_snapshot, settlement_status, net_profit, settled_at)

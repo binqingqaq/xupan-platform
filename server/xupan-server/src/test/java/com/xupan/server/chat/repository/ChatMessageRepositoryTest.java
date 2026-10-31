@@ -139,6 +139,66 @@ class ChatMessageRepositoryTest {
                 .extracting(ChatMessage::id).containsExactly(publicMessage.id());
     }
 
+    @Test
+    @Transactional
+    void hidesEightBallIssueMessagesFromNormalFeedAfterSevenBallIssueStartsAndKeepsCursorOrder() {
+        String oldIssue = "39998001";
+        String sevenIssue = "39998002";
+        insertIssue(oldIssue, 8, "SETTLED");
+        insertIssue(sevenIssue, 7, "BETTING");
+
+        var room = roomRepository.findByCodeForUpdate("main").orElseThrow();
+        ChatMessage oldPlayerBet = insertPlayerMessage(room, "legacy-eight-bet", oldIssue, "第8球/1番10");
+        ChatMessage oldRobotResult = insertRobotForIssue(room, "legacy-eight-result", oldIssue, "旧八球开奖结果");
+        ChatMessage currentGeneric = insertPlayerMessage(room, "current-generic", null, "大家好");
+        ChatMessage currentSevenResult = insertRobotForIssue(room, "current-seven-result", sevenIssue, "七球开奖结果");
+
+        assertThat(messageRepository.isLegacyEightBallMessage(oldPlayerBet)).isTrue();
+        assertThat(messageRepository.isLegacyEightBallMessage(oldRobotResult)).isTrue();
+        assertThat(messageRepository.isLegacyEightBallMessage(currentGeneric)).isFalse();
+        assertThat(messageRepository.isLegacyEightBallMessage(currentSevenResult)).isFalse();
+        assertThat(messageRepository.findAfterSequence(room.id(), 0, 10, 101L))
+                .extracting(ChatMessage::sequenceNo)
+                .containsExactly(currentGeneric.sequenceNo(), currentSevenResult.sequenceNo());
+        assertThat(messageRepository.findBeforeSequence(room.id(), currentSevenResult.sequenceNo() + 1, 10, 101L))
+                .extracting(ChatMessage::sequenceNo)
+                .containsExactly(currentSevenResult.sequenceNo(), currentGeneric.sequenceNo());
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_message WHERE id IN (?, ?)",
+                Integer.class, oldPlayerBet.id(), oldRobotResult.id())).isEqualTo(2);
+    }
+
+    private ChatMessage insertPlayerMessage(com.xupan.server.chat.domain.ChatRoom room, String clientId,
+                                            String issueNumber, String content) {
+        var currentRoom = roomRepository.findByCodeForUpdate(room.roomCode()).orElseThrow();
+        long sequence = roomRepository.allocateNextSequence(currentRoom.id(), currentRoom.nextSequenceNo());
+        if (issueNumber == null) {
+            return messageRepository.insertUserMessage(room.id(), sequence, userId, "仓储测试用户",
+                    clientId, 101L, content, NOW);
+        }
+        return messageRepository.insertUserBetMessage(room.id(), sequence, userId, "仓储测试用户",
+                clientId, issueNumber, content, null, 101L, NOW);
+    }
+
+    private ChatMessage insertRobotForIssue(com.xupan.server.chat.domain.ChatRoom room, String key,
+                                            String issueNumber, String content) {
+        var currentRoom = roomRepository.findByCodeForUpdate(room.roomCode()).orElseThrow();
+        long sequence = roomRepository.allocateNextSequence(currentRoom.id(), currentRoom.nextSequenceNo());
+        return messageRepository.insertRobotMessage(room.id(), sequence, 99L, "机器人", issueNumber,
+                key, content, "{}", ChatMessageVisibility.PUBLIC, null, NOW);
+    }
+
+    private void insertIssue(String issueNumber, int ballCount, String phase) {
+        String status = "BETTING".equals(phase) ? "OPEN" : "CLOSED";
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count,
+                     opened_at, issue_started_at, betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, ?, ?, ?, ?, ?, ?, ?)
+                """, issueNumber, status, phase, ballCount,
+                java.sql.Timestamp.from(NOW), java.sql.Timestamp.from(NOW),
+                java.sql.Timestamp.from(NOW.plusSeconds(180)), java.sql.Timestamp.from(NOW.plusSeconds(300)));
+    }
+
     private ChatMessage insertRobot(com.xupan.server.chat.domain.ChatRoom room, String key,
                                     ChatMessageVisibility visibility, Long agentId) {
         var currentRoom = roomRepository.findByCodeForUpdate(room.roomCode()).orElseThrow();
@@ -148,6 +208,8 @@ class ChatMessageRepositoryTest {
     }
 
     private void clean() {
+        jdbcTemplate.update("DELETE FROM chat_message WHERE issue_number LIKE '399980%'");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number LIKE '399980%'");
         jdbcTemplate.update("DELETE FROM chat_read_cursor WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", USERNAME);
         jdbcTemplate.update("DELETE FROM chat_user_mute WHERE user_id IN "

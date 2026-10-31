@@ -37,11 +37,11 @@ public class BetBoardController {
         return user.getUserId();
     }
 
-    public record BoardResponse(String issueNumber, String phase, Instant serverNow, Instant phaseEndsAt,
+    public record BoardResponse(String issueNumber, int ballCount, String phase, Instant serverNow, Instant phaseEndsAt,
                                 long normalCount, long botCount, BigDecimal normalStake, BigDecimal botStake,
                                 List<BetItemResponse> items, List<DrawHistoryResponse> history) {
         static BoardResponse from(BetBoardService.Board board) {
-            return new BoardResponse(board.issueNumber(), board.phase(), board.serverNow(),
+            return new BoardResponse(board.issueNumber(), board.ballCount(), board.phase(), board.serverNow(),
                     board.phaseEndsAt(), board.normalCount(), board.botCount(),
                     board.normalStake(), board.botStake(),
                     board.items().stream().map(BetItemResponse::from).toList(),

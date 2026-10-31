@@ -90,4 +90,31 @@ describe('platform admin home', () => {
 
     expect(api.listDrawHistory).toHaveBeenLastCalledWith({ gameCode: 'MULTI', pageSize: 48 })
   })
+
+  it('shows only seven-ball results after the active AU8 issue switches', async () => {
+    vi.mocked(api.getGameCatalog).mockResolvedValue([
+      { gameCode: 'AU8', displayName: '七球番摊', sortOrder: 1, nextIssueBallCount: 7, activeIssueBallCount: 7 },
+    ] as never)
+    vi.mocked(api.listDrawHistory).mockResolvedValue({
+      items: [
+        { gameCode: 'AU8', gameName: '七球番摊', issueNumber: '39999947', balls: [1, 2, 3, 4, 5, 6, 7], ballCount: 7,
+          phase: 'SETTLED', openedAt: null, settledAt: '2026-10-03T01:00:00Z', drawConfirmedAt: '2026-10-03T01:00:00Z',
+          drawResultVersion: 1, betCount: 0, pendingBetCount: 0, pendingCenterOrderCount: 0 },
+        { gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999946', balls: [1, 2, 3, 4, 5, 6, 7, 18], ballCount: 8,
+          phase: 'SETTLED', openedAt: null, settledAt: '2026-10-02T01:00:00Z', drawConfirmedAt: '2026-10-02T01:00:00Z',
+          drawResultVersion: 1, betCount: 0, pendingBetCount: 0, pendingCenterOrderCount: 0 },
+      ], page: 1, pageSize: 48, total: 2,
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminHome)
+    app.component('RouterLink', { props: ['to'], template: '<a><slot /></a>' })
+    app.mount(container)
+    await settleOperations()
+
+    expect(container.querySelectorAll('.platform-admin-ball-row .platform-admin-ball')).toHaveLength(7)
+    expect(container.querySelectorAll('.platform-admin-history-balls .el-tag')).toHaveLength(7)
+    expect(container.querySelectorAll('.platform-admin-route-color')).toHaveLength(1)
+    expect(container.textContent).not.toContain('39999946')
+  })
 })

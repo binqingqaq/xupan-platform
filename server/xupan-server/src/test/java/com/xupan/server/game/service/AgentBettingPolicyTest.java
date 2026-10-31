@@ -117,7 +117,7 @@ class AgentBettingPolicyTest {
     void sealWindowFollowsBy220BoundarySemantics() {
         Instant drawEndsAt = Instant.parse("2026-10-02T12:00:00Z");
         GameDataRepository.IssueRecord issue = new GameDataRepository.IssueRecord(
-                "3000000", "OPEN", "BETTING", List.of(), drawEndsAt.minusSeconds(300),
+                "3000000", "OPEN", "BETTING", 8, List.of(), drawEndsAt.minusSeconds(300),
                 drawEndsAt.minusSeconds(120), drawEndsAt, null);
 
         MachineBettingConfig sixty = machine(95, 18, 60, 10);
@@ -135,7 +135,7 @@ class AgentBettingPolicyTest {
     void manualMachineClosureAndSealWindowProduceDistinctReasons() {
         Instant drawEndsAt = Instant.parse("2026-10-02T12:00:00Z");
         GameDataRepository.IssueRecord issue = new GameDataRepository.IssueRecord(
-                "3000000", "OPEN", "BETTING", List.of(), drawEndsAt.minusSeconds(300),
+                "3000000", "OPEN", "BETTING", 8, List.of(), drawEndsAt.minusSeconds(300),
                 drawEndsAt.minusSeconds(120), drawEndsAt, null);
 
         MachineBettingConfig manuallyClosed = new MachineBettingConfig(new BigDecimal("95"), new BigDecimal("18"),

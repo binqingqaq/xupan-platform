@@ -72,13 +72,15 @@ public class GameSettingsController {
                               @NotBlank String algorithm, String playPrefix, boolean switchEnabled,
                               boolean specialEnabled, @NotBlank String specialModel,
                               boolean keyboardEnabled, @NotBlank String status,
+                              Integer nextIssueBallCount, String ballRuleChangeReason,
                               BigDecimal oddsAte, BigDecimal oddsAdx, BigDecimal oddsBte,
                               BigDecimal oddsBdx, BigDecimal oddsCte, BigDecimal oddsCdx,
                               BigDecimal oddsDte, BigDecimal oddsDdx) {
         GameSettingsService.GameInput toInput() {
             return new GameSettingsService.GameInput(gameCode, displayName, ballIndexes, drawSourceUrl,
                     sortOrder, algorithm, playPrefix, switchEnabled, specialEnabled, specialModel,
-                    keyboardEnabled, status, oddsAte, oddsAdx, oddsBte, oddsBdx,
+                    keyboardEnabled, status, nextIssueBallCount, ballRuleChangeReason,
+                    oddsAte, oddsAdx, oddsBte, oddsBdx,
                     oddsCte, oddsCdx, oddsDte, oddsDdx);
         }
     }
@@ -86,7 +88,8 @@ public class GameSettingsController {
     public record GameResponse(long id, String gameCode, String displayName, String ballIndexes,
                                String drawSourceUrl, int sortOrder, String algorithm, String playPrefix,
                                boolean switchEnabled, boolean specialEnabled, String specialModel,
-                               boolean keyboardEnabled, String status, long version, Instant updatedAt,
+                               boolean keyboardEnabled, String status, int nextIssueBallCount,
+                               long version, Instant updatedAt,
                                BigDecimal oddsAte, BigDecimal oddsAdx, BigDecimal oddsBte,
                                BigDecimal oddsBdx, BigDecimal oddsCte, BigDecimal oddsCdx,
                                BigDecimal oddsDte, BigDecimal oddsDdx) {
@@ -94,7 +97,7 @@ public class GameSettingsController {
             return new GameResponse(row.id(), row.gameCode(), row.displayName(), row.ballIndexes(),
                     row.drawSourceUrl(), row.sortOrder(), row.algorithm(), row.playPrefix(),
                     row.switchEnabled(), row.specialEnabled(), row.specialModel(), row.keyboardEnabled(),
-                    row.status(), row.version(), row.updatedAt(), row.oddsAte(), row.oddsAdx(),
+                    row.status(), row.nextIssueBallCount(), row.version(), row.updatedAt(), row.oddsAte(), row.oddsAdx(),
                     row.oddsBte(), row.oddsBdx(), row.oddsCte(), row.oddsCdx(), row.oddsDte(), row.oddsDdx());
         }
     }

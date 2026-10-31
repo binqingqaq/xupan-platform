@@ -91,6 +91,9 @@ class PlayerPhysicalDeleteTest {
     @BeforeEach
     void setUp() {
         clean();
+        int issueBallCount = gameDataRepository.ballCountForIssue("AU8", BET_ISSUE);
+        gameDataRepository.saveIssue(BET_ISSUE, "CLOSED",
+                java.util.stream.IntStream.rangeClosed(1, issueBallCount).boxed().toList());
         adminId = userRepository.insert(ADMIN, "物理删除管理员", passwordPolicy.encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
         machineId = agentAdminService.createAgent(MACHINE_CODE, MACHINE_USER, "物理删除机器", PASSWORD, null, adminId).id();
@@ -549,6 +552,8 @@ class PlayerPhysicalDeleteTest {
         // 物理删除后 user_id 已置空，按快照列清理这些历史行
         jdbc.update("DELETE FROM demo_balance_ledger WHERE player_name_snapshot IN ('删除历史玩家','无历史玩家','重复删除玩家','并发删除玩家')");
         jdbc.update("DELETE FROM game_bet WHERE player_name_snapshot IN ('删除历史玩家','无历史玩家','重复删除玩家','并发删除玩家')");
+        jdbc.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number=? "
+                + "AND draw_confirmed_at IS NULL", BET_ISSUE);
         if (!machineIds.isEmpty()) {
             deleteRows("DELETE FROM agent_game WHERE agent_id IN (%s)", machineIds);
             deleteRows("DELETE FROM agent_ledger WHERE agent_id IN (%s)", machineIds);

@@ -19,7 +19,7 @@ function localize(labels: Record<string, string>, value: string | null | undefin
 export function toHistoryRows(history: GameHistoryView[]): HistoryRow[] {
   return history.map((item) => {
     const numbers = item.balls.map((ball) => ball.number === null ? '--' : String(ball.number).padStart(2, '0'))
-    const specialBall = item.balls[7]
+    const specialBall = item.balls[item.balls.length - 1]
     return {
       issue: item.issueNumber,
       numbers,

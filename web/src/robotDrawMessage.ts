@@ -80,9 +80,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function isNumberArray(value: unknown, expectedLength = 8): value is number[] {
+function isNumberArray(value: unknown, expectedLength?: number): value is number[] {
   return Array.isArray(value)
-    && value.length === expectedLength
+    && (expectedLength === undefined ? value.length === 7 || value.length === 8 : value.length === expectedLength)
     && value.every(item => typeof item === 'number' && Number.isFinite(item))
 }
 
@@ -103,16 +103,17 @@ function isBasePayload(value: Record<string, unknown>): value is Record<string, 
     && isRecord(value.data)
 }
 
-function isDrawHistoryItem(value: unknown): value is DrawHistoryItem {
+function isDrawHistoryItem(value: unknown, ballCount?: number): value is DrawHistoryItem {
   if (!isRecord(value)) return false
-  return isText(value.issueNumber) && isNumberArray(value.numbers) && isText(value.settledAt)
+  return isText(value.issueNumber) && isNumberArray(value.numbers, ballCount) && isText(value.settledAt)
 }
 
-function isWinnerItem(value: unknown): value is WinnerItem {
+function isWinnerItem(value: unknown, ballCount?: number): value is WinnerItem {
   if (!isRecord(value)) return false
   return isText(value.maskedUser)
     && typeof value.ballNumber === 'number'
     && Number.isFinite(value.ballNumber)
+    && (ballCount === undefined || value.ballNumber <= ballCount)
     && isText(value.playType)
     && (value.betText === undefined || isText(value.betText))
     && typeof value.stake === 'number'
@@ -136,7 +137,7 @@ function isTotalBoardItem(value: unknown): value is TotalBoardItem {
     && typeof value.netProfit === 'number' && Number.isFinite(value.netProfit)
 }
 
-export function parseRobotDrawPayload(payloadJson: string | null | undefined): RobotDrawPayload | null {
+export function parseRobotDrawPayload(payloadJson: string | null | undefined, ballCount?: number): RobotDrawPayload | null {
   if (!payloadJson || typeof payloadJson !== 'string') return null
   let value: unknown
   try {
@@ -149,9 +150,9 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
   if (value.component === 'DRAW_SUMMARY') {
     const data = value.data
     const ballResults = data.ballResults
-    return isNumberArray(data.numbers) && isText(data.settledAt)
+    return isNumberArray(data.numbers, ballCount) && isText(data.settledAt)
       && (ballResults === undefined || (Array.isArray(ballResults)
-        && ballResults.length === 8 && ballResults.every(isBallResultItem)))
+        && ballResults.length === data.numbers.length && ballResults.every(isBallResultItem)))
       ? {
         schema: value.schema,
         component: value.component,
@@ -166,8 +167,8 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
     const data = value.data
     const routeItems = data.routeItems
     return Array.isArray(data.items)
-      && data.items.every(isDrawHistoryItem)
-      && (routeItems === undefined || (Array.isArray(routeItems) && routeItems.every(isDrawHistoryItem)))
+      && data.items.every(item => isDrawHistoryItem(item, ballCount))
+      && (routeItems === undefined || (Array.isArray(routeItems) && routeItems.every(item => isDrawHistoryItem(item, ballCount))))
       ? {
         schema: value.schema,
         component: value.component,
@@ -181,9 +182,9 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined): R
   if (value.component === 'WINNER_LIST') {
     const hasResult = data.numbers === undefined && data.settledAt === undefined
       ? true
-      : isNumberArray(data.numbers) && isText(data.settledAt)
+      : isNumberArray(data.numbers, ballCount) && isText(data.settledAt)
     return Array.isArray(data.items)
-      && data.items.every(isWinnerItem)
+      && data.items.every(item => isWinnerItem(item, ballCount))
       && hasResult
       && (data.emptyMessage === undefined || typeof data.emptyMessage === 'string')
       ? {

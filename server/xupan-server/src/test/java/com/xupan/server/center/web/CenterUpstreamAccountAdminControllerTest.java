@@ -60,6 +60,13 @@ class CenterUpstreamAccountAdminControllerTest {
         adminId = userRepository.insert(ADMIN, "中心账号管理员",
                 new BCryptPasswordEncoder().encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
+        if (jdbc.queryForObject("SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number='3000001'",
+                Integer.class) == 0) {
+            jdbc.update("""
+                    INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                    VALUES ('AU8', '3000001', 'CLOSED', 'SETTLED', 8)
+                    """);
+        }
     }
 
     @AfterEach
@@ -394,11 +401,11 @@ class CenterUpstreamAccountAdminControllerTest {
     private long insertCenterOrder(long accountId, long machineId, long betId, String orderNo, String status) {
         jdbc.update("""
                 INSERT INTO center_order
-                    (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code,
+                    (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code, ball_number,
                      issue_number, play_type, play_text, odds, amount, status, frozen_amount,
                      settle_result, settle_amount, draw_numbers, accepted_at, settled_at,
                      risk_amount, risk_policy_version, machine_funded_amount)
-                VALUES (?, ?, ?, ?, 'AU8', '3000001', 'FAN', 'params=1', 3.8500, 10.00, ?,
+                VALUES (?, ?, ?, ?, 'AU8', 1, '3000001', 'FAN', 'params=1', 3.8500, 10.00, ?,
                         10.00, CASE WHEN ? = 'SETTLED' THEN 'AGENT_LOSE' ELSE NULL END,
                         CASE WHEN ? = 'SETTLED' THEN 10.00 ELSE NULL END,
                         CASE WHEN ? = 'SETTLED' THEN '1,2,3,4,5,6,7,8' ELSE NULL END,

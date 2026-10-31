@@ -96,14 +96,14 @@ class CenterRejectWithdrawIntegrationTest {
         accountId = jdbc.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
 
+        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                + "VALUES ('AU8', '39999480', 'OPEN', 'BETTING', 8)");
         jdbc.update("""
                 INSERT INTO game_bet (game_code, user_id, bet_code, request_idempotency_key, issue_number,
                                       ball_number, play_type, parameters_text, stake, odds_snapshot,
                                       settlement_status)
-                VALUES ('AU8', ?, ?, ?, '39999401', 1, 'FAN', '1', 100.00, 3.850, 'PENDING')
+                VALUES ('AU8', ?, ?, ?, '39999480', 1, 'FAN', '1', 100.00, 3.850, 'PENDING')
                 """, accountId, BET_CODE, BET_CODE);
-        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase) "
-                + "VALUES ('AU8', '39999401', 'OPEN', 'BETTING')");
         betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, BET_CODE);
     }
 
@@ -305,7 +305,7 @@ class CenterRejectWithdrawIntegrationTest {
                 INSERT INTO center_order (center_agent_id, agent_order_no, local_bet_id, local_agent_id,
                                           game_code, issue_number, ball_number, play_type, play_text, odds,
                                           amount, status, frozen_amount)
-                VALUES (?, ?, ?, ?, 'AU8', '39999401', 1, 'FAN', 'params=1', 3.8500, 100.00, ?, 0.00)
+                VALUES (?, ?, ?, ?, 'AU8', '39999480', 1, 'FAN', 'params=1', 3.8500, 100.00, ?, 0.00)
                 """, centerAgentId, "BET-" + betId, betId, machineId, status);
         jdbc.update("""
                 INSERT INTO report_upstream_order (bet_id, agent_id, center_agent_id, attempt_no, status,
@@ -369,7 +369,7 @@ class CenterRejectWithdrawIntegrationTest {
         jdbc.update("DELETE FROM demo_balance_ledger WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE member_code = 'REJECT001')");
         jdbc.update("DELETE FROM game_bet WHERE bet_code = ?", BET_CODE);
-        jdbc.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number = '39999401'");
+        jdbc.update("DELETE FROM game_issue WHERE game_code = 'AU8' AND issue_number = '39999480'");
         jdbc.update("DELETE FROM demo_user_account WHERE member_code = 'REJECT001'");
         jdbc.update("DELETE FROM agent WHERE agent_code = ?", MACHINE_CODE);
         jdbc.update("DELETE FROM center_agent WHERE agent_code = ?", CENTER_USERNAME);

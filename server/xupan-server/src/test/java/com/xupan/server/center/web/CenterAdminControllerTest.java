@@ -305,12 +305,20 @@ class CenterAdminControllerTest {
 
     private void insertOrder(long accountId, String orderNo, long localBetId, long machineId,
                              String gameCode, String issueNumber, String status) {
+        if (jdbc.queryForObject("SELECT COUNT(*) FROM game_issue WHERE game_code=? AND issue_number=?",
+                Integer.class, gameCode, issueNumber) == 0) {
+            jdbc.update("""
+                    INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                    VALUES (?, ?, 'CLOSED', 'SETTLED', 8)
+                    """, gameCode, issueNumber);
+        }
         jdbc.update("""
                 INSERT INTO center_order
                     (center_agent_id, agent_order_no, local_bet_id, local_agent_id, game_code, issue_number,
-                     play_type, play_text, odds, amount, status)
-                VALUES (?, ?, ?, ?, ?, ?, 'FAN', 'filter test', 3.8500, 10.00, ?)
-                """, accountId, orderNo, localBetId, machineId, gameCode, issueNumber, status);
+                     ball_number, play_type, play_text, odds, amount, status)
+                VALUES (?, ?, ?, ?, ?, ?, CASE WHEN ? = 'ACCEPTED' THEN 1 ELSE NULL END,
+                        'FAN', 'filter test', 3.8500, 10.00, ?)
+                """, accountId, orderNo, localBetId, machineId, gameCode, issueNumber, status, status);
     }
 
     /** 没有 CENTER_AGENT_MANAGE 的普通用户不得管理中心代理。 */

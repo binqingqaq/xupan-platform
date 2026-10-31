@@ -186,6 +186,9 @@ public class RobotDispatchService {
             if (event == null) {
                 return skip(dispatch, "GAME_EVENT_NOT_FOUND", now);
             }
+            if (isLegacyEightBallEvent(event)) {
+                return skip(dispatch, "LEGACY_EIGHT_BALL_EVENT_SUPPRESSED", now);
+            }
             RobotEventType checkedEventType = eventAdapter.eventType(event.eventType());
             ChatMessage message;
             if (checkedEventType == RobotEventType.BETTING_CLOSED) {
@@ -234,7 +237,8 @@ public class RobotDispatchService {
         ChatMessage latest = publicAnnouncement;
         for (Long agentId : chatMessageService.activeMachineIds()) {
             int closeSeconds = gameDataRepository.findMachineCloseSeconds(agentId);
-            GameDataRepository.IssueRecord issue = gameDataRepository.findIssueByIssueNumber(event.issueNumber())
+            GameDataRepository.IssueRecord issue = gameDataRepository.findIssueByGameCodeAndIssueNumber(
+                    event.gameCode(), event.issueNumber())
                     .orElse(null);
             boolean earlyMachineClose = issue != null && closeSeconds > 0 && issue.drawEndsAt() != null
                     && issue.bettingEndsAt() != null
@@ -369,9 +373,9 @@ public class RobotDispatchService {
                                                        RobotDispatchRepository.UnscheduledGameEvent event,
                                                        Instant now) {
         GameDataRepository.IssueRecord issue = gameDataRepository
-                .findIssueByIssueNumber(event.issueNumber())
-                .filter(value -> value.numbers().size() == 8
-                        && value.numbers().stream().allMatch(java.util.Objects::nonNull))
+                .findIssueByGameCodeAndIssueNumber(event.gameCode(), event.issueNumber())
+                .filter(value -> value.numbers().size() == value.ballCount()
+                        && value.numbers().stream().allMatch(number -> number != null && number >= 1 && number <= 20))
                 .orElseThrow(() -> BusinessException.badRequest("ROBOT_DRAW_DATA_NOT_FOUND",
                         "开奖事件对应的期号数据不存在或不完整"));
         String content = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
@@ -403,8 +407,8 @@ public class RobotDispatchService {
         Object data = switch (checkedComponent) {
             case DRAW_SUMMARY -> new DrawSummaryData(currentIssue.numbers(), currentIssue.settledAt());
             case DRAW_HISTORY -> new DrawHistoryData(
-                    historyItems(gameDataRepository.findSettledIssues(15)),
-                    historyItems(gameDataRepository.findLatestSettledBlock(60)));
+                    historyItems(currentIssue.ballCount(), 15),
+                    historyItems(currentIssue.ballCount(), 60));
             case WINNER_LIST -> winnerData(issueNumber, currentIssue, agentId);
             case TOTAL_BOARD -> totalBoardData(issueNumber, currentIssue, agentId);
         };
@@ -457,6 +461,31 @@ public class RobotDispatchService {
         return issues.stream()
                 .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(), issue.settledAt()))
                 .toList();
+    }
+
+    private List<DrawHistoryItem> historyItems(int ballCount, int limit) {
+        List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues(
+                        GameDataRepository.DEFAULT_GAME_CODE, 100).stream()
+                .filter(issue -> issue.ballCount() == ballCount)
+                .limit(limit)
+                .toList();
+        if (limit == 60) {
+            List<GameDataRepository.IssueRecord> ascending = new ArrayList<>(issues);
+            java.util.Collections.reverse(ascending);
+            return historyItems(ascending);
+        }
+        return historyItems(issues);
+    }
+
+    private boolean isLegacyEightBallEvent(RobotDispatchRepository.UnscheduledGameEvent event) {
+        GameDataRepository.IssueRecord source = gameDataRepository
+                .findIssueByGameCodeAndIssueNumber(event.gameCode(), event.issueNumber())
+                .orElse(null);
+        if (!GameDataRepository.DEFAULT_GAME_CODE.equals(event.gameCode())
+                || source == null || source.ballCount() != 8) return false;
+        return gameDataRepository.findLatestIssue(event.gameCode())
+                .map(latest -> latest.ballCount() == 7)
+                .orElse(false);
     }
 
     private static boolean isPermanentTemplateError(BusinessException exception) {

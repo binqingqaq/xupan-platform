@@ -67,15 +67,16 @@ function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMM
     number, fan: fanOf(number), parity: number % 2 === 0 ? 'EVEN' : 'ODD',
     size: number >= 11 ? 'BIG' : 'SMALL',
   }))
-  const xPositions = numbers.map((_, index) => 74 + index * 116)
-  const fan = fanOf(numbers[7])
+  const xPositions = numbers.map((_, index) => 74 + index * (numbers.length === 7 ? 130 : 116))
+  const terminalNumber = numbers[numbers.length - 1]!
+  const fan = fanOf(terminalNumber)
   const body = `
     <text x="28" y="47" fill="#f1010a" font-family="${FONT}" font-size="25" font-weight="400">开盘结果</text>
     <text x="166" y="47" fill="#111" font-family="${FONT}" font-size="20">第${escapeXml(payload.issueNumber)}期</text>
     <text x="28" y="111" fill="#111" font-family="${FONT}" font-size="19">${escapeXml(formatDate(payload.data.settledAt))}</text>
     <rect x="790" y="34" width="135" height="111" fill="#f1010a"/>
     <text x="857.5" y="106" fill="#fff" font-family="${FONT}" font-size="48" font-weight="700" text-anchor="middle">${fan}番</text>
-    ${numbers.map((number, index) => ball(number, xPositions[index], 192, 24, index === 7)).join('')}
+    ${numbers.map((number, index) => ball(number, xPositions[index], 192, 24, index === numbers.length - 1)).join('')}
     ${numbers.map((_, index) => '<text x="' + xPositions[index] + '" y="228" fill="#444" font-family="' + FONT + '" font-size="13" text-anchor="middle">' + resultAttributeText(ballResults[index]) + '</text>').join('')}
   `
   return {
@@ -99,13 +100,13 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
   const rows = items.map((item, rowIndex) => {
     const y = tableTop + rowIndex * rowHeight
     const numberStart = 345
-    const circles = item.numbers.map((number, index) => ball(number, numberStart + index * 43, y + 17, 12, index === 7)).join('')
-    const special = item.numbers[7]
+    const circles = item.numbers.map((number, index) => ball(number, numberStart + index * 43, y + 17, 12, index === item.numbers.length - 1)).join('')
+    const special = item.numbers[item.numbers.length - 1]!
     const highlight = rowIndex === 0 ? `<rect x="1" y="${y}" width="1118" height="${rowHeight}" fill="none" stroke="#ff4550"/>` : ''
     return `${highlight}<text x="125" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="255" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="748" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="762.5" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="797" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
   }).join('')
   const routeItems = payload.data.routeItems ?? items.slice().reverse()
-  const gridValues = routeItems.slice(-gridColumns * gridRows).map(item => fanOf(item.numbers[7]))
+  const gridValues = routeItems.slice(-gridColumns * gridRows).map(item => fanOf(item.numbers[item.numbers.length - 1]!))
   const grid = Array.from({ length: gridColumns * gridRows }, (_, index) => {
     const value = gridValues[index]
     const x = index % gridColumns * 93.25
@@ -152,7 +153,7 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
       : `<text x="28" y="${130 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
     : `<text x="28" y="${exactResult ? 166 : 130}" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
   const resultLine = exactResult
-    ? `${numbers.map(displayNumber).join(',')} =&gt; ${fanOf(numbers[7])},${numbers[7] % 2 === 0 ? '双' : '单'},${numbers[7] >= 11 ? '大' : '小'}`
+    ? `${numbers.map(displayNumber).join(',')} =&gt; ${fanOf(numbers[numbers.length - 1]!)},${numbers[numbers.length - 1]! % 2 === 0 ? '双' : '单'},${numbers[numbers.length - 1]! >= 11 ? '大' : '小'}`
     : `${payload.issueNumber}期开奖数据`
   const body = exactResult
     ? `

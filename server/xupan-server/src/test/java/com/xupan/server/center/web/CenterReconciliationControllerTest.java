@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -38,6 +39,8 @@ class CenterReconciliationControllerTest {
     private static final String PASSWORD = "CenterReconPassword123";
     private static final String CENTER_CODE = "RECON_CENTER_A";
     private static final String OTHER_CENTER_CODE = "RECON_CENTER_B";
+    private String au8Issue;
+    private String k28Issue;
 
     @Autowired
     private MockMvc mockMvc;
@@ -57,10 +60,17 @@ class CenterReconciliationControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         clean();
+        String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 10);
+        au8Issue = "RCA" + suffix;
+        k28Issue = "RCK" + suffix;
         long adminId = userRepository.insert(ADMIN, "对账管理员",
                 new BCryptPasswordEncoder().encode(PASSWORD), "ACTIVE");
         userRepository.assignRole(adminId, "ADMIN");
         adminToken = login(ADMIN, PASSWORD);
+        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                + "VALUES ('AU8', ?, 'CLOSED', 'SETTLED', 8)", au8Issue);
+        jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
+                + "VALUES ('K28', ?, 'CLOSED', 'SETTLED', 8)", k28Issue);
 
         // 中心代理
         jdbc.update("""
@@ -105,8 +115,8 @@ class CenterReconciliationControllerTest {
         jdbc.update("""
                 INSERT INTO game_bet (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                                       play_type, parameters_text, stake, odds_snapshot, settlement_status)
-                VALUES (?, 'RECON-BET-1', 'RECON-BET-1', '39999801', 1, 'FAN', '1', 100.00, 3.850, 'PENDING')
-                """, accountId);
+                VALUES (?, 'RECON-BET-1', 'RECON-BET-1', ?, 1, 'FAN', '1', 100.00, 3.850, 'PENDING')
+                """, accountId, au8Issue);
         betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = 'RECON-BET-1'", Long.class);
     }
 
@@ -206,7 +216,7 @@ class CenterReconciliationControllerTest {
         mockMvc.perform(get("/api/admin/center/agents/reconciliation")
                         .param("machineId", String.valueOf(agentId))
                         .param("centerAgentId", String.valueOf(centerAgentId))
-                        .param("issueNumber", "39999801")
+                        .param("issueNumber", au8Issue)
                         .header("Authorization", bearerOf(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.counts.localTotal").value(1))
@@ -225,7 +235,7 @@ class CenterReconciliationControllerTest {
 
         mockMvc.perform(get("/api/admin/center/agents/reconciliation")
                         .param("centerAgentId", String.valueOf(centerAgentId))
-                        .param("issueNumber", "39999801")
+                        .param("issueNumber", au8Issue)
                         .header("Authorization", bearerOf(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.differenceCount").value(0))
@@ -240,7 +250,7 @@ class CenterReconciliationControllerTest {
 
         mockMvc.perform(get("/api/admin/center/agents/reconciliation")
                         .param("centerAgentId", String.valueOf(centerAgentId))
-                        .param("issueNumber", "39999801")
+                        .param("issueNumber", au8Issue)
                         .header("Authorization", bearerOf(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.financial.refundedOrders").value(1))
@@ -257,7 +267,7 @@ class CenterReconciliationControllerTest {
 
         mockMvc.perform(get("/api/admin/center/agents/reconciliation")
                         .param("centerAgentId", String.valueOf(centerAgentId))
-                        .param("issueNumber", "39999801")
+                        .param("issueNumber", au8Issue)
                         .header("Authorization", bearerOf(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.financial.refundMismatchCount").value(0))
@@ -271,7 +281,7 @@ class CenterReconciliationControllerTest {
 
         mockMvc.perform(get("/api/admin/center/agents/reconciliation")
                         .param("centerAgentId", String.valueOf(centerAgentId))
-                        .param("issueNumber", "39999801")
+                        .param("issueNumber", au8Issue)
                         .header("Authorization", bearerOf(adminToken)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.financialIssueCount").value(1))
@@ -477,12 +487,12 @@ class CenterReconciliationControllerTest {
         BigDecimal machineFunded = accepted ? risk.subtract(centerFunded) : BigDecimal.ZERO.setScale(2);
         jdbc.update("""
                 INSERT INTO center_order (center_agent_id, agent_order_no, local_bet_id, local_agent_id,
-                                          game_code, issue_number, play_type, play_text, odds, amount,
+                                          game_code, issue_number, ball_number, play_type, play_text, odds, amount,
                                           status, risk_amount, risk_policy_version, frozen_amount,
                                           machine_funded_amount, accepted_at)
-                VALUES (?, ?, ?, ?, 'K28', '39999801', 'FAN', 'params=1', 3.8500, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, 'K28', ?, 1, 'FAN', 'params=1', 3.8500, ?, ?, ?, ?, ?, ?,
                         CURRENT_TIMESTAMP)
-                """, orderCenterAgentId, "BET-" + betId, betId, agentId, stake, status, risk,
+                """, orderCenterAgentId, "BET-" + betId, betId, agentId, k28Issue, stake, status, risk,
                 accepted ? 1 : 0, centerFunded, machineFunded);
         if (accepted) {
             long orderId = jdbc.queryForObject("SELECT id FROM center_order WHERE center_agent_id = ? AND agent_order_no = ?",
@@ -506,12 +516,13 @@ class CenterReconciliationControllerTest {
         BigDecimal centerFunded = totalRisk.subtract(machineFunded);
         jdbc.update("""
                 INSERT INTO center_order (center_agent_id, agent_order_no, local_agent_id,
-                                          game_code, issue_number, play_type, play_text, odds, amount,
+                                          game_code, issue_number, ball_number, play_type, play_text, odds, amount,
                                           status, risk_amount, frozen_amount,
                                           machine_funded_amount, risk_policy_version, accepted_at)
-                VALUES (?, ?, ?, 'K28', '39999801', 'FAN', 'params=1', 3.8500, ?, 'REFUNDED',
+                VALUES (?, ?, ?, 'K28', ?, NULL, 'FAN', 'params=1', 3.8500, ?, 'REFUNDED',
                         0.00, ?, ?, 0, CURRENT_TIMESTAMP)
-                """, centerAgentId, "LEGACY-REFUND-" + betId, agentId, totalRisk, centerFunded, machineFunded);
+                """, centerAgentId, "LEGACY-REFUND-" + betId, agentId, k28Issue,
+                totalRisk, centerFunded, machineFunded);
         long orderId = jdbc.queryForObject("SELECT id FROM center_order WHERE agent_order_no = ?",
                 Long.class, "LEGACY-REFUND-" + betId);
         postCenterOrderLedger(centerAgentId, orderId, "AVAILABLE", "BET_FREEZE", "OUT", centerFunded,
@@ -540,11 +551,11 @@ class CenterReconciliationControllerTest {
         String orderNo = "CANCEL-NO-LEDGER-" + betId;
         jdbc.update("""
                 INSERT INTO center_order (center_agent_id, agent_order_no, game_code, issue_number, play_type,
-                                          play_text, odds, amount, status, risk_amount, frozen_amount,
+                                          ball_number, play_text, odds, amount, status, risk_amount, frozen_amount,
                                           machine_funded_amount, risk_policy_version, accepted_at)
-                VALUES (?, ?, 'K28', '39999801', 'FAN', 'params=1', 3.8500, ?, 'CANCELLED', ?, ?, 0.00, 1,
+                VALUES (?, ?, 'K28', ?, 'FAN', 1, 'params=1', 3.8500, ?, 'CANCELLED', ?, ?, 0.00, 1,
                         CURRENT_TIMESTAMP)
-                """, centerAgentId, orderNo, value, value, value);
+                """, centerAgentId, orderNo, k28Issue, value, value, value);
         long orderId = jdbc.queryForObject("SELECT id FROM center_order WHERE agent_order_no = ?",
                 Long.class, orderNo);
         postCenterOrderLedger(centerAgentId, orderId, "AVAILABLE", "BET_FREEZE", "OUT", value,
@@ -561,12 +572,12 @@ class CenterReconciliationControllerTest {
     private void insertMachineFundedAcceptedOrder() {
         jdbc.update("""
                 INSERT INTO center_order (center_agent_id, agent_order_no, local_bet_id, local_agent_id,
-                                          game_code, issue_number, play_type, play_text, odds, amount, status,
+                                          game_code, issue_number, ball_number, play_type, play_text, odds, amount, status,
                                           risk_amount, risk_policy_version, frozen_amount, machine_funded_amount,
                                           accepted_at)
-                VALUES (?, ?, ?, ?, 'K28', '39999801', 'FAN', 'params=1', 3.8500, 100.00, 'ACCEPTED',
+                VALUES (?, ?, ?, ?, 'K28', ?, 1, 'FAN', 'params=1', 3.8500, 100.00, 'ACCEPTED',
                         100.00, 1, 0.00, 100.00, CURRENT_TIMESTAMP)
-                """, centerAgentId, "BET-" + betId, betId, agentId);
+                """, centerAgentId, "BET-" + betId, betId, agentId, k28Issue);
     }
 
     private long insertSettledCenterFundedOrder(String centerResult, String centerSettleAmount,
@@ -578,12 +589,12 @@ class CenterReconciliationControllerTest {
         BigDecimal machineFunded = amount.subtract(centerFunded);
         jdbc.update("""
                 INSERT INTO center_order (center_agent_id, agent_order_no, local_bet_id, local_agent_id,
-                                          game_code, issue_number, play_type, play_text, odds, amount, status,
+                                          game_code, issue_number, ball_number, play_type, play_text, odds, amount, status,
                                           risk_amount, risk_policy_version, frozen_amount, machine_funded_amount,
                                           settle_result, settle_amount, accepted_at, settled_at)
-                VALUES (?, ?, ?, ?, 'K28', '39999801', 'FAN', 'params=1', 3.8500, ?, 'SETTLED',
+                VALUES (?, ?, ?, ?, 'K28', ?, 1, 'FAN', 'params=1', 3.8500, ?, 'SETTLED',
                         ?, 1, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """, centerAgentId, "BET-" + betId, betId, agentId, amount, amount, centerFunded,
+                """, centerAgentId, "BET-" + betId, betId, agentId, k28Issue, amount, amount, centerFunded,
                 machineFunded,
                 centerResult, settleAmount);
         long orderId = centerOrderId();
@@ -631,12 +642,13 @@ class CenterReconciliationControllerTest {
         BigDecimal amount = new BigDecimal("100.00");
         jdbc.update("""
                 INSERT INTO center_order (center_agent_id, agent_order_no, local_bet_id, local_agent_id,
-                                          game_code, issue_number, play_type, play_text, odds, amount, status,
+                                          game_code, issue_number, ball_number, play_type, play_text, odds, amount, status,
                                           risk_amount, risk_policy_version, frozen_amount, machine_funded_amount,
                                           settle_result, settle_amount, accepted_at, settled_at)
-                VALUES (?, ?, ?, ?, 'K28', '39999801', 'FAN', 'params=1', 3.8500, ?, 'SETTLED',
+                VALUES (?, ?, ?, ?, 'K28', ?, 1, 'FAN', 'params=1', 3.8500, ?, 'SETTLED',
                         ?, 1, 0.00, ?, 'AGENT_LOSE', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """, centerAgentId, "BET-" + betId, betId, agentId, amount, amount, amount, amount);
+                """, centerAgentId, "BET-" + betId, betId, agentId, k28Issue,
+                amount, amount, amount, amount);
         long orderId = centerOrderId();
         jdbc.update("UPDATE game_bet SET settlement_status = 'LOSE', net_profit = -100.00 WHERE id = ?", betId);
         postCenterOrderLedger(centerAgentId, orderId, "AVAILABLE", "SETTLE_LOSE", "IN", amount,
@@ -766,6 +778,14 @@ class CenterReconciliationControllerTest {
         jdbc.update("DELETE FROM report_upstream_order WHERE agent_id IN "
                 + "(SELECT id FROM agent WHERE agent_code = 'RECON_MACHINE_A')");
         jdbc.update("DELETE FROM game_bet WHERE bet_code = 'RECON-BET-1'");
+        if (au8Issue != null) {
+            jdbc.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number=? "
+                    + "AND draw_confirmed_at IS NULL", au8Issue);
+        }
+        if (k28Issue != null) {
+            jdbc.update("DELETE FROM game_issue WHERE game_code='K28' AND issue_number=? "
+                    + "AND draw_confirmed_at IS NULL", k28Issue);
+        }
         jdbc.update("DELETE FROM agent_ledger WHERE agent_id IN "
                 + "(SELECT id FROM agent WHERE agent_code = 'RECON_MACHINE_A')");
         jdbc.update("UPDATE agent SET report_type = NULL, center_agent_id = NULL "

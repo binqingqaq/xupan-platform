@@ -300,12 +300,18 @@ class ChatMessageServiceTest {
         when(roomRepository.allocateNextSequence(1L, 0L)).thenReturn(1L);
         when(messageRepository.insertUserMessage(1L, 1L, USER_ID, "用户甲", "trend-1", 44L, "走势", NOW))
                 .thenReturn(message(24L, 1L, "走势"));
+        when(gameDataRepository.findCurrentIssue()).thenReturn(Optional.of(new GameDataRepository.IssueRecord(
+                "3000002", "OPEN", "BETTING", 7, List.of(), NOW, NOW, NOW, NOW)));
         when(gameDataRepository.findSettledIssues("AU8", 15)).thenReturn(List.of(
                 new GameDataRepository.IssueRecord("3000000", "CLOSED", "SETTLED",
-                        List.of(1, 2, 3, 4, 5, 6, 7, 8), NOW, NOW, NOW, NOW)));
+                        8, List.of(1, 2, 3, 4, 5, 6, 7, 8), NOW, NOW, NOW, NOW),
+                new GameDataRepository.IssueRecord("3000001", "CLOSED", "SETTLED",
+                        7, List.of(1, 2, 3, 4, 5, 6, 7), NOW, NOW, NOW, NOW)));
         when(gameDataRepository.findLatestSettledBlock("AU8", 60)).thenReturn(List.of(
                 new GameDataRepository.IssueRecord("3000000", "CLOSED", "SETTLED",
-                        List.of(1, 2, 3, 4, 5, 6, 7, 8), NOW, NOW, NOW, NOW)));
+                        8, List.of(1, 2, 3, 4, 5, 6, 7, 8), NOW, NOW, NOW, NOW),
+                new GameDataRepository.IssueRecord("3000001", "CLOSED", "SETTLED",
+                        7, List.of(1, 2, 3, 4, 5, 6, 7), NOW, NOW, NOW, NOW)));
 
         service.sendUserMessage(USER_ID, "main", "trend-1", "走势", NOW);
 
@@ -315,7 +321,8 @@ class ChatMessageServiceTest {
                 eq("UNKNOWN"), anyString(), content.capture(), payload.capture(),
                 eq(ChatMessageVisibility.MACHINE), eq(44L), eq(NOW));
         assertThat(content.getValue()).contains("近期开奖走势");
-        assertThat(payload.getValue()).contains("DRAW_HISTORY", "routeItems", "3000000");
+        assertThat(payload.getValue()).contains("DRAW_HISTORY", "routeItems", "3000001")
+                .doesNotContain("3000000", "1,2,3,4,5,6,7,8");
     }
 
     @Test

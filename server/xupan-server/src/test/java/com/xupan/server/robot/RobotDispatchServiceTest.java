@@ -13,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -154,6 +155,46 @@ class RobotDispatchServiceTest {
     }
 
     @Test
+    void sevenBallDrawPublishesOnlySevenNumbersAndUsesTheSeventhAsTheLastBall() {
+        insertSevenBallSettledIssue("draw-seven-ball");
+        insertEvent("draw-seven-ball", "DRAW_RESULT", "七球开奖");
+
+        dispatchService.scanPendingEvents(NOW, 50);
+
+        List<String> payloads = jdbcTemplate.queryForList("""
+                SELECT payload_json FROM chat_message
+                 WHERE issue_number = ? AND message_type = 'ROBOT'
+                """, String.class, ISSUE_PREFIX + "draw-seven-ball");
+        assertThat(payloads).hasSize(4);
+        assertThat(payloads)
+                .anyMatch(payload -> compactJson(payload).contains("DRAW_SUMMARY")
+                        && compactJson(payload).contains("\"numbers\":[1,2,3,4,5,6,7]"))
+                .anyMatch(payload -> compactJson(payload).contains("DRAW_HISTORY")
+                        && compactJson(payload).contains("\"numbers\":[1,2,3,4,5,6,7]"));
+        assertThat(payloads).noneMatch(payload -> compactJson(payload).contains(",8]")
+                || compactJson(payload).contains("\"number\":8"));
+    }
+
+    @Test
+    void delayedEightBallDrawEventIsSkippedAfterSevenBallIssuesHaveStarted() {
+        insertSettledIssue("draw-legacy-eight");
+        insertSevenBallSettledIssue("draw-seven-cutover");
+        long eventId = insertEvent("draw-legacy-eight", "DRAW_RESULT", "旧八球开奖事件");
+
+        dispatchService.scanPendingEvents(NOW, 50);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT status FROM chat_robot_dispatch WHERE game_event_id = ?
+                """, String.class, eventId)).isEqualTo("SKIPPED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT last_error FROM chat_robot_dispatch WHERE game_event_id = ?
+                """, String.class, eventId)).isEqualTo("LEGACY_EIGHT_BALL_EVENT_SUPPRESSED");
+        assertThat(jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM chat_message WHERE issue_number = ? AND sender_type = 'ROBOT'
+                """, Integer.class, ISSUE_PREFIX + "draw-legacy-eight")).isZero();
+    }
+
+    @Test
     void drawResultCanDisableWinnerListWithoutChangingOtherComponents() {
         insertSettledIssue("draw-disabled-winner");
         jdbcTemplate.update("""
@@ -231,16 +272,33 @@ class RobotDispatchServiceTest {
 
     private void insertAuditBet(long accountId, String suffix, String stake) {
         String code = ISSUE_PREFIX + suffix;
+        String issue = ISSUE_PREFIX + "audit-total";
+        Long issueCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number=?", Long.class, issue);
+        if (issueCount == null || issueCount == 0) {
+            jdbcTemplate.update("""
+                    INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                    VALUES ('AU8', ?, 'OPEN', 'BETTING', 8)
+                    """, issue);
+        }
         jdbcTemplate.update("""
                 INSERT INTO game_bet
                     (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, settlement_status)
                 VALUES (?, ?, ?, ?, 1, 'FAN', '1', ?, 3.850, 'PENDING')
-                """, accountId, code, code, ISSUE_PREFIX + "audit-total", new java.math.BigDecimal(stake));
+                """, accountId, code, code, issue, new java.math.BigDecimal(stake));
     }
 
     private long insertEvent(String suffix, String eventType, String message) {
         String issue = ISSUE_PREFIX + suffix;
+        Long issueCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number=?", Long.class, issue);
+        if (issueCount == null || issueCount == 0) {
+            jdbcTemplate.update("""
+                    INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                    VALUES ('AU8', ?, 'OPEN', 'BETTING', 8)
+                    """, issue);
+        }
         jdbcTemplate.update("""
                 INSERT INTO game_issue_event (issue_number, event_type, message, created_at)
                 VALUES (?, ?, ?, ?)
@@ -293,6 +351,19 @@ class RobotDispatchServiceTest {
                      number_5, number_6, number_7, number_8, phase, settled_at)
                 VALUES (?, 'CLOSED', 1, 2, 3, 4, 5, 6, 7, 8, 'SETTLED', ?)
                 """, ISSUE_PREFIX + suffix, java.sql.Timestamp.from(NOW));
+    }
+
+    private void insertSevenBallSettledIssue(String suffix) {
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, number_1, number_2, number_3, number_4,
+                     number_5, number_6, number_7, number_8, ball_count, phase, settled_at)
+                VALUES ('AU8', ?, 'CLOSED', 1, 2, 3, 4, 5, 6, 7, NULL, 7, 'SETTLED', ?)
+                """, ISSUE_PREFIX + suffix, java.sql.Timestamp.from(NOW));
+    }
+
+    private static String compactJson(String value) {
+        return value.replaceAll("\\s+", "");
     }
 
     private void resetDrawComponents() {

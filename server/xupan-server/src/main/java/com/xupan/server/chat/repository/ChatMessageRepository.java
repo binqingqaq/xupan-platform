@@ -69,6 +69,24 @@ public class ChatMessageRepository {
                 """, Long.class);
     }
 
+    /** Old eight-ball messages are retained but leave the normal AU8 chat feed after cutover. */
+    public boolean isLegacyEightBallMessage(ChatMessage message) {
+        if (message == null || message.issueNumber() == null || message.issueNumber().isBlank()) return false;
+        return Boolean.TRUE.equals(jdbcTemplate.queryForObject("""
+                SELECT EXISTS(
+                    SELECT 1 FROM game_issue legacy_issue
+                     WHERE legacy_issue.game_code = 'AU8'
+                       AND legacy_issue.issue_number = ?
+                       AND legacy_issue.ball_count = 8
+                       AND EXISTS (
+                           SELECT 1 FROM game_issue seven_issue
+                            WHERE seven_issue.game_code = legacy_issue.game_code
+                              AND seven_issue.ball_count = 7
+                       )
+                )
+                """, Boolean.class, message.issueNumber()));
+    }
+
     public ChatMessage insertUserMessage(long roomId, long sequenceNo, long userId,
                                          String senderName, String clientMessageId,
                                          long agentId, String content, Instant createdAt) {
@@ -188,6 +206,17 @@ public class ChatMessageRepository {
         return jdbcTemplate.query(COLUMNS + """
                  WHERE m.room_id = ? AND m.sequence_no < ?
                    AND (m.visibility = 'PUBLIC' OR (m.visibility = 'MACHINE' AND m.agent_id = ?))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM game_issue legacy_issue
+                        WHERE legacy_issue.game_code = 'AU8'
+                          AND legacy_issue.issue_number = m.issue_number
+                          AND legacy_issue.ball_count = 8
+                          AND EXISTS (
+                              SELECT 1 FROM game_issue seven_issue
+                               WHERE seven_issue.game_code = legacy_issue.game_code
+                                 AND seven_issue.ball_count = 7
+                          )
+                   )
                  ORDER BY m.sequence_no DESC
                  LIMIT ?
                 """, this::mapMessage, roomId, beforeSequence, agentId, limit + 1);
@@ -198,6 +227,17 @@ public class ChatMessageRepository {
         return jdbcTemplate.query(COLUMNS + """
                  WHERE m.room_id = ? AND m.sequence_no > ?
                    AND (m.visibility = 'PUBLIC' OR (m.visibility = 'MACHINE' AND m.agent_id = ?))
+                   AND NOT EXISTS (
+                       SELECT 1 FROM game_issue legacy_issue
+                        WHERE legacy_issue.game_code = 'AU8'
+                          AND legacy_issue.issue_number = m.issue_number
+                          AND legacy_issue.ball_count = 8
+                          AND EXISTS (
+                              SELECT 1 FROM game_issue seven_issue
+                               WHERE seven_issue.game_code = legacy_issue.game_code
+                                 AND seven_issue.ball_count = 7
+                          )
+                   )
                  ORDER BY m.sequence_no ASC
                  LIMIT ?
                 """, this::mapMessage, roomId, afterSequence, agentId, limit + 1);

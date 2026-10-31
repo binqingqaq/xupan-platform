@@ -122,6 +122,7 @@ async function loadHbyBetBoard(commandType: number) {
     return { total1: 0, total2: 0, totalPu: 0, totalTuo: 0, totalChi: 0, isPrev: true, detail: [] }
   }
   const board = await api.getBetBoard(commandType === 1 ? 'BOT' : 'NORMAL', 500)
+  const ballCount = board.ballCount ?? board.history[0]?.balls.length ?? 8
   return {
     total1: board.normalStake,
     total2: board.botStake,
@@ -133,7 +134,7 @@ async function loadHbyBetBoard(commandType: number) {
       const report = betReportState(item.reportStatus)
       return {
         id: item.id,
-        gameName: '澳8番摊/1-8球',
+        gameName: `AU8番摊/${ballCount}球`,
         qihao: board.issueNumber,
         wid: item.displayName,
         text: item.betText,
@@ -149,23 +150,24 @@ async function loadHbyBetBoard(commandType: number) {
 
 async function loadHbyOpenResults() {
   const board = await api.getBetBoard('NORMAL', 1)
+  const ballCount = board.ballCount ?? board.history[0]?.balls.length ?? 8
   const phaseLabel = board.phase === 'DRAWING' ? '开奖中' : board.phase === 'BETTING' ? '下注中' : '已开奖'
   const serverNow = Date.parse(board.serverNow)
   const phaseEndsAt = board.phaseEndsAt ? Date.parse(board.phaseEndsAt) : NaN
   const countdown = board.phase === 'SETTLED' || !Number.isFinite(serverNow) || !Number.isFinite(phaseEndsAt)
     ? null
     : Math.max(0, Math.ceil((phaseEndsAt - serverNow) / 1000))
-  const gameName = `澳8番摊/8球（${phaseLabel}）`
+  const gameName = `AU8番摊/${ballCount}球（${phaseLabel}）`
   return {
     gameName,
     phaseLabel,
     countdown,
-    list: board.history.map(history => ({
+    list: board.history.filter(history => (history.ballCount ?? history.balls.length) === ballCount).map(history => ({
       gameName,
       countdown,
       qihao: history.issueNumber,
       showQihao: history.issueNumber,
-      fans: Array.from({ length: 8 }, (_, index) => history.balls.find(ball => ball.position === index + 1)?.fan ?? ''),
+      fans: Array.from({ length: ballCount }, (_, index) => history.balls.find(ball => ball.position === index + 1)?.fan ?? ''),
       status: history.status,
     })),
   }

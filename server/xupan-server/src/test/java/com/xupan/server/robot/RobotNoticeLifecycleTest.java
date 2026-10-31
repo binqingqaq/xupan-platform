@@ -28,6 +28,7 @@ class RobotNoticeLifecycleTest {
 
     private String suffix;
     private String issueNumber;
+    private String sevenIssueNumber;
     private long userId;
     private long machineId;
     private Instant now;
@@ -37,6 +38,7 @@ class RobotNoticeLifecycleTest {
         suffix = UUID.randomUUID().toString().substring(0, 8);
         issueNumber = "39" + suffix.replaceAll("[^0-9]", "0");
         if (issueNumber.length() > 16) issueNumber = issueNumber.substring(0, 16);
+        sevenIssueNumber = issueNumber + "7";
         now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         jdbc.update("UPDATE chat_robot SET status='ENABLED' WHERE robot_code='issue-helper'");
         jdbc.update("""
@@ -70,7 +72,7 @@ class RobotNoticeLifecycleTest {
         jdbc.update("DELETE FROM chat_outbox WHERE message_id IN (SELECT id FROM chat_message WHERE issue_number = ?)",
                 issueNumber);
         jdbc.update("DELETE FROM chat_message WHERE issue_number = ?", issueNumber);
-        jdbc.update("DELETE FROM game_issue WHERE issue_number = ?", issueNumber);
+        jdbc.update("DELETE FROM game_issue WHERE issue_number IN (?, ?)", issueNumber, sevenIssueNumber);
         if (machineId > 0) {
             jdbc.update("DELETE FROM agent_game WHERE agent_id = ?", machineId);
             jdbc.update("DELETE FROM agent WHERE id = ?", machineId);
@@ -132,5 +134,26 @@ class RobotNoticeLifecycleTest {
                 String.class, key)).isEqualTo("PUBLISHED");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM chat_message WHERE idempotency_key=?",
                 Integer.class, key)).isEqualTo(1);
+    }
+
+    @Test
+    void skipsDelayedEightBallBusinessNoticeAfterSevenBallIssueStarts() {
+        jdbc.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at)
+                VALUES ('AU8', ?, 'CLOSED', 'SETTLED', 7, ?, ?)
+                """, sevenIssueNumber, Timestamp.from(now), Timestamp.from(now));
+        String key = "ROBOT-NOTICE-LEGACY-" + suffix;
+        intents.enqueue("OLD_ISSUE_NOTICE", "GAME_ISSUE_MACHINE", issueNumber + ":" + machineId,
+                "AU8", issueNumber, com.xupan.server.chat.domain.ChatMessageVisibility.MACHINE, machineId,
+                "OLD_ISSUE_NOTICE", "旧期机器公告", key, now);
+
+        assertThat(dispatcher.dispatchDue(now, 50)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status FROM robot_notice_intent WHERE idempotency_key=?",
+                String.class, key)).isEqualTo("SKIPPED");
+        assertThat(jdbc.queryForObject("SELECT last_error FROM robot_notice_intent WHERE idempotency_key=?",
+                String.class, key)).isEqualTo("LEGACY_EIGHT_BALL_NOTICE_SUPPRESSED");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM chat_message WHERE idempotency_key=?",
+                Integer.class, key)).isZero();
     }
 }

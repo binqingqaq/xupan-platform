@@ -158,21 +158,29 @@ class AgentControllerTest {
                 .andExpect(status().isOk());
         long normalAccountId = ((Number) JsonPath.read(
                 normalResult.getResponse().getContentAsString(), "$.accountId")).longValue();
+        String operationsIssue = "AGENT-OPS-" + java.util.UUID.randomUUID().toString().replace("-", "");
+        jdbcTemplate.update("""
+                INSERT INTO game_issue
+                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at,
+                     betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, 'CLOSED', 'SETTLED', 8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, operationsIssue);
         jdbcTemplate.update("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, settlement_status, net_profit,
                      created_at, settled_at)
-                VALUES ('AU8', ?, 'AGENT_CONTROLLER_SETTLED', 'agent-controller-settled', '3000000', 1,
+                VALUES ('AU8', ?, 'AGENT_CONTROLLER_SETTLED', 'agent-controller-settled', ?, 1,
                         'FAN', '1', 10.00, 3.850, 'WIN', 5.00, '2026-10-02 12:00:00', '2026-10-02 12:00:00')
-                """, normalAccountId);
+                """, normalAccountId, operationsIssue);
         jdbcTemplate.update("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
                      play_type, parameters_text, stake, odds_snapshot, settlement_status, created_at)
-                VALUES ('AU8', ?, 'AGENT_CONTROLLER_PENDING', 'agent-controller-pending', '3000000', 1,
+                VALUES ('AU8', ?, 'AGENT_CONTROLLER_PENDING', 'agent-controller-pending', ?, 1,
                         'FAN', '1', 20.00, 3.850, 'PENDING', '2026-10-02 12:00:00')
-                """, normalAccountId);
+                """, normalAccountId, operationsIssue);
         mockMvc.perform(get("/api/agent/operations")
                         .header("Authorization", bearer(agentToken)).param("day", "2026-10-02"))
                 .andExpect(status().isOk())
@@ -302,6 +310,9 @@ class AgentControllerTest {
         jdbcTemplate.update("DELETE FROM game_bet WHERE user_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
+        jdbcTemplate.update("DELETE FROM game_issue_event WHERE issue_number LIKE 'AGENT-OPS-%'");
+        jdbcTemplate.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number LIKE 'AGENT-OPS-%' "
+                + "AND draw_confirmed_at IS NULL");
         jdbcTemplate.update("DELETE FROM test_player_action WHERE account_id IN "
                 + "(SELECT id FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username LIKE 'agent-controller-%'))");
