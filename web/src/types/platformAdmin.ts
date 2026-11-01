@@ -391,6 +391,35 @@ export interface PlatformSettingsInput {
   version: number
 }
 
+export interface DisplayObserverBinding {
+  configured: boolean
+  enabled: boolean
+  valid: boolean
+  invalidReason: string | null
+  version: number
+  agentId: number | null
+  machineUsername: string | null
+  machineDisplayName: string | null
+  groupDisplayName: string | null
+  viewerUserId: number | null
+  viewerDisplayName: string | null
+  publicId: string | null
+  publicPath: string | null
+}
+
+export interface DisplayObserverMachineOption {
+  id: number
+  username: string
+  displayName: string
+  groupDisplayName: string
+}
+
+export interface DisplayObserverBotOption {
+  userId: number
+  displayName: string
+  memberCode: string
+}
+
 export interface DeleteAllAccountsCounts {
   admins: number
   robots: number

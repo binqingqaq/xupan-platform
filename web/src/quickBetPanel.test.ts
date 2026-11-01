@@ -126,4 +126,31 @@ describe('quick bet panel', () => {
 
     app.unmount()
   })
+
+  it('renders the quick panel as read-only without any betting controls', async () => {
+    mountedContainer = document.createElement('div')
+    document.body.appendChild(mountedContainer)
+    const app = createApp(QuickBetPanel, {
+      issueNumber: '3000001',
+      pendingCount: 1,
+      settledCount: 2,
+      displayOdds,
+      specialEnabled: true,
+      quickAmounts: ['50', '100'],
+      readOnly: true,
+    })
+    app.mount(mountedContainer)
+    await nextTick()
+
+    expect(mountedContainer.querySelector('[aria-label="快捷内容（只读）"]')).not.toBeNull()
+    expect(mountedContainer.querySelector('[role="status"]')?.textContent).toContain('只读查看，不可下注')
+    expect(mountedContainer.querySelectorAll<HTMLButtonElement>('.quick-option:disabled').length)
+      .toBe(mountedContainer.querySelectorAll('.quick-option').length)
+    expect(mountedContainer.querySelector('.quick-bet-controls')).toBeNull()
+    expect(mountedContainer.querySelector('.quick-bet-amount')).toBeNull()
+    expect(mountedContainer.querySelector('.quick-bet-number-row')).toBeNull()
+    expect(mountedContainer.querySelector('.quick-bet-quick-row')).toBeNull()
+
+    app.unmount()
+  })
 })

@@ -26,25 +26,34 @@ public final class ChatConnection {
     private final String sessionId;
     private final String roomCode;
     private final Long agentId;
+    private final String observerPublicId;
     private final WebSocketSession session;
     private final Instant connectedAt;
     private final AtomicInteger pendingMessages = new AtomicInteger();
     private final AtomicLong lastPongMillis;
     private final AtomicBoolean subscribed = new AtomicBoolean();
     private final ReentrantLock sendLock = new ReentrantLock();
+    private Instant observerFrameWindowStart;
+    private int observerFramesInWindow;
 
     public ChatConnection(String connectionId, long userId, String sessionId, String roomCode,
                           WebSocketSession session, Instant connectedAt) {
-        this(connectionId, userId, sessionId, roomCode, null, session, connectedAt);
+        this(connectionId, userId, sessionId, roomCode, null, null, session, connectedAt);
     }
 
     public ChatConnection(String connectionId, long userId, String sessionId, String roomCode,
                           Long agentId, WebSocketSession session, Instant connectedAt) {
+        this(connectionId, userId, sessionId, roomCode, agentId, null, session, connectedAt);
+    }
+
+    public ChatConnection(String connectionId, long userId, String sessionId, String roomCode,
+                          Long agentId, String observerPublicId, WebSocketSession session, Instant connectedAt) {
         this.connectionId = requireText(connectionId, "connectionId");
         this.userId = userId;
         this.sessionId = requireText(sessionId, "sessionId");
         this.roomCode = requireText(roomCode, "roomCode");
         this.agentId = agentId;
+        this.observerPublicId = observerPublicId == null || observerPublicId.isBlank() ? null : observerPublicId;
         this.session = Objects.requireNonNull(session, "session");
         this.connectedAt = Objects.requireNonNull(connectedAt, "connectedAt");
         this.lastPongMillis = new AtomicLong(connectedAt.toEpochMilli());
@@ -68,6 +77,27 @@ public final class ChatConnection {
 
     public Long agentId() {
         return agentId;
+    }
+
+    public boolean isDisplayObserver() {
+        return observerPublicId != null;
+    }
+
+    public synchronized boolean allowObserverFrame(Instant now, Duration window, int limit) {
+        if (!isDisplayObserver()) return true;
+        if (now == null || window == null || window.isZero() || window.isNegative() || limit < 1) return false;
+        if (observerFrameWindowStart == null || now.isBefore(observerFrameWindowStart)
+                || !now.isBefore(observerFrameWindowStart.plus(window))) {
+            observerFrameWindowStart = now;
+            observerFramesInWindow = 0;
+        }
+        if (observerFramesInWindow >= limit) return false;
+        observerFramesInWindow++;
+        return true;
+    }
+
+    public String observerPublicId() {
+        return observerPublicId;
     }
 
     public WebSocketSession session() {

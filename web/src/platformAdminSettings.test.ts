@@ -14,6 +14,13 @@ vi.mock('./api', () => ({
     deleteAllAccounts: vi.fn(),
     previewClearData: vi.fn(),
     clearData: vi.fn(),
+    getDisplayObserverBinding: vi.fn(),
+    listDisplayObserverMachines: vi.fn(),
+    listDisplayObserverBots: vi.fn(),
+    bindDisplayObserver: vi.fn(),
+    setDisplayObserverEnabled: vi.fn(),
+    rotateDisplayObserverLink: vi.fn(),
+    resetDisplayObserverBinding: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
@@ -79,6 +86,41 @@ beforeEach(() => {
     data: 24,
     message: '已清理 2026-09-01T00:00:00Z 之前的数据，共 24 条',
   })
+  vi.mocked(api.getDisplayObserverBinding).mockResolvedValue({
+    configured: false, enabled: false, valid: false, invalidReason: null, version: 0,
+    agentId: null, machineUsername: null, machineDisplayName: null, groupDisplayName: null,
+    viewerUserId: null, viewerDisplayName: null, publicId: null, publicPath: null,
+  })
+  vi.mocked(api.listDisplayObserverMachines).mockResolvedValue([
+    { id: 9, username: 'display-machine', displayName: '开奖展示机器', groupDisplayName: '开奖展示子账号' },
+  ])
+  vi.mocked(api.listDisplayObserverBots).mockResolvedValue([
+    { userId: 901, displayName: '展示托', memberCode: 'DISPLAY-901' },
+  ])
+  vi.mocked(api.bindDisplayObserver).mockResolvedValue({
+    configured: true, enabled: true, valid: true, invalidReason: null, version: 1,
+    agentId: 9, machineUsername: 'display-machine', machineDisplayName: '开奖展示机器',
+    groupDisplayName: '开奖展示子账号', viewerUserId: 901, viewerDisplayName: '展示托',
+    publicId: 'public-observer-id', publicPath: '/display/observe/public-observer-id',
+  })
+  vi.mocked(api.setDisplayObserverEnabled).mockResolvedValue({
+    configured: true, enabled: false, valid: true, invalidReason: null, version: 2,
+    agentId: 9, machineUsername: 'display-machine', machineDisplayName: '开奖展示机器',
+    groupDisplayName: '开奖展示子账号', viewerUserId: 901, viewerDisplayName: '展示托',
+    publicId: 'public-observer-id', publicPath: null,
+  })
+  vi.mocked(api.rotateDisplayObserverLink).mockResolvedValue({
+    configured: true, enabled: true, valid: true, invalidReason: null, version: 2,
+    agentId: 9, machineUsername: 'display-machine', machineDisplayName: '开奖展示机器',
+    groupDisplayName: '开奖展示子账号', viewerUserId: 901, viewerDisplayName: '展示托',
+    publicId: 'rotated-observer-id', publicPath: '/display/observe/rotated-observer-id',
+  })
+  vi.mocked(api.resetDisplayObserverBinding).mockResolvedValue({
+    configured: true, enabled: false, valid: true, invalidReason: null, version: 3,
+    agentId: 10, machineUsername: 'replacement-machine', machineDisplayName: '替换展示机器',
+    groupDisplayName: '开奖展示子账号', viewerUserId: 902, viewerDisplayName: '替换展示托',
+    publicId: 'replacement-observer-id', publicPath: null,
+  })
 })
 
 afterEach(() => {
@@ -90,6 +132,40 @@ afterEach(() => {
 })
 
 describe('platform admin settings', () => {
+  it('loads fixed observer candidates separately from ordinary platform settings', async () => {
+    await mountSettings()
+
+    expect(api.getDisplayObserverBinding).toHaveBeenCalledOnce()
+    expect(api.listDisplayObserverMachines).toHaveBeenCalledOnce()
+    expect(api.listDisplayObserverBots).not.toHaveBeenCalled()
+    expect(container?.textContent).toContain('开奖页只读入口')
+    expect(container?.textContent).toContain('选择展示机器')
+    expect(container?.textContent).toContain('绑定并启用')
+
+    expect(api.updatePlatformSettings).not.toHaveBeenCalled()
+  })
+
+  it('shows only the fixed identity and link controls after a binding exists', async () => {
+    vi.mocked(api.getDisplayObserverBinding).mockResolvedValue({
+      configured: true, enabled: true, valid: true, invalidReason: null, version: 1,
+      agentId: 9, machineUsername: 'display-machine', machineDisplayName: '开奖展示机器',
+      groupDisplayName: '开奖展示子账号', viewerUserId: 901, viewerDisplayName: '展示托',
+      publicId: 'public-observer-id', publicPath: '/display/observe/public-observer-id',
+    })
+    Object.defineProperty(window.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+    })
+    await mountSettings()
+
+    expect(container?.textContent).toContain('开奖展示机器')
+    expect(container?.textContent).toContain('展示托')
+    expect(container?.textContent).not.toContain('选择展示机器')
+    expect(container?.textContent).not.toContain('选择手动展示托')
+    expect(container?.querySelector<HTMLInputElement>('input[aria-label="只读观察链接"]')?.value)
+      .toBe(`${window.location.origin}/display/observe/public-observer-id`)
+  })
+
   it('renders BY220 fields, exposes clear data and saves settings', async () => {
     await mountSettings()
 

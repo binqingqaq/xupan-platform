@@ -7,6 +7,7 @@ import org.springframework.web.socket.WebSocketSession;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -124,6 +125,53 @@ class ChatConnectionRegistryTest {
         verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4401));
     }
 
+    @Test
+    void observerConnectionsHaveTheirOwnPerBindingCapAndDoNotConsumeBotUserSlots() throws Exception {
+        ChatWebSocketProperties properties = properties(1, 10);
+        properties.setMaxObserverConnectionsPerBinding(2);
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties, allowedAccessService());
+        WebSocketSession playerSession = openSession();
+        WebSocketSession observerSession1 = openSession();
+        WebSocketSession observerSession2 = openSession();
+        WebSocketSession otherBindingSession = openSession();
+        WebSocketSession observerSession3 = openSession();
+        ChatConnection player = new ChatConnection("player-1", 7L, "player-session", "main",
+                101L, playerSession, Instant.parse("2026-11-01T00:00:00Z"));
+        ChatConnection observer1 = observerConnection("observer-1", "observer-session-1", observerSession1,
+                Instant.parse("2026-11-01T00:00:01Z"));
+        ChatConnection observer2 = observerConnection("observer-2", "observer-session-2", observerSession2,
+                Instant.parse("2026-11-01T00:00:02Z"));
+        ChatConnection otherBindingObserver = observerConnection("observer-other-binding", "observer-session-other",
+                "ZyXwVu9876543210", otherBindingSession, Instant.parse("2026-11-01T00:00:03Z"));
+        ChatConnection observer3 = observerConnection("observer-3", "observer-session-3", observerSession3,
+                Instant.parse("2026-11-01T00:00:04Z"));
+
+        registry.register(player);
+        registry.register(observer1);
+        registry.register(observer2);
+        registry.register(otherBindingObserver);
+        registry.register(new ChatConnection("player-2", 7L, "player-session-2", "main",
+                101L, openSession(), Instant.parse("2026-11-01T00:00:05Z")));
+
+        verify(playerSession).close(org.springframework.web.socket.CloseStatus.POLICY_VIOLATION);
+        assertThat(observer1.isOpen()).isTrue();
+        assertThat(observer2.isOpen()).isTrue();
+        assertThat(registry.userConnectionCount(7L)).isEqualTo(4);
+        assertThat(registry.normalUserConnectionCount(7L)).isEqualTo(1);
+        assertThat(registry.observerConnectionCount("AbCdEf0123456789")).isEqualTo(2);
+        assertThat(registry.observerConnectionCount("ZyXwVu9876543210")).isEqualTo(1);
+
+        assertThatThrownBy(() -> registry.register(observer3))
+                .isInstanceOf(ChatConnectionRegistry.ConnectionLimitException.class)
+                .satisfies(exception -> assertThat(
+                        ((ChatConnectionRegistry.ConnectionLimitException) exception).closeStatus().getCode())
+                        .isEqualTo(4429));
+        assertThat(observer1.isOpen()).isTrue();
+        assertThat(observer2.isOpen()).isTrue();
+        assertThat(registry.size()).isEqualTo(4);
+        assertThat(registry.normalUserConnectionCount(7L)).isEqualTo(1);
+    }
+
     private static ChatConnectionAccessService allowedAccessService() {
         ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
         when(accessService.check(any(ChatConnection.class), any(Instant.class)))
@@ -147,5 +195,16 @@ class ChatConnectionRegistryTest {
 
     private static ChatConnection connection(String id, WebSocketSession session, Instant connectedAt) {
         return new ChatConnection(id, 7L, "session-7", "main", session, connectedAt);
+    }
+
+    private static ChatConnection observerConnection(String id, String sessionId,
+                                                     WebSocketSession session, Instant connectedAt) {
+        return observerConnection(id, sessionId, "AbCdEf0123456789", session, connectedAt);
+    }
+
+    private static ChatConnection observerConnection(String id, String sessionId, String publicId,
+                                                     WebSocketSession session, Instant connectedAt) {
+        return new ChatConnection(id, 7L, sessionId, "main", 101L, publicId,
+                session, connectedAt);
     }
 }

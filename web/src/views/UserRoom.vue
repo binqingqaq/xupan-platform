@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
-import { api, apiErrorMessage, ApiError, getAuthAudience, pointRequestErrorMessage, restoreSession } from '../api'
+import { api, apiErrorMessage, ApiError, clearAccessToken, getAuthAudience, pointRequestErrorMessage, restoreSession } from '../api'
 import Hby019AccountPanelFrame from '../components/Hby019AccountPanelFrame.vue'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import QuickBetPanel from '../components/QuickBetPanel.vue'
@@ -146,7 +146,10 @@ const chatSocket = new ChatSocket()
 
 const props = defineProps<{
   playerLinkOnly?: boolean
+  displayObserverOnly?: boolean
+  displayObserverPublicId?: string
 }>()
+const observerReadOnly = computed(() => props.displayObserverOnly === true)
 
 const playTokens = ['番', '角', '加', '车', '念', '正', '通', '无', '单', '双', '大', '小', '特', '查', '上', '下', '流水', '历史', '♫', '取消', '说明', '⇅']
 const keyboardActionTokens = playTokens.slice(-3)
@@ -505,7 +508,7 @@ async function pollAdminNotices() {
 }
 
 function startAdminNoticePolling() {
-  if (adminNoticeTimer !== undefined) return
+  if (observerReadOnly.value || adminNoticeTimer !== undefined) return
   void pollAdminNotices()
   adminNoticeTimer = window.setInterval(() => { void pollAdminNotices() }, 10000)
 }
@@ -589,7 +592,7 @@ function handleChatVisibilityChange() {
 }
 
 async function saveChatReadCursor(sequence: number) {
-  if (sequence <= chatReadCursorSaved.value) return
+  if (observerReadOnly.value || sequence <= chatReadCursorSaved.value) return
   try {
     await api.saveChatReadCursor(ROOM_CODE, sequence)
     chatReadCursorSaved.value = sequence
@@ -765,7 +768,7 @@ function connectChatSocket() {
       // 仅在 message 非空时提示，避免把网络类错误也盖成业务文案。
       if (pendingFailed && event.message) showFeedback(event.message, 'error')
     },
-  }, { lastReceivedSequence: chatLastSequence.value })
+  }, { lastReceivedSequence: chatLastSequence.value, readOnly: observerReadOnly.value })
 }
 
 async function pollChatMessages() {
@@ -817,12 +820,18 @@ async function load() {
 
     const [user, preferences] = await Promise.all([api.me(), api.getPlayerPreferences()])
     countdownVisible.value = preferences.countdownVisible
-    gameCatalog.value = await api.getGameCatalog()
-    const savedGameCode = window.localStorage.getItem('xupan.selectedGameCode')
-    if (savedGameCode && gameCatalog.value.some(game => game.gameCode === savedGameCode)) {
-      selectedGameCode.value = savedGameCode
-    } else if (!gameCatalog.value.some(game => game.gameCode === selectedGameCode.value) && gameCatalog.value.length > 0) {
-      selectedGameCode.value = gameCatalog.value[0]!.gameCode
+    const catalog = await api.getGameCatalog()
+    gameCatalog.value = observerReadOnly.value ? catalog.filter(game => game.gameCode === 'AU8') : catalog
+    if (observerReadOnly.value) {
+      if (!gameCatalog.value.length) throw new Error('观察机器未启用 AU8')
+      selectedGameCode.value = 'AU8'
+    } else {
+      const savedGameCode = window.localStorage.getItem('xupan.selectedGameCode')
+      if (savedGameCode && gameCatalog.value.some(game => game.gameCode === savedGameCode)) {
+        selectedGameCode.value = savedGameCode
+      } else if (!gameCatalog.value.some(game => game.gameCode === selectedGameCode.value) && gameCatalog.value.length > 0) {
+        selectedGameCode.value = gameCatalog.value[0]!.gameCode
+      }
     }
     await loadGame()
     currentUser.value = user
@@ -835,7 +844,7 @@ async function load() {
     await loadQuickBetPreferences()
     await loadChatHistory()
     connectChatSocket()
-    startAdminNoticePolling()
+    if (!observerReadOnly.value) startAdminNoticePolling()
     scrollToBottom()
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -853,7 +862,18 @@ async function load() {
 }
 
 async function initializeRoom() {
-  if (props.playerLinkOnly && (!api.hasAccessToken() || getAuthAudience() !== 'PLAYER')) {
+  if (observerReadOnly.value) {
+    const user = await restoreSession('OBSERVER')
+    const expectedScope = `DRO:${props.displayObserverPublicId || ''}`
+    if (!user || user.authMode !== 'DISPLAY_OBSERVER' || user.scope !== expectedScope
+        || getAuthAudience() !== 'OBSERVER') {
+      clearAccessToken()
+      authenticated.value = false
+      sessionChecked.value = true
+      return
+    }
+    authenticated.value = true
+  } else if (props.playerLinkOnly && (!api.hasAccessToken() || getAuthAudience() !== 'PLAYER')) {
     const user = await restoreSession('PLAYER')
     if (!user) {
       authenticated.value = false
@@ -886,6 +906,7 @@ async function login() {
 }
 
 function appendToken(token: string) {
+  if (observerReadOnly.value) return
   const uniqueTokens: Record<string, string> = {
     查: '查',
     上: '上',
@@ -942,6 +963,7 @@ function resizeMessageInput() {
 }
 
 function openKeyboardFromInput() {
+  if (observerReadOnly.value) return
   if (!keyboardOpen.value) keyboardOpen.value = true
 }
 
@@ -1036,6 +1058,7 @@ function closeAccountPanel() {
 }
 
 function openSettings() {
+  if (observerReadOnly.value) return
   settingsOpen.value = true
   menuOpen.value = false
   quickOpen.value = false
@@ -1073,6 +1096,7 @@ async function loadQuickBetPreferences() {
 }
 
 async function saveQuickBetSettings() {
+  if (observerReadOnly.value) return
   const amounts = settingAmounts.value.map(value => Number(value))
   if (amounts.length !== 5 || amounts.some(value => !Number.isFinite(value) || value <= 0)) {
     showFeedback('快捷金额必须是大于 0 的数字', 'error')
@@ -1089,6 +1113,7 @@ async function saveQuickBetSettings() {
 }
 
 function resetQuickBetSettingsToDefault() {
+  if (observerReadOnly.value) return
   settingAmounts.value = DEFAULT_QUICK_BET_AMOUNTS.map(String)
 }
 
@@ -1098,6 +1123,7 @@ function quickAmountText(value: number) {
 
 
 function selectOddsCard(card: OddsCard) {
+  if (observerReadOnly.value) return
   const code = selectedQuickNumber.value
   const amount = selectedQuickAmount.value
   messageInput.value = `${code}${card.label}${amount}`
@@ -1105,10 +1131,12 @@ function selectOddsCard(card: OddsCard) {
 }
 
 function applyQuickNumber(number: string) {
+  if (observerReadOnly.value) return
   selectedQuickNumber.value = number
 }
 
 function applyQuickAmount(amount: number) {
+  if (observerReadOnly.value) return
   selectedQuickAmount.value = amount
 }
 
@@ -1119,6 +1147,7 @@ function resetQuickSelection() {
 }
 
 async function submitMessage() {
+  if (observerReadOnly.value) return
   const text = messageInput.value.trim()
   if (!text) return
   messageInput.value = ''
@@ -1136,6 +1165,7 @@ function isRulesRequest(text: string) {
 }
 
 async function sendPlainTextMessage(body: string, clientMessageId = createChatClientMessageId()): Promise<boolean> {
+  if (observerReadOnly.value) return false
   if (pendingChatMessage.value?.status === 'sending') return false
   // 上下分申请（上X/下X）也会改余额：下分**创建即扣**（BY220 common.php:1874-1876），
   // 因此发送后必须刷新账户面板，不能只靠下次轮询。
@@ -1182,6 +1212,7 @@ async function sendPlainTextMessage(body: string, clientMessageId = createChatCl
 }
 
 async function submitQuickBet(message: string) {
+  if (observerReadOnly.value) return
   if (pendingChatMessage.value) return
   const clientMessageId = createChatClientMessageId()
   pendingQuickBetClientMessageId.value = clientMessageId
@@ -1226,6 +1257,7 @@ function retryPendingChatMessage() {
 }
 
 function toggleKeyboard() {
+  if (observerReadOnly.value) return
   keyboardOpen.value = !keyboardOpen.value
   scrollToBottom()
 }
@@ -1273,7 +1305,12 @@ function createChatClientMessageId() {
   return `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+function retryObserverSession() {
+  if (observerReadOnly.value) window.location.reload()
+}
+
 async function switchGame() {
+  if (observerReadOnly.value) return
   window.localStorage.setItem('xupan.selectedGameCode', selectedGameCode.value)
   await loadGame()
 }
@@ -1333,8 +1370,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <PlayerLinkExpiredView v-if="props.playerLinkOnly && sessionChecked && !authenticated" session-expired />
-  <div v-else class="reference-room" :aria-busy="props.playerLinkOnly && !sessionChecked" :class="{
+  <main v-if="observerReadOnly && sessionChecked && !authenticated" class="observer-session-expired" role="alert">
+    <h1>只读观察会话已失效</h1>
+    <p>请重新打开开奖页的观察链接。</p>
+    <button type="button" @click="retryObserverSession">重新连接</button>
+  </main>
+  <PlayerLinkExpiredView v-else-if="props.playerLinkOnly && sessionChecked && !authenticated" session-expired />
+  <div v-else class="reference-room" :aria-busy="(props.playerLinkOnly || observerReadOnly) && !sessionChecked" :class="{
     'interface-two': interfaceMode === 'ui2',
     'account-open': menuOpen,
     'chat-font-mini': chatFontSize === 'mini',
@@ -1343,17 +1385,18 @@ onUnmounted(() => {
     'chat-font-big': chatFontSize === 'big',
     'chat-font-bold': chatFontBold,
   }">
-    <div v-if="props.playerLinkOnly && !sessionChecked" class="player-session-loading" role="status" aria-live="polite">
+    <div v-if="(props.playerLinkOnly || observerReadOnly) && !sessionChecked" class="player-session-loading" role="status" aria-live="polite">
       <el-icon class="player-session-spinner" aria-hidden="true"><Loading /></el-icon>
-      <span class="player-session-loading-label">正在恢复玩家会话</span>
+      <span class="player-session-loading-label">{{ observerReadOnly ? '正在打开只读观察页' : '正在恢复玩家会话' }}</span>
     </div>
     <header v-show="platformSettings?.headerEnabled !== false" class="reference-header">
       <div class="reference-toolbar">
-        <select v-if="gameCatalog.length > 1" v-model="selectedGameCode" class="game-select" aria-label="选择彩种" @change="switchGame">
+        <select v-if="!observerReadOnly && gameCatalog.length > 1" v-model="selectedGameCode" class="game-select" aria-label="选择彩种" @change="switchGame">
           <option v-for="game in gameCatalog" :key="game.gameCode" :value="game.gameCode">{{ game.displayName }}</option>
         </select>
         <strong class="balance-text">余额:{{ balance }}</strong>
         <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
+        <span v-if="observerReadOnly" class="observer-mode-label">只读观察</span>
         <div class="header-actions">
           <button class="quick-button" type="button" @click="openQuickBet">快捷</button>
           <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
@@ -1391,6 +1434,7 @@ onUnmounted(() => {
       :quick-amounts="settingAmounts"
       :submitting="pendingChatMessage?.status === 'sending'"
       :blocked="Boolean(pendingChatMessage)"
+      :read-only="observerReadOnly"
       :initial-scroll-top="quickBetScrollTop"
       @close="closeQuickBet"
       @settings="openSettings"
@@ -1434,13 +1478,13 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <main ref="messageScroll" class="reference-message-scroll" :style="{ bottom: `${composerHeight}px` }" aria-label="聊天室消息" @scroll="handleChatScroll">
+    <main ref="messageScroll" class="reference-message-scroll" :style="{ bottom: `${observerReadOnly ? 0 : composerHeight}px` }" aria-label="聊天室消息" @scroll="handleChatScroll">
       <section class="reference-message-feed">
         <div v-if="chatLoadingOlder" class="chat-history-state" role="status">正在加载更早消息...</div>
         <div v-else-if="chatHistoryExhausted && displayMessages.length" class="chat-history-state">已显示最近4小时消息</div>
-        <section v-if="wallet" class="account-summary" aria-label="我的下注与余额流水">
+        <section v-if="wallet" class="account-summary" :aria-label="observerReadOnly ? '展示托账户与余额流水' : '我的下注与余额流水'">
           <header class="account-summary-header">
-            <strong>第{{ displayIssueNumber }}期 · 我的下注</strong>
+            <strong>第{{ displayIssueNumber }}期 · {{ observerReadOnly ? '展示托注单' : '我的下注' }}</strong>
             <span>余额 {{ balance }}</span>
           </header>
           <div v-if="wallet?.statistics" class="account-statistics">
@@ -1471,7 +1515,7 @@ onUnmounted(() => {
           {{ chatConnectionLabel }}
         </div>
         <div v-if="chatLoading && !displayMessages.length" class="chat-state">正在加载消息...</div>
-        <div v-else-if="!displayMessages.length" class="chat-state">还没有消息，发出第一条消息吧。</div>
+        <div v-else-if="!displayMessages.length" class="chat-state">{{ observerReadOnly ? '暂无聊天消息' : '还没有消息，发出第一条消息吧。' }}</div>
         <template v-else v-for="message in displayMessages" :key="message.id">
           <div v-if="message.showTimestamp" class="reference-time"><span>{{ message.time }}</span></div>
           <article class="reference-message" :class="messageClass(message)">
@@ -1494,11 +1538,11 @@ onUnmounted(() => {
       v-if="chatAwayFromBottom"
       class="chat-unread"
       type="button"
-      :style="{ bottom: `${composerHeight + 6}px` }"
+      :style="{ bottom: `${observerReadOnly ? 6 : composerHeight + 6}px` }"
       @click="scrollToBottom"
     ><b>{{ Math.max(0, chatUnread) }}条新消息</b></button>
 
-    <footer ref="composerElement" class="reference-composer" :class="interfaceMode === 'ui1' ? ['divBottom', 'msgdown', 'selekb'] : []">
+    <footer v-if="!observerReadOnly" ref="composerElement" class="reference-composer" :class="interfaceMode === 'ui1' ? ['divBottom', 'msgdown', 'selekb'] : []">
       <div v-if="interfaceMode === 'ui1'" style="background:#dadadc;width:100%;height:1px;position:absolute;top:0px;"></div>
       <div class="divBottom_top" :class="{ 'composer-row': interfaceMode === 'ui2' }">
         <div v-if="interfaceMode === 'ui1'" class="vkb" role="button" tabindex="0" aria-label="打开或关闭键盘" title="打开或关闭键盘" @click="toggleKeyboard" @keydown.enter.prevent="toggleKeyboard" @keydown.space.prevent="toggleKeyboard">
@@ -1625,6 +1669,13 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.observer-mode-label { padding: 2px 6px; border: 1px solid #8b989f; border-radius: 3px; color: #53636d; font-size: 11px; white-space: nowrap; }
+.observer-session-expired { min-height: 100vh; display: grid; align-content: center; justify-items: center; gap: 8px; padding: 24px; color: #34434c; background: #f4f6f7; text-align: center; }
+.observer-session-expired h1, .observer-session-expired p { margin: 0; }
+.observer-session-expired button { min-height: 36px; padding: 0 12px; border: 1px solid #8b989f; border-radius: 4px; background: #fff; color: #34434c; }
+</style>
 
 <style scoped>
 .player-session-loading {

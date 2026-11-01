@@ -93,6 +93,20 @@ class RequestObservabilityFilterTest {
                 .doesNotContain("?token=");
     }
 
+    @Test
+    void redactsPublicObserverIdFromRequestPath(CapturedOutput output) throws Exception {
+        String publicId = "AbCdEf0123456789";
+        MockHttpServletRequest request = request("GET", "/display/observe/" + publicId);
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        filter.doFilter(request, response, (servletRequest, servletResponse) ->
+                ((MockHttpServletResponse) servletResponse).setStatus(200));
+
+        assertThat(output.getOut())
+                .contains("path=/display/observe/{publicId}")
+                .doesNotContain(publicId);
+    }
+
     private static MockHttpServletRequest request(String method, String uri) {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.setMethod(method);

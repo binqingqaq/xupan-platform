@@ -236,6 +236,11 @@ public class AuthenticationService {
         if (!userRepository.isLoginWindowOpen(user.id(), clock.instant())) {
             throw new AuthenticationFailure("AUTH_SUB_ACCOUNT_EXPIRED");
         }
+        if ("DISPLAY_OBSERVER".equals(authMode) && scope != null && scope.startsWith("DRO:")) {
+            return new CurrentUser(user.id(), user.username(), user.displayName(), user.avatarKey(),
+                    authMode, scope, List.of(),
+                    List.of("CHAT_ROOM_READ", "GAME_CURRENT_READ", "WALLET_READ"), null);
+        }
         // BY220 head.html:192：子账号在顶部显示「可用积分：N」（取 x_admin.score）。
         BigDecimal subAccountScore = findSubAccountScore(user.id());
         if ("CHAT_ONLY".equals(scope)) {

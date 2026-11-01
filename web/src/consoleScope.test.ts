@@ -7,6 +7,7 @@ import PlayerWorkbenchModule from './components/admin/PlayerWorkbenchModule.vue'
 import { adminRoutes } from './adminRoutes'
 import { api } from './api'
 import {
+  authEntryForRoute,
   botQuotaText,
   consoleLandingPath,
   isConsoleEntryAccount,
@@ -619,6 +620,8 @@ describe('route guard diversion', () => {
 
     expect(isPlayerIdentity({ authMode: 'PLAYER_LINK', scope: 'CHAT_ONLY' })).toBe(true)
     expect(isPlayerIdentity({ authMode: 'PLAYER_LINK', scope: 'PLAYER_FULL' })).toBe(true)
+    expect(isPlayerIdentity({ authMode: 'DISPLAY_OBSERVER', scope: 'DRO:public-id' })).toBe(true)
+    expect(authEntryForRoute('/display/observe/public-id')).toBe('OBSERVER')
     expect(isPlayerIdentity({ authMode: 'PASSWORD', scope: 'CHAT_ONLY' })).toBe(true)
     expect(isPlayerIdentity({ authMode: 'PASSWORD', scope: null })).toBe(false)
     expect(isPlayerIdentity(null)).toBe(false)

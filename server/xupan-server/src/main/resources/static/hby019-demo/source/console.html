@@ -3095,26 +3095,6 @@
                     if (sjstr != $(".guoqitime").text()) {
                         $(".guoqitime").text(new Date(data.OverdueTime).pattern("yyyy/MM/dd HH:mm:ss"));
                     }
-                    var sH = (data.OverdueTime - data.ServerTime) / (60 * 60 * 1000);
-                    var xs = parseInt(sH);
-                    var fz = parseInt((sH - parseInt(sH)) * 60);
-                    var alertMsg = "剩余" + xs + "小时" + (fz ? fz + "分钟" : "") + "过期";
-                    if (sH < 2) {
-                        baojingmsg[3] = alertMsg;
-                        var msg = "";
-                        for (var k in baojingmsg) {
-                            msg += (msg ? "," : "") + baojingmsg[k];
-                        }
-                        $("#baojingmsg").text(msg);
-                    };
-                    if ((!centerConfig.isgqbj) || centerConfig.isgqbj - sH > 0.8) {
-                        if (sH < 2) {
-                            centerConfig.isgqbj = sH;
-                            baojing(true, 3, alertMsg);
-                        } else {
-                            centerConfig.isgqbj = 0;
-                        }
-                    }
                 }
                 //更新剩余积分
                 $("#leftScore").html(parseFloat(data.score));

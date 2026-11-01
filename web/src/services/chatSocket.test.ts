@@ -203,6 +203,27 @@ describe('ChatSocket', () => {
     expect(sockets[0].sent).toContainEqual({ type: 'cursor.ack', sequence: 9 })
   })
 
+  it('keeps an observer socket receive-only while subscribing to machine chat', async () => {
+    const page = createPage([createMessage(8)])
+    apiMocks.getChatMessages.mockResolvedValue(page)
+    const socket = createSocket()
+    socket.connect('main', {}, { lastReceivedSequence: 7, readOnly: true })
+    await flushPromises()
+
+    const connection = sockets[0]
+    connection.open()
+    connection.receive({ type: 'connected', roomCode: 'main', connectionId: 'observer', serverTime: '2026-09-13T10:00:00Z' })
+    connection.receive({ type: 'sync.required', afterSequence: 7 })
+    await flushPromises()
+    connection.receive({ type: 'sync.complete', afterSequence: 7, latestSequence: 8 })
+
+    expect(connection.sent).toContainEqual({ type: 'subscribe', roomCode: 'main', afterSequence: 7 })
+    expect(connection.sent).not.toContainEqual({ type: 'cursor.ack', sequence: 8 })
+    expect(socket.sendMessage('observer-message', '下注内容')).toBe(false)
+    expect(socket.ackCursor(8)).toBe(false)
+    expect(connection.sent).not.toContainEqual({ type: 'message.send', clientMessageId: 'observer-message', content: '下注内容' })
+  })
+
   it('ignores an old socket event and keeps the largest sequence after stale sync completion', async () => {
     vi.useFakeTimers()
     const socket = createSocket({ random: () => 0 })

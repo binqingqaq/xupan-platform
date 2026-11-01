@@ -14,6 +14,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /** Adds a safe request identifier and writes one request completion log entry. */
 @Component
@@ -26,6 +27,8 @@ public final class RequestObservabilityFilter extends OncePerRequestFilter {
             + ".requestId";
 
     private static final Logger log = LoggerFactory.getLogger(RequestObservabilityFilter.class);
+    private static final Pattern DISPLAY_OBSERVER_PATH =
+            Pattern.compile("^/display/observe/[A-Za-z0-9_-]{16}/?$");
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
@@ -69,6 +72,9 @@ public final class RequestObservabilityFilter extends OncePerRequestFilter {
                                   String requestId, long durationMs) {
         int status = response.getStatus();
         String path = request.getRequestURI();
+        if (DISPLAY_OBSERVER_PATH.matcher(path).matches()) {
+            path = "/display/observe/{publicId}";
+        }
         if ("/actuator/health".equals(path)) {
             if (status >= 400) {
                 log.warn("HTTP health request completed requestId={} httpMethod={} path={} status={} durationMs={}",

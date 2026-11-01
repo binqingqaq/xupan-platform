@@ -73,6 +73,17 @@ public class TokenService {
         return issuePlayerLinkSession(userId, deviceLabel, metadata, "PLAYER_FULL");
     }
 
+    public IssuedTokens issueDisplayObserver(long userId, String publicId,
+                                             RequestMetadata metadata) {
+        if (publicId == null || !publicId.matches("[A-Za-z0-9_-]{16}")) {
+            throw new InvalidTokenException("观察入口无效");
+        }
+        Instant now = clock.instant();
+        UserAccount user = activeUserForSession(userId, "DISPLAY_OBSERVER", now);
+        return issueSession(user, "开奖页只读观察", metadata, "DISPLAY_OBSERVER", "DRO:" + publicId,
+                SessionRecord.ENTRY_DISPLAY_OBSERVER, now);
+    }
+
     private IssuedTokens issue(long userId, String deviceLabel, RequestMetadata metadata,
                                String authMode, String scope, String entry) {
         Instant now = clock.instant();

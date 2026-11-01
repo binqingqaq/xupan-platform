@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
  * 阶段 5（计划 §3.3 + §5 迁移 V75）：入口级独立会话。
  *
  * 后端契约（2026-10-08 后端 lane 交付）：
- * - 请求头 `X-Xupan-Auth-Audience`，取值 `PLATFORM` / `CONSOLE` / `PLAYER`，另兼容 `ADMIN` 与缺省（都按 `PLATFORM`）；
- * - 三个 HttpOnly 刷新 Cookie（`xupan_refresh` / `xupan_console_refresh` / `xupan_player_refresh`），前端读不到也不该读；
+ * - 请求头 `X-Xupan-Auth-Audience`，取值 `PLATFORM` / `CONSOLE` / `PLAYER` / `OBSERVER`，另兼容 `ADMIN` 与缺省（都按 `PLATFORM`）；
+ * - 每个入口使用独立 HttpOnly 刷新 Cookie，前端读不到也不该读；
  * - 跨入口刷新返回 401 `AUTH_TOKEN_REVOKED`，只清当前入口的 Cookie、不动另一个入口；
  * - 退出由服务端按会话 `entry` 决定清哪个 Cookie。
  *
@@ -58,10 +58,11 @@ describe('入口级使用端（阶段 5）', () => {
     expect((await freshApi()).getAuthAudience()).toBe('PLATFORM')
   })
 
-  it('PLATFORM / CONSOLE / PLAYER 三个取值原样保留', async () => {
+  it('PLATFORM / CONSOLE / PLAYER / OBSERVER 四个取值原样保留', async () => {
     expect((await freshApi('PLATFORM')).getAuthAudience()).toBe('PLATFORM')
     expect((await freshApi('CONSOLE')).getAuthAudience()).toBe('CONSOLE')
     expect((await freshApi('PLAYER')).getAuthAudience()).toBe('PLAYER')
+    expect((await freshApi('OBSERVER')).getAuthAudience()).toBe('OBSERVER')
   })
 
   it('两个登录页各自发送自己入口的头，并把本地使用端切到该入口', async () => {
@@ -160,6 +161,24 @@ describe('入口级使用端（阶段 5）', () => {
     expect(window.sessionStorage.getItem(AUDIENCE_KEY)).toBe('PLAYER')
   })
 
+  it('只读观察入口使用独立 OBSERVER audience 兑换，不复用 PLAYER audience', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      accessToken: 'observer-token',
+      expiresIn: 1800,
+      user: currentUser({ authMode: 'DISPLAY_OBSERVER', scope: 'DRO:observer-public-id' }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const api = await freshApi('PLAYER')
+
+    await api.api.exchangeDisplayObserver('observer-public-id')
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/display-observer/exchange')
+    expect(headerOf(fetchMock, 0)).toBe('OBSERVER')
+    expect(api.getAuthAudience()).toBe('OBSERVER')
+    expect(window.sessionStorage.getItem(AUDIENCE_KEY)).toBe('OBSERVER')
+    expect(api.getAccessToken()).toBe('observer-token')
+  })
+
   it('前端不读取任何刷新 Cookie（Token 只在标签页内存 + HttpOnly Cookie）', () => {
     const apiSource = readFileSync(resolve(process.cwd(), 'src/api.ts'), 'utf8')
 
@@ -169,7 +188,7 @@ describe('入口级使用端（阶段 5）', () => {
     expect(apiSource).toContain("credentials: 'include'")
     // Cookie 名只在注释里登记契约，不参与任何读写逻辑（出现处必须是注释行）。
     for (const line of apiSource.split('\n')) {
-      if (line.includes('xupan_console_refresh') || line.includes('xupan_player_refresh')) {
+      if (line.includes('xupan_console_refresh') || line.includes('xupan_player_refresh') || line.includes('xupan_observer_refresh')) {
         expect(line.trim().startsWith('*'), `cookie 名不应出现在代码语句里：${line.trim()}`).toBe(true)
       }
     }

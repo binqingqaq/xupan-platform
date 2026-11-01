@@ -2,6 +2,7 @@ package com.xupan.server.chat.realtime;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.security.AuthenticatedUserDetailsService;
+import com.xupan.server.displayobserver.DisplayObserverRateLimiter;
 import com.xupan.server.chat.domain.ChatMessage;
 import com.xupan.server.chat.domain.ChatMessageStatus;
 import com.xupan.server.chat.domain.ChatMessageType;
@@ -17,6 +18,7 @@ import tools.jackson.databind.ObjectMapper;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
 import java.time.Instant;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -35,10 +37,13 @@ class ChatWebSocketHandlerTest {
     private final AuthenticatedUserDetailsService userDetailsService = mock(AuthenticatedUserDetailsService.class);
     private final ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);
     private final ChatAvatarResolver avatarResolver = mock(ChatAvatarResolver.class);
-    private final ChatConnectionRegistry registry = new ChatConnectionRegistry(properties(), accessService);
+    private final ChatWebSocketProperties websocketProperties = properties();
+    private final DisplayObserverRateLimiter observerRateLimiter =
+            new DisplayObserverRateLimiter(Duration.ofMinutes(1), 60, 600, 600, 3000);
+    private final ChatConnectionRegistry registry = new ChatConnectionRegistry(websocketProperties, accessService);
     private final ChatWebSocketHandler handler = new ChatWebSocketHandler(
-            registry, properties(), objectMapper, messageService, syncService, userDetailsService, accessService,
-            avatarResolver);
+            registry, websocketProperties, objectMapper, messageService, syncService, userDetailsService, accessService,
+            avatarResolver, observerRateLimiter);
     private WebSocketSession session;
 
     @BeforeEach
@@ -143,6 +148,60 @@ class ChatWebSocketHandlerTest {
         verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4401));
         verify(messageService, org.mockito.Mockito.never())
                 .saveReadCursor(any(Long.class), any(String.class), any(Long.class), any(Instant.class));
+    }
+
+    @Test
+    void displayObserverCanSubscribeButCannotSendOrWriteReadCursor() throws Exception {
+        AuthenticatedUser observer = mock(AuthenticatedUser.class);
+        when(observer.getUserId()).thenReturn(7L);
+        when(observer.isDisplayObserver()).thenReturn(true);
+        when(observer.isEnabled()).thenReturn(true);
+        when(observer.isAccountNonLocked()).thenReturn(true);
+        java.util.Collection<org.springframework.security.core.GrantedAuthority> observerAuthorities =
+                java.util.List.of(new SimpleGrantedAuthority("SCOPE_DISPLAY_OBSERVER"));
+        org.mockito.Mockito.doReturn(observerAuthorities).when(observer).getAuthorities();
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.allowed(observer));
+        when(syncService.prepare(eq(7L), eq("main"), eq(0L), any(Instant.class)))
+                .thenReturn(new ChatRealtimeSyncService.SyncPlan(0L, 0L));
+
+        handler.handleTextMessage(session, new TextMessage("{\"type\":\"subscribe\",\"roomCode\":\"main\"}"));
+        handler.handleTextMessage(session,
+                new TextMessage("{\"type\":\"message.send\",\"clientMessageId\":\"observer-1\",\"content\":\"hello\"}"));
+        handler.handleTextMessage(session, new TextMessage("{\"type\":\"cursor.ack\",\"sequence\":0}"));
+
+        verify(syncService).prepare(eq(7L), eq("main"), eq(0L), any(Instant.class));
+        verify(messageService, org.mockito.Mockito.never())
+                .sendUserMessageWithOutcome(any(Long.class), any(String.class), any(String.class), any(String.class), any(Instant.class));
+        verify(messageService, org.mockito.Mockito.never())
+                .saveReadCursor(any(Long.class), any(String.class), any(Long.class), any(Instant.class));
+        assertThat(sentPayloads()).filteredOn(value -> value.contains("MESSAGE_REJECTED"))
+                .hasSize(2);
+    }
+
+    @Test
+    void observerFrameRateLimitClosesConnectionBeforeRepeatedSessionLookups() throws Exception {
+        AuthenticatedUser observer = mock(AuthenticatedUser.class);
+        when(observer.getUserId()).thenReturn(7L);
+        when(observer.isDisplayObserver()).thenReturn(true);
+        when(observer.scope()).thenReturn("DRO:AbCdEf0123456789");
+        when(observer.isEnabled()).thenReturn(true);
+        when(observer.isAccountNonLocked()).thenReturn(true);
+        when(accessService.check(any(ChatConnection.class), any(Instant.class)))
+                .thenReturn(ChatConnectionAccessService.AccessCheck.allowed(observer));
+        Map<String, Object> attributes = session.getAttributes();
+        attributes.put(ChatWebSocketHandshakeInterceptor.USER_ATTRIBUTE, observer);
+        handler.afterConnectionEstablished(session);
+        org.mockito.Mockito.clearInvocations(accessService);
+        websocketProperties.setMaxObserverFramesPerConnectionPerWindow(2);
+
+        TextMessage ping = new TextMessage("{\"type\":\"ping\",\"nonce\":\"n-1\"}");
+        handler.handleTextMessage(session, ping);
+        handler.handleTextMessage(session, ping);
+        handler.handleTextMessage(session, ping);
+
+        verify(accessService, org.mockito.Mockito.times(2)).check(any(ChatConnection.class), any(Instant.class));
+        verify(session).close(org.mockito.ArgumentMatchers.argThat(status -> status.getCode() == 4429));
     }
 
     private ChatMessage message(long sequence, String clientMessageId, String content) {

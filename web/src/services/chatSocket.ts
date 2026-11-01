@@ -10,6 +10,7 @@ import type {
 
 interface ChatSocketOptions {
   lastReceivedSequence?: number
+  readOnly?: boolean
   maxReconnectAttempts?: number
   websocketFactory?: (url: string) => WebSocket
   random?: () => number
@@ -155,6 +156,7 @@ export class ChatSocket {
   private intentionalDisconnect = false
   private networkOffline = false
   private lastReceivedSequence = 0
+  private readOnly = false
   private syncInFlight = false
   private syncCompleteReceived = false
   private deliveredMessageKeys = new Set<string>()
@@ -173,6 +175,7 @@ export class ChatSocket {
     this.intentionalDisconnect = false
     this.reconnectAttempt = 0
     this.lastReceivedSequence = Math.max(0, options.lastReceivedSequence ?? 0)
+    this.readOnly = options.readOnly ?? false
     this.deliveredMessageKeys.clear()
     this.generation += 1
     const generation = this.generation
@@ -184,12 +187,12 @@ export class ChatSocket {
   }
 
   sendMessage(clientMessageId: string, content: string): boolean {
-    if (!this.canSend()) return false
+    if (this.readOnly || !this.canSend()) return false
     return this.send({ type: 'message.send', clientMessageId, content })
   }
 
   ackCursor(sequence: number): boolean {
-    if (!Number.isFinite(sequence) || sequence <= 0) return false
+    if (this.readOnly || !Number.isFinite(sequence) || sequence <= 0) return false
     return this.send({ type: 'cursor.ack', sequence: Math.min(sequence, this.lastReceivedSequence) })
   }
 
@@ -344,7 +347,7 @@ export class ChatSocket {
       this.updateLastSequence(page.items)
       const newItems = page.items.filter(message => this.markMessageDelivered(message))
       if (newItems.length > 0) this.handlers.onMessages?.({ ...page, items: newItems })
-      if (this.lastReceivedSequence > 0) this.ackCursor(this.lastReceivedSequence)
+      if (!this.readOnly && this.lastReceivedSequence > 0) this.ackCursor(this.lastReceivedSequence)
     } catch (error) {
       if (!this.isCurrent(generation)) return
       if (this.isAuthFailure(error)) {

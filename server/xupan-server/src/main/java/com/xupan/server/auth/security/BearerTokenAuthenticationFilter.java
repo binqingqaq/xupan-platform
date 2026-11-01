@@ -4,6 +4,7 @@ import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.domain.SessionRecord;
 import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.service.TokenService;
+import com.xupan.server.displayobserver.DisplayObserverAccessService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -29,13 +30,22 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
     private final TokenService tokenService;
     private final AuthenticatedUserDetailsService userDetailsService;
     private final SessionRepository sessionRepository;
+    private final DisplayObserverAccessService displayObserverAccessService;
+
+    public BearerTokenAuthenticationFilter(TokenService tokenService,
+                                           AuthenticatedUserDetailsService userDetailsService,
+                                           SessionRepository sessionRepository,
+                                           DisplayObserverAccessService displayObserverAccessService) {
+        this.tokenService = tokenService;
+        this.userDetailsService = userDetailsService;
+        this.sessionRepository = sessionRepository;
+        this.displayObserverAccessService = displayObserverAccessService;
+    }
 
     public BearerTokenAuthenticationFilter(TokenService tokenService,
                                            AuthenticatedUserDetailsService userDetailsService,
                                            SessionRepository sessionRepository) {
-        this.tokenService = tokenService;
-        this.userDetailsService = userDetailsService;
-        this.sessionRepository = sessionRepository;
+        this(tokenService, userDetailsService, sessionRepository, null);
     }
 
     @Override
@@ -74,6 +84,11 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
     private Optional<AuthenticatedUser> loadEnabledUser(SessionRecord session) {
         try {
             AuthenticatedUser user = userDetailsService.loadUserById(session.userId());
+            if ("DISPLAY_OBSERVER".equals(session.authMode())) {
+                return displayObserverAccessService == null
+                        ? Optional.empty()
+                        : displayObserverAccessService.principal(user, session.scope());
+            }
             if (session.isChatOnly()) {
                 user = user.asChatOnly();
             } else if (!Objects.equals(session.authMode(), user.authMode())
@@ -89,7 +104,11 @@ public class BearerTokenAuthenticationFilter extends OncePerRequestFilter {
 
     private Optional<AuthenticatedUser> loadUser(SessionRecord session) {
         try {
-            return Optional.of(userDetailsService.loadUserById(session.userId()));
+            AuthenticatedUser user = userDetailsService.loadUserById(session.userId());
+            if ("DISPLAY_OBSERVER".equals(session.authMode())) {
+                return Optional.of(user.asDisplayObserver(session.scope()));
+            }
+            return Optional.of(user);
         } catch (RuntimeException ignored) {
             return Optional.empty();
         }

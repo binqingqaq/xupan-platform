@@ -59,12 +59,24 @@ public final class AuthenticatedUser implements UserDetails {
         return "CHAT_ONLY".equals(scope);
     }
 
+    public boolean isDisplayObserver() {
+        return "DISPLAY_OBSERVER".equals(authMode) && scope != null && scope.startsWith("DRO:");
+    }
+
     public AuthenticatedUser asChatOnly() {
         Set<GrantedAuthority> chatAuthorities = new LinkedHashSet<>();
         chatAuthorities.add(new SimpleGrantedAuthority("SCOPE_CHAT_ONLY"));
         chatAuthorities.add(new SimpleGrantedAuthority("PERM_CHAT_ROOM_READ"));
         chatAuthorities.add(new SimpleGrantedAuthority("PERM_CHAT_MESSAGE_SEND"));
         return new AuthenticatedUser(account, chatAuthorities, "PLAYER_LINK", "CHAT_ONLY");
+    }
+
+    public AuthenticatedUser asDisplayObserver(String observerScope) {
+        Set<GrantedAuthority> observerAuthorities = new LinkedHashSet<>();
+        observerAuthorities.add(new SimpleGrantedAuthority("SCOPE_DISPLAY_OBSERVER"));
+        observerAuthorities.add(new SimpleGrantedAuthority("PERM_GAME_CURRENT_READ"));
+        observerAuthorities.add(new SimpleGrantedAuthority("PERM_WALLET_READ"));
+        return new AuthenticatedUser(account, observerAuthorities, "DISPLAY_OBSERVER", observerScope);
     }
 
     @Override

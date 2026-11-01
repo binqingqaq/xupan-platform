@@ -112,6 +112,9 @@ import type {
   OnlinePlayerMessageInput,
   PlatformSettings,
   PlatformSettingsInput,
+  DisplayObserverBinding,
+  DisplayObserverMachineOption,
+  DisplayObserverBotOption,
   PublicPlatformSettings,
   DeleteAllAccountsResult,
   ClearDataResult,
@@ -162,9 +165,10 @@ export type AuthState = 'unknown' | 'authenticated' | 'unauthenticated'
  *
  * 取值与后端请求头 `X-Xupan-Auth-Audience` 的契约一致：`PLATFORM`（`/platform-admin`，
  * Cookie `xupan_refresh`）、`CONSOLE`（`/console`，Cookie `xupan_console_refresh`）、
- * `PLAYER`（玩家链接，Cookie `xupan_player_refresh`）。后端另兼容旧的 `ADMIN`（当 `PLATFORM`）。
+ * `PLAYER`（玩家链接，Cookie `xupan_player_refresh`）、`OBSERVER`（开奖页只读观察，Cookie `xupan_observer_refresh`）。
+ * 后端另兼容旧的 `ADMIN`（当 `PLATFORM`）。
  */
-export type AuthAudience = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
+export type AuthAudience = 'PLATFORM' | 'CONSOLE' | 'PLAYER' | 'OBSERVER'
 
 const AUTH_AUDIENCE_STORAGE_KEY = 'xupan.auth.audience'
 const AUTH_REFRESH_AUDIENCE_HEADER = 'X-Xupan-Auth-Audience'
@@ -185,7 +189,7 @@ const authStateListeners = new Set<(state: AuthState) => void>()
 function readStoredAuthAudience(): AuthAudience {
   try {
     const stored = window.sessionStorage.getItem(AUTH_AUDIENCE_STORAGE_KEY)
-    if (stored === 'PLAYER' || stored === 'CONSOLE' || stored === 'PLATFORM') return stored
+    if (stored === 'PLAYER' || stored === 'CONSOLE' || stored === 'PLATFORM' || stored === 'OBSERVER') return stored
     return 'PLATFORM'
   } catch {
     return 'PLATFORM'
@@ -543,6 +547,20 @@ export const api = {
     setAccessToken(result.accessToken)
     return result
   }),
+  getDisplayObserverLink: () => request<{ enabled: boolean; href: string | null }>('/api/display/observer-link', {}, false),
+  exchangeDisplayObserver: (publicId: string) => request<{
+    accessToken: string
+    expiresIn: number
+    user: CurrentUserView
+  }>('/api/display-observer/exchange', {
+    method: 'POST',
+    headers: { [AUTH_REFRESH_AUDIENCE_HEADER]: 'OBSERVER' },
+    body: JSON.stringify({ publicId }),
+  }, false).then(result => {
+    setAuthAudience('OBSERVER')
+    setAccessToken(result.accessToken)
+    return result
+  }),
   logout: async () => {
     try {
       await request<void>('/api/auth/logout', {
@@ -862,6 +880,28 @@ export const api = {
   getPlatformSettings: () => request<PlatformSettings>('/api/admin/settings'),
   updatePlatformSettings: (payload: PlatformSettingsInput) =>
     request<PlatformSettings>('/api/admin/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  getDisplayObserverBinding: () =>
+    request<DisplayObserverBinding>('/api/admin/settings/display-observer'),
+  listDisplayObserverMachines: () =>
+    request<DisplayObserverMachineOption[]>('/api/admin/settings/display-observer/machines'),
+  listDisplayObserverBots: (agentId: number) =>
+    request<DisplayObserverBotOption[]>(`/api/admin/settings/display-observer/machines/${agentId}/bots`),
+  bindDisplayObserver: (payload: { agentId: number; viewerUserId: number; expectedVersion: number }) =>
+    request<DisplayObserverBinding>('/api/admin/settings/display-observer', {
+      method: 'PUT', body: JSON.stringify(payload),
+    }),
+  setDisplayObserverEnabled: (payload: { enabled: boolean; expectedVersion: number; reason: string }) =>
+    request<DisplayObserverBinding>('/api/admin/settings/display-observer/enabled', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+  rotateDisplayObserverLink: (payload: { expectedVersion: number; reason: string }) =>
+    request<DisplayObserverBinding>('/api/admin/settings/display-observer/rotate', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+  resetDisplayObserverBinding: (payload: { agentId: number; viewerUserId: number; expectedVersion: number; reason: string }) =>
+    request<DisplayObserverBinding>('/api/admin/settings/display-observer/reset-binding', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
   previewDeleteAllAccounts: (confirm: string) =>
     request<DeleteAllAccountsResult>('/api/admin/settings/delete-all-accounts', {
       method: 'POST', body: JSON.stringify({ confirm, preview: true }),

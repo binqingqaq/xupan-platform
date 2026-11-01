@@ -63,6 +63,11 @@ public class SpaController {
         return "forward:/display/mobile-replica/index.html";
     }
 
+    @GetMapping({"/display/observe/{publicId}", "/display/observe/{publicId}/"})
+    public String forwardToDisplayObserver() {
+        return "forward:/index.html";
+    }
+
     @GetMapping({"/33/{linkPath}", "/33/{linkPath}/"})
     public String forwardPlayerLink() {
         return "forward:/index.html";

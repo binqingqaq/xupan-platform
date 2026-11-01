@@ -12,6 +12,7 @@ public class ChatWebSocketProperties {
     private List<String> allowedOrigins = new ArrayList<>(List.of(
             "http://127.0.0.1:5173", "http://localhost:5173"));
     private int maxConnectionsPerUser = 3;
+    private int maxObserverConnectionsPerBinding = 100;
     private int maxConnections = 5000;
     private Duration heartbeatInterval = Duration.ofSeconds(20);
     private Duration heartbeatTimeout = Duration.ofSeconds(30);
@@ -20,6 +21,8 @@ public class ChatWebSocketProperties {
     private int maxOutboundMessageBytes = 64 * 1024;
     private int maxMessagesPerWindow = 10;
     private Duration messageRateWindow = Duration.ofSeconds(10);
+    private int maxObserverFramesPerConnectionPerWindow = 120;
+    private Duration observerFrameRateWindow = Duration.ofMinutes(1);
 
     public List<String> getAllowedOrigins() {
         return List.copyOf(allowedOrigins);
@@ -42,6 +45,15 @@ public class ChatWebSocketProperties {
 
     public void setMaxConnectionsPerUser(int maxConnectionsPerUser) {
         this.maxConnectionsPerUser = positive(maxConnectionsPerUser, "maxConnectionsPerUser");
+    }
+
+    public int getMaxObserverConnectionsPerBinding() {
+        return maxObserverConnectionsPerBinding;
+    }
+
+    public void setMaxObserverConnectionsPerBinding(int maxObserverConnectionsPerBinding) {
+        this.maxObserverConnectionsPerBinding = positive(
+                maxObserverConnectionsPerBinding, "maxObserverConnectionsPerBinding");
     }
 
     public int getMaxConnections() {
@@ -106,6 +118,23 @@ public class ChatWebSocketProperties {
 
     public void setMessageRateWindow(Duration messageRateWindow) {
         this.messageRateWindow = positive(messageRateWindow, "messageRateWindow");
+    }
+
+    public int getMaxObserverFramesPerConnectionPerWindow() {
+        return maxObserverFramesPerConnectionPerWindow;
+    }
+
+    public void setMaxObserverFramesPerConnectionPerWindow(int maxObserverFramesPerConnectionPerWindow) {
+        this.maxObserverFramesPerConnectionPerWindow = positive(
+                maxObserverFramesPerConnectionPerWindow, "maxObserverFramesPerConnectionPerWindow");
+    }
+
+    public Duration getObserverFrameRateWindow() {
+        return observerFrameRateWindow;
+    }
+
+    public void setObserverFrameRateWindow(Duration observerFrameRateWindow) {
+        this.observerFrameRateWindow = positive(observerFrameRateWindow, "observerFrameRateWindow");
     }
 
     private static int positive(int value, String name) {

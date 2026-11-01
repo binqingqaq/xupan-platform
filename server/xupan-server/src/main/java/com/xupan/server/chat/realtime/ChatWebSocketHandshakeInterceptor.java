@@ -3,7 +3,9 @@ package com.xupan.server.chat.realtime;
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.domain.WsTicket;
 import com.xupan.server.auth.security.AuthenticatedUserDetailsService;
+import com.xupan.server.displayobserver.DisplayObserverAccessService;
 import com.xupan.server.auth.service.TokenService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.server.ServerHttpRequest;
 import org.springframework.http.server.ServerHttpResponse;
@@ -28,11 +30,20 @@ public class ChatWebSocketHandshakeInterceptor implements HandshakeInterceptor {
 
     private final TokenService tokenService;
     private final AuthenticatedUserDetailsService userDetailsService;
+    private final DisplayObserverAccessService displayObserverAccessService;
+
+    @Autowired
+    public ChatWebSocketHandshakeInterceptor(TokenService tokenService,
+                                             AuthenticatedUserDetailsService userDetailsService,
+                                             DisplayObserverAccessService displayObserverAccessService) {
+        this.tokenService = tokenService;
+        this.userDetailsService = userDetailsService;
+        this.displayObserverAccessService = displayObserverAccessService;
+    }
 
     public ChatWebSocketHandshakeInterceptor(TokenService tokenService,
                                              AuthenticatedUserDetailsService userDetailsService) {
-        this.tokenService = tokenService;
-        this.userDetailsService = userDetailsService;
+        this(tokenService, userDetailsService, null);
     }
 
     @Override
@@ -48,11 +59,23 @@ public class ChatWebSocketHandshakeInterceptor implements HandshakeInterceptor {
         try {
             WsTicket ticket = tokenService.consumeWsTicket(rawTicket, roomCode);
             AuthenticatedUser user = userDetailsService.loadUserById(ticket.userId());
-            if ("CHAT_ONLY".equals(ticket.scope())) {
+            if (ticket.scope() != null && ticket.scope().startsWith(DisplayObserverAccessService.SCOPE_PREFIX)) {
+                if (!"main".equals(roomCode) || displayObserverAccessService == null) {
+                    response.setStatusCode(HttpStatus.FORBIDDEN);
+                    return false;
+                }
+                user = displayObserverAccessService.principal(user, ticket.scope()).orElse(null);
+                if (user == null) {
+                    response.setStatusCode(HttpStatus.FORBIDDEN);
+                    return false;
+                }
+            } else if ("CHAT_ONLY".equals(ticket.scope())) {
                 user = user.asChatOnly();
             }
-            if (!user.isEnabled() || !user.getAuthorities().stream()
-                    .anyMatch(authority -> "PERM_CHAT_ROOM_READ".equals(authority.getAuthority()))) {
+            boolean observer = user.isDisplayObserver();
+            if (!user.isEnabled() || !user.isAccountNonLocked()
+                    || (!observer && !user.getAuthorities().stream()
+                    .anyMatch(authority -> "PERM_CHAT_ROOM_READ".equals(authority.getAuthority())))) {
                 response.setStatusCode(HttpStatus.FORBIDDEN);
                 return false;
             }

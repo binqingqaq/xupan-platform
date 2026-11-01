@@ -1,6 +1,8 @@
 package com.xupan.server.chat.realtime;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
+import com.xupan.server.displayobserver.DisplayObserverAccessService;
+import com.xupan.server.displayobserver.DisplayObserverRateLimiter;
 import com.xupan.server.auth.security.AuthenticatedUserDetailsService;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.chat.web.ChatMessageResponse;
@@ -37,6 +39,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final AuthenticatedUserDetailsService userDetailsService;
     private final ChatConnectionAccessService accessService;
     private final ChatAvatarResolver avatarResolver;
+    private final DisplayObserverRateLimiter displayObserverRateLimiter;
     private final Map<String, MessageRateWindow> messageRateWindows = new ConcurrentHashMap<>();
 
     public ChatWebSocketHandler(ChatConnectionRegistry connectionRegistry,
@@ -46,7 +49,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                                 ChatRealtimeSyncService syncService,
                                 AuthenticatedUserDetailsService userDetailsService,
                                 ChatConnectionAccessService accessService,
-                                ChatAvatarResolver avatarResolver) {
+                                ChatAvatarResolver avatarResolver,
+                                DisplayObserverRateLimiter displayObserverRateLimiter) {
         this.connectionRegistry = connectionRegistry;
         this.properties = properties;
         this.objectMapper = objectMapper;
@@ -55,6 +59,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         this.userDetailsService = userDetailsService;
         this.accessService = accessService;
         this.avatarResolver = avatarResolver;
+        this.displayObserverRateLimiter = displayObserverRateLimiter;
     }
 
     @Override
@@ -64,14 +69,16 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         String sessionId = attribute(session, ChatWebSocketHandshakeInterceptor.SESSION_ID_ATTRIBUTE, String.class);
         String roomCode = attribute(session, ChatWebSocketHandshakeInterceptor.ROOM_CODE_ATTRIBUTE, String.class);
         Long agentId = chatMessageService.machineAgentId(user.getUserId());
+        String observerPublicId = user.isDisplayObserver()
+                ? user.scope().substring(DisplayObserverAccessService.SCOPE_PREFIX.length()) : null;
         ChatConnection connection = new ChatConnection(UUID.randomUUID().toString(), user.getUserId(),
-                sessionId, roomCode, agentId, session, Instant.now());
+                sessionId, roomCode, agentId, observerPublicId, session, Instant.now());
         try {
             connectionRegistry.register(connection);
             session.getAttributes().put(ChatWebSocketHandshakeInterceptor.CONNECTION_ATTRIBUTE, connection);
             send(connection, ChatProtocol.connected(connection.connectionId(), roomCode, Instant.now()));
         } catch (ChatConnectionRegistry.ConnectionLimitException exception) {
-            closeQuietly(session, CloseStatus.POLICY_VIOLATION);
+            closeQuietly(session, exception.closeStatus());
         }
     }
 
@@ -81,6 +88,18 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         if (connection == null) {
             closeQuietly(session, CloseStatus.NOT_ACCEPTABLE);
             return;
+        }
+        if (connection.isDisplayObserver()) {
+            boolean connectionAllowed = connection.allowObserverFrame(Instant.now(),
+                    properties.getObserverFrameRateWindow(),
+                    properties.getMaxObserverFramesPerConnectionPerWindow());
+            long bindingRetryAfter = connectionAllowed
+                    ? displayObserverRateLimiter.checkWebSocketFrame(connection.observerPublicId()) : 0;
+            if (!connectionAllowed || bindingRetryAfter > 0) {
+                remove(session);
+                connection.close(new CloseStatus(4429, "observer frame rate limit"));
+                return;
+            }
         }
         ChatConnectionAccessService.AccessCheck access = accessService.check(connection, Instant.now());
         if (!access.allowed()) {
@@ -92,6 +111,13 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             ChatProtocol.ClientEvent event = ChatProtocol.parseClientEvent(objectMapper, message.getPayload(),
                     properties.getMaxMessageBytes());
             ChatProtocol.ClientEventType eventType = ChatProtocol.ClientEventType.fromWire(event.type());
+            if (access.user().isDisplayObserver()
+                    && eventType != ChatProtocol.ClientEventType.PING
+                    && eventType != ChatProtocol.ClientEventType.SUBSCRIBE) {
+                send(connection, ChatProtocol.error(ChatProtocol.ErrorCode.MESSAGE_REJECTED,
+                        "只读观察入口不能发送或写入聊天室数据", event.clientMessageId()));
+                return;
+            }
             if (eventType == ChatProtocol.ClientEventType.PING) {
                 connection.markPong(Instant.now());
                 send(connection, ChatProtocol.pong(event.nonce(), Instant.now()));

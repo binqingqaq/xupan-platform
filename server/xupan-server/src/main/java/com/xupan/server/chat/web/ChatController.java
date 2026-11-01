@@ -31,6 +31,7 @@ public class ChatController {
     @GetMapping
     public ChatRoomResponse room(Authentication authentication, @PathVariable String roomCode) {
         AuthenticatedUser user = principal(authentication);
+        requireObserverRoom(user, roomCode);
         return ChatRoomResponse.from(chatMessageService.getRoom(user.getUserId(), roomCode, Instant.now()));
     }
 
@@ -41,6 +42,7 @@ public class ChatController {
                                             @RequestParam(required = false) Long afterSequence,
                                             @RequestParam(defaultValue = "50") int limit) {
         AuthenticatedUser user = principal(authentication);
+        requireObserverRoom(user, roomCode);
         return ChatMessagePageResponse.from(roomCode, chatMessageService.history(user.getUserId(), roomCode,
                 beforeSequence, afterSequence, limit, Instant.now()), avatarResolver);
     }
@@ -51,6 +53,10 @@ public class ChatController {
                                     @PathVariable String roomCode,
                                     @RequestBody SendChatMessageRequest request) {
         AuthenticatedUser user = principal(authentication);
+        if (user.isDisplayObserver()) {
+            throw com.xupan.server.web.BusinessException.forbidden(
+                    "DISPLAY_OBSERVER_READ_ONLY", "只读观察入口不能发送聊天消息");
+        }
         return avatarResolver.toResponse(chatMessageService.sendUserMessage(user.getUserId(), roomCode,
                 request == null ? null : request.clientMessageId(),
                 request == null ? null : request.content(),
@@ -63,6 +69,10 @@ public class ChatController {
                            @PathVariable String roomCode,
                            @RequestBody ReadCursorRequest request) {
         AuthenticatedUser user = principal(authentication);
+        if (user.isDisplayObserver()) {
+            throw com.xupan.server.web.BusinessException.forbidden(
+                    "DISPLAY_OBSERVER_READ_ONLY", "只读观察入口不能修改聊天已读状态");
+        }
         chatMessageService.saveReadCursor(user.getUserId(), roomCode,
                 request == null || request.lastReadSequence() == null ? -1 : request.lastReadSequence(),
                 Instant.now());
@@ -73,5 +83,12 @@ public class ChatController {
             throw new AuthenticationService.AuthenticationFailure("AUTH_UNAUTHENTICATED");
         }
         return user;
+    }
+
+    private static void requireObserverRoom(AuthenticatedUser user, String roomCode) {
+        if (user.isDisplayObserver() && !"main".equals(roomCode)) {
+            throw com.xupan.server.web.BusinessException.forbidden(
+                    "DISPLAY_OBSERVER_ROOM_FORBIDDEN", "观察入口只能查看绑定机器的公开大厅");
+        }
     }
 }

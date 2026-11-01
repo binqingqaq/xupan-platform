@@ -4,6 +4,7 @@ import com.xupan.server.auth.repository.OperationAuditRepository;
 import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.displayobserver.DisplayObserverBindingService;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.domain.VirtualWallet;
 import com.xupan.server.game.domain.WalletLedgerEntry;
@@ -46,6 +47,7 @@ public class PlayerDeskAdminService {
     private final PlayerLinkAuthenticationService playerLinkAuthenticationService;
     private final AvatarPresetService avatarPresetService;
     private final PlayerPhysicalDeleteService playerPhysicalDeleteService;
+    private final DisplayObserverBindingService displayObserverBindingService;
 
     public PlayerDeskAdminService(PlayerDeskRepository repository, PermissionService permissionService,
                                   PlayerDeskScopeService scopeService,
@@ -59,7 +61,8 @@ public class PlayerDeskAdminService {
                                   AvatarPresetService avatarPresetService,
                                   com.xupan.server.agent.service.AgentConsoleService agentConsoleService,
                                   com.xupan.server.agent.repository.AgentRepository agentRepository,
-                                  PlayerPhysicalDeleteService playerPhysicalDeleteService) {
+                                  PlayerPhysicalDeleteService playerPhysicalDeleteService,
+                                  DisplayObserverBindingService displayObserverBindingService) {
         this.repository = repository;
         this.permissionService = permissionService;
         this.scopeService = scopeService;
@@ -79,6 +82,7 @@ public class PlayerDeskAdminService {
         this.agentConsoleService = agentConsoleService;
         this.agentRepository = agentRepository;
         this.playerPhysicalDeleteService = playerPhysicalDeleteService;
+        this.displayObserverBindingService = displayObserverBindingService;
     }
 
     @Transactional(readOnly = true)
@@ -559,6 +563,7 @@ public class PlayerDeskAdminService {
         }
         PlayerDeskRepository.Behavior current = repository.findBehavior(userId)
                 .orElseGet(() -> repository.ensureBehavior(player.accountId()));
+        displayObserverBindingService.requireManualBehaviorIfBound(userId, mode);
         if (chaseEnabled && !current.machineChaseEnabled()) {
             throw BusinessException.badRequest("PLAYER_CHASE_NOT_ENABLED", "机器账号尚未开通追单权限");
         }

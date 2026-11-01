@@ -44,20 +44,28 @@ public class DemoGameController {
     public DemoGameService.GameView current(Authentication authentication,
                                             @RequestParam(defaultValue = "AU8") String gameCode) {
         AuthenticatedUser user = authenticatedUser(authentication);
+        requireObserverGame(user, gameCode);
         boolean includeAllIssueBets = permissionService.findRoleCodes(user.getUserId()).contains("ADMIN");
         return gameService.current(user.getUserId(), gameCode, includeAllIssueBets);
     }
 
     @GetMapping("/catalog")
-    public List<GameSettingsService.GameCatalogItem> catalog() {
-        return gameSettingsService.activeCatalog();
+    public List<GameSettingsService.GameCatalogItem> catalog(Authentication authentication) {
+        List<GameSettingsService.GameCatalogItem> catalog = gameSettingsService.activeCatalog();
+        if (!authenticatedUser(authentication).isDisplayObserver()) return catalog;
+        return catalog.stream().filter(item -> "AU8".equalsIgnoreCase(item.gameCode())).toList();
     }
 
     @PostMapping("/bets")
     @ResponseStatus(HttpStatus.CREATED)
     public DemoGameService.BetView placeBet(Authentication authentication,
                                             @Valid @RequestBody PlaceBetRequest request) {
-        long userId = authenticatedUser(authentication).getUserId();
+        AuthenticatedUser user = authenticatedUser(authentication);
+        if (user.isDisplayObserver()) {
+            throw com.xupan.server.web.BusinessException.forbidden(
+                    "DISPLAY_OBSERVER_READ_ONLY", "只读观察入口不能下注");
+        }
+        long userId = user.getUserId();
         // Keep the per-player quota check serialized through the commit of this bet.
         return playerBetLock.withPlayerLock(userId, () -> gameService.placeBet(userId, request));
     }
@@ -95,5 +103,12 @@ public class DemoGameController {
             throw new IllegalStateException("GAME_BET_USER_REQUIRED");
         }
         return user;
+    }
+
+    private static void requireObserverGame(AuthenticatedUser user, String gameCode) {
+        if (user.isDisplayObserver() && !"AU8".equalsIgnoreCase(gameCode)) {
+            throw com.xupan.server.web.BusinessException.forbidden(
+                    "DISPLAY_OBSERVER_GAME_FORBIDDEN", "观察入口只能查看 AU8 彩种");
+        }
     }
 }

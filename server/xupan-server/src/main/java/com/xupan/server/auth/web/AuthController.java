@@ -4,6 +4,7 @@ import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.domain.SessionRecord;
 import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.auth.service.TokenService;
+import com.xupan.server.displayobserver.DisplayObserverAccessService;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -30,17 +31,21 @@ public class AuthController {
     public static final String REFRESH_COOKIE = "xupan_refresh";
     public static final String CONSOLE_REFRESH_COOKIE = "xupan_console_refresh";
     public static final String PLAYER_REFRESH_COOKIE = "xupan_player_refresh";
+    public static final String OBSERVER_REFRESH_COOKIE = "xupan_observer_refresh";
     public static final String REFRESH_AUDIENCE_HEADER = "X-Xupan-Auth-Audience";
     private static final String COOKIE_PATH = "/api/auth";
 
     private final AuthenticationService authenticationService;
     private final TokenService tokenService;
+    private final DisplayObserverAccessService displayObserverAccessService;
     private final boolean refreshCookieSecure;
 
     public AuthController(AuthenticationService authenticationService, TokenService tokenService,
+                          DisplayObserverAccessService displayObserverAccessService,
                           @Value("${xupan.auth.refresh-cookie-secure:true}") boolean refreshCookieSecure) {
         this.authenticationService = authenticationService;
         this.tokenService = tokenService;
+        this.displayObserverAccessService = displayObserverAccessService;
         this.refreshCookieSecure = refreshCookieSecure;
     }
 
@@ -71,6 +76,10 @@ public class AuthController {
                     rawRefreshToken, metadata(request), audience.authMode(), audience.entry());
             var session = tokenService.validateAccessToken(tokens.accessToken())
                     .orElseThrow(() -> new TokenService.InvalidTokenException("刷新状态无效"));
+            if ("DISPLAY_OBSERVER".equals(session.authMode())
+                    && !displayObserverAccessService.isCurrent(session.userId(), session.scope())) {
+                throw new TokenService.InvalidTokenException("只读观察入口已停用");
+            }
             AuthenticationService.CurrentUser user = authenticationService.currentUser(
                     session.userId(), session.authMode(), session.scope());
             writeRefreshCookie(response, audience, tokens.refreshToken(), refreshCookieSecure);
@@ -109,6 +118,14 @@ public class AuthController {
                                      HttpServletRequest request,
                                      @RequestParam(required = false) String roomCode) {
         AuthenticatedUser user = principal(authentication);
+        if (user.isDisplayObserver()) {
+            if (!displayObserverAccessService.isCurrent(user.getUserId(), user.scope())
+                    || (roomCode != null && !"main".equals(roomCode))) {
+                throw com.xupan.server.web.BusinessException.forbidden(
+                        "DISPLAY_OBSERVER_ROOM_FORBIDDEN", "观察入口只能订阅当前绑定机器的公开大厅");
+            }
+            roomCode = "main";
+        }
         String sessionId = (String) request.getAttribute(AuthenticationService.SESSION_ID_ATTRIBUTE);
         TokenService.IssuedWsTicket ticket = tokenService.issueWsTicket(user.getUserId(), sessionId, roomCode);
         return new WsTicketResponse(ticket.rawTicket(), TokenService.WS_TICKET_LIFETIME.toSeconds());
@@ -143,6 +160,10 @@ public class AuthController {
 
     public static void writePlayerRefreshCookie(HttpServletResponse response, String value, boolean secure) {
         writeRefreshCookie(response, RefreshAudience.PLAYER, value, secure);
+    }
+
+    public static void writeObserverRefreshCookie(HttpServletResponse response, String value, boolean secure) {
+        writeRefreshCookie(response, RefreshAudience.OBSERVER, value, secure);
     }
 
     private static void writeRefreshCookie(HttpServletResponse response, RefreshAudience audience,
@@ -184,13 +205,17 @@ public class AuthController {
         if ("CONSOLE".equalsIgnoreCase(normalized)) {
             return RefreshAudience.CONSOLE;
         }
-        return "PLAYER".equalsIgnoreCase(normalized) ? RefreshAudience.PLAYER : RefreshAudience.PLATFORM;
+        if ("PLAYER".equalsIgnoreCase(normalized)) return RefreshAudience.PLAYER;
+        return "OBSERVER".equalsIgnoreCase(normalized) ? RefreshAudience.OBSERVER : RefreshAudience.PLATFORM;
     }
 
     /** 退出时按会话入口决定清哪个 Cookie；玩家链接会话仍只清玩家 Cookie。 */
     private RefreshAudience logoutAudience(AuthenticatedUser user, String sessionId) {
         if ("PLAYER_LINK".equals(user.authMode())) {
             return RefreshAudience.PLAYER;
+        }
+        if ("DISPLAY_OBSERVER".equals(user.authMode())) {
+            return RefreshAudience.OBSERVER;
         }
         return RefreshAudience.forEntry(tokenService.sessionEntry(sessionId));
     }
@@ -212,7 +237,8 @@ public class AuthController {
     public enum RefreshAudience {
         PLATFORM(REFRESH_COOKIE, "PASSWORD", SessionRecord.ENTRY_PLATFORM),
         CONSOLE(CONSOLE_REFRESH_COOKIE, "PASSWORD", SessionRecord.ENTRY_CONSOLE),
-        PLAYER(PLAYER_REFRESH_COOKIE, "PLAYER_LINK", null);
+        PLAYER(PLAYER_REFRESH_COOKIE, "PLAYER_LINK", null),
+        OBSERVER(OBSERVER_REFRESH_COOKIE, "DISPLAY_OBSERVER", SessionRecord.ENTRY_DISPLAY_OBSERVER);
 
         private final String cookieName;
         private final String authMode;

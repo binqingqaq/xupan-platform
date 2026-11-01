@@ -4,6 +4,8 @@ import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.domain.SessionRecord;
 import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.security.AuthenticatedUserDetailsService;
+import com.xupan.server.displayobserver.DisplayObserverAccessService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 
@@ -18,11 +20,20 @@ public class ChatConnectionAccessService {
 
     private final SessionRepository sessionRepository;
     private final AuthenticatedUserDetailsService userDetailsService;
+    private final DisplayObserverAccessService displayObserverAccessService;
+
+    @Autowired
+    public ChatConnectionAccessService(SessionRepository sessionRepository,
+                                       AuthenticatedUserDetailsService userDetailsService,
+                                       DisplayObserverAccessService displayObserverAccessService) {
+        this.sessionRepository = sessionRepository;
+        this.userDetailsService = userDetailsService;
+        this.displayObserverAccessService = displayObserverAccessService;
+    }
 
     public ChatConnectionAccessService(SessionRepository sessionRepository,
                                        AuthenticatedUserDetailsService userDetailsService) {
-        this.sessionRepository = sessionRepository;
-        this.userDetailsService = userDetailsService;
+        this(sessionRepository, userDetailsService, null);
     }
 
     public AccessCheck check(ChatConnection connection, Instant now) {
@@ -36,13 +47,20 @@ public class ChatConnectionAccessService {
                     || !session.get().isAccessTokenValid(now, user.getSecurityVersion())) {
                 return AccessCheck.unauthenticated();
             }
-            if (session.get().isChatOnly()) {
+            if ("DISPLAY_OBSERVER".equals(session.get().authMode())) {
+                if (displayObserverAccessService == null) return AccessCheck.forbidden();
+                Optional<AuthenticatedUser> observer = displayObserverAccessService.principal(
+                        user, session.get().scope());
+                if (observer.isEmpty()) return AccessCheck.forbidden();
+                user = observer.get();
+            } else if (session.get().isChatOnly()) {
                 user = user.asChatOnly();
             }
             if (!user.isEnabled() || !user.isAccountNonLocked()) {
                 return AccessCheck.forbidden();
             }
-            boolean canRead = user.getAuthorities().stream()
+            boolean canRead = user.isDisplayObserver()
+                    || user.getAuthorities().stream()
                     .anyMatch(authority -> ROOM_READ_PERMISSION.equals(authority.getAuthority()));
             return canRead ? AccessCheck.allowed(user) : AccessCheck.forbidden();
         } catch (RuntimeException exception) {

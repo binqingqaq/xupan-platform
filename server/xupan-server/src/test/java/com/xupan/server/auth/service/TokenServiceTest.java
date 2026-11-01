@@ -57,6 +57,28 @@ class TokenServiceTest {
     }
 
     @Test
+    void observerSessionHasItsOwnAuthModeScopeAndRefreshEntry() {
+        SessionRepository sessions = mock(SessionRepository.class);
+        UserRepository users = mock(UserRepository.class);
+        UserAccount bot = new UserAccount(42L, "bot-42", "展示托", null, "password-hash", "ACTIVE",
+                0, null, 5L, null, null, "REAL", "BOT-42", "PLAYER_LINK");
+        when(users.findById(42L)).thenReturn(Optional.of(bot));
+        TokenService service = service(sessions, users);
+
+        TokenService.IssuedTokens issued = service.issueDisplayObserver(
+                42L, "AbCdEf0123456789", TokenService.RequestMetadata.empty());
+
+        ArgumentCaptor<SessionRecord> captor = ArgumentCaptor.forClass(SessionRecord.class);
+        verify(sessions).insert(captor.capture());
+        SessionRecord observer = captor.getValue();
+        assertThat(observer.authMode()).isEqualTo("DISPLAY_OBSERVER");
+        assertThat(observer.scope()).isEqualTo("DRO:AbCdEf0123456789");
+        assertThat(observer.entry()).isEqualTo(SessionRecord.ENTRY_DISPLAY_OBSERVER);
+        assertThat(observer.accessTokenHash()).isEqualTo(TokenService.sha256(issued.accessToken()));
+        assertThat(observer.refreshTokenHash()).isEqualTo(TokenService.sha256(issued.refreshToken()));
+    }
+
+    @Test
     void accessAndRefreshTokensAreNotInterchangeable() {
         SessionRepository sessions = mock(SessionRepository.class);
         UserRepository users = mock(UserRepository.class);

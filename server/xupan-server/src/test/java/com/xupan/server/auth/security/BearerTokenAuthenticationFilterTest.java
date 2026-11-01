@@ -5,6 +5,7 @@ import com.xupan.server.auth.domain.SessionRecord;
 import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.domain.UserAccount;
 import com.xupan.server.auth.service.TokenService;
+import com.xupan.server.displayobserver.DisplayObserverAccessService;
 import jakarta.servlet.ServletException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -89,6 +90,41 @@ class BearerTokenAuthenticationFilterTest {
         when(detailsService.loadUserById(7L)).thenReturn(disabled);
         assertAnonymous("Bearer disabled-token");
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void observerSessionGetsOnlyBoundReadAuthorities() throws Exception {
+        String scope = "DRO:AbCdEf0123456789";
+        Instant now = Instant.now();
+        SessionRecord session = new SessionRecord(1L, "observer-session", 42L, "access-hash",
+                now.plusSeconds(60), "refresh-hash", now.plusSeconds(3600), "display-observer",
+                null, null, now, null, now, 0L, "DISPLAY_OBSERVER", scope,
+                SessionRecord.ENTRY_DISPLAY_OBSERVER);
+        AuthenticatedUser bot = new AuthenticatedUser(
+                new UserAccount(42L, "showcase-bot", "展示托", null, "password-hash", "ACTIVE", 0,
+                        null, 0L, null, null), List.of(
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("PERM_GAME_BET_PLACE"),
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("PERM_CHAT_MESSAGE_SEND"),
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("PERM_WALLET_ADJUST"),
+                        new org.springframework.security.core.authority.SimpleGrantedAuthority("PERM_USER_MANAGE")));
+        AuthenticatedUser observer = bot.asDisplayObserver(scope);
+        DisplayObserverAccessService observerAccess = mock(DisplayObserverAccessService.class);
+        when(tokenService.validateAccessToken("observer-token")).thenReturn(Optional.of(session));
+        when(detailsService.loadUserById(42L)).thenReturn(bot);
+        when(observerAccess.principal(bot, scope)).thenReturn(Optional.of(observer));
+        BearerTokenAuthenticationFilter observerFilter =
+                new BearerTokenAuthenticationFilter(tokenService, detailsService, sessionRepository, observerAccess);
+
+        observerFilter.doFilter(request("Bearer observer-token"), new MockHttpServletResponse(), new MockFilterChain());
+
+        AuthenticatedUser actual = (AuthenticatedUser) SecurityContextHolder.getContext()
+                .getAuthentication().getPrincipal();
+        assertThat(actual.isDisplayObserver()).isTrue();
+        assertThat(actual.getAuthorities()).extracting(value -> value.getAuthority())
+                .containsExactlyInAnyOrder("SCOPE_DISPLAY_OBSERVER", "PERM_GAME_CURRENT_READ", "PERM_WALLET_READ")
+                .doesNotContain("PERM_GAME_BET_PLACE", "PERM_CHAT_MESSAGE_SEND", "PERM_WALLET_ADJUST",
+                        "PERM_USER_MANAGE");
+        verify(observerAccess).principal(bot, scope);
     }
 
     private void assertAnonymous(String authorization) throws ServletException, java.io.IOException {

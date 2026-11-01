@@ -67,13 +67,14 @@ export function isConsoleEntryAccount(roles: readonly string[] | null | undefine
 export const PLATFORM_ADMIN_ROLES = ['ADMIN', 'SUB_ACCOUNT'] as const
 
 /** 入口级使用端（阶段 5，与 `X-Xupan-Auth-Audience` 取值一致）。 */
-export type AuthEntry = 'PLATFORM' | 'CONSOLE' | 'PLAYER'
+export type AuthEntry = 'PLATFORM' | 'CONSOLE' | 'PLAYER' | 'OBSERVER'
 
 /**
  * 路由 → 入口级使用端（阶段 5，Flyway V75 `auth_session.entry`）：
  * - `/login`、`/console/login/**`、`/console`、`/agent`、`/hby019-demo/login`、`/hby019-demo/console`、`/hby019-demo/showdetails` → `CONSOLE`（机器账号入口，Cookie `xupan_console_refresh`）；
  * - `/platform-admin/**` → `PLATFORM`（平台后台入口，Cookie `xupan_refresh`）；
  * - `/player-login`、`/33/**`、`/room` → `PLAYER`（玩家链接，Cookie `xupan_player_refresh`）；
+ * - `/display/observe/**` → `OBSERVER`（公开只读观察，Cookie `xupan_observer_refresh`）；
  * - 其余（`/display/**`、`/forbidden`、`/404`、`/`）不绑定入口，返回 `undefined`。
  *
  * 守卫的 `requiredAudience` 与两个登录页的 `redirect` 校验都用它，避免两处口径漂移。
@@ -84,6 +85,7 @@ export function authEntryForRoute(path: string): AuthEntry | undefined {
     || path === '/hby019-demo/console' || path === '/hby019-demo/showdetails') return 'CONSOLE'
   if (path.startsWith('/platform-admin')) return 'PLATFORM'
   if (path === '/player-login' || path.startsWith('/33/') || path === '/room') return 'PLAYER'
+  if (path.startsWith('/display/observe/')) return 'OBSERVER'
   return undefined
 }
 
@@ -126,7 +128,7 @@ export function isPlayerIdentity(
   user: { authMode?: string | null; scope?: string | null } | null | undefined,
 ): boolean {
   if (!user) return false
-  if (user.authMode === 'PLAYER_LINK') return true
+  if (user.authMode === 'PLAYER_LINK' || user.authMode === 'DISPLAY_OBSERVER') return true
   return user.scope === 'CHAT_ONLY' || user.scope === 'PLAYER_FULL'
 }
 
@@ -171,7 +173,7 @@ export interface RouteGuardInput {
   /** `restoreSession()` 的结果；`null` 表示没有可用会话。 */
   user: RouteGuardUser | null
   /** 进入路由前该标签页的使用端（阶段 5 三入口）；`PLAYER` 视为玩家标签页误入后台。 */
-  previousAudience?: 'PLATFORM' | 'CONSOLE' | 'PLAYER'
+  previousAudience?: AuthEntry
 }
 
 /**
@@ -184,7 +186,7 @@ export interface RouteGuardInput {
 export function resolveRouteGuardDecision(input: RouteGuardInput): RouteGuardDecision {
   const loginPath = loginPathForRoute(input.path)
   if (!input.user) {
-    if (input.previousAudience === 'PLAYER') return playerForbiddenDecision()
+    if (input.previousAudience === 'PLAYER' || input.previousAudience === 'OBSERVER') return playerForbiddenDecision()
     return { type: 'login', path: loginPath, query: { redirect: input.fullPath, reason: 'required' } }
   }
   if (isPlayerIdentity(input.user)) return playerForbiddenDecision()

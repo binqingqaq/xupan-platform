@@ -26,6 +26,8 @@ public class ChatConnectionRegistry {
     private final Map<String, ChatConnection> connections = new ConcurrentHashMap<>();
     private final Map<String, Set<String>> roomConnections = new ConcurrentHashMap<>();
     private final Map<Long, Set<String>> userConnections = new ConcurrentHashMap<>();
+    private final Map<Long, Set<String>> normalUserConnections = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> observerConnections = new ConcurrentHashMap<>();
 
     public ChatConnectionRegistry(ChatWebSocketProperties properties,
                                   ChatConnectionAccessService accessService) {
@@ -39,13 +41,20 @@ public class ChatConnectionRegistry {
             if (connections.size() >= properties.getMaxConnections()) {
                 throw new ConnectionLimitException("聊天室当前连接数已达上限");
             }
-            Set<String> userIds = userConnections.computeIfAbsent(connection.userId(), ignored ->
-                    ConcurrentHashMap.newKeySet());
-            if (userIds.size() >= properties.getMaxConnectionsPerUser()) {
-                evicted = userIds.stream().map(connections::get).filter(value -> value != null)
-                        .min(Comparator.comparing(ChatConnection::connectedAt)).orElse(null);
-                if (evicted != null) {
-                    removeInternal(evicted);
+            if (connection.isDisplayObserver()) {
+                Set<String> bindingIds = observerConnections.get(connection.observerPublicId());
+                if (bindingIds != null && bindingIds.size() >= properties.getMaxObserverConnectionsPerBinding()) {
+                    throw new ConnectionLimitException("开奖页观察连接已达上限",
+                            new CloseStatus(4429, "observer connection limit"));
+                }
+            } else {
+                Set<String> normalIds = normalUserConnections.get(connection.userId());
+                if (normalIds != null && normalIds.size() >= properties.getMaxConnectionsPerUser()) {
+                    evicted = normalIds.stream().map(connections::get).filter(value -> value != null)
+                            .min(Comparator.comparing(ChatConnection::connectedAt)).orElse(null);
+                    if (evicted != null) {
+                        removeInternal(evicted);
+                    }
                 }
             }
             connections.put(connection.connectionId(), connection);
@@ -53,6 +62,13 @@ public class ChatConnectionRegistry {
                     .add(connection.connectionId());
             userConnections.computeIfAbsent(connection.userId(), ignored -> ConcurrentHashMap.newKeySet())
                     .add(connection.connectionId());
+            if (connection.isDisplayObserver()) {
+                observerConnections.computeIfAbsent(connection.observerPublicId(), ignored ->
+                        ConcurrentHashMap.newKeySet()).add(connection.connectionId());
+            } else {
+                normalUserConnections.computeIfAbsent(connection.userId(), ignored ->
+                        ConcurrentHashMap.newKeySet()).add(connection.connectionId());
+            }
         }
         if (evicted != null) {
             log.info("聊天室连接达到单用户上限，关闭最旧连接 userId={} roomCode={} connectionId={}",
@@ -84,6 +100,16 @@ public class ChatConnectionRegistry {
 
     public int userConnectionCount(long userId) {
         Set<String> ids = userConnections.get(userId);
+        return ids == null ? 0 : ids.size();
+    }
+
+    public int normalUserConnectionCount(long userId) {
+        Set<String> ids = normalUserConnections.get(userId);
+        return ids == null ? 0 : ids.size();
+    }
+
+    public int observerConnectionCount(String publicId) {
+        Set<String> ids = observerConnections.get(publicId);
         return ids == null ? 0 : ids.size();
     }
 
@@ -160,6 +186,11 @@ public class ChatConnectionRegistry {
         connections.remove(connection.connectionId(), connection);
         removeIndex(roomConnections, connection.roomCode(), connection.connectionId());
         removeIndex(userConnections, connection.userId(), connection.connectionId());
+        if (connection.isDisplayObserver()) {
+            removeIndex(observerConnections, connection.observerPublicId(), connection.connectionId());
+        } else {
+            removeIndex(normalUserConnections, connection.userId(), connection.connectionId());
+        }
     }
 
     private static <K> void removeIndex(Map<K, Set<String>> index, K key, String connectionId) {
@@ -173,8 +204,19 @@ public class ChatConnectionRegistry {
     }
 
     public static final class ConnectionLimitException extends RuntimeException {
+        private final CloseStatus closeStatus;
+
         public ConnectionLimitException(String message) {
+            this(message, CloseStatus.POLICY_VIOLATION);
+        }
+
+        public ConnectionLimitException(String message, CloseStatus closeStatus) {
             super(message);
+            this.closeStatus = closeStatus == null ? CloseStatus.POLICY_VIOLATION : closeStatus;
+        }
+
+        public CloseStatus closeStatus() {
+            return closeStatus;
         }
     }
 }

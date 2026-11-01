@@ -19,6 +19,7 @@ const props = defineProps<{
   quickAmounts: string[]
   submitting?: boolean
   blocked?: boolean
+  readOnly?: boolean
   initialScrollTop?: number
 }>()
 
@@ -52,6 +53,7 @@ watch(() => props.specialEnabled, enabled => {
 })
 
 function toggleOption(option: QuickBetOption) {
+  if (props.readOnly) return
   const index = selectedKeys.value.indexOf(option.key)
   if (index >= 0) {
     selectedKeys.value.splice(index, 1)
@@ -74,21 +76,25 @@ function formatOdds(option: QuickBetOption) {
 }
 
 function appendDigit(digit: string) {
+  if (props.readOnly) return
   amount.value = appendQuickAmountDigit(amount.value, digit)
   error.value = ''
 }
 
 function backspace() {
+  if (props.readOnly) return
   amount.value = backspaceQuickAmount(amount.value)
   error.value = ''
 }
 
 function setQuickAmount(value: string) {
+  if (props.readOnly) return
   amount.value = value
   error.value = ''
 }
 
 function clearSelection() {
+  if (props.readOnly) return
   selectedKeys.value = []
   error.value = ''
 }
@@ -98,6 +104,7 @@ function handleScroll() {
 }
 
 function submit() {
+  if (props.readOnly) return
   if (!selectedKeys.value.length) {
     error.value = '请先选择至少一个赔率玩法'
     return
@@ -119,7 +126,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="quick-bet-panel" role="dialog" aria-modal="true" aria-label="快捷下注">
+  <section class="quick-bet-panel" :class="{ 'quick-bet-panel-read-only': readOnly }" role="dialog" aria-modal="true" :aria-label="readOnly ? '快捷内容（只读）' : '快捷下注'">
     <div ref="scrollElement" class="quick-bet-scroll" @scroll="handleScroll">
       <div class="quick-top-grid" aria-label="主赔率区">
         <button
@@ -130,6 +137,7 @@ onMounted(() => {
           :class="[`quick-option-${option.tone ?? 'plain'}`, { checked: selectedKeys.includes(option.key) }]"
           :style="topStyle(option)"
           :aria-pressed="selectedKeys.includes(option.key)"
+          :disabled="readOnly"
           @click="toggleOption(option)"
         >
           <strong>{{ option.code }}</strong>
@@ -145,6 +153,7 @@ onMounted(() => {
           class="quick-option quick-option-lower"
           :class="[`quick-option-${option.tone ?? 'plain'}`, { checked: selectedKeys.includes(option.key) }]"
           :aria-pressed="selectedKeys.includes(option.key)"
+          :disabled="readOnly"
           @click="toggleOption(option)"
         >
           <strong>{{ option.code }}</strong>
@@ -161,7 +170,8 @@ onMounted(() => {
         <span>/</span>
         <span>已结：{{ settledCount }}</span>
       </div>
-      <div class="quick-bet-controls">
+      <p v-if="readOnly" class="quick-bet-read-only" role="status">只读查看，不可下注</p>
+      <div v-else class="quick-bet-controls">
         <button class="quick-bet-settings" type="button" @click="emit('settings')">设置</button>
         <input
           v-model="amount"
@@ -178,10 +188,10 @@ onMounted(() => {
       <p v-if="selectedSpecialCount" class="quick-bet-special-hint">
         特码按单号金额计算：{{ selectedSpecialCount }} 个号码，共 {{ specialStakeTotal.toFixed(2) }} 积分
       </p>
-      <div class="quick-bet-number-row">
+      <div v-if="!readOnly" class="quick-bet-number-row">
         <button v-for="digit in numberKeys" :key="digit" type="button" @click="appendDigit(digit)">{{ digit }}</button>
       </div>
-      <div class="quick-bet-quick-row">
+      <div v-if="!readOnly" class="quick-bet-quick-row">
         <button v-for="(quickAmount, index) in quickAmounts" :key="`${quickAmount}-${index}`" type="button" @click="setQuickAmount(quickAmount)">{{ quickAmount }}</button>
         <button type="button" class="quick-bet-backspace" aria-label="删除金额最后一位" @click="backspace">X</button>
       </div>
@@ -247,6 +257,8 @@ onMounted(() => {
   outline-offset: -3px;
 }
 
+.quick-option:disabled { cursor: default; opacity: 1; }
+
 .quick-option.checked {
   background: #f9cfcf;
 }
@@ -295,6 +307,10 @@ onMounted(() => {
   background: #1577c7;
   color: #fff;
 }
+
+.quick-bet-panel-read-only .quick-bet-scroll { bottom: 56px; }
+.quick-bet-panel-read-only .quick-bet-bar { height: 56px; }
+.quick-bet-read-only { margin: 5px 0 0; color: #fff; text-align: center; font-size: 13px; }
 
 .quick-bet-close {
   position: absolute;

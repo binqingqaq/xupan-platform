@@ -298,6 +298,43 @@ public class GameDataRepository {
                 """, gameCode);
     }
 
+    public List<IssueRecord> findSettledIssues(String gameCode, int ballCount, int limit, long offset) {
+        if (gameCode == null || gameCode.isBlank() || ballCount != 7
+                || limit < 1 || limit > 50 || offset < 0) {
+            throw new IllegalArgumentException("开奖历史查询参数无效");
+        }
+        return findIssues("""
+                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
+                  FROM game_issue
+                 WHERE game_code = ? AND ball_count = ? AND phase = 'SETTLED' AND settled_at IS NOT NULL
+                   AND number_1 IS NOT NULL AND number_2 IS NOT NULL
+                   AND number_3 IS NOT NULL AND number_4 IS NOT NULL
+                   AND number_5 IS NOT NULL AND number_6 IS NOT NULL
+                   AND number_7 IS NOT NULL
+                   AND number_8 IS NULL
+                 ORDER BY settled_at DESC, id DESC
+                 LIMIT ? OFFSET ?
+                """, gameCode, ballCount, limit, offset);
+    }
+
+    public long countSettledIssues(String gameCode, int ballCount) {
+        if (gameCode == null || gameCode.isBlank() || ballCount != 7) {
+            throw new IllegalArgumentException("开奖历史查询参数无效");
+        }
+        Long count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                  FROM game_issue
+                 WHERE game_code = ? AND ball_count = ? AND phase = 'SETTLED' AND settled_at IS NOT NULL
+                   AND number_1 IS NOT NULL AND number_2 IS NOT NULL
+                   AND number_3 IS NOT NULL AND number_4 IS NOT NULL
+                   AND number_5 IS NOT NULL AND number_6 IS NOT NULL
+                   AND number_7 IS NOT NULL AND number_8 IS NULL
+                """, Long.class, gameCode, ballCount);
+        return count == null ? 0 : count;
+    }
+
     public Optional<IssueRecord> findIssueByIssueNumber(String issueNumber) {
         if (issueNumber == null || issueNumber.isBlank()) {
             return Optional.empty();

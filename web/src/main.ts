@@ -5,6 +5,7 @@ import ForbiddenView from './views/ForbiddenView.vue'
 import NotFoundView from './views/NotFoundView.vue'
 import UserRoom from './views/UserRoom.vue'
 import PlayerLinkLoginView from './views/PlayerLinkLoginView.vue'
+import DisplayObserverEntryView from './views/DisplayObserverEntryView.vue'
 import Hby019SourcePage from './views/Hby019SourcePage.vue'
 import { adminRoutes } from './adminRoutes'
 import { getAuthAudience, restoreSession, subscribeAuthState } from './api'
@@ -75,6 +76,7 @@ const router = createRouter({
     { path: '/platform-admin/password', component: () => import('./views/PlatformAdminPassword.vue'), meta: { requiresAuth: true, requiredPermission: 'PLATFORM_PASSWORD_MANAGE', title: '修改密码' } },
     { path: '/player-login', component: PlayerLinkLoginView, meta: { title: '公开大厅' } },
     { path: '/33/:linkPath(.*)', component: PlayerLinkLoginView, meta: { title: '公开大厅' } },
+    { path: '/display/observe/:publicId', component: DisplayObserverEntryView, meta: { title: 'AU8 只读观察' } },
     { path: '/forbidden', component: ForbiddenView, meta: { title: 'AI模型房间管理' } },
     { path: '/room', component: UserRoom, props: { playerLinkOnly: true }, meta: { title: '公开大厅' } },
     // 已收敛：`/agent` 曾是重复实现出来的代理后台。用户 2026-10-02 确认代理后台唯一入口是 `/console`
