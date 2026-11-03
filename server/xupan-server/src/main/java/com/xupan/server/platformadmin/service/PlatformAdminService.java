@@ -422,7 +422,7 @@ public class PlatformAdminService {
         validateExpiry(expiresAt);
         BigDecimal rebateRate = machineValue(input.rebateRate(), create, 0);
         BigDecimal oddsRate = machineValue(input.oddsRate(), create, 95);
-        BigDecimal specialRebateRate = machineValue(input.specialRebateRate(), create, 0);
+        BigDecimal specialRebateRate = machineValue(input.specialRebateRate(), create, 1);
         BigDecimal specialOddsRate = machineValue(input.specialOddsRate(), create, 18);
         BigDecimal totalLimit = machineValue(input.totalLimit(), create, 5_000);
         BigDecimal positiveLimit = machineValue(input.positiveLimit(), create, 20_000);

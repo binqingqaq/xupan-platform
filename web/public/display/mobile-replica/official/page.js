@@ -6,8 +6,6 @@ const liveDrawTimes = new Map();
 let liveRetryTimer;
 let liveRetryDelay = 10_000;
 let displayObserverHref = null;
-let au8HistoryPage = 1;
-let au8HistoryOpen = false;
 
 function issueForDisplay(issue) {
   return String(issue || '').replace(/^20\d{2}(?=\d{3}$)/, '');
@@ -15,6 +13,11 @@ function issueForDisplay(issue) {
 
 function au8IssueForDisplay(issue) {
   return String(issue || '').slice(-3);
+}
+
+function nextAu8IssueForDisplay(issue) {
+  const value = Number(issue);
+  return Number.isSafeInteger(value) ? String(value + 1).slice(-3) : '';
 }
 
 function formatNextDrawAt(value) {
@@ -40,6 +43,12 @@ function refreshCountdowns() {
     const countdown = selected?.querySelector('.baomalaodaCountdown');
     if (!countdown) continue;
     const seconds = Math.max(0, Math.floor((nextDrawAt - Date.now()) / 1000));
+    if (name === '快乐8' && seconds === 0) {
+      countdown.textContent = '开奖中';
+      const summary = selected.querySelector('.baomalaodaInfo3 > div:first-child');
+      if (summary) summary.textContent = '开奖中';
+      continue;
+    }
     const hours = String(Math.floor(seconds / 3600)).padStart(2, '0');
     const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
     const remainingSeconds = String(seconds % 60).padStart(2, '0');
@@ -145,22 +154,31 @@ function applyAu8Draw(response) {
   const currentIssue = response.currentIssue;
   const currentSummary = card.querySelector('.baomalaodaInfo3 > div:first-child');
   let currentIssueLabel = '';
-  const deadline = currentIssue?.phase === 'DRAWING'
-    ? currentIssue.drawEndsAt
-    : currentIssue?.bettingEndsAt;
-  if (currentIssue && deadline) {
-    const nextDrawAt = Date.parse(deadline);
-    if (Number.isFinite(nextDrawAt)) {
+  const nextStartAt = currentIssue?.drawEndsAt;
+  const bettingEndsAt = currentIssue?.bettingEndsAt;
+  if (currentIssue?.issueNumber && nextStartAt && bettingEndsAt
+      && Number.isFinite(Date.parse(nextStartAt)) && Number.isFinite(Date.parse(bettingEndsAt))) {
+    const nextDrawAt = Date.parse(bettingEndsAt);
+    if (currentIssue.phase === 'DRAWING' || nextDrawAt <= Date.now()) {
       liveDrawTimes.set('快乐8', nextDrawAt);
-      const closeTime = new Intl.DateTimeFormat('zh-CN', {
-        timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-      }).format(nextDrawAt);
-      const phaseLabel = currentIssue.phase === 'DRAWING' ? '开奖中' : '截止下注';
-      currentIssueLabel = `本地期 ${au8IssueForDisplay(currentIssue.issueNumber)} ${phaseLabel} ${closeTime}`;
+      currentIssueLabel = '开奖中';
       if (currentSummary) currentSummary.textContent = currentIssueLabel;
+    } else if (Number.isFinite(nextDrawAt)) {
+      const nextIssue = nextAu8IssueForDisplay(currentIssue.issueNumber);
+      if (!nextIssue) {
+        if (currentSummary) currentSummary.textContent = '快乐8下期开奖时间暂不可用';
+        liveDrawTimes.delete('快乐8');
+      } else {
+        liveDrawTimes.set('快乐8', nextDrawAt);
+        currentIssueLabel = `快乐8第${nextIssue}期: ${formatNextDrawAt(nextStartAt)}`;
+        if (currentSummary) currentSummary.textContent = currentIssueLabel;
+      }
+    } else {
+      if (currentSummary) currentSummary.textContent = '快乐8下期开奖时间暂不可用';
+      liveDrawTimes.delete('快乐8');
     }
   } else {
-    if (currentSummary) currentSummary.textContent = '本地 AU8 当前期暂不可用';
+    if (currentSummary) currentSummary.textContent = '快乐8下期开奖时间暂不可用';
     liveDrawTimes.delete('快乐8');
     const countdown = card.querySelector('.baomalaodaCountdown');
     if (countdown) countdown.textContent = '--:--:--';
@@ -220,6 +238,22 @@ function updateAu8ObserverLinkLabel() {
   title.style.cursor = 'pointer';
 }
 
+function updateAu8CardActions() {
+  const card = [...document.querySelectorAll('#widgetContainer40617 .baomalaoda')]
+    .find((item) => item.querySelector('.baomalaodaName')?.textContent.trim() === '快乐8');
+  document.querySelectorAll('#widgetContainer40617 .baomalaodaLive').forEach((link) => link.remove());
+  if (!card) return;
+  card.querySelectorAll('.baomalaodaHistory').forEach((link) => link.remove());
+  card.querySelector('.xupan-au8-history-panel')?.remove();
+  const actionGroup = card.querySelector('.baomalaodaInfo1 > .baomalaoda-group:last-child');
+  if (!actionGroup || actionGroup.querySelector('.xupan-au8-history-label')) return;
+  const label = document.createElement('span');
+  label.className = 'xupan-au8-history-label';
+  label.textContent = '历史记录';
+  Object.assign(label.style, { color: '#e71607', fontSize: '1em' });
+  actionGroup.append(label);
+}
+
 async function refreshDisplayObserverLink() {
   try {
     const response = await fetch('/api/display/observer-link', {
@@ -243,103 +277,6 @@ async function refreshDisplayObserverLink() {
 
 function openAu8ObserverLink() {
   if (displayObserverHref) window.open(displayObserverHref, '_blank', 'noopener,noreferrer');
-}
-
-function renderAu8History(result, errorMessage = '') {
-  const card = [...document.querySelectorAll('#widgetContainer40617 .baomalaoda')]
-    .find((item) => item.querySelector('.baomalaodaName')?.textContent.trim() === '快乐8');
-  if (!card) return;
-
-  let panel = card.querySelector('.xupan-au8-history-panel');
-  if (!panel) {
-    panel = document.createElement('section');
-    panel.className = 'xupan-au8-history-panel';
-    Object.assign(panel.style, {
-      borderTop: '1px solid #ddd', color: '#333', padding: '6px 0', whiteSpace: 'normal',
-    });
-    card.querySelector('.baomalaodaInfo3')?.after(panel);
-  }
-  panel.replaceChildren();
-
-  const header = document.createElement('div');
-  Object.assign(header.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center' });
-  const title = document.createElement('strong');
-  title.textContent = `AU8 开奖历史${result ? `（共 ${result.total} 期）` : ''}`;
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.textContent = '收起';
-  close.addEventListener('click', () => {
-    au8HistoryOpen = false;
-    panel.remove();
-  });
-  header.append(title, close);
-  panel.append(header);
-
-  if (errorMessage) {
-    const error = document.createElement('div');
-    error.textContent = errorMessage;
-    error.style.padding = '8px 0';
-    panel.append(error);
-    return;
-  }
-  if (!result?.items?.length) {
-    const empty = document.createElement('div');
-    empty.textContent = '暂无已确认的 AU8 七球开奖记录';
-    empty.style.padding = '8px 0';
-    panel.append(empty);
-    return;
-  }
-
-  for (const draw of result.items) {
-    const row = document.createElement('div');
-    Object.assign(row.style, {
-      borderBottom: '1px solid #e5e5e5', padding: '6px 0', textAlign: 'left',
-    });
-    const metadata = document.createElement('div');
-    metadata.textContent = `第 ${au8IssueForDisplay(draw.issueNumber)} 期　${new Intl.DateTimeFormat('zh-CN', {
-      timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-    }).format(new Date(draw.drawnAt))}`;
-    const balls = document.createElement('div');
-    balls.textContent = draw.balls.map((ball) => `${String(ball.number).padStart(2, '0')}(${ball.fan}番)`).join('　');
-    row.append(metadata, balls);
-    panel.append(row);
-  }
-
-  const pageCount = Math.max(1, Math.ceil(result.total / result.pageSize));
-  const pagination = document.createElement('div');
-  Object.assign(pagination.style, { display: 'flex', justifyContent: 'space-between', paddingTop: '6px' });
-  const previous = document.createElement('button');
-  previous.type = 'button';
-  previous.textContent = '上一页';
-  previous.disabled = result.page <= 1;
-  previous.addEventListener('click', () => { void refreshAu8History(result.page - 1); });
-  const pageLabel = document.createElement('span');
-  pageLabel.textContent = `第 ${result.page}/${pageCount} 页`;
-  const next = document.createElement('button');
-  next.type = 'button';
-  next.textContent = '下一页';
-  next.disabled = result.page >= pageCount;
-  next.addEventListener('click', () => { void refreshAu8History(result.page + 1); });
-  pagination.append(previous, pageLabel, next);
-  panel.append(pagination);
-}
-
-async function refreshAu8History(page = au8HistoryPage) {
-  au8HistoryOpen = true;
-  au8HistoryPage = page;
-  renderAu8History(null, '正在读取 AU8 开奖历史');
-  try {
-    const response = await fetch(`/api/display/mobile/au8/history?page=${page}&pageSize=10`, {
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-    });
-    if (!response.ok) throw new Error('AU8_HISTORY_UNAVAILABLE');
-    const result = await response.json();
-    au8HistoryPage = result.page;
-    renderAu8History(result);
-  } catch {
-    renderAu8History(null, 'AU8 开奖历史暂时不可用');
-  }
 }
 
 function selectLottery(name) {
@@ -394,10 +331,7 @@ document.addEventListener('click', (event) => {
 }, true);
 
 selectLottery('香港彩');
-const au8Card = [...document.querySelectorAll('#widgetContainer40617 .baomalaoda')]
-  .find((item) => item.querySelector('.baomalaodaName')?.textContent.trim() === '快乐8');
-const au8LiveLink = au8Card?.querySelector('.baomalaodaLive');
-if (au8LiveLink) au8LiveLink.textContent = '最新开奖';
+updateAu8CardActions();
 
 const floatGroup = document.querySelector('#widgetContainer39200 .float-btn-group');
 if (floatGroup && !floatGroup.querySelector('.local-back-to-top')) {
@@ -432,17 +366,9 @@ document.addEventListener('click', (event) => {
     return;
   }
 
-  const au8Link = event.target.closest('#widgetContainer40617 .baomalaodaHistory');
-  if (au8Link && au8Link.closest('.baomalaoda')?.querySelector('.baomalaodaName')?.textContent.trim() === '快乐8') {
-    event.preventDefault();
-    if (au8Link.textContent.includes('历史')) void refreshAu8History(1);
-    else void refreshAu8Draw();
-    return;
-  }
   if (event.target.closest('#widgetContainer40617 .baomalaodaRefresh')) {
     event.preventDefault();
     void refreshAu8Draw();
-    if (au8HistoryOpen) void refreshAu8History(au8HistoryPage);
     return;
   }
 
@@ -466,7 +392,7 @@ document.addEventListener('click', (event) => {
     event.preventDefault();
     window.location.reload();
   }
-});
+}, true);
 
 document.addEventListener('keydown', (event) => {
   const observerTitle = event.target.closest('#widgetContainer40617 .baomalaodaInfo1 .info1-title[role="link"]');

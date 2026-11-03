@@ -166,6 +166,9 @@ public class CenterAgentService {
     public BigDecimal grantAvailable(long id, BigDecimal amount, String reason, Long operator,
                                      String idempotencyKey) {
         requireManage(operator);
+        if (amount != null && amount.stripTrailingZeros().scale() > 0) {
+            throw BusinessException.badRequest("CENTER_GRANT_AMOUNT_INTEGER_REQUIRED", "追加额度只能填写整数");
+        }
         BigDecimal positive = positive(amount, "CENTER_GRANT_AMOUNT_INVALID", "充值金额必须大于零");
         return move(id, BUCKET_AVAILABLE, TYPE_CREDIT_GRANT, "IN", positive, reason,
                 "CENTER_AGENT", Long.toString(id), idempotencyKey, operator);

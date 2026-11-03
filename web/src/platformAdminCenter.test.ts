@@ -336,6 +336,7 @@ describe('中心上游管理页', () => {
   it('creates an account bound to an active subaccount and shows its password once', async () => {
     vi.mocked(api.createCenterUpstreamAccount).mockResolvedValue({
       account: { ...centerAccount, accountId: 42, groupId: 32, groupName: '代理子账号B', username: 'center_agent_b' },
+      password: 'random123abc456xy',
     } as never)
     const host = mountPage()
     await settle()
@@ -362,15 +363,8 @@ describe('中心上游管理页', () => {
     groupOption!.click()
     await settle()
 
-    const inputFor = (label: string) => {
-      const item = Array.from(host.querySelectorAll<HTMLElement>('.account-form .el-form-item'))
-        .find(formItem => formItem.textContent?.includes(label))
-      const input = item?.querySelector('input')
-      if (!input) throw new Error(`找不到字段：${label}`)
-      return input as HTMLInputElement
-    }
-    setValue(inputFor('中心账号名'), 'center_agent_b')
-    setValue(inputFor('初始密码'), 'initial-secret-123')
+    expect(host.textContent ?? '').toContain('账号名与密码将在创建时自动生成')
+    expect(host.textContent ?? '').not.toContain('初始密码')
     await settle()
 
     const createButton = Array.from(host.querySelectorAll('.account-form button'))
@@ -380,19 +374,17 @@ describe('中心上游管理页', () => {
 
     expect(api.createCenterUpstreamAccount).toHaveBeenCalledWith(expect.objectContaining({
       groupId: 32,
-      username: 'center_agent_b',
-      password: 'initial-secret-123',
       initialQuota: 0,
       expiresAt: expect.any(String),
     }))
-    expect(document.body.textContent ?? '').toContain('initial-secret-123')
+    expect(document.body.textContent ?? '').toContain('random123abc456xy')
     expect(document.body.textContent ?? '').toContain('只在本次操作后展示一次')
 
     const dismiss = Array.from(document.body.querySelectorAll('button'))
       .find(item => item.textContent?.trim() === '已安全记录') as HTMLButtonElement
     dismiss.click()
     await new Promise(resolve => setTimeout(resolve, 350))
-    expect(document.body.textContent ?? '').not.toContain('initial-secret-123')
+    expect(document.body.textContent ?? '').not.toContain('random123abc456xy')
   })
 
   it('supports account status, renewal, password reset and account deletion', async () => {

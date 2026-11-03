@@ -10,8 +10,11 @@ import type { DrawHistoryBet, DrawHistoryItem } from '../types/platformAdmin'
 const rows = ref<DrawHistoryItem[]>([])
 const bets = ref<DrawHistoryBet[]>([])
 const gameCatalog = ref<GameCatalogItem[]>([])
-const selectedGameCode = ref('AU8')
+const historyGameCode = 'AU8'
 const issueNumber = ref('')
+const currentPage = ref(1)
+const pageSize = ref(20)
+const total = ref(0)
 const loading = ref(false)
 const forcing = ref(false)
 const error = ref('')
@@ -32,7 +35,7 @@ const savingDraft = ref(false)
 const confirmingDraw = ref(false)
 let refreshTimer: number | undefined
 const visibleBallCount = computed(() => {
-  const game = gameCatalog.value.find(item => item.gameCode === selectedGameCode.value)
+  const game = gameCatalog.value.find(item => item.gameCode === historyGameCode)
   return game?.activeIssueBallCount ?? game?.nextIssueBallCount ?? 8
 })
 const visibleRows = computed(() => rows.value.filter(row =>
@@ -40,23 +43,42 @@ const visibleRows = computed(() => rows.value.filter(row =>
   && row.balls.length === visibleBallCount.value))
 
 async function load() {
+  if (loading.value) return
   loading.value = true
   error.value = ''
   try {
     const [catalog, page] = await Promise.all([
-      api.getGameCatalog(),
-      api.listDrawHistory({ gameCode: selectedGameCode.value, issueNumber: issueNumber.value.trim() || undefined, pageSize: 100 }),
+      gameCatalog.value.length > 0 ? Promise.resolve(gameCatalog.value) : api.getGameCatalog(),
+      api.listDrawHistory({
+        gameCode: historyGameCode,
+        issueNumber: issueNumber.value.trim() || undefined,
+        page: currentPage.value,
+        pageSize: pageSize.value,
+      }),
     ])
     gameCatalog.value = catalog
-    if (catalog.length > 0 && !catalog.some(game => game.gameCode === selectedGameCode.value)) {
-      selectedGameCode.value = catalog[0]!.gameCode
-    }
     rows.value = page.items
+    currentPage.value = page.page
+    pageSize.value = page.pageSize
+    total.value = page.total
   } catch (cause) {
     error.value = apiErrorMessage(cause, '开奖历史加载失败')
   } finally {
     loading.value = false
   }
+}
+function searchHistory() {
+  currentPage.value = 1
+  void load()
+}
+function changePage(page: number) {
+  currentPage.value = page
+  void load()
+}
+function changePageSize(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  void load()
 }
 async function showBets(row: DrawHistoryItem) { selectedIssue.value = row.issueNumber; betsOpen.value = true; bets.value = []; try { bets.value = await api.listDrawHistoryBets(row.gameCode, row.issueNumber) } catch (cause) { adminNotice.error(apiErrorMessage(cause, '投注记录加载失败')) } }
 function editDraft(row: DrawHistoryItem) {
@@ -128,7 +150,7 @@ async function supplement() {
   supplementing.value = true; error.value = ''
   try {
     const result = await api.supplementDrawHistory({
-      gameCode: selectedGameCode.value, issueNumber: supplementIssue.value.trim(), numbers,
+      gameCode: historyGameCode, issueNumber: supplementIssue.value.trim(), numbers,
       openedAt: supplementOpenedAt.value ? new Date(supplementOpenedAt.value).toISOString() : null,
     })
     adminNotice.success(result.message)
@@ -155,12 +177,16 @@ async function forceSettleAll() {
 function ball(value: number) { return String(value).padStart(2, '0') }
 function time(value: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '--' }
 onMounted(async () => {
-  const me = await api.me()
-  currentUser.value = me.displayName || '超级管理员'
-  canForceSettle.value = me.permissions.includes('DRAW_HISTORY_FORCE_SETTLE')
-  canSupplement.value = me.permissions.includes('DRAW_HISTORY_SUPPLEMENT')
+  try {
+    const me = await api.me()
+    currentUser.value = me.displayName || '超级管理员'
+    canForceSettle.value = me.permissions.includes('DRAW_HISTORY_FORCE_SETTLE')
+    canSupplement.value = me.permissions.includes('DRAW_HISTORY_SUPPLEMENT')
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '开奖历史权限读取失败')
+  }
   await load()
-  refreshTimer = window.setInterval(() => { void load() }, 10000)
+  refreshTimer = window.setInterval(() => { if (!loading.value) void load() }, 10000)
 })
 onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(refreshTimer) })
 </script>
@@ -170,14 +196,9 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
     <PlatformAdminNav :display-name="currentUser" />
     <section class="content">
       <header class="page-heading"><h1>开奖历史</h1></header>
-      <el-form inline class="filters">
-        <el-form-item label="彩种">
-          <el-select v-model="selectedGameCode" aria-label="选择彩种" @change="load">
-            <el-option v-for="game in gameCatalog" :key="game.gameCode" :value="game.gameCode" :label="game.displayName" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="期号"><el-input v-model="issueNumber" placeholder="请输入期号" @keyup.enter="load" /></el-form-item>
-        <el-form-item><el-button type="primary" @click="load">查询</el-button></el-form-item>
+      <el-form inline class="filters" @submit.prevent="searchHistory">
+        <el-form-item label="期号"><el-input v-model="issueNumber" placeholder="请输入期号" @keyup.enter="searchHistory" /></el-form-item>
+        <el-form-item><el-button type="primary" :loading="loading" @click="searchHistory">查询</el-button></el-form-item>
         <el-form-item><el-button type="danger" :disabled="!canForceSettle || forcing" :loading="forcing" @click="forceSettleAll">强制结算全部</el-button></el-form-item>
       </el-form>
 
@@ -204,6 +225,19 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
           <el-button v-if="row.drawConfirmedAt && (row.pendingBetCount > 0 || row.pendingCenterOrderCount > 0)" link type="danger" :disabled="!canForceSettle || forcing" :loading="forcing" @click="forceSettleIssue(row as DrawHistoryItem)">补齐结算</el-button>
         </template></el-table-column>
       </el-table>
+      <div class="history-pagination">
+        <el-pagination
+          background
+          :current-page="currentPage"
+          :page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          layout="total, sizes, prev, pager, next, jumper"
+          :disabled="loading"
+          @current-change="changePage"
+          @size-change="changePageSize"
+        />
+      </div>
     </section>
     <el-dialog v-model="betsOpen" :title="`${selectedIssue} 投注记录`" width="min(1000px, 94vw)" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
       <el-table scrollbar-always-on :data="bets" stripe border empty-text="暂无投注">
@@ -240,6 +274,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .page-heading h1 { margin: 0; font-size: 26px; }
 .filters { padding: 14px 16px 0; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
 .supplement-form { border-color: #dcdfe6; }
+.history-pagination { display: flex; justify-content: flex-end; padding: 12px 4px; }
 .ball { min-width: 28px; justify-content: center; }
 </style>
 

@@ -51,6 +51,13 @@ public class CenterUpstreamAccountAdminController {
                 request.initialQuota(), request.expiresAt(), operator(authentication));
     }
 
+    @PostMapping("/generated")
+    public CenterUpstreamAccountService.GeneratedAccount createGenerated(
+            Authentication authentication, @Valid @RequestBody CreateGeneratedAccountRequest request) {
+        return service.createGeneratedAccount(request.groupId(), request.initialQuota(),
+                request.expiresAt(), operator(authentication));
+    }
+
     @PatchMapping("/{id}/status")
     public CenterUpstreamAccountService.AccountView changeStatus(
             Authentication authentication, @PathVariable long id,
@@ -95,6 +102,10 @@ public class CenterUpstreamAccountAdminController {
             return "CreateAccountRequest[groupId=" + groupId + ", username=" + username
                     + ", password=[REDACTED], initialQuota=" + initialQuota + ", expiresAt=" + expiresAt + "]";
         }
+    }
+
+    public record CreateGeneratedAccountRequest(@NotNull @Positive Long groupId,
+                                                BigDecimal initialQuota, Instant expiresAt) {
     }
 
     public record AccountStatusRequest(@NotBlank String status,

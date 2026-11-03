@@ -58,7 +58,7 @@ class DisplayObserverAccessServiceTest {
 
     private static AuthenticatedUser botUser(long userId) {
         UserAccount account = new UserAccount(userId, "showcase-bot", "展示托", null,
-                "password-hash", "ACTIVE", 0, null, 0L, null, null);
+                "password-hash", "ACTIVE", 0, null, 0L, null, null, "TEST");
         return new AuthenticatedUser(account, List.of(
                 new SimpleGrantedAuthority("PERM_GAME_BET_PLACE"),
                 new SimpleGrantedAuthority("PERM_CHAT_MESSAGE_SEND"),

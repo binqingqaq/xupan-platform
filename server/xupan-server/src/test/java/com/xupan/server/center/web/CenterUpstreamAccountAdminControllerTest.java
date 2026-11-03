@@ -75,6 +75,35 @@ class CenterUpstreamAccountAdminControllerTest {
     }
 
     @Test
+    void generatesCenterCredentialsWithZeroInitialQuota() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+        long groupId = createGroup();
+
+        MvcResult result = mockMvc.perform(post("/api/admin/center/accounts/generated")
+                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"groupId\":" + groupId + ",\"initialQuota\":0}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.account.availableBalance").value(0.0))
+                .andExpect(jsonPath("$.account.online").value(false))
+                .andReturn();
+        String json = result.getResponse().getContentAsString();
+        String username = JsonPath.read(json, "$.account.username");
+        String password = JsonPath.read(json, "$.password");
+        assertThat(username).matches("loc" + groupId + "_[a-z0-9]{10}");
+        assertThat(password).matches("[a-z0-9]{16}")
+                .containsPattern("[a-z]").containsPattern("[0-9]");
+        String hash = jdbc.queryForObject("SELECT password_hash FROM center_agent WHERE agent_code = ?",
+                String.class, username);
+        assertThat(hash).isNotEqualTo(password);
+        assertThat(new BCryptPasswordEncoder().matches(password, hash)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM center_agent_ledger WHERE center_agent_id = "
+                + "(SELECT id FROM center_agent WHERE agent_code = ?)", Integer.class, username)).isZero();
+        mockMvc.perform(get("/api/admin/center/accounts").header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].password").doesNotExist());
+    }
+
+    @Test
     void createsAndManagesAccountWithoutReturningPassword() throws Exception {
         String token = login(ADMIN, PASSWORD);
         long groupId = createGroup();
@@ -467,6 +496,8 @@ class CenterUpstreamAccountAdminControllerTest {
         jdbc.update("DELETE FROM center_agent_ledger WHERE center_agent_id IN "
                 + "(SELECT id FROM center_agent WHERE agent_code LIKE ?)", ACCOUNT_PREFIX + "%");
         jdbc.update("DELETE FROM center_agent WHERE agent_code LIKE ?", ACCOUNT_PREFIX + "%");
+        jdbc.update("DELETE FROM center_agent WHERE agent_group_id IN "
+                + "(SELECT id FROM agent_group WHERE group_code = ?)", GROUP_CODE);
         jdbc.update("DELETE FROM agent_group WHERE group_code = ?", GROUP_CODE);
         jdbc.update("DELETE FROM sys_login_log WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?))", ADMIN, PLAIN_USER);

@@ -675,7 +675,9 @@ export const api = {
     if (params.issueNumber) search.set('issueNumber', params.issueNumber)
     search.set('page', String(params.page || 1))
     search.set('pageSize', String(params.pageSize || 30))
-    return request<DrawHistoryPage>(`/api/admin/draw-history?${search.toString()}`)
+    return request<DrawHistoryPage>(`/api/admin/draw-history?${search.toString()}`, {
+      signal: AbortSignal.timeout(15_000),
+    })
   },
   listDrawHistoryBets: (gameCode: string, issueNumber: string) => request<DrawHistoryBet[]>(
     `/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/bets`,
@@ -703,7 +705,7 @@ export const api = {
   // ---- 中心上游（阶段 B）----
   listCenterUpstreamAccounts: () => request<CenterUpstreamAccount[]>('/api/admin/center/accounts'),
   createCenterUpstreamAccount: (body: CreateCenterUpstreamAccountRequest) =>
-    request<CreatedCenterUpstreamAccount>('/api/admin/center/accounts', {
+    request<CreatedCenterUpstreamAccount>('/api/admin/center/accounts/generated', {
       method: 'POST', body: JSON.stringify(body),
     }),
   changeCenterUpstreamAccountStatus: (id: number, status: Exclude<CenterUpstreamAccountStatus, 'EXPIRED'>, reason: string) =>

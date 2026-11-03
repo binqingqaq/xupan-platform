@@ -11,7 +11,7 @@
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/notify.min.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/base.css">
         <link rel="stylesheet" href="/hby019-demo/source/static/xz/admin/home.css?20261028-status-layout">
-        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=21"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
+        <script type="text/javascript" src="/hby019-demo/source/static/xz/admin/jquery-1.11.3.min.js"></script><script src="/hby019-demo/source/local-api-bridge.js?v=22"></script><script src="/hby019-demo/source/console-live-header.js?v=1"></script>
         <script type="text/javascript">
             (function() {
                 var prevOnError = window.onerror;
@@ -1094,13 +1094,12 @@
                 <!-- 第一行：报网类型 | 登录 + 押注 + 余额 -->
                 <div class="el-row" style="display:flex;align-items:center;flex-wrap:nowrap;margin-bottom:8px;">
                     <span style="white-space:nowrap;">报网类型:</span>
-                    <span class="wptype" style="font-weight:bold;margin:0 6px;white-space:nowrap;">无</span>
+                    <span class="wptype" style="font-weight:bold;margin:0 6px;white-space:nowrap;">loc</span>
                     <button class="el-button el-button--small setWp" aria-disabled="false" type="button" style="margin-right:4px;"><span>设置账号</span></button>
-                    <span class="lock-account-name" style="margin-right:4px;color:#1890ff;font-weight:bold;white-space:nowrap;display:none;"></span>
                     <button class="el-button el-button--danger el-button--small logout" type="button" style="margin-right:10px;"><span>退出</span></button>
                     <button class="el-button el-button--success el-button--small login" aria-disabled="false" type="button" style="margin-right:10px;"><span>登录</span></button>
-                    <span style="white-space:nowrap;margin-right:10px;">押注: <span class="pankouYa" style="font-weight:bold;">0</span></span>
-                    <span class="wpmoney" style="white-space:nowrap;">网盘余额: <span class="pankouMoney" style="font-weight:bold;"></span></span>
+                    <span style="white-space:nowrap;margin-right:10px;">押注: <span class="pankouYa" style="font-weight:bold;">0.00</span></span>
+                    <span class="wpmoney" style="white-space:nowrap;">网盘余额: <span class="pankouMoney" style="font-weight:bold;">0.00</span></span>
                     <button id="btnToggleBaowang" style="font-size:11px;padding:2px 8px;height:22px;white-space:nowrap;cursor:pointer;margin-left:20px;">↑移上</button>
                 </div>
                 <!-- 第二行：报网状态 + 退单 | 自动上报 + 超时订单 + 刷新 -->
@@ -2145,10 +2144,10 @@
         </div>
 
         <div class="el-overlay wpKuang" style="z-index: 2012; display: none;">
-            <div role="dialog" aria-modal="true" aria-label="网盘账号" aria-describedby="el-id-3182-11"
+            <div role="dialog" aria-modal="true" aria-label="登录中心账号" aria-describedby="el-id-3182-11"
                 class="el-overlay-dialog">
                 <div class="el-dialog el-dialog--center" style="--el-dialog-width:480px;">
-                    <header class="el-dialog__header"><span role="heading" class="el-dialog__title">网盘账号</span><button
+                    <header class="el-dialog__header"><span role="heading" class="el-dialog__title">登录中心账号</span><button
                             aria-label="Close this dialog" class="el-dialog__headerbtn closeKuang" type="button"><i
                                 class="el-icon el-dialog__close"><svg viewBox="0 0 1024 1024"
                                     xmlns="http://www.w3.org/2000/svg">
@@ -2159,7 +2158,7 @@
                     <div id="el-id-3182-11" class="el-dialog__body">
                         <form class="el-form el-form--default el-form--label-right"
                             style="padding-left: 15px; padding-right: 15px;">
-                            <div class="el-form-item is-success is-required"><label id="el-id-3182-22"
+                            <div class="el-form-item is-success is-required" style="display:none"><label id="el-id-3182-22"
                                     for="el-id-3182-29" class="el-form-item__label" style="width: 100px;">网盘</label>
                                 <div class="el-form-item__content">
                                     <div class="el-radio-group ml-4" role="radiogroup" aria-labelledby="el-id-3182-22"
@@ -2167,7 +2166,7 @@
                                 </div>
                             </div>
                             <div class="el-form-item is-required fstype myHide"><label id="el-id-3410-63" for="el-id-3410-66" class="el-form-item__label" style="width: 100px;">返水方式</label><div class="el-form-item__content"><div class="el-radio-group ml-4" role="radiogroup" aria-labelledby="el-id-3410-63" id="el-id-3410-66"><label class="el-radio el-radio--large" for="fstype1"><span class="el-radio__input"><input name="fstype" id="fstype1" type="radio" value="1" tabindex="0" checked=""></span><span class="el-radio__label">单边</span></label><label class="el-radio el-radio--large" for="fstype2"><span class="el-radio__input"><input name="fstype" id="fstype2" type="radio" value="2"></span><span class="el-radio__label">双边</span></label></div></div></div>
-                            <div class="el-form-item pankou"><label id="el-id-3182-52" for="el-id-3182-54"
+                            <div class="el-form-item pankou" style="display:none"><label id="el-id-3182-52" for="el-id-3182-54"
                                     class="el-form-item__label" style="width: 100px;">盘口</label>
                                 <div class="el-form-item__content">
                                     <div class="el-radio-group ml-4" role="radiogroup" aria-labelledby="el-id-3182-52"
@@ -2185,11 +2184,11 @@
                                 </div>
                             </div>
                             <div class="el-form-item is-success is-required"><label id="el-id-3182-46" for="wpname"
-                                    class="el-form-item__label" style="width: 100px;">用户名</label>
+                                    class="el-form-item__label" style="width: 100px;">账号</label>
                                 <div class="el-form-item__content">
                                     <div class="el-input">
-                                        <div class="el-input__wrapper"><input class="el-input__inner" type="type"
-                                                tabindex="0" id="wpname"></div>
+                                        <div class="el-input__wrapper"><input class="el-input__inner" type="text"
+                                                tabindex="0" id="wpname" autocomplete="username"></div>
 
                                     </div>
                                 </div>
@@ -2198,8 +2197,8 @@
                                     class="el-form-item__label" style="width: 100px;">密码</label>
                                 <div class="el-form-item__content">
                                     <div class="el-input">
-                                        <div class="el-input__wrapper"><input class="el-input__inner" type="type"
-                                                tabindex="0" id="wppwd"></div>
+                                        <div class="el-input__wrapper"><input class="el-input__inner" type="password"
+                                                tabindex="0" id="wppwd" autocomplete="current-password"></div>
 
                                     </div>
                                 </div>
@@ -2210,7 +2209,7 @@
                     <footer class="el-dialog__footer"><span class="dialog-footer"><button class="el-button closeKuang"
                                 aria-disabled="false" type="button"><span class="">取消</span></button><button
                                 class="el-button el-button--primary save" aria-disabled="false" type="button"><span
-                                    class="">确认</span></button></span></footer>
+                                    class="">登录</span></button></span></footer>
                 </div>
             </div>
         </div>
@@ -3065,8 +3064,6 @@
                 });
             })();
 
-            getWpList()
-
             // 锁屏/切前后台的复位逻辑已经由前面统一注册的 _wakeReset 处理(见 putAjax 后)
 
             function updateManualBettingButton(open) {
@@ -3085,6 +3082,25 @@
                 centerConfig.manualBettingPending = pending;
                 if (centerConfig.manualBettingOpen !== null) updateManualBettingButton(centerConfig.manualBettingOpen);
                 else $("#kaipanstatus").prop("disabled", pending);
+            }
+
+            function fillLimitForm(rowData) {
+                $("#limitForm input:first").val(rowData.te);
+                $("#limitForm input:eq(1)").val(rowData.pt);
+                $("#limitForm input:eq(2)").val(rowData.total);
+                $("#limitForm input:eq(3)").val(rowData.zheng);
+                $("#limitForm input:eq(4)").val(rowData.jiao);
+                $("#limitForm input:eq(5)").val(rowData.nian);
+                $("#limitForm input:eq(6)").val(rowData.tong);
+                $("#limitForm input:eq(7)").val(rowData.che);
+                $("#limitForm input:eq(8)").val(rowData.danshuang);
+                $("#limitForm input:eq(9)").val(rowData.daxiao);
+                $("#limitForm input:eq(10)").val(rowData.fan);
+                $("#limitForm input:eq(11)").val(rowData.jia);
+                $("#limitForm input:eq(12)").val(rowData.PeiLv);
+                $("#limitForm input:eq(13)").val(rowData.zuigao);
+                $("#limitForm input:eq(14)").val(rowData.zuidi);
+                $("#limitForm input:eq(15)").val(rowData.chidan);
             }
 
             //刷新界面
@@ -3111,23 +3127,7 @@
                     $("input[name='vip'][value='"+data.rob.vip+"']").prop('checked', true);
                     $("input[name='log'][value='"+data.rob.log+"']").prop('checked', true);
                     if (!centerConfig.changexe) {
-                        var rowData = data.rob;
-                        $("#limitForm input:first").val(rowData.te);
-                        $("#limitForm input:eq(1)").val(rowData.pt);
-                        $("#limitForm input:eq(2)").val(rowData.total);
-                        $("#limitForm input:eq(3)").val(rowData.zheng);
-                        $("#limitForm input:eq(4)").val(rowData.jiao);
-                        $("#limitForm input:eq(5)").val(rowData.nian);
-                        $("#limitForm input:eq(6)").val(rowData.tong);
-                        $("#limitForm input:eq(7)").val(rowData.che);
-                        $("#limitForm input:eq(8)").val(rowData.danshuang);
-                        $("#limitForm input:eq(9)").val(rowData.daxiao);
-                        $("#limitForm input:eq(10)").val(rowData.fan);
-                        $("#limitForm input:eq(11)").val(rowData.jia);
-                        $("#limitForm input:eq(12)").val(rowData.PeiLv);
-                        $("#limitForm input:eq(13)").val(rowData.zuigao);
-                        $("#limitForm input:eq(14)").val(rowData.zuidi);
-                        $("#limitForm input:eq(15)").val(rowData.chidan);
+                        fillLimitForm(data.rob);
                     }
                     //赔率
                     if (!centerConfig.changepeilv) {
@@ -3397,33 +3397,44 @@
              * @constructor
              */
             function flyersList(data) {
-                // putAjax("/rbt/index/flyerslist", {}, function(data) {
+                $(".wptype").text('loc');
+                if (data.reportError || !data.Data) {
+                    $(".pankouMoney,.pankouYa").text('--');
+                    $(".csrecord").text('--');
+                    $(".flyers_tips").text('状态不可用');
+                    $(".login span").text('登录');
+                    $(".logout").prop('disabled', true);
+                    $(".baowang-bar .login,.baowang-bar .setWp,#flyers_auto,#flyers_withdraw").prop('disabled', true);
+                    return;
+                }
+                $(".baowang-bar .login,.baowang-bar .setWp,#flyers_auto,#flyers_withdraw").prop('disabled', false);
                 if (data.iswp) {
                     $('.login,.wpmoney,.wpinfo').show();
                     $("#flyers_auto").prop("checked", data.Data.flyers_auto == 1);
                     $("#flyers_withdraw").prop("checked", data.Data.flyers_withdraw == 1);
                     var aScore = data.Data;
+                    $(".csrecord").text(aScore.timeout_count);
                     if (!$('input[name="flyers_url"]').is(':focus') && !$('input[name="flyers_username"]').is(
                             ':focus') && !$('input[name="flyers_password"]').is(':focus')) {
                         $(".wangpanlogin1").eq(0).attr('data-id', aScore.id)
-                        $(".wangpanlogin1").eq(0).find("[name='flyers_url']").val(aScore.flyers_url)
+                        $(".wangpanlogin1").eq(0).find("[name='flyers_url']").val('')
                         $(".wangpanlogin1").eq(0).find("[name='flyers_username']").val(aScore.flyers_username)
                         $(".wangpanlogin1").eq(0).find("[name='flyers_password']").val(aScore.flyers_password)
                         $(".wangpanlogin1").eq(0).find("[name='flyers_type']").val(aScore.flyers_type)
                     }
                     if ($(".wpKuang").css('display')=='none') {
                         $("#wpname").val(aScore.flyers_username)
-                        $("#wppwd").val(aScore.flyers_password)
+                        var savedCenterPassword = aScore.flyers_username
+                            ? localStorage.getItem('xupan.center-report-password:' + aScore.flyers_username)
+                            : '';
+                        $("#wppwd").val(savedCenterPassword || '')
                     }
-                    if (aScore.wpname) {
-                        $(".wptype").text(aScore.wpname)
-                    }
+                    $(".baowang-bar .login,.baowang-bar .setWp").prop('disabled', !aScore.flyers_username);
                     $("input[name='code'][value='"+aScore.fly_id+"']").attr('checked', true);
                     if (!fly_id) {
                         fly_id = aScore.fly_id;
                     }
                     $("input[name='fstype'][value='"+aScore.fly_fs+"']").attr('checked', true);
-                    $("input[name='pktype'][value='"+aScore.flyers_type+"']").attr('checked', true);
                     if (aScore.flyers_online) {
                         $(".pankouMoney").text(aScore.money)
                         $(".pankouYa").text(aScore.betting)
@@ -3432,11 +3443,8 @@
                         });
                         $(".login span").html('已登录')
                     } else {
-                        $(".pankouMoney").text("0")
-                        $(".pankouYa").text("0")
-                        if (aScore.flyers_password && aScore.flyers_username) {
-                            // PlayXF();
-                        }
+                        $(".pankouMoney").text(aScore.money)
+                        $(".pankouYa").text(aScore.betting)
                         $(".flyers_tips").html('离线').css({
                             'color': '#f00'
                         });
@@ -3447,17 +3455,14 @@
                 }
                 // 根据锁定设置账号状态控制显示
                 if (lock_account == 0) {
-                    // 锁定时：隐藏按钮，直接显示账号
+                    // 锁定时隐藏账号设置按钮，不展示账号名。
                     $(".setWp").hide();
-                    var savedName = $("#wpname").val() || '';
-                    $(".lock-account-name").text(savedName ? savedName : '未设置').show();
                 } else {
-                    // 未锁定：显示按钮，隐藏账号文字
+                    // 未锁定时允许打开登录设置。
                     $(".setWp").show();
-                    $(".lock-account-name").hide();
                 }
                 // 根据账号退出锁定状态控制"退出"按钮
-                if (lock_logout == 0) {
+                if (lock_logout == 0 || !data.Data.flyers_online) {
                     $(".logout").attr('disabled', true).css({opacity: 0.4, cursor: 'not-allowed'});
                 } else {
                     $(".logout").attr('disabled', false).css({opacity: 1, cursor: 'pointer'});
@@ -3469,7 +3474,14 @@
                     window.top.location.href = '/hby019-demo/login';
                 });
                 $('#changexe').on('click', function() {
-                    openKuang('peilvKuang');
+                    putAjax("/rbt/index/getlimits", {}, function(data) {
+                        if (!data || data.bOK !== 0 || !data.rob) {
+                            alertErr((data && data.Message) || '读取机器限额失败');
+                            return;
+                        }
+                        fillLimitForm(data.rob);
+                        openKuang('peilvKuang');
+                    });
                 })
                 $('.okBtn').on('click', function() {
                     putAjax("/rbt/index/changelimit", {
@@ -3656,7 +3668,6 @@
                     if (lock_account == 0) {
                         return; // 锁定时按钮已隐藏，兜底防护
                     }
-                    getWpList();
                     openKuang('wpKuang');
                 });
                 $('#el-id-3182-29').on('change', 'input', function() {
@@ -3706,17 +3717,6 @@
                     return false;
                 });
             })();
-            function getWpList() {
-                putAjax("/rbt/index/getwplist",{},function(data) {
-                    if (!$("input[name='code']:checked").val()) {
-                        $('#el-id-3182-29').empty();
-                        for (var k in data) {
-                            var item = data[k];
-                            $('#el-id-3182-29').append('<label class="el-radio" for="wp'+item['id']+'"><input id="wp'+item['id']+'" type="radio" name="code" value="'+item['id']+'" fs="'+item['fstype']+'" sr="'+item['searchCode']+'" api="'+item['apiKey']+'" style="width:20px;"><span class="el-radio__label">'+item['name']+'</span></label>');
-                        }
-                    }
-                });
-            }
             $("#kaipanstatus").on("click", function() {
                 if (centerConfig.manualBettingPending || centerConfig.manualBettingOpen === null) return;
                 var nextOpen = !centerConfig.manualBettingOpen;
@@ -4830,8 +4830,7 @@
                 $(".userjifenzj img").attr('src', s.qr);
                 $('.qrBox').toggle();
             });
-            //飞单账号密码保存
-            //手动刷新网盘余额和押注
+            // 仅刷新本系统中心上游的额度和未结押注。
             $("#btnRefreshWp").click(function() {
                 var btn = $(this);
                 btn.find('span').text('刷新中...');
@@ -4842,40 +4841,27 @@
                         $(".pankouYa").text(data.betting);
                         btn.find('span').text('刷新');
                     } else {
+                        flyersList({ reportError: data.Message || '中心额度读取失败' });
                         btn.find('span').text('失败');
                         setTimeout(function(){ btn.find('span').text('刷新'); }, 2000);
                     }
                     btn.attr('disabled', false);
                 });
             });
-            $(".save").click(function() {
-                var data = {
-                    "id": fly_id,
-                    // "url": list.eq(0).find("[name='flyers_url']").val(),
-                	"at": $("#flyers_auto").is(':checked') ? 1 : 0,
-                	"wd": $("#flyers_withdraw").is(':checked') ? 1 : 0,
-                    "pw": $("#wppwd").val(),
-                    "un": $("#wpname").val(),
-                    "fs": $("input[name='fstype']:checked").val(),
-                    "pk": $("input[name='pktype']:checked").val(),
-                    "search": $("input[name='searchCode']").val()
-                };
-                bindChange("/rbt/index/flyerssave", data);
+            $(".wpKuang .save").click(function() {
+                var username = $("#wpname").val();
+                var password = $("#wppwd").val();
+                if (!username || !password) { alertErr('请输入中心账号密码'); return; }
+                bindChange("/rbt/index/flyerslogin", { un: username, pw: password });
             });
-            //飞单登录
-            $(".login").click(function() {
-                if ($(".login span").text() == '登录') {
-                    $(".jifenright .jifenmessage").text("登录中!");
-                    bindChange("/rbt/index/flyerslogin", {});
-                }
+            $(".baowang-bar .login").click(function() {
+                if ($(this).find('span').text() == '登录') openKuang('wpKuang');
             });
             $(".logout").click(function() {
                 if (!confirm('确定要退出飞单账号吗？')) return;
                 putAjax("/rbt/index/flyerslogout", {}, function(data) {
                     if (data.bOK == 0) {
-                        $(".pankouMoney").text("0");
-                        $(".pankouYa").text("0");
-                        $(".flyers_tips").text("离线");
+                        flyersList({ iswp: 1, Data: data.Data });
                         alertSuc(data.Message);
                     } else {
                         alertErr(data.Message);
@@ -5009,13 +4995,23 @@
             });
 
             function bindChange(url, data) {
+                var requestData = data;
                 putAjax(url, data, function(data) {
                     $(".jifenright .jifenmessage").text('');
                     closeKuang();
                     if (data.bOK == 0) {
+                        if (url === '/rbt/index/flyerslogin' && requestData && requestData.un && requestData.pw) {
+                            localStorage.setItem('xupan.center-report-password:' + requestData.un, requestData.pw);
+                        }
+                        if (data.Data && data.Data.wpname) flyersList({ iswp: 1, Data: data.Data });
+                        $("#wppwd").val('');
                         alertSuc(data.Message);
                     } else {
+                        if (url === '/rbt/index/flyerslogin' && requestData && requestData.un) {
+                            localStorage.removeItem('xupan.center-report-password:' + requestData.un);
+                        }
                         alertErr(data.Message);
+                        if (url.indexOf('/rbt/index/flyers') === 0) setTimeout(autoHandle, 0);
                     }
                 });
             }

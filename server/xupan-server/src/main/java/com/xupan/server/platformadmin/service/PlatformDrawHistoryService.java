@@ -64,10 +64,14 @@ public class PlatformDrawHistoryService {
         }
         String normalizedGameCode = normalizeGameCode(gameCode);
         String keyword = issueNumber == null || issueNumber.isBlank() ? null : issueNumber.trim();
+        boolean hasSevenBallHistory = Boolean.TRUE.equals(jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM game_issue WHERE game_code = ? AND ball_count = 7)
+                """, Boolean.class, normalizedGameCode));
         StringBuilder where = new StringBuilder(
-                " WHERE (i.number_1 IS NOT NULL OR i.phase = 'DRAWING') AND i.game_code = ?"
-                        + " AND (NOT EXISTS (SELECT 1 FROM game_issue seven "
-                        + "WHERE seven.game_code=i.game_code AND seven.ball_count=7) OR i.ball_count=7)");
+                " WHERE (i.number_1 IS NOT NULL OR i.phase = 'DRAWING') AND i.game_code = ?");
+        if (hasSevenBallHistory) {
+            where.append(" AND i.ball_count = 7");
+        }
         List<Object> args = new ArrayList<>();
         args.add(normalizedGameCode);
         if (keyword != null) { where.append(" AND issue_number LIKE ?"); args.add("%" + keyword + "%"); }

@@ -61,7 +61,7 @@ class TokenServiceTest {
         SessionRepository sessions = mock(SessionRepository.class);
         UserRepository users = mock(UserRepository.class);
         UserAccount bot = new UserAccount(42L, "bot-42", "展示托", null, "password-hash", "ACTIVE",
-                0, null, 5L, null, null, "REAL", "BOT-42", "PLAYER_LINK");
+                0, null, 5L, null, null, "TEST", "BOT-42", "PLAYER_LINK");
         when(users.findById(42L)).thenReturn(Optional.of(bot));
         TokenService service = service(sessions, users);
 

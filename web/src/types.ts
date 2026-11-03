@@ -1019,12 +1019,11 @@ export interface CenterUpstreamAccount {
 
 export interface CreatedCenterUpstreamAccount {
   account: CenterUpstreamAccount
+  password: string
 }
 
 export interface CreateCenterUpstreamAccountRequest {
   groupId: number
-  username: string
-  password: string
   initialQuota: number
   expiresAt: string | null
 }

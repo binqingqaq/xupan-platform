@@ -117,6 +117,45 @@ function betReportState(status: string) {
   }
 }
 
+function legacyMachineLimitValues(config: MachineConfigView) {
+  return {
+    te: config.specialLimit,
+    pt: 0,
+    total: config.totalLimit,
+    zheng: config.positiveLimit,
+    jiao: config.angleLimit,
+    nian: config.strictLimit,
+    tong: config.tongLimit,
+    che: config.carLimit,
+    danshuang: config.oddEvenLimit,
+    daxiao: config.bigSmallLimit,
+    fan: config.fanLimit,
+    jia: config.addLimit,
+    PeiLv: config.oddsRate,
+    zuigao: config.playerMaxStake,
+    zuidi: config.playerMinStake,
+    chidan: 0,
+  }
+}
+
+function legacyReportConfig(config: Awaited<ReturnType<typeof api.getReportConfig>>) {
+  return {
+    id: config.machineId,
+    flyers_auto: config.reportAuto ? 1 : 0,
+    flyers_withdraw: config.reportWithdraw ? 1 : 0,
+    flyers_username: config.centerAccountUsername || '',
+    flyers_password: '',
+    flyers_online: config.reportOnline ? 1 : 0,
+    wpname: 'loc',
+    money: Number(config.centerAvailableBalance).toFixed(2),
+    betting: Number(config.centerOpenStake).toFixed(2),
+    timeout_count: config.timeoutOrderCount,
+    fly_id: 1,
+    fly_fs: 1,
+    flyers_type: 0,
+  }
+}
+
 async function loadHbyBetBoard(commandType: number) {
   if (commandType === -1) {
     return { total1: 0, total2: 0, totalPu: 0, totalTuo: 0, totalChi: 0, isPrev: true, detail: [] }
@@ -346,11 +385,13 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
     if (data.path === '/rbt/index/needhandle') {
       const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
       const commandType = Number(requestData.type ?? 0)
-      const [summary, requests, betBoard, machineConfig] = await Promise.all([
+      const [summary, requests, betBoard, machineConfig, reportResult] = await Promise.all([
         api.getPlayerDeskSummary(),
         api.getPendingPointRequests(200),
         loadHbyBetBoard(commandType),
         api.getMachineConfig(),
+        api.getReportConfig().then(config => ({ config, error: '' }),
+          error => ({ config: null, error: apiErrorMessage(error, '报网状态读取失败') })),
       ])
       liveMachineConfig.value = machineConfig
       const rebateMode = machineConfig.rebateMode === 'DOUBLE' ? 3 : 1
@@ -368,10 +409,14 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
           ls: rebateMode,
           dj: (machineConfig.countdownVisible ?? true) ? 1 : 2,
           xiugai: machineConfig.robotManage ? 1 : 0,
+          ...legacyMachineLimitValues(machineConfig),
         },
         count1: summary.normalCount,
         count2: summary.botCount,
         ...betBoard,
+        iswp: 1,
+        reportError: reportResult.error,
+        Data: reportResult.config ? legacyReportConfig(reportResult.config) : null,
         list: requests.map(request => ({
           id: request.id,
           type: request.requestType === 'TOP_UP' ? 0 : 1,
@@ -382,6 +427,53 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
           isTuoManual: 0,
         })),
       } })
+      return
+    }
+    if (typeof data.path === 'string' && [
+      '/rbt/index/flyerslogin', '/rbt/index/flyerslogout', '/rbt/index/flyersauto',
+      '/rbt/index/flyersdraw', '/rbt/index/flyersrefresh', '/rbt/index/refeidan',
+    ].includes(data.path)) {
+      const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
+      try {
+        if (data.path === '/rbt/index/refeidan') {
+          const betId = Number(requestData.id)
+          if (!Number.isSafeInteger(betId) || betId <= 0) throw new Error('注单编号无效')
+          await api.resubmitReportOrder(betId)
+          sendToFrame({ type: 'xupan-player-response', requestId, data: { bOK: 0, Message: '重报请求已处理' } })
+          return
+        }
+        let config
+        if (data.path === '/rbt/index/flyerslogin') {
+          config = await api.loginReport({ username: String(requestData.un || '').trim(), password: String(requestData.pw || '') })
+        } else if (data.path === '/rbt/index/flyerslogout') {
+          config = await api.logoutReport()
+        } else if (data.path === '/rbt/index/flyersauto') {
+          config = await api.updateReportConfig({ reportAuto: Number(requestData.flyers_auto) === 1 })
+        } else if (data.path === '/rbt/index/flyersdraw') {
+          config = await api.updateReportConfig({ reportWithdraw: Number(requestData.flyers_withdraw) === 1 })
+        } else {
+          config = await api.getReportConfig()
+        }
+        const messages: Record<string, string> = {
+          '/rbt/index/flyerslogin': '中心账号登录成功',
+          '/rbt/index/flyerslogout': '已退出中心账号',
+          '/rbt/index/flyersauto': '自动上报设置已更新',
+          '/rbt/index/flyersdraw': '失败自动退单设置已更新',
+          '/rbt/index/flyersrefresh': '中心额度已刷新',
+        }
+        sendToFrame({ type: 'xupan-player-response', requestId, data: {
+          bOK: 0,
+          Message: messages[data.path],
+          Data: legacyReportConfig(config),
+          money: Number(config.centerAvailableBalance).toFixed(2),
+          betting: Number(config.centerOpenStake).toFixed(2),
+          timeout_count: config.timeoutOrderCount,
+        } })
+      } catch (error) {
+        sendToFrame({ type: 'xupan-player-response', requestId, data: {
+          bOK: 1, Message: apiErrorMessage(error, '报网操作失败'),
+        } })
+      }
       return
     }
     if (data.path === '/rbt/index/updatepanstatus') {
@@ -421,6 +513,38 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
       else if (data.path === '/rbt/index/getway3data') response = legacyWay3(report)
       else response = legacyPointReport(report)
       sendToFrame({ type: 'xupan-player-response', requestId, data: response })
+      return
+    }
+    if (data.path === '/rbt/index/getlimits') {
+      const machineConfig = await api.getMachineConfig()
+      sendToFrame({ type: 'xupan-player-response', requestId, data: {
+        bOK: 0,
+        rob: legacyMachineLimitValues(machineConfig),
+      } })
+      return
+    }
+    if (data.path === '/rbt/index/changelimit') {
+      const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
+      const mappings = [
+        ['te', 'specialLimit'], ['total', 'totalLimit'], ['zheng', 'positiveLimit'],
+        ['jiao', 'angleLimit'], ['nian', 'strictLimit'], ['tong', 'tongLimit'],
+        ['che', 'carLimit'], ['danshuang', 'oddEvenLimit'], ['daxiao', 'bigSmallLimit'],
+        ['fan', 'fanLimit'], ['jia', 'addLimit'], ['PeiLv', 'oddsRate'],
+        ['zuigao', 'playerMaxStake'], ['zuidi', 'playerMinStake'],
+      ] as const
+      const patch: MachineConfigUpdatePatch = {}
+      for (const [legacyField, machineField] of mappings) {
+        const rawValue = String(requestData[legacyField] ?? '').trim()
+        const value = Number(rawValue)
+        if (!rawValue || !Number.isSafeInteger(value) || value < 0) {
+          throw new Error('限额必须填写非负整数')
+        }
+        Object.assign(patch, { [machineField]: value })
+      }
+      await saveMachineConfig(patch)
+      sendToFrame({ type: 'xupan-player-response', requestId, data: {
+        bOK: 0, Message: '机器限额已保存',
+      } })
       return
     }
     if (data.path === '/rbt/index/updatepeilv') {

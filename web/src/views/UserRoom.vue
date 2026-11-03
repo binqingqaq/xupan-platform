@@ -1396,7 +1396,6 @@ onUnmounted(() => {
         </select>
         <strong class="balance-text">余额:{{ balance }}</strong>
         <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
-        <span v-if="observerReadOnly" class="observer-mode-label">只读观察</span>
         <div class="header-actions">
           <button class="quick-button" type="button" @click="openQuickBet">快捷</button>
           <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
@@ -1671,7 +1670,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.observer-mode-label { padding: 2px 6px; border: 1px solid #8b989f; border-radius: 3px; color: #53636d; font-size: 11px; white-space: nowrap; }
 .observer-session-expired { min-height: 100vh; display: grid; align-content: center; justify-items: center; gap: 8px; padding: 24px; color: #34434c; background: #f4f6f7; text-align: center; }
 .observer-session-expired h1, .observer-session-expired p { margin: 0; }
 .observer-session-expired button { min-height: 36px; padding: 0 12px; border: 1px solid #8b989f; border-radius: 4px; background: #fff; color: #34434c; }

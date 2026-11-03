@@ -1,0 +1,118 @@
+import { createApp, h, nextTick } from 'vue'
+import { RouterView, createMemoryHistory, createRouter } from 'vue-router'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import Hby019SourcePage from './views/Hby019SourcePage.vue'
+import { api } from './api'
+
+vi.mock('./api', () => ({
+  api: {
+    me: vi.fn(), getPlayerDeskScope: vi.fn(), getPlayerDeskSummary: vi.fn(),
+    getPendingPointRequests: vi.fn(), getBetBoard: vi.fn(), getMachineConfig: vi.fn(),
+    getReportConfig: vi.fn(), loginReport: vi.fn(), logoutReport: vi.fn(),
+    updateReportConfig: vi.fn(), resubmitReportOrder: vi.fn(),
+  },
+  apiErrorMessage: (_error: unknown, fallback: string) => fallback,
+  restoreSession: vi.fn(),
+}))
+
+const reportConfig = {
+  machineId: 8, reportAuto: false, reportWithdraw: false, reportOnline: false,
+  centerAccountUsername: 'loc31_abc123def4', centerAvailableBalance: 0,
+  centerFrozenBalance: 0, centerOpenStake: 0, timeoutOrderCount: 0,
+}
+
+let app: ReturnType<typeof createApp> | null = null
+let host: HTMLDivElement | null = null
+let postMessage: ReturnType<typeof vi.spyOn> | null = null
+
+async function settle() {
+  await nextTick()
+  await new Promise(resolve => setTimeout(resolve, 0))
+  await nextTick()
+}
+
+async function mount() {
+  host = document.createElement('div')
+  document.body.appendChild(host)
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: '/hby019-demo/console', component: Hby019SourcePage }],
+  })
+  await router.push('/hby019-demo/console')
+  await router.isReady()
+  app = createApp({ render: () => h(RouterView) })
+  app.use(router)
+  app.mount(host)
+  await settle()
+  const frame = host.querySelector('iframe')
+  if (!frame?.contentWindow) throw new Error('missing console iframe')
+  postMessage = vi.spyOn(frame.contentWindow, 'postMessage')
+  return frame.contentWindow
+}
+
+async function request(frame: Window, path: string, data: Record<string, unknown> = {}) {
+  postMessage?.mockClear()
+  window.dispatchEvent(new MessageEvent('message', {
+    origin: window.location.origin, source: frame,
+    data: { type: 'xupan-player-request', requestId: 'report-test', path, data },
+  }))
+  await settle()
+  const response = postMessage?.mock.calls.map((call: unknown[]) => call[0] as Record<string, unknown>)
+    .find((message: Record<string, unknown>) => message.type === 'xupan-player-response' && message.requestId === 'report-test')
+  if (!response) throw new Error(`missing response for ${path}`)
+  return response.data as Record<string, unknown>
+}
+
+beforeEach(() => {
+  vi.mocked(api.me).mockResolvedValue({ username: 'machine', roles: ['AGENT'] } as never)
+  vi.mocked(api.getPlayerDeskScope).mockResolvedValue({ mode: 'MACHINE', machineId: 8 } as never)
+  vi.mocked(api.getPlayerDeskSummary).mockResolvedValue({ normalCount: 0, botCount: 0 } as never)
+  vi.mocked(api.getPendingPointRequests).mockResolvedValue([] as never)
+  vi.mocked(api.getBetBoard).mockResolvedValue({
+    ballCount: 7, history: [], normalStake: 0, botStake: 0,
+    normalCount: 0, botCount: 0, items: [], issueNumber: '3000001',
+  } as never)
+  vi.mocked(api.getMachineConfig).mockResolvedValue({
+    manualBettingOpen: true, rebateMode: 'SINGLE', countdownVisible: true,
+  } as never)
+  vi.mocked(api.getReportConfig).mockResolvedValue(reportConfig as never)
+})
+
+afterEach(() => {
+  app?.unmount()
+  host?.remove()
+  app = null
+  host = null
+  postMessage = null
+  vi.clearAllMocks()
+})
+
+describe('HBY019 center report bridge', () => {
+  it('uses actual center balance and fixed local type on console refresh', async () => {
+    const frame = await mount()
+    const result = await request(frame, '/rbt/index/needhandle')
+    expect(api.getReportConfig).toHaveBeenCalled()
+    expect(result.reportError).toBe('')
+    expect(result.Data).toMatchObject({ wpname: 'loc', money: '0.00', betting: '0.00', timeout_count: 0, flyers_online: 0 })
+  })
+
+  it('uses real login and switches, returning failure without simulated success', async () => {
+    const frame = await mount()
+    vi.mocked(api.loginReport).mockResolvedValue({ ...reportConfig, reportOnline: true } as never)
+    const login = await request(frame, '/rbt/index/flyerslogin', { un: reportConfig.centerAccountUsername, pw: 'secret' })
+    expect(api.loginReport).toHaveBeenCalledWith({ username: reportConfig.centerAccountUsername, password: 'secret' })
+    expect(login.Data).toMatchObject({ flyers_online: 1, money: '0.00' })
+
+    vi.mocked(api.updateReportConfig).mockRejectedValueOnce(new Error('failed'))
+    const failed = await request(frame, '/rbt/index/flyersauto', { flyers_auto: 1 })
+    expect(api.updateReportConfig).toHaveBeenCalledWith({ reportAuto: true })
+    expect(failed).toMatchObject({ bOK: 1, Message: '报网操作失败' })
+  })
+
+  it('marks report data unavailable when the center status request fails', async () => {
+    vi.mocked(api.getReportConfig).mockRejectedValueOnce(new Error('offline'))
+    const frame = await mount()
+    const result = await request(frame, '/rbt/index/needhandle')
+    expect(result).toMatchObject({ iswp: 1, reportError: '报网状态读取失败', Data: null })
+  })
+})

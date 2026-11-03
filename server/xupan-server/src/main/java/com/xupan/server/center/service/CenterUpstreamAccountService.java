@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -20,6 +21,8 @@ import java.util.Optional;
 /** Manages center upstream login accounts and machine-scoped sessions. */
 @Service
 public class CenterUpstreamAccountService {
+    private static final SecureRandom CREDENTIAL_RANDOM = new SecureRandom();
+    private static final String CREDENTIAL_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
     private static final String MANAGE_PERMISSION = "CENTER_AGENT_MANAGE";
     private static final String MACHINE_LOGIN_AUDIT = "CENTER_MACHINE_LOGIN";
@@ -94,6 +97,38 @@ public class CenterUpstreamAccountService {
                 "创建中心账号 groupId=" + groupId + " username=" + normalizedUsername
                         + " initialQuota=" + quota + " expiresAt=" + expiry, null);
         return new CreatedAccount(account);
+    }
+
+    @Transactional
+    public GeneratedAccount createGeneratedAccount(long groupId, BigDecimal initialQuota,
+                                                   Instant expiresAt, long operatorUserId) {
+        String password = randomCredential(16);
+        for (int attempt = 0; attempt < 5; attempt++) {
+            String username = "loc" + groupId + "_" + randomCredential(10);
+            try {
+                return new GeneratedAccount(
+                        createAccount(groupId, username, password, initialQuota, expiresAt, operatorUserId).account(),
+                        password);
+            } catch (BusinessException exception) {
+                if (!"CENTER_ACCOUNT_USERNAME_TAKEN".equals(exception.code())) {
+                    throw exception;
+                }
+            }
+        }
+        throw BusinessException.conflict("CENTER_ACCOUNT_USERNAME_TAKEN", "中心账号名生成冲突，请重试");
+    }
+
+    private static String randomCredential(int length) {
+        String value;
+        do {
+            StringBuilder result = new StringBuilder(length);
+            for (int i = 0; i < length; i++) {
+                result.append(CREDENTIAL_ALPHABET.charAt(CREDENTIAL_RANDOM.nextInt(CREDENTIAL_ALPHABET.length())));
+            }
+            value = result.toString();
+        } while (value.chars().noneMatch(Character::isLetter)
+                || value.chars().noneMatch(Character::isDigit));
+        return value;
     }
 
     @Transactional
@@ -449,6 +484,13 @@ public class CenterUpstreamAccountService {
     }
 
     public record CreatedAccount(AccountView account) {
+    }
+
+    public record GeneratedAccount(AccountView account, String password) {
+        @Override
+        public String toString() {
+            return "GeneratedAccount[account=" + account + ", password=[REDACTED]]";
+        }
     }
 
     public record LoginView(AccountView account, long machineAgentId, Instant authenticatedAt,

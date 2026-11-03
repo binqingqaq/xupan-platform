@@ -62,7 +62,7 @@
       settings: {
         odds: 95, specialOdds: 18, rebate: 1, normalRebate: 5,
         hold: 100, cancel: 20, adapter: true, hideMsg: 0, cmdTuoCount: 20,
-        limits: {}, wp: { online: true, auto: 0, withdraw: 0, money: 50000, betting: 0, name: 'lx' },
+        limits: {},
         tuo: { activeRate: 90, maxBets: 3, cancelledCmdIds: [] }
       }
     };
@@ -99,7 +99,6 @@
       saved.ledger = Array.isArray(saved.ledger) ? saved.ledger : fresh.ledger;
       saved.nickLogs = saved.nickLogs || {};
       saved.settings = Object.assign({}, fresh.settings, saved.settings || {});
-      saved.settings.wp = Object.assign({}, fresh.settings.wp, saved.settings.wp || {});
       saved.settings.tuo = Object.assign({}, fresh.settings.tuo, saved.settings.tuo || {});
       saved.settings.limits = Object.assign({}, fresh.settings.limits, saved.settings.limits || {});
       return saved;
@@ -448,9 +447,7 @@
       heji: memberTotal(Number(req && req.rtype || 0)), data: clone(memberList(Number(req && req.rtype || 0))),
       list: clone(db.applications),
       iswp: 1,
-      Data: { id: 1, flyers_auto: s.wp.auto, flyers_withdraw: s.wp.withdraw, flyers_url: '', flyers_username: '',
-        flyers_password: '', flyers_type: 0, wpname: s.wp.name, flyers_online: s.wp.online ? 1 : 0,
-        money: s.wp.money, betting: s.wp.betting, fly_id: 1, fly_fs: 1 }
+      Data: null
     }, commandList({ type: 0, prev: '0' }));
   }
   function ok(message) { return { bOK: 0, code: 0, Data: 0, status: 1, Message: message || '本地模拟成功', msg: message || '本地模拟成功' }; }
@@ -476,8 +473,6 @@
       case '/rbt/index/getcmdlist': return commandList(data);
       case '/rbt/index/gettodayscorelog': return { bOK: 0, list: recent() };
       case '/rbt/index/getupdownscorereq': return { bOK: 0, list: clone(db.applications) };
-      case '/rbt/index/getwplist': return [{ id: 1, name: '本地模拟', fstype: 0, searchCode: '', apiKey: '' }];
-      case '/rbt/index/flyerslist': return needHandle(data);
       case '/rbt/index/getopenresultlist': return { list: [] };
       case '/rbt/index/getscorehis': return historySummary(0, data.day);
       case '/rbt/index/getscorehistuo': return historySummary(1, data.day);
@@ -530,7 +525,6 @@
         if (data.tar && /te|special/i.test(String(data.tar))) db.settings.specialOdds = Number(data.newPeiLv || db.settings.specialOdds);
         else db.settings.odds = Number(data.newPeiLv || db.settings.odds);
         save(); return 0;
-      case '/rbt/index/changelimit': db.settings.limits = Object.assign({}, db.settings.limits, data); save(); return 0;
       case '/rbt/index/setblack':
       case '/rbt/index/setauto':
       case '/rbt/index/setmanual2':
@@ -564,13 +558,6 @@
         save();
         return Object.assign(ok('本地演示操作成功'), { Data: 0 });
       }
-      case '/rbt/index/refeidan': return Object.assign(ok('本地演示操作成功'), { Data: 0 });
-      case '/rbt/index/flyersauto': db.settings.wp.auto = Number(data.flyers_auto || 0); save(); return ok('本地模拟：自动上报设置已更新');
-      case '/rbt/index/flyersdraw': db.settings.wp.withdraw = Number(data.flyers_withdraw || 0); save(); return ok('本地模拟：失败退单设置已更新');
-      case '/rbt/index/flyerssave': db.settings.wp.name = String(data.un || db.settings.wp.name); save(); return ok('本地模拟：报网设置已保存');
-      case '/rbt/index/flyerslogin': db.settings.wp.online = true; save(); return ok('本地模拟：已登录');
-      case '/rbt/index/flyerslogout': db.settings.wp.online = false; save(); return ok('本地模拟：已退出');
-      case '/rbt/index/flyersrefresh': return Object.assign(ok('本地模拟：余额已刷新'), { money: db.settings.wp.money, betting: db.settings.wp.betting });
       case '/rbt/index/tuominmax': {
         const user = findUser(data.uid); if (user) user.flyers_num = Number(data.num || 0); save(); return ok('本地模拟：托单设置已更新');
       }
@@ -619,7 +606,10 @@
       '/rbt/index/getupdownscorereq', '/rbt/index/acceptupdownscorereq', '/rbt/index/denyupdownscorereq',
       '/rbt/index/getavatarlist', '/rbt/index/changeheadimage2',
       '/rbt/index/getscorehis', '/rbt/index/getscorehistuo', '/rbt/index/getscorehisdetail',
-      '/rbt/index/getway2data', '/rbt/index/getway3data'
+      '/rbt/index/getway2data', '/rbt/index/getway3data',
+      '/rbt/index/flyerslogin', '/rbt/index/flyerslogout', '/rbt/index/flyersauto',
+      '/rbt/index/flyersdraw', '/rbt/index/flyersrefresh', '/rbt/index/refeidan',
+      '/rbt/index/getlimits', '/rbt/index/changelimit'
     ];
     if (xupanPaths.indexOf(path) !== -1) {
       (window.__localApiLog || (window.__localApiLog = [])).push({ path: path, method: settings.type || 'GET', source: 'xupan' });

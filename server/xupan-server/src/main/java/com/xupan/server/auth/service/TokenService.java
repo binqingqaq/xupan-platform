@@ -306,7 +306,8 @@ public class TokenService {
         if (!"ACTIVE".equals(user.status()) || now == null) {
             return false;
         }
-        if ("PLAYER_LINK".equals(authMode) && "TEST".equals(user.userType())) {
+        if (("PLAYER_LINK".equals(authMode) || "DISPLAY_OBSERVER".equals(authMode))
+                && "TEST".equals(user.userType())) {
             return user.lockedUntil() == null || !now.isBefore(user.lockedUntil());
         }
         return user.canLogin(now);

@@ -31,12 +31,11 @@ import type {
  * 中心账号生命周期管理与现有中心代理账务、订单和对账视图共用此入口。
  */
 
-type Tab = 'overview' | 'accounts' | 'agents' | 'orders' | 'ledger' | 'risk' | 'reconcile'
+type Tab = 'overview' | 'accounts' | 'orders' | 'ledger' | 'risk' | 'reconcile'
 const tab = ref<Tab>('overview')
 const tabs: { key: Tab; label: string }[] = [
   { key: 'overview', label: '总览' },
   { key: 'accounts', label: '中心账号' },
-  { key: 'agents', label: '代理管理' },
   { key: 'orders', label: '实时订单' },
   { key: 'ledger', label: '财务流水' },
   { key: 'risk', label: '风险' },
@@ -92,8 +91,6 @@ const busy = ref(false)
 const showCreateCenterAccount = ref(false)
 const centerAccountForm = ref({
   groupId: null as number | null,
-  username: '',
-  password: '',
   initialQuota: 0,
   expiresAt: instantToLocalDateTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()) ?? '',
 })
@@ -108,8 +105,6 @@ const oneTimeCredential = ref<{ username: string; password: string; action: stri
 const oneTimeCredentialVisible = ref(false)
 const quotaForm = ref({ accountId: 0, amount: 0, reason: '', idempotencyKey: '' })
 
-const grantForm = ref({ agentId: 0, amount: 1000 })
-const limitForm = ref({ agentId: 0, creditLimit: 10000 })
 const settleForm = ref({ gameCode: 'AU8', issueNumber: '' })
 
 // P1-C1：代理级风控
@@ -127,18 +122,18 @@ const disposeForm = ref({ reason: '' })
 const disposeHistory = ref<CenterOrderDispositionRecord[]>([])
 const disposeHistoryOrderId = ref<number | null>(null)
 
-const activeAgents = computed(() => agents.value.filter(item => item.status === 'ACTIVE'))
 const assignedCenterGroupIds = computed(() => new Set(centerAccounts.value.map(item => item.groupId)))
 const centerAccountIds = computed(() => new Set(centerAccounts.value.map(item => item.accountId)))
-const legacyCenterAgents = computed(() => agents.value.filter(item => !centerAccountIds.value.has(item.id)))
+const currentCenterAgents = computed(() => agents.value.filter(item => centerAccountIds.value.has(item.id)))
+const activeCenterAccounts = computed(() => centerAccounts.value.filter(item => item.status === 'ACTIVE'))
 const availableAgentGroups = computed(() => agentGroups.value.filter(group =>
   group.status === 'ACTIVE' && !assignedCenterGroupIds.value.has(group.id),
 ))
 const totals = computed(() => ({
-  available: agents.value.reduce((sum, item) => sum + Number(item.availableBalance), 0),
-  frozen: agents.value.reduce((sum, item) => sum + Number(item.frozenBalance), 0),
-  unsettled: agents.value.reduce((sum, item) => sum + Number(item.upstreamUnsettled), 0),
-  risk: agents.value.reduce((sum, item) => sum + Number(item.frozenBalance) + Number(item.upstreamUnsettled), 0),
+  available: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.availableBalance), 0),
+  frozen: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.frozenBalance), 0),
+  unsettled: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.upstreamUnsettled), 0),
+  risk: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.frozenBalance) + Number(item.upstreamUnsettled), 0),
 }))
 
 function money(value: number | null | undefined) {
@@ -327,8 +322,6 @@ function closeOneTimeCredential() {
 function openCreateAccount() {
   centerAccountForm.value = {
     groupId: null,
-    username: '',
-    password: '',
     initialQuota: 0,
     expiresAt: instantToLocalDateTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()) ?? '',
   }
@@ -346,8 +339,8 @@ function openCenterQuota(account: CenterUpstreamAccount) {
 
 async function grantCenterQuota() {
   const form = quotaForm.value
-  if (form.accountId <= 0 || form.amount <= 0 || !form.idempotencyKey) {
-    adminNotice.warning('请选择中心账号并输入有效额度')
+  if (form.accountId <= 0 || !Number.isInteger(form.amount) || form.amount <= 0 || !form.idempotencyKey) {
+    adminNotice.warning('请选择中心账号并输入正整数额度')
     return
   }
   busy.value = true
@@ -371,9 +364,8 @@ async function grantCenterQuota() {
 
 async function createCenterAccount() {
   const draft = centerAccountForm.value
-  const username = draft.username.trim()
-  if (draft.groupId === null || !username || !draft.password) {
-    adminNotice.warning('请填写所属子账号、用户名和密码')
+  if (draft.groupId === null) {
+    adminNotice.warning('请选择所属子账号')
     return
   }
   const expiresAt = draft.expiresAt ? localDateTimeToInstant(draft.expiresAt) : null
@@ -384,12 +376,9 @@ async function createCenterAccount() {
 
   const payload: CreateCenterUpstreamAccountRequest = {
     groupId: draft.groupId,
-    username,
-    password: draft.password,
     initialQuota: Number(draft.initialQuota) || 0,
     expiresAt,
   }
-  centerAccountForm.value.password = ''
   busy.value = true
   error.value = ''
   feedback.value = ''
@@ -397,12 +386,11 @@ async function createCenterAccount() {
     const created = await api.createCenterUpstreamAccount(payload)
     oneTimeCredential.value = {
       username: created.account.username,
-      password: payload.password,
+      password: created.password,
       action: '中心账号已创建',
     }
     oneTimeCredentialVisible.value = true
     showCreateCenterAccount.value = false
-    centerAccountForm.value.username = ''
     feedback.value = '中心账号已创建'
     await refresh()
   } catch (cause) {
@@ -552,57 +540,6 @@ async function deleteCenterAccount(account: CenterUpstreamAccount) {
     await refresh()
   } catch (cause) {
     adminNotice.error(apiErrorMessage(cause, '删除中心账号失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
-async function toggleStatus(agent: CenterAgent) {
-  busy.value = true
-  error.value = ''
-  try {
-    await api.changeCenterAgentStatus(agent.id, agent.status === 'ACTIVE' ? 'DISABLED' : 'ACTIVE')
-    adminNotice.success('中心代理状态已更新')
-    await refresh()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '修改中心代理状态失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
-async function grant() {
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    await api.grantCenterAgent(grantForm.value.agentId, {
-      amount: Number(grantForm.value.amount) || 0,
-      reason: '超管充值',
-      idempotencyKey: `center-grant-${grantForm.value.agentId}-${Date.now()}`,
-    })
-    feedback.value = '额度已充值'
-    await refresh()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '充值失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
-async function setLimit() {
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    await api.setCenterAgentCreditLimit(limitForm.value.agentId, {
-      creditLimit: Number(limitForm.value.creditLimit) || 0,
-      idempotencyKey: `center-limit-${limitForm.value.agentId}-${Date.now()}`,
-    })
-    feedback.value = '信用额度已更新'
-    await refresh()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '设置信用额度失败'))
   } finally {
     busy.value = false
   }
@@ -859,7 +796,7 @@ onMounted(async () => {
 
     <section v-if="tab === 'overview'" class="center-panel">
       <el-row :gutter="12" class="center-stats">
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心代理（启用）" :value="activeAgents.length"><template #suffix> / {{ agents.length }}</template></el-statistic></el-col>
+        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心账号（启用）" :value="activeCenterAccounts.length"><template #suffix> / {{ centerAccounts.length }}</template></el-statistic></el-col>
         <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="可用额度合计" :value="totals.available" :precision="2" /></el-col>
         <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="冻结额度合计" :value="totals.frozen" :precision="2" /></el-col>
         <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="上游未结算合计" :value="totals.unsettled" :precision="2" /></el-col>
@@ -898,14 +835,13 @@ onMounted(async () => {
             <el-option v-for="group in availableAgentGroups" :key="group.id" :label="`${group.displayName}（${group.code}）`" :value="group.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="中心账号名"><el-input v-model="centerAccountForm.username" maxlength="64" autocomplete="off" /></el-form-item>
-        <el-form-item label="初始密码"><el-input v-model="centerAccountForm.password" type="password" show-password autocomplete="new-password" /></el-form-item>
+        <span class="account-form-note">账号名与密码将在创建时自动生成，创建后仅展示一次。</span>
         <el-form-item label="初始额度"><el-input-number v-model="centerAccountForm.initialQuota" :min="0" :precision="2" :step="100" controls-position="right" /></el-form-item>
         <el-form-item label="有效期">
           <el-date-picker v-model="centerAccountForm.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" clearable placeholder="留空按 7 天" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :disabled="busy || centerAccountForm.groupId === null || !centerAccountForm.username.trim() || !centerAccountForm.password" :loading="busy" @click="createCenterAccount">创建账号</el-button>
+          <el-button type="primary" :disabled="busy || centerAccountForm.groupId === null" :loading="busy" @click="createCenterAccount">创建账号</el-button>
           <el-button :disabled="busy" @click="showCreateCenterAccount = false">取消</el-button>
         </el-form-item>
         <p class="account-form-note">初始额度为虚拟积分。成功后账号名和密码只展示一次；留空有效期由服务端设置为 7 天。</p>
@@ -957,9 +893,9 @@ onMounted(async () => {
 
       <el-form v-if="quotaForm.accountId" :model="quotaForm" inline class="center-form center-form-block account-action-form">
         <el-form-item><template #label><strong>为中心账号 #{{ quotaForm.accountId }} 追加可用额度</strong></template></el-form-item>
-        <el-form-item label="额度"><el-input-number v-model="quotaForm.amount" :min="0.01" :precision="2" :step="100" controls-position="right" /></el-form-item>
+        <el-form-item label="额度"><el-input-number v-model="quotaForm.amount" :min="0" :precision="0" :step="1" :formatter="(value) => Number(value ?? 0).toFixed(2)" controls-position="right" /></el-form-item>
         <el-form-item label="调整原因"><el-input v-model="quotaForm.reason" maxlength="255" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy || quotaForm.amount <= 0 || !quotaForm.reason.trim()" :loading="busy" @click="grantCenterQuota">确认追加</el-button><el-button @click="quotaForm.accountId = 0">取消</el-button></el-form-item>
+        <el-form-item><el-button type="primary" :disabled="busy || !Number.isInteger(quotaForm.amount) || quotaForm.amount <= 0 || !quotaForm.reason.trim()" :loading="busy" @click="grantCenterQuota">确认追加</el-button><el-button @click="quotaForm.accountId = 0">取消</el-button></el-form-item>
       </el-form>
 
       <el-form v-if="statusTarget" :model="{ statusReason }" inline class="center-form center-form-block account-action-form">
@@ -980,42 +916,6 @@ onMounted(async () => {
         <el-form-item label="新密码"><el-input v-model="passwordResetDraft" type="password" show-password autocomplete="new-password" /></el-form-item>
         <el-form-item label="重置原因"><el-input v-model="passwordResetReason" maxlength="255" /></el-form-item>
         <el-form-item><el-button type="primary" :disabled="busy || !passwordResetDraft || !passwordResetReason.trim()" :loading="busy" @click="resetCenterAccountPassword">确认重置</el-button><el-button @click="passwordResetTarget = null; passwordResetDraft = ''; passwordResetReason = ''">取消</el-button></el-form-item>
-      </el-form>
-    </section>
-
-    <section v-else-if="tab === 'agents'" class="center-panel">
-      <el-table scrollbar-always-on :data="legacyCenterAgents" row-key="id" border stripe class="center-table" empty-text="没有历史中心代理">
-        <el-table-column prop="agentCode" label="代理编号" min-width="130" />
-        <el-table-column prop="agentName" label="名称" min-width="140" />
-        <el-table-column prop="upstreamAccount" label="上游账号" min-width="150" />
-        <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</el-tag></template></el-table-column>
-        <el-table-column label="可用" width="120" align="right"><template #default="{ row }">{{ money(row.availableBalance) }}</template></el-table-column>
-        <el-table-column label="冻结" width="120" align="right"><template #default="{ row }">{{ money(row.frozenBalance) }}</template></el-table-column>
-        <el-table-column label="未结算" width="120" align="right"><template #default="{ row }">{{ money(row.upstreamUnsettled) }}</template></el-table-column>
-        <el-table-column label="信用额度" width="120" align="right"><template #default="{ row }">{{ money(row.creditLimit) }}</template></el-table-column>
-        <el-table-column label="操作" fixed="right" width="250">
-          <template #default="{ row }">
-            <el-space wrap>
-              <el-button link type="primary" :disabled="busy" @click="toggleStatus(row as CenterAgent)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
-              <el-button link type="primary" @click="grantForm.agentId = row.id">充值</el-button>
-              <el-button link type="primary" @click="limitForm.agentId = row.id; limitForm.creditLimit = Number(row.creditLimit)">改额度</el-button>
-              <el-button link type="primary" @click="loadLedger(row.id); tab = 'ledger'">流水</el-button>
-            </el-space>
-          </template>
-        </el-table-column>
-        <template #empty><el-empty description="还没有中心代理" /></template>
-      </el-table>
-
-      <el-form v-if="grantForm.agentId" :model="grantForm" inline class="center-form center-form-block">
-        <el-form-item><template #label><strong>给代理 #{{ grantForm.agentId }} 充值可用额度</strong></template></el-form-item>
-        <el-form-item label="金额"><el-input-number v-model="grantForm.amount" :min="0" controls-position="right" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy" :loading="busy" @click="grant">确认充值</el-button><el-button @click="grantForm.agentId = 0">取消</el-button></el-form-item>
-      </el-form>
-
-      <el-form v-if="limitForm.agentId" :model="limitForm" inline class="center-form center-form-block">
-        <el-form-item><template #label><strong>设置代理 #{{ limitForm.agentId }} 的信用额度</strong></template></el-form-item>
-        <el-form-item label="额度"><el-input-number v-model="limitForm.creditLimit" :min="0" controls-position="right" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy" :loading="busy" @click="setLimit">确认</el-button><el-button @click="limitForm.agentId = 0">取消</el-button></el-form-item>
       </el-form>
     </section>
 
@@ -1090,7 +990,7 @@ onMounted(async () => {
     </section>
 
     <section v-else-if="tab === 'ledger'" class="center-panel">
-      <el-empty v-if="!ledgerAgentId" description="请到「代理管理」选择某个代理查看流水。" />
+      <el-empty v-if="!ledgerAgentId" description="请到「中心账号」选择账号查看流水。" />
       <template v-else>
         <el-alert class="center-hint" :type="ledgerBalanced ? 'success' : 'error'" :closable="false" :title="`代理 #${ledgerAgentId} 的账本流水 · 账本自检：${ledgerBalanced ? '一致' : '不一致'}`" />
         <el-table scrollbar-always-on :data="ledger" row-key="id" border stripe class="center-table" empty-text="暂无流水">

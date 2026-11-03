@@ -283,7 +283,7 @@ public class DisplayObserverBindingRepository {
                      group_display_name_snapshot, viewer_member_code_snapshot, viewer_display_name_snapshot,
                      public_id, enabled, version,
                      created_by, created_at, updated_by, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 1, ?, CURRENT_TIMESTAMP(6), ?, CURRENT_TIMESTAMP(6))
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 1, ?, CURRENT_TIMESTAMP(6), ?, CURRENT_TIMESTAMP(6))
                 """, target.agentId(), target.viewerUserId(), target.agentId(), target.viewerUserId(),
                 target.groupId(), target.machineCode(), target.machineUsername(), target.machineDisplayName(),
                 target.groupDisplayName(), target.viewerMemberCode(), target.viewerDisplayName(),

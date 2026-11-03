@@ -10,7 +10,9 @@ export default defineConfig({
     Components({
       dirs: [],
       resolvers: [ElementPlusResolver({ importStyle: 'css' })],
-      dts: resolve(__dirname, 'src/components.d.ts'),
+      dts: process.env.XUPAN_VITE_GENERATE_COMPONENT_DECLARATIONS === 'false'
+        ? false
+        : resolve(__dirname, 'src/components.d.ts'),
     }),
   ],
   server: {
