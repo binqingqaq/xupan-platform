@@ -17,6 +17,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.UUID;
 
 /** Manages center upstream login accounts and machine-scoped sessions. */
 @Service
@@ -30,20 +31,26 @@ public class CenterUpstreamAccountService {
     private static final String INVALID_CREDENTIALS_MESSAGE = "中心账号或密码错误";
     private static final String ACCOUNT_PATH = "/api/admin/center/accounts";
     private static final String MACHINE_PATH = "/api/console/report/center";
+    private static final String DEFAULT_GENERATED_PASSWORD = "test123456";
+    private static final BigDecimal DEFAULT_MAX_SINGLE_AMOUNT = new BigDecimal("1000.00");
+    private static final BigDecimal DEFAULT_MAX_ISSUE_EXPOSURE = new BigDecimal("5000.00");
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.UNNECESSARY);
 
     private final CenterUpstreamAccountRepository repository;
+    private final CenterAgentService centerAgentService;
     private final PermissionService permissionService;
     private final PasswordPolicyService passwordPolicy;
     private final CenterTokenService tokenService;
     private final OperationAuditRepository auditRepository;
 
     public CenterUpstreamAccountService(CenterUpstreamAccountRepository repository,
+                                        CenterAgentService centerAgentService,
                                         PermissionService permissionService,
                                         PasswordPolicyService passwordPolicy,
                                         CenterTokenService tokenService,
                                         OperationAuditRepository auditRepository) {
         this.repository = repository;
+        this.centerAgentService = centerAgentService;
         this.permissionService = permissionService;
         this.passwordPolicy = passwordPolicy;
         this.tokenService = tokenService;
@@ -57,13 +64,34 @@ public class CenterUpstreamAccountService {
         return repository.findAllAccounts().stream().map(row -> accountView(row, now)).toList();
     }
 
+    @Transactional(readOnly = true)
+    public AccountView requireManagedAccount(long accountId, long operatorUserId) {
+        requireManage(operatorUserId);
+        return requireAccountView(accountId, Instant.now());
+    }
+
     @Transactional
     public CreatedAccount createAccount(long groupId, String username, String password,
                                         BigDecimal initialQuota, Instant expiresAt, long operatorUserId) {
+        return createAccount(groupId, username, password, initialQuota,
+                DEFAULT_MAX_SINGLE_AMOUNT, DEFAULT_MAX_ISSUE_EXPOSURE, expiresAt, operatorUserId);
+    }
+
+    @Transactional
+    public CreatedAccount createAccount(long groupId, String username, String password,
+                                        BigDecimal initialQuota, BigDecimal maxSingleAmount,
+                                        BigDecimal maxIssueExposure, Instant expiresAt, long operatorUserId) {
         requireManage(operatorUserId);
         String normalizedUsername = requireUsername(username);
         String passwordHash = encodePassword(password);
         BigDecimal quota = normalizeQuota(initialQuota);
+        BigDecimal singleLimit = requirePositiveLimit(maxSingleAmount, "CENTER_RISK_SINGLE_INVALID",
+                "单笔上限必须大于零");
+        BigDecimal exposureLimit = requirePositiveLimit(maxIssueExposure, "CENTER_RISK_EXPOSURE_INVALID",
+                "单期敞口上限必须大于零");
+        if (exposureLimit.compareTo(singleLimit) < 0) {
+            throw BusinessException.badRequest("CENTER_RISK_LIMIT_CONFLICT", "单期敞口上限不能低于单笔上限");
+        }
         Instant now = Instant.now();
         Instant expiry = expiresAt == null ? now.plus(7, ChronoUnit.DAYS) : expiresAt;
         if (!expiry.isAfter(now)) {
@@ -85,7 +113,8 @@ public class CenterUpstreamAccountService {
         long accountId;
         try {
             accountId = repository.insertAccount(groupId, normalizedUsername, passwordHash,
-                    tokenService.hash(unusableToken), CenterTokenService.PREFIX, quota, expiry, operatorUserId);
+                    tokenService.hash(unusableToken), CenterTokenService.PREFIX, quota,
+                    singleLimit, exposureLimit, expiry, operatorUserId);
         } catch (DataIntegrityViolationException exception) {
             throw BusinessException.conflict("CENTER_ACCOUNT_UNIQUE_CONFLICT", "中心账号名或子账号绑定已被占用");
         }
@@ -95,19 +124,32 @@ public class CenterUpstreamAccountService {
         AccountView account = requireAccountView(accountId, now);
         audit(operatorUserId, "POST", ACCOUNT_PATH, Long.toString(accountId), "SUCCESS", null,
                 "创建中心账号 groupId=" + groupId + " username=" + normalizedUsername
-                        + " initialQuota=" + quota + " expiresAt=" + expiry, null);
+                        + " initialQuota=" + quota + " expiresAt=" + expiry
+                        + " maxSingleAmount=" + singleLimit + " maxIssueExposure=" + exposureLimit, null);
         return new CreatedAccount(account);
     }
 
     @Transactional
-    public GeneratedAccount createGeneratedAccount(long groupId, BigDecimal initialQuota,
+    public GeneratedAccount createGeneratedAccount(long groupId, String requestedUsername,
+                                                   String requestedPassword, BigDecimal maxSingleAmount,
+                                                   BigDecimal maxIssueExposure, BigDecimal initialQuota,
                                                    Instant expiresAt, long operatorUserId) {
-        String password = randomCredential(16);
+        String password = requestedPassword == null || requestedPassword.isBlank()
+                ? DEFAULT_GENERATED_PASSWORD : requestedPassword;
+        BigDecimal singleLimit = maxSingleAmount == null ? DEFAULT_MAX_SINGLE_AMOUNT : maxSingleAmount;
+        BigDecimal exposureLimit = maxIssueExposure == null ? DEFAULT_MAX_ISSUE_EXPOSURE : maxIssueExposure;
+        if (requestedUsername != null && !requestedUsername.isBlank()) {
+            CreatedAccount created = createAccount(groupId, requestedUsername, password, initialQuota,
+                    singleLimit, exposureLimit, expiresAt, operatorUserId);
+            return new GeneratedAccount(created.account(), password);
+        }
+
         for (int attempt = 0; attempt < 5; attempt++) {
             String username = "loc" + groupId + "_" + randomCredential(10);
             try {
                 return new GeneratedAccount(
-                        createAccount(groupId, username, password, initialQuota, expiresAt, operatorUserId).account(),
+                        createAccount(groupId, username, password, initialQuota, singleLimit,
+                                exposureLimit, expiresAt, operatorUserId).account(),
                         password);
             } catch (BusinessException exception) {
                 if (!"CENTER_ACCOUNT_USERNAME_TAKEN".equals(exception.code())) {
@@ -182,6 +224,42 @@ public class CenterUpstreamAccountService {
                 "SUCCESS", null, "reason=" + normalizedReason + ",beforeStatus=" + before.status()
                         + ",afterStatus=" + updated.status() + ",passwordChanged=true", null);
         return updated;
+    }
+
+    @Transactional
+    public AccountView editAccount(long accountId, Instant expiresAt, String newPassword,
+                                   BigDecimal additionalQuota, BigDecimal maxSingleAmount,
+                                   BigDecimal maxIssueExposure, long operatorUserId) {
+        requireManage(operatorUserId);
+        Instant now = Instant.now();
+        if (expiresAt == null || !expiresAt.isAfter(now)) {
+            throw BusinessException.badRequest("CENTER_ACCOUNT_EXPIRY_INVALID", "有效期必须晚于当前时间");
+        }
+        BigDecimal quota = normalizeAdditionalQuota(additionalQuota);
+        String passwordHash = newPassword == null || newPassword.isBlank() ? null : encodePassword(newPassword);
+        CenterUpstreamAccountRepository.EditableAccountRow before = repository.lockAccountForEdit(accountId)
+                .orElseThrow(() -> BusinessException.notFound("CENTER_ACCOUNT_NOT_FOUND", "中心账号不存在"));
+
+        centerAgentService.setRiskLimits(accountId, maxSingleAmount, maxIssueExposure, operatorUserId);
+        if (repository.updateEditableAccount(accountId, expiresAt, passwordHash) != 1) {
+            throw BusinessException.conflict("CENTER_ACCOUNT_EDIT_CONFLICT", "中心账号已变化，请刷新后重试");
+        }
+        boolean passwordChanged = passwordHash != null;
+        boolean expiryChanged = !expiresAt.equals(before.expiresAt());
+        if (passwordChanged || expiryChanged) {
+            repository.revokeAccountSessions(accountId, now, passwordChanged && expiryChanged
+                    ? "ACCOUNT_EDITED" : passwordChanged ? "PASSWORD_RESET" : "ACCOUNT_RENEWED");
+        }
+        if (quota.signum() > 0) {
+            centerAgentService.grantAvailable(accountId, quota, "中心账号编辑追加可用额度", operatorUserId,
+                    "CENTER-ACCOUNT-EDIT-GRANT-" + accountId + "-" + UUID.randomUUID());
+        }
+
+        audit(operatorUserId, "PATCH", ACCOUNT_PATH + "/" + accountId + "/edit", Long.toString(accountId),
+                "SUCCESS", null, "expiresAt=" + expiresAt + ",passwordChanged=" + passwordChanged
+                        + ",additionalQuota=" + quota + ",maxSingleAmount=" + maxSingleAmount
+                        + ",maxIssueExposure=" + maxIssueExposure, null);
+        return requireAccountView(accountId, now);
     }
 
     @Transactional
@@ -412,7 +490,7 @@ public class CenterUpstreamAccountService {
                 ? "EXPIRED" : row.status();
         return new AccountView(row.accountId(), row.groupId(), row.groupName(), row.username(), status,
                 row.expiresAt(), row.availableBalance(), row.frozenBalance(), row.openStake(), row.lastLoginAt(),
-                row.online(), row.onlineMachineCount());
+                row.online(), row.onlineMachineCount(), row.maxSingleAmount(), row.maxIssueExposure());
     }
 
     private String encodePassword(String rawPassword) {
@@ -440,6 +518,26 @@ public class CenterUpstreamAccountService {
             throw BusinessException.badRequest("CENTER_ACCOUNT_QUOTA_INVALID", "初始额度超出允许范围");
         }
         return value;
+    }
+
+    private static BigDecimal normalizeAdditionalQuota(BigDecimal amount) {
+        BigDecimal value = amount == null ? BigDecimal.ZERO : amount;
+        if (value.signum() < 0 || value.stripTrailingZeros().scale() > 0
+                || value.precision() - value.scale() > 16) {
+            throw BusinessException.badRequest("CENTER_ACCOUNT_EDIT_QUOTA_INVALID", "追加额度必须是非负整数");
+        }
+        return value.setScale(2, RoundingMode.UNNECESSARY);
+    }
+
+    private static BigDecimal requirePositiveLimit(BigDecimal value, String code, String message) {
+        if (value == null || value.signum() <= 0) {
+            throw BusinessException.badRequest(code, message);
+        }
+        BigDecimal normalized = value.setScale(2, RoundingMode.HALF_UP);
+        if (normalized.signum() <= 0) {
+            throw BusinessException.badRequest(code, message);
+        }
+        return normalized;
     }
 
     private boolean safeMatches(String rawPassword, String passwordHash) {
@@ -480,7 +578,8 @@ public class CenterUpstreamAccountService {
     public record AccountView(long accountId, Long groupId, String groupName, String username,
                               String status, Instant expiresAt, BigDecimal availableBalance,
                               BigDecimal frozenBalance, BigDecimal openStake, Instant lastLoginAt,
-                              boolean online, int onlineMachineCount) {
+                              boolean online, int onlineMachineCount,
+                              BigDecimal maxSingleAmount, BigDecimal maxIssueExposure) {
     }
 
     public record CreatedAccount(AccountView account) {

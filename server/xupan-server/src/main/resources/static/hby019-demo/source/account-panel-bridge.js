@@ -63,7 +63,7 @@
 
       const result = document.createElement('div')
       result.setAttribute('data-v-30d8da26', '')
-      result.style.cssText = `flex:2 1 0%;text-align:center;font-weight:550;${item.resultColor ? 'color:red;' : ''}${item.refunded ? 'text-decoration:line-through;' : ''}`
+      result.style.cssText = `flex:2 1 0%;text-align:center;font-weight:550;color:${item.resultColor ? 'red' : '#000'};${item.refunded ? 'text-decoration:line-through;' : ''}`
       setText(result, item.result)
 
       row.append(issue, ball, text, result)

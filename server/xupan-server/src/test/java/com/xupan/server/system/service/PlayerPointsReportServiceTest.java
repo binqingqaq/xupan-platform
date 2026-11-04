@@ -39,6 +39,39 @@ class PlayerPointsReportServiceTest {
     }
 
     @Test
+    void businessDayStartsAtMidnightInShanghaiWhenRequested() {
+        PlayerPointsReportService.BusinessDay day =
+                PlayerPointsReportService.resolveBusinessDay("2026-09-21", 0);
+
+        assertThat(day.businessDate()).isEqualTo(LocalDate.of(2026, 9, 21));
+        assertThat(day.fromInclusive()).isEqualTo(Instant.parse("2026-09-20T16:00:00Z"));
+        assertThat(day.toExclusive()).isEqualTo(Instant.parse("2026-09-21T16:00:00Z"));
+    }
+
+    @Test
+    void reportReturnsModeSpecificDynamicDateLists() {
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
+        when(repository.findPlayers(eq("BOT"), any(Instant.class), any(Instant.class), any())).thenReturn(List.of());
+        when(repository.findBetEvents(eq("BOT"), any(Instant.class), any(Instant.class), eq(500), any()))
+                .thenReturn(List.of());
+        when(repository.findLedgerTotals(eq("BOT"), any(Instant.class), any(Instant.class), any()))
+                .thenReturn(List.of());
+        when(repository.findLedgerEvents(eq("BOT"), any(Instant.class), any(Instant.class), eq(500), any()))
+                .thenReturn(List.of());
+        when(repository.findActionEvents(eq("BOT"), any(Instant.class), any(Instant.class), eq(500), any()))
+                .thenReturn(List.of());
+
+        PlayerPointsReportService.Report report = new PlayerPointsReportService(repository, scopeService)
+                .report("BOT", "2026-09-21", 500, 0, 7L);
+
+        assertThat(report.cutoffHour()).isZero();
+        assertThat(report.fromInclusive()).isEqualTo(Instant.parse("2026-09-20T16:00:00Z"));
+        assertThat(report.availableDates()).isEqualTo(report.availableDatesAt00());
+        assertThat(report.availableDatesAt00()).contains(LocalDate.of(2026, 9, 21));
+        assertThat(report.availableDatesAt06()).contains(LocalDate.of(2026, 9, 21));
+    }
+
+    @Test
     void reportAggregatesBetsAndAdminPointOperationsForSelectedKind() {
         when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
         Instant createdAt = Instant.parse("2026-09-21T10:00:00Z");

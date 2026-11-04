@@ -8,6 +8,7 @@ vi.mock('./api', () => ({
   api: {
     me: vi.fn(), getPlayerDeskScope: vi.fn(), getPlayerDeskSummary: vi.fn(),
     getPendingPointRequests: vi.fn(), getBetBoard: vi.fn(), getMachineConfig: vi.fn(),
+    getPlayerDeskPointRecords: vi.fn(),
     getReportConfig: vi.fn(), loginReport: vi.fn(), logoutReport: vi.fn(),
     updateReportConfig: vi.fn(), resubmitReportOrder: vi.fn(),
   },
@@ -114,5 +115,26 @@ describe('HBY019 center report bridge', () => {
     const frame = await mount()
     const result = await request(frame, '/rbt/index/needhandle')
     expect(result).toMatchObject({ iswp: 1, reportError: '报网状态读取失败', Data: null })
+  })
+
+  it('passes the selected zero-hour cutoff and both dynamic date lists to the legacy report', async () => {
+    vi.mocked(api.getPlayerDeskPointRecords).mockResolvedValue({
+      businessDate: '2026-11-04', cutoffHour: 0,
+      availableDates: ['2026-11-04'], availableDatesAt00: ['2026-11-04'],
+      availableDatesAt06: ['2026-11-03'], players: [],
+      summary: {
+        effectiveRebate: 0, netProfit: 0, turnover: 0, effectiveFlow: 0,
+        topUp: 0, down: 0, openingBalance: 0, closingBalance: 0,
+      },
+    } as never)
+    const frame = await mount()
+    const result = await request(frame, '/rbt/index/getscorehistuo', { day: '2026-11-04', timeType: 0 })
+
+    expect(api.getPlayerDeskPointRecords).toHaveBeenCalledWith('BOT', '2026-11-04', 0)
+    expect(result).toMatchObject({
+      cutoffHour: 0,
+      availableDatesAt00: ['2026-11-04'],
+      availableDatesAt06: ['2026-11-03'],
+    })
   })
 })

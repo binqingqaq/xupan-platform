@@ -18,6 +18,8 @@ public class CenterUpstreamAccountRepository {
     private static final String ACCOUNT_SELECT = """
             SELECT c.id, c.agent_group_id, g.display_name AS group_name, c.agent_code AS username,
                    c.status, c.expires_at, c.available_balance, c.frozen_balance,
+                   COALESCE(c.max_single_amount, 100000.00) AS max_single_amount,
+                   COALESCE(c.max_issue_exposure, 500000.00) AS max_issue_exposure,
                    COALESCE((SELECT SUM(o.amount) FROM center_order o
                               WHERE o.center_agent_id = c.id AND o.status = 'ACCEPTED'), 0) AS open_stake,
                    (SELECT MAX(s.authenticated_at) FROM center_machine_session s
@@ -58,6 +60,15 @@ public class CenterUpstreamAccountRepository {
         return jdbc.query(ACCOUNT_SELECT + " WHERE c.id = ? AND c.agent_group_id IS NOT NULL",
                 this::accountRow, accountId)
                 .stream().findFirst();
+    }
+
+    public Optional<EditableAccountRow> lockAccountForEdit(long accountId) {
+        return jdbc.query("""
+                SELECT id, expires_at FROM center_agent
+                 WHERE id = ? AND agent_group_id IS NOT NULL
+                 FOR UPDATE
+                """, (rs, rowNum) -> new EditableAccountRow(rs.getLong("id"),
+                instant(rs.getTimestamp("expires_at"))), accountId).stream().findFirst();
     }
 
     public List<MachineSessionRow> findMachineSessions(long accountId) {
@@ -120,15 +131,17 @@ public class CenterUpstreamAccountRepository {
 
     public long insertAccount(long groupId, String username, String passwordHash,
                               String tokenHash, String tokenPrefix, BigDecimal initialAvailable,
+                              BigDecimal maxSingleAmount, BigDecimal maxIssueExposure,
                               Instant expiresAt, long operatorUserId) {
         jdbc.update("""
                 INSERT INTO center_agent
                     (agent_code, agent_name, upstream_account, token_hash, token_prefix, status,
-                     credit_limit, available_balance, password_hash, expires_at, agent_group_id, created_by)
-                VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?)
+                     credit_limit, available_balance, password_hash, expires_at, agent_group_id,
+                     max_single_amount, max_issue_exposure, created_by)
+                VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?)
                 """, username, username, username, tokenHash, tokenPrefix,
                 BigDecimal.ZERO.setScale(2), initialAvailable, passwordHash,
-                Timestamp.from(expiresAt), groupId, operatorUserId);
+                Timestamp.from(expiresAt), groupId, maxSingleAmount, maxIssueExposure, operatorUserId);
         Long id = jdbc.queryForObject("SELECT id FROM center_agent WHERE agent_code = ?", Long.class, username);
         if (id == null) {
             throw new IllegalStateException("创建中心账号后未取得 ID");
@@ -298,6 +311,15 @@ public class CenterUpstreamAccountRepository {
                 """, Timestamp.from(expiresAt), accountId);
     }
 
+    public int updateEditableAccount(long accountId, Instant expiresAt, String passwordHash) {
+        return jdbc.update("""
+                UPDATE center_agent
+                   SET expires_at = ?, password_hash = COALESCE(?, password_hash),
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ? AND agent_group_id IS NOT NULL
+                """, Timestamp.from(expiresAt), passwordHash, accountId);
+    }
+
     public int updatePassword(long accountId, String passwordHash) {
         return jdbc.update("""
                 UPDATE center_agent
@@ -386,6 +408,8 @@ public class CenterUpstreamAccountRepository {
         return jdbc.query("""
                 SELECT c.id, c.agent_group_id, g.display_name AS group_name, c.agent_code AS username,
                        c.status, c.expires_at, c.available_balance, c.frozen_balance,
+                       COALESCE(c.max_single_amount, 100000.00) AS max_single_amount,
+                       COALESCE(c.max_issue_exposure, 500000.00) AS max_issue_exposure,
                        COALESCE((SELECT SUM(o.amount) FROM center_order o
                                   WHERE o.center_agent_id = c.id AND o.status = 'ACCEPTED'), 0) AS open_stake,
                        (SELECT MAX(s.authenticated_at) FROM center_machine_session s
@@ -420,6 +444,7 @@ public class CenterUpstreamAccountRepository {
                 rs.getString("group_name"), rs.getString("username"), rs.getString("status"),
                 instant(rs.getTimestamp("expires_at")), rs.getBigDecimal("available_balance"),
                 rs.getBigDecimal("frozen_balance"), rs.getBigDecimal("open_stake"),
+                rs.getBigDecimal("max_single_amount"), rs.getBigDecimal("max_issue_exposure"),
                 instant(rs.getTimestamp("last_login_at")), rs.getBoolean("online"),
                 rs.getInt("online_machine_count"));
     }
@@ -439,8 +464,12 @@ public class CenterUpstreamAccountRepository {
 
     public record AccountRow(Long accountId, Long groupId, String groupName, String username,
                              String status, Instant expiresAt, BigDecimal availableBalance,
-                             BigDecimal frozenBalance, BigDecimal openStake, Instant lastLoginAt,
+                             BigDecimal frozenBalance, BigDecimal openStake,
+                             BigDecimal maxSingleAmount, BigDecimal maxIssueExposure, Instant lastLoginAt,
                              boolean online, int onlineMachineCount) {
+    }
+
+    public record EditableAccountRow(long accountId, Instant expiresAt) {
     }
 
     public record AccountCredential(long accountId, Long groupId, String username, String status,

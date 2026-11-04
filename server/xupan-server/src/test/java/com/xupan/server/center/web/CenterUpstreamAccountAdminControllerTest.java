@@ -85,13 +85,14 @@ class CenterUpstreamAccountAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.account.availableBalance").value(0.0))
                 .andExpect(jsonPath("$.account.online").value(false))
+                .andExpect(jsonPath("$.account.maxSingleAmount").value(1000.0))
+                .andExpect(jsonPath("$.account.maxIssueExposure").value(5000.0))
                 .andReturn();
         String json = result.getResponse().getContentAsString();
         String username = JsonPath.read(json, "$.account.username");
         String password = JsonPath.read(json, "$.password");
         assertThat(username).matches("loc" + groupId + "_[a-z0-9]{10}");
-        assertThat(password).matches("[a-z0-9]{16}")
-                .containsPattern("[a-z]").containsPattern("[0-9]");
+        assertThat(password).isEqualTo("test123456");
         String hash = jdbc.queryForObject("SELECT password_hash FROM center_agent WHERE agent_code = ?",
                 String.class, username);
         assertThat(hash).isNotEqualTo(password);
@@ -101,6 +102,20 @@ class CenterUpstreamAccountAdminControllerTest {
         mockMvc.perform(get("/api/admin/center/accounts").header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].password").doesNotExist());
+    }
+
+    @Test
+    void allowsCustomRiskLimitsWhenGeneratingCenterAccount() throws Exception {
+        String token = login(ADMIN, PASSWORD);
+        long groupId = createGroup();
+
+        mockMvc.perform(post("/api/admin/center/accounts/generated")
+                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"groupId\":" + groupId + ",\"maxSingleAmount\":1200,"
+                                + "\"maxIssueExposure\":6000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.account.maxSingleAmount").value(1200.0))
+                .andExpect(jsonPath("$.account.maxIssueExposure").value(6000.0));
     }
 
     @Test
@@ -120,6 +135,8 @@ class CenterUpstreamAccountAdminControllerTest {
                 .andExpect(jsonPath("$.account.availableBalance").value(125.50))
                 .andExpect(jsonPath("$.account.frozenBalance").value(0.0))
                 .andExpect(jsonPath("$.account.openStake").value(0.0))
+                .andExpect(jsonPath("$.account.maxSingleAmount").value(1000.0))
+                .andExpect(jsonPath("$.account.maxIssueExposure").value(5000.0))
                 .andExpect(jsonPath("$.account.online").value(false))
                 .andExpect(jsonPath("$.password").doesNotExist())
                 .andReturn();
@@ -170,6 +187,22 @@ class CenterUpstreamAccountAdminControllerTest {
         assertThat(latestAudit(accountId, "/expiry")).contains("reason=续期申请", "beforeExpiresAt=", "afterExpiresAt=");
         assertThat(latestAudit(accountId, "/password")).contains("reason=凭据轮换", "passwordChanged=true")
                 .doesNotContain("ChangedPass456");
+
+        mockMvc.perform(patch("/api/admin/center/accounts/" + accountId)
+                        .header("Authorization", bearer(token)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expiresAt\":\"2038-01-01T00:00:00Z\",\"newPassword\":\"EditPass678\","
+                                + "\"additionalQuota\":300,\"maxSingleAmount\":1200,"
+                                + "\"maxIssueExposure\":6000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.expiresAt").value("2038-01-01T00:00:00Z"))
+                .andExpect(jsonPath("$.availableBalance").value(425.50))
+                .andExpect(jsonPath("$.maxSingleAmount").value(1200.0))
+                .andExpect(jsonPath("$.maxIssueExposure").value(6000.0));
+        String editedHash = jdbc.queryForObject("SELECT password_hash FROM center_agent WHERE id = ?",
+                String.class, accountId);
+        assertThat(new BCryptPasswordEncoder().matches("EditPass678", editedHash)).isTrue();
+        assertThat(latestAudit(accountId, "/edit")).contains("passwordChanged=true", "additionalQuota=300.00")
+                .doesNotContain("EditPass678");
     }
 
     @Test

@@ -21,9 +21,10 @@ import static org.mockito.Mockito.spy;
 class CenterUpstreamAccountCredentialTest {
 
     @Test
-    void generatedCredentialsFollowTheRuleAndAreNeverLoggedInPlaintext() {
+    void generatedUsernameKeepsItsRuleAndBlankPasswordUsesTheSharedDefault() {
         CenterUpstreamAccountService service = spy(new CenterUpstreamAccountService(
-                mock(CenterUpstreamAccountRepository.class), mock(PermissionService.class),
+                mock(CenterUpstreamAccountRepository.class), mock(CenterAgentService.class),
+                mock(PermissionService.class),
                 mock(PasswordPolicyService.class), mock(CenterTokenService.class),
                 mock(OperationAuditRepository.class)));
         doAnswer(invocation -> {
@@ -32,18 +33,16 @@ class CenterUpstreamAccountCredentialTest {
             return new CenterUpstreamAccountService.CreatedAccount(
                     new CenterUpstreamAccountService.AccountView(1L, groupId, "测试子账号", username,
                             "ACTIVE", null, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                            null, false, 0));
+                            null, false, 0, new BigDecimal("1000.00"), new BigDecimal("5000.00")));
         }).when(service).createAccount(anyLong(), anyString(), anyString(), any(BigDecimal.class),
-                nullable(Instant.class), anyLong());
+                any(BigDecimal.class), any(BigDecimal.class), nullable(Instant.class), anyLong());
 
-        var first = service.createGeneratedAccount(31L, BigDecimal.ZERO, null, 9L);
-        var second = service.createGeneratedAccount(31L, BigDecimal.ZERO, null, 9L);
+        var first = service.createGeneratedAccount(31L, null, null, null, null, BigDecimal.ZERO, null, 9L);
+        var second = service.createGeneratedAccount(31L, null, null, null, null, BigDecimal.ZERO, null, 9L);
 
         assertThat(first.account().username()).matches("loc31_[a-z0-9]{10}")
                 .isNotEqualTo(second.account().username());
-        assertThat(first.password()).matches("[a-z0-9]{16}")
-                .containsPattern("[a-z]").containsPattern("[0-9]")
-                .isNotEqualTo(second.password());
+        assertThat(first.password()).isEqualTo("test123456").isEqualTo(second.password());
         assertThat(first.toString()).doesNotContain(first.password());
     }
 }

@@ -180,8 +180,9 @@ import java.util.List;
     public PointsReport pointsRecords(Authentication auth,
                                       @RequestParam String kind,
                                       @RequestParam(required = false) String date,
-                                      @RequestParam(defaultValue = "500") int detailLimit) {
-        return PointsReport.from(pointsReportService.report(kind, date, detailLimit, user(auth)));
+                                      @RequestParam(defaultValue = "500") int detailLimit,
+                                      @RequestParam(defaultValue = "6") int cutoffHour) {
+        return PointsReport.from(pointsReportService.report(kind, date, detailLimit, cutoffHour, user(auth)));
     }
 
     @GetMapping("/point-requests")
@@ -354,11 +355,15 @@ import java.util.List;
                     x.machineId(), x.alreadyDeleted());
         }
     }
-    public record PointsReport(String businessDate, Instant fromInclusive, Instant toExclusive, List<String> availableDates, String playerKind,
-                               String rebateMode,
+    public record PointsReport(String businessDate, Instant fromInclusive, Instant toExclusive, int cutoffHour,
+                               List<String> availableDates, List<String> availableDatesAt00,
+                               List<String> availableDatesAt06, String playerKind, String rebateMode,
                                PointsSummary summary, List<PointsCard> players, int detailLimit) {
         static PointsReport from(PlayerPointsReportService.Report x) {
-            return new PointsReport(x.businessDate().toString(), x.fromInclusive(), x.toExclusive(), x.availableDates().stream().map(Object::toString).toList(), x.playerKind(),
+            return new PointsReport(x.businessDate().toString(), x.fromInclusive(), x.toExclusive(), x.cutoffHour(),
+                    x.availableDates().stream().map(Object::toString).toList(),
+                    x.availableDatesAt00().stream().map(Object::toString).toList(),
+                    x.availableDatesAt06().stream().map(Object::toString).toList(), x.playerKind(),
                     x.rebateMode(), PointsSummary.from(x.summary()), x.players().stream().map(PointsCard::from).toList(), x.detailLimit());
         }
     }

@@ -11,7 +11,8 @@ import type {
   CenterUpstreamAccount,
   CenterMachineSession,
   CreateCenterUpstreamAccountRequest,
-  CenterAgentLedgerEntry,
+  CenterLedgerGroup,
+  CenterLedgerGroupEntry,
   CenterOrderItem,
   CenterOrderSummary,
   CenterReconciliation,
@@ -20,6 +21,7 @@ import type {
   CenterRiskRuleSummary,
   CenterOrderDispositionRecord,
   CenterDispositionAction,
+  EditCenterUpstreamAccountRequest,
   ReconciliationDisposition,
   ReconciliationRetention,
   ReconciliationResolution,
@@ -31,13 +33,11 @@ import type {
  * 中心账号生命周期管理与现有中心代理账务、订单和对账视图共用此入口。
  */
 
-type Tab = 'overview' | 'accounts' | 'orders' | 'ledger' | 'risk' | 'reconcile'
-const tab = ref<Tab>('overview')
+type Tab = 'accounts' | 'orders' | 'risk' | 'reconcile'
+const tab = ref<Tab>('accounts')
 const tabs: { key: Tab; label: string }[] = [
-  { key: 'overview', label: '总览' },
   { key: 'accounts', label: '中心账号' },
   { key: 'orders', label: '实时订单' },
-  { key: 'ledger', label: '财务流水' },
   { key: 'risk', label: '风险' },
   { key: 'reconcile', label: '对账' },
 ]
@@ -62,12 +62,18 @@ const orderFilters = ref({
 })
 const orderPageSize = 20
 const summaries = ref<CenterOrderSummary[]>([])
-const ledger = ref<CenterAgentLedgerEntry[]>([])
-const ledgerAgentId = ref<number | null>(null)
+const ledgerDrawerOpen = ref(false)
+const ledgerAccount = ref<CenterUpstreamAccount | null>(null)
+const ledgerGroups = ref<CenterLedgerGroup[]>([])
+const ledgerGroupPage = ref(1)
+const ledgerGroupTotal = ref(0)
+const ledgerGroupPageSize = 20
+const ledgerGroupsLoading = ref(false)
 const ledgerBalanced = ref(true)
-const ledgerPage = ref(1)
-const ledgerTotal = ref(0)
-const ledgerPageSize = 20
+const expandedLedgerEntries = ref<Record<string, CenterLedgerGroupEntry[]>>({})
+const ledgerEntryLoading = ref<Record<string, boolean>>({})
+const ledgerEntryErrors = ref<Record<string, string>>({})
+let ledgerLoadSequence = 0
 const sessionAccount = ref<CenterUpstreamAccount | null>(null)
 const machineSessions = ref<CenterMachineSession[]>([])
 const sessionsLoading = ref(false)
@@ -91,28 +97,28 @@ const busy = ref(false)
 const showCreateCenterAccount = ref(false)
 const centerAccountForm = ref({
   groupId: null as number | null,
+  username: '',
+  password: '',
   initialQuota: 0,
+  maxSingleAmount: 1000,
+  maxIssueExposure: 5000,
   expiresAt: instantToLocalDateTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()) ?? '',
 })
-const renewalTarget = ref<CenterUpstreamAccount | null>(null)
-const renewalForm = ref({ expiresAt: '', reason: '' })
-const passwordResetTarget = ref<CenterUpstreamAccount | null>(null)
-const passwordResetDraft = ref('')
-const passwordResetReason = ref('')
+const editAccountTarget = ref<CenterUpstreamAccount | null>(null)
+const editAccountDialogOpen = ref(false)
+const editAccountForm = ref({
+  expiresAt: '',
+  newPassword: '',
+  additionalQuota: 0,
+  maxSingleAmount: 1000,
+  maxIssueExposure: 5000,
+})
 const statusTarget = ref<CenterUpstreamAccount | null>(null)
 const statusReason = ref('')
 const oneTimeCredential = ref<{ username: string; password: string; action: string } | null>(null)
 const oneTimeCredentialVisible = ref(false)
-const quotaForm = ref({ accountId: 0, amount: 0, reason: '', idempotencyKey: '' })
-
 const settleForm = ref({ gameCode: 'AU8', issueNumber: '' })
 
-// P1-C1：代理级风控
-const riskForm = ref<{ agentId: number; maxSingleAmount: number | ''; maxIssueExposure: number | '' }>({
-  agentId: 0,
-  maxSingleAmount: '',
-  maxIssueExposure: '',
-})
 const riskHits = ref<CenterRiskHit[]>([])
 const riskAgentId = ref<number | null>(null)
 const riskSummary = ref<CenterRiskRuleSummary[]>([])
@@ -246,17 +252,130 @@ async function loadSummaries() {
   summaries.value = await api.centerOrderSummary()
 }
 
-async function loadLedger(agentId: number, nextPage = 1) {
-  ledgerAgentId.value = agentId
-  const result = await api.centerAgentLedger(agentId, { page: nextPage, pageSize: ledgerPageSize })
-  ledger.value = result.items
-  ledgerPage.value = result.page
-  ledgerTotal.value = result.total
-  ledgerBalanced.value = result.balanced
+function ledgerGroupKey(group: CenterLedgerGroup) {
+  return `${group.groupType}:${group.groupReferenceId}`
 }
 
-async function changeLedgerPage(page: number) {
-  if (ledgerAgentId.value !== null) await loadLedger(ledgerAgentId.value, page)
+async function loadLedgerGroups(page = 1) {
+  const account = ledgerAccount.value
+  if (!account) return
+  const sequence = ++ledgerLoadSequence
+  ledgerGroupsLoading.value = true
+  try {
+    const result = await api.centerAccountLedgerGroups(account.accountId, {
+      page,
+      pageSize: ledgerGroupPageSize,
+    })
+    if (sequence !== ledgerLoadSequence || ledgerAccount.value?.accountId !== account.accountId) return
+    ledgerGroups.value = result.items
+    ledgerGroupPage.value = result.page
+    ledgerGroupTotal.value = result.total
+    ledgerBalanced.value = result.balanced
+    expandedLedgerEntries.value = {}
+    ledgerEntryErrors.value = {}
+  } catch (cause) {
+    if (sequence === ledgerLoadSequence) adminNotice.error(apiErrorMessage(cause, '中心账号流水加载失败'))
+  } finally {
+    if (sequence === ledgerLoadSequence) ledgerGroupsLoading.value = false
+  }
+}
+
+function openAccountLedger(account: CenterUpstreamAccount) {
+  ledgerAccount.value = account
+  ledgerGroups.value = []
+  ledgerGroupPage.value = 1
+  ledgerGroupTotal.value = 0
+  ledgerBalanced.value = true
+  expandedLedgerEntries.value = {}
+  ledgerEntryLoading.value = {}
+  ledgerEntryErrors.value = {}
+  ledgerDrawerOpen.value = true
+  void loadLedgerGroups(1)
+}
+
+function closeAccountLedger() {
+  ledgerLoadSequence++
+  ledgerDrawerOpen.value = false
+  ledgerAccount.value = null
+  ledgerGroups.value = []
+  ledgerGroupTotal.value = 0
+  ledgerGroupsLoading.value = false
+  expandedLedgerEntries.value = {}
+  ledgerEntryLoading.value = {}
+  ledgerEntryErrors.value = {}
+}
+
+async function loadLedgerGroupEntries(group: CenterLedgerGroup) {
+  const account = ledgerAccount.value
+  if (!account) return
+  const key = ledgerGroupKey(group)
+  const accountId = account.accountId
+  if (expandedLedgerEntries.value[key]) return
+  ledgerEntryLoading.value = { ...ledgerEntryLoading.value, [key]: true }
+  const { [key]: _removed, ...otherErrors } = ledgerEntryErrors.value
+  ledgerEntryErrors.value = otherErrors
+  try {
+    const entries = await api.centerAccountLedgerGroupEntries(accountId, group.groupType, group.groupReferenceId)
+    if (ledgerAccount.value?.accountId === accountId && ledgerDrawerOpen.value) {
+      expandedLedgerEntries.value = { ...expandedLedgerEntries.value, [key]: entries }
+    }
+  } catch (cause) {
+    if (ledgerAccount.value?.accountId === accountId && ledgerDrawerOpen.value) {
+      ledgerEntryErrors.value = { ...ledgerEntryErrors.value, [key]: apiErrorMessage(cause, '流水明细加载失败') }
+    }
+  } finally {
+    if (ledgerAccount.value?.accountId === accountId) {
+      const { [key]: _loading, ...remaining } = ledgerEntryLoading.value
+      ledgerEntryLoading.value = remaining
+    }
+  }
+}
+
+async function changeLedgerGroupPage(page: number) {
+  await loadLedgerGroups(page)
+}
+
+function ledgerEntryTypeLabel(value: string | null) {
+  const labels: Record<string, string> = {
+    OPENING_BALANCE: '期初额度',
+    CREDIT_GRANT: '追加额度',
+    CREDIT_ADJUST: '额度调整',
+    BET_FREEZE: '订单风险冻结',
+    BET_UNFREEZE: '订单风险释放',
+    UPSTREAM_MOVE: '风险额度转移',
+    SETTLE_WIN: '代理赢结算',
+    SETTLE_LOSE: '代理输结算',
+    SETTLE_REFUND: '退款/流局结算',
+  }
+  return value ? labels[value] ?? value : '—'
+}
+
+function ledgerGroupKindLabel(group: CenterLedgerGroup) {
+  if (group.groupType === 'ORDER') return '订单'
+  if (group.sourceReferenceType === 'CENTER_ORDER') return '未关联订单'
+  if (group.sourceReferenceType === 'CENTER_AGENT') return '账号额度变动'
+  return '独立流水'
+}
+
+function ledgerGroupSettlementLabel(group: CenterLedgerGroup) {
+  if (group.groupType !== 'ORDER') {
+    return `${bucketLabel(group.bucket ?? '')} · ${group.direction === 'IN' ? '增加' : '减少'}`
+  }
+  if (!group.settleResult) return statusLabel(group.orderStatus ?? '—')
+  return `${settleLabel(group.settleResult)}${group.settleAmount === null ? '' : ` ${money(group.settleAmount)}`}`
+}
+
+function ledgerGroupChangeSummary(group: CenterLedgerGroup) {
+  if (group.groupType === 'ORDER') return '—'
+  return `${money(group.balanceBefore)} → ${money(group.balanceAfter)} · ${group.reason ?? '—'}`
+}
+
+function onLedgerGroupExpand(group: CenterLedgerGroup, expandedRows: CenterLedgerGroup[]) {
+  const key = ledgerGroupKey(group)
+  if (expandedRows.some(row => ledgerGroupKey(row) === key)
+      && !expandedLedgerEntries.value[key] && !ledgerEntryLoading.value[key]) {
+    void loadLedgerGroupEntries(group)
+  }
 }
 
 async function loadMachineSessions(account: CenterUpstreamAccount) {
@@ -301,7 +420,9 @@ async function refresh() {
   error.value = ''
   try {
     await Promise.all([loadAgents(), loadCenterAccounts(), loadOrders(1), loadSummaries(), loadReconciliation()])
-    if (ledgerAgentId.value) await loadLedger(ledgerAgentId.value)
+    if (ledgerDrawerOpen.value && ledgerAccount.value) {
+      await loadLedgerGroups(ledgerGroupPage.value)
+    }
   } catch (cause) {
     error.value = apiErrorMessage(cause, '中心上游数据加载失败')
   } finally {
@@ -322,44 +443,14 @@ function closeOneTimeCredential() {
 function openCreateAccount() {
   centerAccountForm.value = {
     groupId: null,
+    username: '',
+    password: '',
     initialQuota: 0,
+    maxSingleAmount: 1000,
+    maxIssueExposure: 5000,
     expiresAt: instantToLocalDateTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()) ?? '',
   }
   showCreateCenterAccount.value = true
-}
-
-function openCenterQuota(account: CenterUpstreamAccount) {
-  quotaForm.value = {
-    accountId: account.accountId,
-    amount: 0,
-    reason: '',
-    idempotencyKey: `center-quota-${account.accountId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-  }
-}
-
-async function grantCenterQuota() {
-  const form = quotaForm.value
-  if (form.accountId <= 0 || !Number.isInteger(form.amount) || form.amount <= 0 || !form.idempotencyKey) {
-    adminNotice.warning('请选择中心账号并输入正整数额度')
-    return
-  }
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    await api.grantCenterAgent(form.accountId, {
-      amount: Number(form.amount),
-      reason: form.reason.trim(),
-      idempotencyKey: form.idempotencyKey,
-    })
-    feedback.value = '中心账号可用额度已增加'
-    quotaForm.value = { accountId: 0, amount: 0, reason: '', idempotencyKey: '' }
-    await refresh()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '中心账号额度调整失败'))
-  } finally {
-    busy.value = false
-  }
 }
 
 async function createCenterAccount() {
@@ -373,12 +464,21 @@ async function createCenterAccount() {
     adminNotice.warning('有效期必须晚于当前时间')
     return
   }
+  if (draft.maxSingleAmount <= 0 || draft.maxIssueExposure < draft.maxSingleAmount) {
+    adminNotice.warning('单笔上限必须大于零，单期敞口上限不能低于单笔上限')
+    return
+  }
 
   const payload: CreateCenterUpstreamAccountRequest = {
     groupId: draft.groupId,
     initialQuota: Number(draft.initialQuota) || 0,
     expiresAt,
+    maxSingleAmount: Number(draft.maxSingleAmount),
+    maxIssueExposure: Number(draft.maxIssueExposure),
   }
+  const username = draft.username.trim()
+  if (username) payload.username = username
+  if (draft.password) payload.password = draft.password
   busy.value = true
   error.value = ''
   feedback.value = ''
@@ -390,6 +490,7 @@ async function createCenterAccount() {
       action: '中心账号已创建',
     }
     oneTimeCredentialVisible.value = true
+    centerAccountForm.value.password = ''
     showCreateCenterAccount.value = false
     feedback.value = '中心账号已创建'
     await refresh()
@@ -400,76 +501,72 @@ async function createCenterAccount() {
   }
 }
 
-function openRenewal(account: CenterUpstreamAccount) {
-  renewalTarget.value = account
-  const currentExpiry = account.expiresAt ? new Date(account.expiresAt) : new Date()
-  const base = Number.isNaN(currentExpiry.getTime()) || currentExpiry.getTime() < Date.now()
-    ? new Date()
-    : currentExpiry
-  base.setDate(base.getDate() + 30)
-  renewalForm.value = { expiresAt: instantToLocalDateTime(base.toISOString()) ?? '', reason: '' }
-  passwordResetTarget.value = null
-  passwordResetDraft.value = ''
+function openEditCenterAccount(account: CenterUpstreamAccount) {
+  editAccountTarget.value = account
+  editAccountForm.value = {
+    expiresAt: account.expiresAt ? instantToLocalDateTime(account.expiresAt) ?? '' : '',
+    newPassword: '',
+    additionalQuota: 0,
+    maxSingleAmount: Number(account.maxSingleAmount),
+    maxIssueExposure: Number(account.maxIssueExposure),
+  }
+  editAccountDialogOpen.value = true
 }
 
-async function renewCenterAccount() {
-  if (!renewalTarget.value) return
-  if (!renewalForm.value.reason.trim()) {
-    adminNotice.warning('请填写续期原因')
+function closeEditCenterAccount() {
+  editAccountDialogOpen.value = false
+  editAccountTarget.value = null
+  editAccountForm.value.newPassword = ''
+}
+
+async function saveCenterAccountEdit() {
+  const account = editAccountTarget.value
+  const draft = editAccountForm.value
+  if (!account) return
+  const expiresAt = localDateTimeToInstant(draft.expiresAt)
+  if (!expiresAt || !localDateTimeIsFuture(draft.expiresAt)) {
+    adminNotice.warning('有效期必须晚于当前时间')
     return
   }
-  const expiresAt = localDateTimeToInstant(renewalForm.value.expiresAt)
-  if (!expiresAt || !localDateTimeIsFuture(renewalForm.value.expiresAt)) {
-    adminNotice.warning('新到期时间必须晚于当前时间')
+  if (!Number.isInteger(draft.additionalQuota) || draft.additionalQuota < 0) {
+    adminNotice.warning('追加额度必须是非负整数')
     return
   }
+  if (!Number.isFinite(draft.maxSingleAmount) || draft.maxSingleAmount <= 0
+      || !Number.isFinite(draft.maxIssueExposure) || draft.maxIssueExposure <= 0) {
+    adminNotice.warning('单笔上限和单期敞口上限必须大于零')
+    return
+  }
+  if (draft.maxIssueExposure < draft.maxSingleAmount) {
+    adminNotice.warning('单期敞口上限不能低于单笔上限')
+    return
+  }
+
+  const payload: EditCenterUpstreamAccountRequest = {
+    expiresAt,
+    additionalQuota: draft.additionalQuota,
+    maxSingleAmount: draft.maxSingleAmount,
+    maxIssueExposure: draft.maxIssueExposure,
+  }
+  if (draft.newPassword) payload.newPassword = draft.newPassword
   busy.value = true
   error.value = ''
   feedback.value = ''
   try {
-    await api.renewCenterUpstreamAccount(renewalTarget.value.accountId, expiresAt, renewalForm.value.reason.trim())
-    feedback.value = `中心账号 ${renewalTarget.value.username} 的有效期已更新`
-    renewalTarget.value = null
+    await api.editCenterUpstreamAccount(account.accountId, payload)
+    if (draft.newPassword) {
+      oneTimeCredential.value = {
+        username: account.username,
+        password: draft.newPassword,
+        action: '中心账号密码已更新',
+      }
+      oneTimeCredentialVisible.value = true
+    }
+    feedback.value = `中心账号 ${account.username} 已更新`
+    closeEditCenterAccount()
     await refresh()
   } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '中心账号续期失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
-function openPasswordReset(account: CenterUpstreamAccount) {
-  passwordResetTarget.value = account
-  passwordResetDraft.value = ''
-  passwordResetReason.value = ''
-  renewalTarget.value = null
-}
-
-async function resetCenterAccountPassword() {
-  if (!passwordResetTarget.value) return
-  if (!passwordResetDraft.value) {
-    adminNotice.warning('请输入新密码')
-    return
-  }
-  if (!passwordResetReason.value.trim()) {
-    adminNotice.warning('请填写重置原因')
-    return
-  }
-  const account = passwordResetTarget.value
-  const newPassword = passwordResetDraft.value
-  passwordResetDraft.value = ''
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    await api.resetCenterUpstreamAccountPassword(account.accountId, newPassword, passwordResetReason.value.trim())
-    oneTimeCredential.value = { username: account.username, password: newPassword, action: '中心账号密码已重置' }
-    oneTimeCredentialVisible.value = true
-    passwordResetTarget.value = null
-    feedback.value = '中心账号密码已重置'
-    await refresh()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '重置中心账号密码失败'))
+    adminNotice.error(apiErrorMessage(cause, '保存中心账号失败'))
   } finally {
     busy.value = false
   }
@@ -529,13 +626,7 @@ async function deleteCenterAccount(account: CenterUpstreamAccount) {
   try {
     await api.deleteCenterUpstreamAccount(account.accountId, reason)
     if (sessionAccount.value?.accountId === account.accountId) closeMachineSessions()
-    if (ledgerAgentId.value === account.accountId) {
-      ledgerAgentId.value = null
-      ledger.value = []
-      ledgerTotal.value = 0
-      ledgerBalanced.value = true
-    }
-    if (quotaForm.value.accountId === account.accountId) quotaForm.value.accountId = 0
+    if (ledgerAccount.value?.accountId === account.accountId) closeAccountLedger()
     feedback.value = `中心账号 ${account.username} 及其中心侧业务数据已删除；机器积分未调整`
     await refresh()
   } catch (cause) {
@@ -571,31 +662,6 @@ async function settle() {
     await refresh()
   } catch (cause) {
     adminNotice.error(apiErrorMessage(cause, '补齐开奖结算失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
-// ---------------------------------------------------------------
-// P1-C1：代理级风控上限与命中记录
-// ---------------------------------------------------------------
-
-async function saveRiskLimits() {
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    // 空字符串表示"回退全局默认"（后端 null → 用全局常量）。
-    const single = riskForm.value.maxSingleAmount
-    const exposure = riskForm.value.maxIssueExposure
-    await api.setCenterAgentRiskLimits(riskForm.value.agentId, {
-      maxSingleAmount: single === '' || single === null ? null : Number(single),
-      maxIssueExposure: exposure === '' || exposure === null ? null : Number(exposure),
-    })
-    feedback.value = '代理级风控上限已更新'
-    await refresh()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '设置代理级风控上限失败'))
   } finally {
     busy.value = false
   }
@@ -794,58 +860,44 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <section v-if="tab === 'overview'" class="center-panel">
-      <el-row :gutter="12" class="center-stats">
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心账号（启用）" :value="activeCenterAccounts.length"><template #suffix> / {{ centerAccounts.length }}</template></el-statistic></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="可用额度合计" :value="totals.available" :precision="2" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="冻结额度合计" :value="totals.frozen" :precision="2" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="上游未结算合计" :value="totals.unsettled" :precision="2" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="对账状态" :formatter="() => reconciliation?.balanced ? '已对平' : '有差异'" /></el-col>
-      </el-row>
-
-      <h2>订单状态汇总</h2>
-      <el-table scrollbar-always-on :data="summaries" row-key="status" border stripe class="center-table" empty-text="暂无中心订单">
-        <el-table-column label="状态" min-width="150"><template #default="{ row }"><el-tag effect="plain">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
-        <el-table-column prop="total" label="笔数" width="120" align="right" />
-        <el-table-column label="金额合计" width="180" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
-        <template #empty><el-empty description="暂无中心订单" /></template>
-      </el-table>
-
-      <h2>第二层结算</h2>
-      <p class="center-hint">开奖确认时会自动结算本地注单和中心订单；此处只补齐已确认开奖后仍未完成的结算。</p>
-      <el-form :model="settleForm" inline class="center-form">
-        <el-form-item label="游戏编码"><el-input v-model="settleForm.gameCode" /></el-form-item>
-        <el-form-item label="期号"><el-input v-model="settleForm.issueNumber" placeholder="输入待补齐的期号" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy || !settleForm.gameCode.trim() || !settleForm.issueNumber.trim()" :loading="busy" @click="settle">按确认结果补齐</el-button></el-form-item>
-      </el-form>
-      <div v-if="settlement" class="center-settle-result">
-        <el-alert type="info" :closable="false" :title="settlement.message" />
-      </div>
-    </section>
-
-    <section v-else-if="tab === 'accounts'" class="center-panel">
+    <section v-if="tab === 'accounts'" class="center-panel">
       <div class="center-actions">
         <span class="center-hint">账号绑定代理子账号；同一代理子账号只分配一个中心账号。</span>
         <el-button type="primary" @click="openCreateAccount">分配中心账号</el-button>
       </div>
 
-      <el-form v-if="showCreateCenterAccount" :model="centerAccountForm" inline class="center-form center-form-block account-form">
-        <el-form-item label="代理子账号">
-          <el-select v-model="centerAccountForm.groupId" placeholder="选择代理子账号" filterable>
-            <el-option v-for="group in availableAgentGroups" :key="group.id" :label="`${group.displayName}（${group.code}）`" :value="group.id" />
-          </el-select>
-        </el-form-item>
-        <span class="account-form-note">账号名与密码将在创建时自动生成，创建后仅展示一次。</span>
-        <el-form-item label="初始额度"><el-input-number v-model="centerAccountForm.initialQuota" :min="0" :precision="2" :step="100" controls-position="right" /></el-form-item>
-        <el-form-item label="有效期">
-          <el-date-picker v-model="centerAccountForm.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" clearable placeholder="留空按 7 天" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :disabled="busy || centerAccountForm.groupId === null" :loading="busy" @click="createCenterAccount">创建账号</el-button>
-          <el-button :disabled="busy" @click="showCreateCenterAccount = false">取消</el-button>
-        </el-form-item>
-        <p class="account-form-note">初始额度为虚拟积分。成功后账号名和密码只展示一次；留空有效期由服务端设置为 7 天。</p>
-      </el-form>
+      <el-dialog v-model="showCreateCenterAccount" title="分配中心账号" width="min(640px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close @closed="centerAccountForm.password = ''">
+        <el-form :model="centerAccountForm" class="center-account-form" label-position="top" @submit.prevent="createCenterAccount">
+          <el-form-item label="代理子账号" required class="form-span-all">
+            <el-select v-model="centerAccountForm.groupId" placeholder="选择代理子账号" filterable>
+              <el-option v-for="group in availableAgentGroups" :key="group.id" :label="`${group.displayName}（${group.code}）`" :value="group.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="用户名">
+            <el-input v-model="centerAccountForm.username" maxlength="64" autocomplete="username" placeholder="留空自动生成 loc<子账号ID>_<随机后缀>" />
+          </el-form-item>
+          <el-form-item label="密码">
+            <el-input v-model="centerAccountForm.password" type="password" show-password maxlength="72" autocomplete="new-password" placeholder="留空使用默认密码 test123456" />
+          </el-form-item>
+          <el-form-item label="初始额度">
+            <el-input-number v-model="centerAccountForm.initialQuota" :min="0" :precision="2" :step="100" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="单笔上限">
+            <el-input-number v-model="centerAccountForm.maxSingleAmount" :min="0.01" :precision="2" :step="100" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="单期敞口上限">
+            <el-input-number v-model="centerAccountForm.maxIssueExposure" :min="0.01" :precision="2" :step="500" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="有效期">
+            <el-date-picker v-model="centerAccountForm.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" clearable placeholder="留空按 7 天" />
+          </el-form-item>
+          <p class="account-form-note form-span-all">留空用户名沿用系统命名规则；留空密码使用统一默认密码。初始额度为虚拟积分；创建成功后账号和密码只展示一次。</p>
+          <div class="dialog-footer form-span-all">
+            <el-button :disabled="busy" @click="showCreateCenterAccount = false">取消</el-button>
+            <el-button type="primary" :disabled="busy || centerAccountForm.groupId === null" :loading="busy" @click="createCenterAccount">创建账号</el-button>
+          </div>
+        </el-form>
+      </el-dialog>
 
       <el-alert v-if="!availableAgentGroups.length && !centerAccounts.length" type="info" :closable="false" title="没有可分配中心账号的有效代理子账号" />
       <el-table scrollbar-always-on :data="centerAccounts" row-key="accountId" border stripe class="center-table" empty-text="还没有中心账号">
@@ -858,15 +910,13 @@ onMounted(async () => {
         <el-table-column label="未结押注" width="130" align="right"><template #default="{ row }">{{ money(row.openStake) }}</template></el-table-column>
         <el-table-column label="有效期至" min-width="170"><template #default="{ row }">{{ row.expiresAt ? row.expiresAt.replace('T', ' ').slice(0, 19) : '—' }}</template></el-table-column>
         <el-table-column label="最近登录" min-width="170"><template #default="{ row }">{{ row.lastLoginAt ? row.lastLoginAt.replace('T', ' ').slice(0, 19) : '—' }}</template></el-table-column>
-        <el-table-column label="操作" fixed="right" width="405">
+        <el-table-column label="操作" fixed="right" width="350">
           <template #default="{ row }">
             <el-space wrap>
+              <el-button link type="primary" :disabled="busy" @click="openEditCenterAccount(row as CenterUpstreamAccount)">编辑</el-button>
               <el-button link type="primary" :disabled="busy" @click="openCenterAccountStatus(row as CenterUpstreamAccount)">{{ row.status === 'DISABLED' ? '恢复' : '停用' }}</el-button>
-              <el-button link type="primary" :disabled="busy" @click="openRenewal(row as CenterUpstreamAccount)">续期</el-button>
-              <el-button link type="primary" :disabled="busy" @click="openPasswordReset(row as CenterUpstreamAccount)">重置密码</el-button>
-              <el-button link type="primary" :disabled="busy" @click="openCenterQuota(row as CenterUpstreamAccount)">追加额度</el-button>
               <el-button link type="primary" :disabled="busy" @click="loadMachineSessions(row as CenterUpstreamAccount)">机器会话</el-button>
-              <el-button link type="primary" :disabled="busy" @click="loadLedger(row.accountId); tab = 'ledger'">流水</el-button>
+              <el-button link type="primary" :disabled="busy" @click="openAccountLedger(row as CenterUpstreamAccount)">流水</el-button>
               <el-button link type="danger" :disabled="busy" @click="deleteCenterAccount(row as CenterUpstreamAccount)">删除</el-button>
             </el-space>
           </template>
@@ -891,12 +941,30 @@ onMounted(async () => {
         </el-table>
       </div>
 
-      <el-form v-if="quotaForm.accountId" :model="quotaForm" inline class="center-form center-form-block account-action-form">
-        <el-form-item><template #label><strong>为中心账号 #{{ quotaForm.accountId }} 追加可用额度</strong></template></el-form-item>
-        <el-form-item label="额度"><el-input-number v-model="quotaForm.amount" :min="0" :precision="0" :step="1" :formatter="(value) => Number(value ?? 0).toFixed(2)" controls-position="right" /></el-form-item>
-        <el-form-item label="调整原因"><el-input v-model="quotaForm.reason" maxlength="255" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy || !Number.isInteger(quotaForm.amount) || quotaForm.amount <= 0 || !quotaForm.reason.trim()" :loading="busy" @click="grantCenterQuota">确认追加</el-button><el-button @click="quotaForm.accountId = 0">取消</el-button></el-form-item>
-      </el-form>
+      <el-dialog v-model="editAccountDialogOpen" :title="editAccountTarget ? `编辑中心账号：${editAccountTarget.username}` : '编辑中心账号'" width="min(720px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close @close="closeEditCenterAccount">
+        <el-form :model="editAccountForm" class="center-account-form center-account-edit-form" label-position="top" @submit.prevent="saveCenterAccountEdit">
+          <el-form-item label="有效期" required>
+            <el-date-picker v-model="editAccountForm.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" class="full-width" />
+          </el-form-item>
+          <el-form-item label="新密码">
+            <el-input v-model="editAccountForm.newPassword" type="password" show-password maxlength="72" autocomplete="new-password" placeholder="留空表示不修改密码" />
+          </el-form-item>
+          <el-form-item label="追加可用额度">
+            <el-input-number v-model="editAccountForm.additionalQuota" :min="0" :precision="0" :step="100" controls-position="right" class="full-width" />
+          </el-form-item>
+          <el-form-item label="单笔上限" required>
+            <el-input-number v-model="editAccountForm.maxSingleAmount" :min="0.01" :precision="2" :step="100" controls-position="right" class="full-width" />
+          </el-form-item>
+          <el-form-item label="单期敞口上限" required>
+            <el-input-number v-model="editAccountForm.maxIssueExposure" :min="0.01" :precision="2" :step="500" controls-position="right" class="full-width" />
+          </el-form-item>
+          <p class="account-form-note form-span-all">追加额度填 0 表示不追加；无需填写原因。修改密码或有效期会让现有机器会话重新登录。</p>
+          <div class="dialog-footer form-span-all">
+            <el-button :disabled="busy" @click="closeEditCenterAccount">取消</el-button>
+            <el-button type="primary" :disabled="busy" :loading="busy" @click="saveCenterAccountEdit">保存</el-button>
+          </div>
+        </el-form>
+      </el-dialog>
 
       <el-form v-if="statusTarget" :model="{ statusReason }" inline class="center-form center-form-block account-action-form">
         <el-form-item><template #label><strong>{{ statusTarget.status === 'DISABLED' ? '恢复' : '停用' }}：{{ statusTarget.username }}</strong></template></el-form-item>
@@ -904,19 +972,6 @@ onMounted(async () => {
         <el-form-item><el-button type="primary" :disabled="busy || !statusReason.trim()" :loading="busy" @click="changeCenterAccountStatus">确认</el-button><el-button @click="statusTarget = null; statusReason = ''">取消</el-button></el-form-item>
       </el-form>
 
-      <el-form v-if="renewalTarget" :model="renewalForm" inline class="center-form center-form-block account-action-form">
-        <el-form-item><template #label><strong>续期：{{ renewalTarget.username }}</strong></template></el-form-item>
-        <el-form-item label="新有效期"><el-date-picker v-model="renewalForm.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" /></el-form-item>
-        <el-form-item label="续期原因"><el-input v-model="renewalForm.reason" maxlength="255" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy || !renewalForm.reason.trim()" :loading="busy" @click="renewCenterAccount">确认续期</el-button><el-button @click="renewalTarget = null">取消</el-button></el-form-item>
-      </el-form>
-
-      <el-form v-if="passwordResetTarget" inline class="center-form center-form-block account-action-form">
-        <el-form-item><template #label><strong>重置：{{ passwordResetTarget.username }}</strong></template></el-form-item>
-        <el-form-item label="新密码"><el-input v-model="passwordResetDraft" type="password" show-password autocomplete="new-password" /></el-form-item>
-        <el-form-item label="重置原因"><el-input v-model="passwordResetReason" maxlength="255" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy || !passwordResetDraft || !passwordResetReason.trim()" :loading="busy" @click="resetCenterAccountPassword">确认重置</el-button><el-button @click="passwordResetTarget = null; passwordResetDraft = ''; passwordResetReason = ''">取消</el-button></el-form-item>
-      </el-form>
     </section>
 
     <section v-else-if="tab === 'orders'" class="center-panel">
@@ -989,24 +1044,6 @@ onMounted(async () => {
       <div class="center-list-pagination"><span>共 {{ orderTotal }} 笔</span><el-pagination background layout="prev, pager, next" :current-page="orderPage" :page-size="orderPageSize" :total="orderTotal" @current-change="loadOrders" /></div>
     </section>
 
-    <section v-else-if="tab === 'ledger'" class="center-panel">
-      <el-empty v-if="!ledgerAgentId" description="请到「中心账号」选择账号查看流水。" />
-      <template v-else>
-        <el-alert class="center-hint" :type="ledgerBalanced ? 'success' : 'error'" :closable="false" :title="`代理 #${ledgerAgentId} 的账本流水 · 账本自检：${ledgerBalanced ? '一致' : '不一致'}`" />
-        <el-table scrollbar-always-on :data="ledger" row-key="id" border stripe class="center-table" empty-text="暂无流水">
-          <el-table-column label="层" min-width="140"><template #default="{ row }">{{ bucketLabel(row.bucket) }}</template></el-table-column>
-          <el-table-column prop="entryType" label="类型" min-width="150" />
-          <el-table-column label="方向" width="100"><template #default="{ row }"><el-tag :type="row.direction === 'IN' ? 'success' : 'warning'" effect="plain">{{ row.direction === 'IN' ? '增加' : '减少' }}</el-tag></template></el-table-column>
-          <el-table-column label="金额" width="130" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
-          <el-table-column label="变动前" width="140" align="right"><template #default="{ row }">{{ money(row.balanceBefore) }}</template></el-table-column>
-          <el-table-column label="变动后" width="140" align="right"><template #default="{ row }">{{ money(row.balanceAfter) }}</template></el-table-column>
-          <el-table-column label="说明" min-width="200"><template #default="{ row }">{{ row.reason ?? '—' }}</template></el-table-column>
-          <template #empty><el-empty description="暂无流水" /></template>
-        </el-table>
-        <div class="center-list-pagination"><span>共 {{ ledgerTotal }} 笔</span><el-pagination background layout="prev, pager, next" :current-page="ledgerPage" :page-size="ledgerPageSize" :total="ledgerTotal" @current-change="changeLedgerPage" /></div>
-      </template>
-    </section>
-
     <section v-else-if="tab === 'risk'" class="center-panel">
       <el-row :gutter="12" class="center-stats">
         <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="冻结敞口" :value="totals.frozen" :precision="2" /></el-col>
@@ -1015,13 +1052,6 @@ onMounted(async () => {
         <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="24h 风控命中" :value="riskSummary.reduce((sum, item) => sum + item.hitCount, 0)" /></el-col>
       </el-row>
       <el-alert class="center-hint" type="info" :closable="false" title="敞口 = 冻结额度 + 上游未结算。中心对每笔订单做单笔上限、单期敞口上限、可用额度与异常行为校验；超限的订单会被拒绝并留下命中记录，代理侧据此走失败退单。" />
-
-      <el-form :model="riskForm" inline class="center-form">
-        <el-form-item label="代理"><el-select v-model.number="riskForm.agentId" placeholder="请选择"><el-option label="请选择" :value="0" /><el-option v-for="row in agents" :key="row.id" :label="row.agentCode" :value="row.id" /></el-select></el-form-item>
-        <el-form-item label="单笔上限（留空=全局默认）"><el-input v-model="riskForm.maxSingleAmount" type="number" min="0" placeholder="100000" /></el-form-item>
-        <el-form-item label="单期敞口上限（留空=全局默认）"><el-input v-model="riskForm.maxIssueExposure" type="number" min="0" placeholder="500000" /></el-form-item>
-        <el-form-item><el-button type="primary" :disabled="busy || !riskForm.agentId" :loading="busy" @click="saveRiskLimits">保存代理级风控</el-button></el-form-item>
-      </el-form>
 
       <el-table scrollbar-always-on :data="agents" row-key="id" border stripe class="center-table" empty-text="还没有中心代理">
         <el-table-column prop="agentCode" label="代理编号" min-width="130" />
@@ -1138,6 +1168,59 @@ onMounted(async () => {
         </el-table>
       </div>
     </section>
+
+    <el-drawer v-model="ledgerDrawerOpen" direction="rtl" size="min(96vw, 1480px)" :with-header="false" :destroy-on-close="true" class="center-ledger-drawer" @closed="closeAccountLedger">
+      <div class="ledger-drawer-content">
+        <header class="ledger-drawer-header">
+          <div>
+            <h2>中心账号流水</h2>
+            <p>{{ ledgerAccount?.username ?? '—' }} · 账本自检：<el-tag :type="ledgerBalanced ? 'success' : 'danger'" effect="plain">{{ ledgerBalanced ? '一致' : '不一致' }}</el-tag></p>
+          </div>
+          <el-button @click="closeAccountLedger">关闭</el-button>
+        </header>
+        <el-alert class="center-hint" type="info" :closable="false" title="同一订单的额度冻结、层间转移和结算流水合并在一行；展开可查看每条原始分录。期初额度、追加额度等账号流水独立显示。" />
+        <el-table
+          v-loading="ledgerGroupsLoading"
+          :data="ledgerGroups"
+          :row-key="ledgerGroupKey"
+          border
+          stripe
+          class="center-table ledger-groups-table"
+          empty-text="暂无中心账号流水"
+          @expand-change="onLedgerGroupExpand"
+        >
+          <el-table-column type="expand" width="42">
+            <template #default="{ row }">
+              <el-alert v-if="ledgerEntryErrors[ledgerGroupKey(row as CenterLedgerGroup)]" type="error" :title="ledgerEntryErrors[ledgerGroupKey(row as CenterLedgerGroup)]" :closable="false" />
+              <el-skeleton v-else-if="ledgerEntryLoading[ledgerGroupKey(row as CenterLedgerGroup)]" :rows="2" animated />
+              <el-table v-else :data="expandedLedgerEntries[ledgerGroupKey(row as CenterLedgerGroup)] ?? []" row-key="id" border stripe size="small" empty-text="暂无关联分录">
+                <el-table-column prop="id" label="流水号" width="95" />
+                <el-table-column label="额度层" min-width="130"><template #default="{ row: entry }">{{ bucketLabel(entry.bucket) }}</template></el-table-column>
+                <el-table-column label="变动类型" min-width="150"><template #default="{ row: entry }">{{ ledgerEntryTypeLabel(entry.entryType) }} <small>{{ entry.entryType }}</small></template></el-table-column>
+                <el-table-column label="方向" width="95"><template #default="{ row: entry }"><el-tag :type="entry.direction === 'IN' ? 'success' : 'warning'" effect="plain">{{ entry.direction === 'IN' ? '增加' : '减少' }}</el-tag></template></el-table-column>
+                <el-table-column label="金额" width="120" align="right"><template #default="{ row: entry }">{{ money(entry.amount) }}</template></el-table-column>
+                <el-table-column label="变动前" width="130" align="right"><template #default="{ row: entry }">{{ money(entry.balanceBefore) }}</template></el-table-column>
+                <el-table-column label="变动后" width="130" align="right"><template #default="{ row: entry }">{{ money(entry.balanceAfter) }}</template></el-table-column>
+                <el-table-column label="说明" min-width="230"><template #default="{ row: entry }">{{ entry.reason ?? '—' }}</template></el-table-column>
+                <el-table-column label="时间" min-width="165"><template #default="{ row: entry }">{{ entry.createdAt.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
+              </el-table>
+            </template>
+          </el-table-column>
+          <el-table-column label="记录类型" width="145"><template #default="{ row }"><el-tag :type="row.groupType === 'ORDER' ? 'primary' : row.sourceReferenceType === 'CENTER_ORDER' ? 'danger' : 'info'" effect="plain">{{ ledgerGroupKindLabel(row as CenterLedgerGroup) }}</el-tag></template></el-table-column>
+          <el-table-column label="中心订单 / 流水" min-width="165"><template #default="{ row }">{{ row.groupType === 'ORDER' ? row.agentOrderNo : `流水 #${row.groupReferenceId}` }}</template></el-table-column>
+          <el-table-column label="本地单" width="105"><template #default="{ row }">{{ row.localBetId ?? '—' }}</template></el-table-column>
+          <el-table-column label="期号 / 彩种" min-width="155"><template #default="{ row }">{{ row.groupType === 'ORDER' ? `${row.gameCode} / ${row.issueNumber}` : row.sourceReferenceType === 'CENTER_ORDER' ? `订单引用 ${row.sourceReferenceId ?? '无效'}` : '账号级变动' }}</template></el-table-column>
+          <el-table-column label="玩法" min-width="140"><template #default="{ row }">{{ row.groupType === 'ORDER' ? `${row.playType ?? ''} ${row.playText ?? ''}` : ledgerEntryTypeLabel(row.entryType) }}</template></el-table-column>
+          <el-table-column label="本金 / 变动" width="125" align="right"><template #default="{ row }">{{ money(row.groupType === 'ORDER' ? row.orderAmount : row.amount) }}</template></el-table-column>
+          <el-table-column label="结算 / 额度层" min-width="155"><template #default="{ row }">{{ ledgerGroupSettlementLabel(row as CenterLedgerGroup) }}</template></el-table-column>
+          <el-table-column label="分录数" width="90" align="right"><template #default="{ row }">{{ row.entryCount }}</template></el-table-column>
+          <el-table-column label="说明 / 余额变化" min-width="230"><template #default="{ row }">{{ ledgerGroupChangeSummary(row as CenterLedgerGroup) }}</template></el-table-column>
+          <el-table-column label="最近变动" min-width="165"><template #default="{ row }">{{ row.latestEntryAt.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
+          <template #empty><el-empty description="暂无中心账号流水" /></template>
+        </el-table>
+        <div class="center-list-pagination"><span>共 {{ ledgerGroupTotal }} 条汇总记录</span><el-pagination background layout="prev, pager, next" :current-page="ledgerGroupPage" :page-size="ledgerGroupPageSize" :total="ledgerGroupTotal" @current-change="changeLedgerGroupPage" /></div>
+      </div>
+    </el-drawer>
     </div>
   </main>
 </template>
@@ -1169,6 +1252,13 @@ onMounted(async () => {
 .center-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 10px; }
 .center-actions .center-hint { margin: 0; }
 .account-form-note { flex: 1 0 100%; margin: 0 0 12px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.5; }
+.center-account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.center-account-form :deep(.el-form-item) { min-width: 0; }
+.center-account-form :deep(.el-select),
+.center-account-form :deep(.el-input-number),
+.center-account-form :deep(.el-date-editor) { width: 100%; }
+.form-span-all { grid-column: 1 / -1; }
+.dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
 .account-action-form { margin-top: 14px; }
 .machine-count { display: block; margin-top: 3px; }
 .credential-details { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px 14px; margin: 0; }
@@ -1179,12 +1269,22 @@ onMounted(async () => {
 .center-table code { color: var(--el-color-primary); font-size: 14px; }
 .center-table small { color: var(--el-text-color-secondary); }
 .center-settle-result { display: grid; gap: 12px; margin-top: 14px; }
+.ledger-drawer-content { display: grid; gap: 12px; min-width: 0; }
+.ledger-drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.ledger-drawer-header h2 { margin: 0 0 4px; font-size: 20px; }
+.ledger-drawer-header p { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; color: var(--el-text-color-secondary); }
+.ledger-groups-table { width: 100%; }
+:global(.center-ledger-drawer .el-drawer__body) { padding: 18px; overflow: auto; }
 @media (max-width: 900px) {
   .center-admin { width: calc(100% - 24px); padding-top: 14px; }
 }
 @media (max-width: 560px) {
   .center-admin { width: calc(100% - 20px); padding-top: 12px; }
+  :global(.center-ledger-drawer) { width: 100vw !important; }
+  :global(.center-ledger-drawer .el-drawer__body) { padding: 12px; }
   .center-header h1 { font-size: 24px; }
+  .center-account-form { grid-template-columns: 1fr; }
+  .center-account-form .form-span-all { grid-column: auto; }
   .center-form .el-form-item,
   .center-form .el-input,
   .center-form .el-select,

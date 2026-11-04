@@ -88,7 +88,7 @@ class PlayerPointsReportControllerTest {
                 "SELECT COUNT(*) FROM game_issue WHERE game_code='AU8' AND issue_number='20260921'", Integer.class);
         if (reportIssueCount == null || reportIssueCount == 0) {
             jdbc.update("INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count) "
-                    + "VALUES ('AU8', '20260921', 'CLOSED', 'SETTLED', 8)");
+                    + "VALUES ('AU8', '20260921', 'CLOSED', 'SETTLED', 7)");
         }
 
         insertLedger(normalAccountId, "ADMIN_GRANT", "100.00", "0.00", "100.00", "上分");
@@ -121,6 +121,14 @@ class PlayerPointsReportControllerTest {
                 VALUES (?, ?, ?, '20260921', 1, 'BET_TEXT', 'REPORT-ACTION-1', '第1球/1番30',
                         'SUCCEEDED', ?, ?)
                 """, actualBehaviorId, botId, botAccountId, timestamp(IN_DAY), timestamp(IN_DAY));
+        jdbc.update("""
+                INSERT INTO game_bet
+                    (user_id, bet_code, issue_number, ball_number, play_type, parameters_text,
+                     stake, odds_snapshot, rebate_rate_snapshot, special_rebate_rate_snapshot,
+                     settlement_status, created_at)
+                VALUES (?, 'REPORT-BOT-BET', '20260921', 1, 'FAN', '1', 20.00, 3.8515,
+                        0.0015, 0.0025, 'PENDING', ?)
+                """, botAccountId, timestamp(IN_DAY));
     }
 
     @AfterEach
@@ -150,6 +158,7 @@ class PlayerPointsReportControllerTest {
                 .andExpect(jsonPath("$.summary.topUp").value(100.00))
                 .andExpect(jsonPath("$.summary.down").value(25.00))
                 .andExpect(jsonPath("$.players[0].bets", hasSize(1)))
+                .andExpect(jsonPath("$.players[0].bets[0].odds").value(1.95))
                 .andExpect(jsonPath("$.players[0].pointOperations", hasSize(2)));
 
         mockMvc.perform(get("/api/admin/player-desk/points-records")
@@ -158,8 +167,18 @@ class PlayerPointsReportControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.playerKind").value("BOT"))
                 .andExpect(jsonPath("$.summary.playerCount").value(1))
+                .andExpect(jsonPath("$.summary.betCount").value(1))
+                .andExpect(jsonPath("$.players[0].bets[0].odds").value(3.8515))
                 .andExpect(jsonPath("$.players[0].botActions", hasSize(1)))
                 .andExpect(jsonPath("$.players[0].botActions[0].status").value("SUCCEEDED"));
+
+        mockMvc.perform(get("/api/admin/player-desk/points-records")
+                        .param("kind", "BOT").param("date", "2026-09-21").param("cutoffHour", "0")
+                        .header("Authorization", bearer(token)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cutoffHour").value(0))
+                .andExpect(jsonPath("$.fromInclusive").value("2026-09-20T16:00:00Z"))
+                .andExpect(jsonPath("$.toExclusive").value("2026-09-21T16:00:00Z"));
     }
 
     @Test

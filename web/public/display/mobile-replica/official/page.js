@@ -6,6 +6,52 @@ const liveDrawTimes = new Map();
 let liveRetryTimer;
 let liveRetryDelay = 10_000;
 let displayObserverHref = null;
+let middleContentHtml = null;
+
+function initializeMiddleContentToggle() {
+  const control = document.getElementById('xupan-middle-content-toggle');
+  const button = document.getElementById('xupan-middle-content-toggle-button');
+  const anchor = document.getElementById('xupan-middle-content-anchor');
+  if (!control || !button || !anchor || control.parentElement !== anchor.parentElement) return;
+
+  button.addEventListener('click', async () => {
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    if (expanded) {
+      let node = control.nextSibling;
+      while (node && node !== anchor) {
+        const next = node.nextSibling;
+        node.remove();
+        node = next;
+      }
+      button.setAttribute('aria-expanded', 'false');
+      button.textContent = '显示中段内容（约占页面一半）';
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = middleContentHtml ? '正在展开中段内容…' : '正在加载中段内容…';
+    try {
+      if (middleContentHtml === null) {
+        const response = await fetch('/display/mobile-replica/middle-content.html', {
+          headers: { Accept: 'text/html' },
+          cache: 'force-cache',
+        });
+        if (!response.ok) throw new Error('MOBILE_DISPLAY_MIDDLE_CONTENT_UNAVAILABLE');
+        middleContentHtml = await response.text();
+      }
+
+      const range = document.createRange();
+      range.selectNode(anchor);
+      anchor.before(range.createContextualFragment(middleContentHtml));
+      button.setAttribute('aria-expanded', 'true');
+      button.textContent = '收起中段内容';
+    } catch {
+      button.textContent = '加载失败，点击重试';
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
 
 function issueForDisplay(issue) {
   return String(issue || '').replace(/^20\d{2}(?=\d{3}$)/, '');
@@ -404,6 +450,7 @@ document.addEventListener('keydown', (event) => {
 
 document.addEventListener('submit', (event) => event.preventDefault());
 
+initializeMiddleContentToggle();
 void refreshLiveDraws();
 renderAu8Unavailable('正在读取本地七球开奖');
 void refreshAu8Draw();

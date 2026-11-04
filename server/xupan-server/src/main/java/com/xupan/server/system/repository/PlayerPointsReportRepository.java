@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -101,15 +102,7 @@ public class PlayerPointsReportRepository {
                   ) x
                  WHERE x.row_no <= ?
                  ORDER BY x.account_id, x.created_at DESC, x.id DESC
-                """, (rs, rowNum) -> new BetEvent(
-                rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
-                rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
-                rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
-                money(rs.getBigDecimal("odds_snapshot")), money(rs.getBigDecimal("rebate_rate_snapshot")),
-                money(rs.getBigDecimal("special_rebate_rate_snapshot")),
-                nullableMoney(rs.getBigDecimal("selection_unit_stake")), rs.getString("settlement_status"),
-                money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
-                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at"))),
+                """, (rs, rowNum) -> mapBetEvent(rs),
                 args.toArray());
     }
 
@@ -249,19 +242,19 @@ public class PlayerPointsReportRepository {
     }
 
     private static BigDecimal money(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO.setScale(2) : value.setScale(2);
+        return value == null ? BigDecimal.ZERO.setScale(2) : value.setScale(2, RoundingMode.HALF_UP);
     }
 
     private static BigDecimal nullableMoney(BigDecimal value) {
         return value == null ? null : money(value);
     }
 
-    private static BetEvent mapBetEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
+    static BetEvent mapBetEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new BetEvent(rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
                 rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
                 rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
-                money(rs.getBigDecimal("odds_snapshot")), money(rs.getBigDecimal("rebate_rate_snapshot")),
-                money(rs.getBigDecimal("special_rebate_rate_snapshot")),
+                rs.getBigDecimal("odds_snapshot"), rs.getBigDecimal("rebate_rate_snapshot"),
+                rs.getBigDecimal("special_rebate_rate_snapshot"),
                 nullableMoney(rs.getBigDecimal("selection_unit_stake")), rs.getString("settlement_status"),
                 money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
                 instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at")));

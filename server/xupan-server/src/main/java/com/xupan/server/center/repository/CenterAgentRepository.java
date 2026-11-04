@@ -236,6 +236,116 @@ public class CenterAgentRepository {
         return total == null ? 0 : total;
     }
 
+    /** Parent rows for the center account ledger: one group per order, one row per non-order entry. */
+    public List<LedgerGroupRow> findLedgerGroups(long centerAgentId, int page, int pageSize) {
+        return jdbc.query("""
+                WITH ledger_groups AS (
+                    SELECT 'ORDER' AS group_type, order_entries.reference_id AS group_reference_id,
+                           order_entries.sort_id, order_entries.latest_entry_at, order_entries.entry_count,
+                           o.id AS center_order_id, o.agent_order_no, o.local_bet_id, o.game_code,
+                           o.issue_number, o.play_type, o.play_text, o.amount AS order_amount,
+                           o.status AS order_status, o.settle_result, o.settle_amount,
+                           NULL AS bucket, NULL AS entry_type, NULL AS direction, NULL AS amount,
+                           NULL AS balance_before, NULL AS balance_after, NULL AS reason,
+                           'CENTER_ORDER' AS source_reference_type, CAST(o.id AS CHAR) AS source_reference_id
+                      FROM (
+                          SELECT center_agent_id, reference_id, MAX(id) AS sort_id,
+                                 MAX(created_at) AS latest_entry_at, COUNT(*) AS entry_count
+                            FROM center_agent_ledger
+                           WHERE center_agent_id = ? AND reference_type = 'CENTER_ORDER'
+                           GROUP BY center_agent_id, reference_id
+                      ) order_entries
+                      JOIN center_order o
+                        ON order_entries.reference_id = CAST(o.id AS CHAR)
+                       AND o.center_agent_id = order_entries.center_agent_id
+                    UNION ALL
+                    SELECT 'ENTRY' AS group_type, CAST(l.id AS CHAR) AS group_reference_id,
+                           l.id AS sort_id, l.created_at AS latest_entry_at, 1 AS entry_count,
+                           NULL AS center_order_id, NULL AS agent_order_no, NULL AS local_bet_id,
+                           NULL AS game_code, NULL AS issue_number, NULL AS play_type, NULL AS play_text,
+                           NULL AS order_amount, NULL AS order_status, NULL AS settle_result,
+                           NULL AS settle_amount, l.bucket, l.entry_type, l.direction, l.amount,
+                           l.balance_before, l.balance_after, l.reason, l.reference_type AS source_reference_type,
+                           l.reference_id AS source_reference_id
+                      FROM center_agent_ledger l
+                     WHERE l.center_agent_id = ?
+                       AND NOT (l.reference_type = 'CENTER_ORDER' AND EXISTS (
+                           SELECT 1 FROM center_order o
+                            WHERE o.center_agent_id = l.center_agent_id
+                              AND l.reference_id = CAST(o.id AS CHAR)
+                       ))
+                )
+                SELECT * FROM ledger_groups ORDER BY sort_id DESC LIMIT ? OFFSET ?
+                """, (rs, rowNum) -> new LedgerGroupRow(rs.getString("group_type"),
+                rs.getString("group_reference_id"), rs.getLong("sort_id"),
+                instant(rs.getTimestamp("latest_entry_at")), rs.getLong("entry_count"),
+                nullableLong(rs, "center_order_id"), rs.getString("agent_order_no"),
+                nullableLong(rs, "local_bet_id"), rs.getString("game_code"), rs.getString("issue_number"),
+                rs.getString("play_type"), rs.getString("play_text"), rs.getBigDecimal("order_amount"),
+                rs.getString("order_status"), rs.getString("settle_result"), rs.getBigDecimal("settle_amount"),
+                rs.getString("bucket"), rs.getString("entry_type"), rs.getString("direction"),
+                rs.getBigDecimal("amount"), rs.getBigDecimal("balance_before"),
+                rs.getBigDecimal("balance_after"), rs.getString("reason"),
+                rs.getString("source_reference_type"), rs.getString("source_reference_id")), centerAgentId, centerAgentId,
+                pageSize, (long) (page - 1) * pageSize);
+    }
+
+    public long countLedgerGroups(long centerAgentId) {
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM (
+                    SELECT o.id AS group_id
+                      FROM center_agent_ledger l
+                      JOIN center_order o
+                        ON l.reference_type = 'CENTER_ORDER'
+                       AND l.reference_id = CAST(o.id AS CHAR)
+                       AND o.center_agent_id = l.center_agent_id
+                     WHERE l.center_agent_id = ?
+                     GROUP BY o.id
+                    UNION ALL
+                    SELECT l.id AS group_id
+                      FROM center_agent_ledger l
+                     WHERE l.center_agent_id = ?
+                       AND NOT (l.reference_type = 'CENTER_ORDER' AND EXISTS (
+                           SELECT 1 FROM center_order o
+                            WHERE o.center_agent_id = l.center_agent_id
+                              AND l.reference_id = CAST(o.id AS CHAR)
+                       ))
+                ) AS ledger_group_count
+                """, Long.class, centerAgentId, centerAgentId);
+        return total == null ? 0 : total;
+    }
+
+    public List<LedgerRow> findOrderLedgerEntries(long centerAgentId, long centerOrderId) {
+        return jdbc.query("""
+                SELECT l.id, l.center_agent_id, l.bucket, l.entry_type, l.direction, l.amount,
+                       l.balance_before, l.balance_after, l.reason, l.reference_type, l.reference_id,
+                       l.idempotency_key, l.operator_user_id, l.created_at
+                  FROM center_agent_ledger l
+                  JOIN center_order o
+                    ON o.id = ? AND o.center_agent_id = l.center_agent_id
+                   AND l.reference_type = 'CENTER_ORDER'
+                   AND l.reference_id = CAST(o.id AS CHAR)
+                 WHERE l.center_agent_id = ?
+                 ORDER BY l.id
+                """, (rs, rowNum) -> ledgerRow(rs), centerOrderId, centerAgentId);
+    }
+
+    public Optional<LedgerRow> findStandaloneLedgerEntry(long centerAgentId, long ledgerEntryId) {
+        return jdbc.query("""
+                SELECT l.id, l.center_agent_id, l.bucket, l.entry_type, l.direction, l.amount,
+                       l.balance_before, l.balance_after, l.reason, l.reference_type, l.reference_id,
+                       l.idempotency_key, l.operator_user_id, l.created_at
+                  FROM center_agent_ledger l
+                 WHERE l.center_agent_id = ? AND l.id = ?
+                   AND NOT (l.reference_type = 'CENTER_ORDER' AND EXISTS (
+                       SELECT 1 FROM center_order o
+                        WHERE o.center_agent_id = l.center_agent_id
+                          AND l.reference_id = CAST(o.id AS CHAR)
+                   ))
+                """, (rs, rowNum) -> ledgerRow(rs), centerAgentId, ledgerEntryId)
+                .stream().findFirst();
+    }
+
     /**
      * 账本验算：每一层"最新一条流水的变动后余额"都应等于该层当前值。
      *
@@ -285,6 +395,11 @@ public class CenterAgentRepository {
         return value == null ? null : value.toInstant();
     }
 
+    private static Long nullableLong(ResultSet rs, String column) throws SQLException {
+        long value = rs.getLong(column);
+        return rs.wasNull() ? null : value;
+    }
+
     /** 一个中心代理身份（不含 token 原文，只含前缀与哈希存在性）。 */
     public record AgentRow(long id, String agentCode, String agentName, String upstreamAccount,
                            String tokenPrefix, String status, BigDecimal creditLimit,
@@ -299,6 +414,16 @@ public class CenterAgentRepository {
                             BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter, String reason,
                             String referenceType, String referenceId, String idempotencyKey,
                             Long operatorUserId, Instant createdAt) {
+    }
+
+    public record LedgerGroupRow(String groupType, String groupReferenceId, long sortId,
+                                 Instant latestEntryAt, long entryCount, Long centerOrderId,
+                                 String agentOrderNo, Long localBetId, String gameCode, String issueNumber,
+                                 String playType, String playText, BigDecimal orderAmount, String orderStatus,
+                                 String settleResult, BigDecimal settleAmount, String bucket, String entryType,
+                                 String direction, BigDecimal amount, BigDecimal balanceBefore,
+                                 BigDecimal balanceAfter, String reason,
+                                 String sourceReferenceType, String sourceReferenceId) {
     }
 
     /** 一次风控命中。 */

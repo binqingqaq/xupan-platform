@@ -2,11 +2,14 @@ package com.xupan.server.center.web;
 
 import com.xupan.server.auth.domain.AuthenticatedUser;
 import com.xupan.server.auth.service.AuthenticationService;
+import com.xupan.server.center.repository.CenterAgentRepository;
+import com.xupan.server.center.service.CenterAgentService;
 import com.xupan.server.center.service.CenterUpstreamAccountService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
 import jakarta.validation.constraints.Size;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
@@ -28,9 +32,12 @@ import java.util.List;
 public class CenterUpstreamAccountAdminController {
 
     private final CenterUpstreamAccountService service;
+    private final CenterAgentService agentService;
 
-    public CenterUpstreamAccountAdminController(CenterUpstreamAccountService service) {
+    public CenterUpstreamAccountAdminController(CenterUpstreamAccountService service,
+                                                CenterAgentService agentService) {
         this.service = service;
+        this.agentService = agentService;
     }
 
     @GetMapping
@@ -44,6 +51,27 @@ public class CenterUpstreamAccountAdminController {
         return service.machineSessions(id, operator(authentication));
     }
 
+    @GetMapping("/{id}/ledger-groups")
+    public CenterLedgerGroupPage ledgerGroups(Authentication authentication, @PathVariable long id,
+                                              @RequestParam(defaultValue = "1") int page,
+                                              @RequestParam(defaultValue = "20") int pageSize) {
+        long operator = operator(authentication);
+        service.requireManagedAccount(id, operator);
+        CenterAgentService.LedgerGroupPage result = agentService.ledgerGroups(id, page, pageSize, operator);
+        return new CenterLedgerGroupPage(result.items().stream().map(CenterLedgerGroup::from).toList(),
+                result.page(), result.pageSize(), result.total(), result.balanced());
+    }
+
+    @GetMapping("/{id}/ledger-groups/{groupType}/{referenceId}/entries")
+    public List<CenterLedgerEntryView> ledgerGroupEntries(Authentication authentication, @PathVariable long id,
+                                                          @PathVariable String groupType,
+                                                          @PathVariable String referenceId) {
+        long operator = operator(authentication);
+        service.requireManagedAccount(id, operator);
+        return agentService.ledgerGroupEntries(id, groupType, referenceId, operator).stream()
+                .map(CenterLedgerEntryView::from).toList();
+    }
+
     @PostMapping
     public CenterUpstreamAccountService.CreatedAccount create(
             Authentication authentication, @Valid @RequestBody CreateAccountRequest request) {
@@ -54,7 +82,8 @@ public class CenterUpstreamAccountAdminController {
     @PostMapping("/generated")
     public CenterUpstreamAccountService.GeneratedAccount createGenerated(
             Authentication authentication, @Valid @RequestBody CreateGeneratedAccountRequest request) {
-        return service.createGeneratedAccount(request.groupId(), request.initialQuota(),
+        return service.createGeneratedAccount(request.groupId(), request.username(), request.password(),
+                request.maxSingleAmount(), request.maxIssueExposure(), request.initialQuota(),
                 request.expiresAt(), operator(authentication));
     }
 
@@ -77,6 +106,14 @@ public class CenterUpstreamAccountAdminController {
             Authentication authentication, @PathVariable long id,
             @Valid @RequestBody ResetPasswordRequest request) {
         return service.resetPassword(id, request.newPassword(), request.reason(), operator(authentication));
+    }
+
+    @PatchMapping("/{id}")
+    public CenterUpstreamAccountService.AccountView edit(
+            Authentication authentication, @PathVariable long id,
+            @Valid @RequestBody EditAccountRequest request) {
+        return service.editAccount(id, request.expiresAt(), request.newPassword(), request.additionalQuota(),
+                request.maxSingleAmount(), request.maxIssueExposure(), operator(authentication));
     }
 
     @DeleteMapping("/{id}")
@@ -105,7 +142,49 @@ public class CenterUpstreamAccountAdminController {
     }
 
     public record CreateGeneratedAccountRequest(@NotNull @Positive Long groupId,
+                                                @Size(max = 64) String username,
+                                                @Size(max = 72) String password,
+                                                @Positive BigDecimal maxSingleAmount,
+                                                @Positive BigDecimal maxIssueExposure,
                                                 BigDecimal initialQuota, Instant expiresAt) {
+        @Override
+        public String toString() {
+            return "CreateGeneratedAccountRequest[groupId=" + groupId + ", username=" + username
+                    + ", password=[REDACTED], initialQuota=" + initialQuota + ", expiresAt=" + expiresAt + "]";
+        }
+    }
+
+    public record CenterLedgerGroupPage(List<CenterLedgerGroup> items, int page, int pageSize,
+                                        long total, boolean balanced) {
+    }
+
+    public record CenterLedgerGroup(String groupType, String groupReferenceId, Instant latestEntryAt,
+                                    long entryCount, Long centerOrderId, String agentOrderNo,
+                                    Long localBetId, String gameCode, String issueNumber, String playType,
+                                    String playText, BigDecimal orderAmount, String orderStatus,
+                                    String settleResult, BigDecimal settleAmount, String bucket,
+                                    String entryType, String direction, BigDecimal amount,
+                                    BigDecimal balanceBefore, BigDecimal balanceAfter, String reason,
+                                    String sourceReferenceType, String sourceReferenceId) {
+        static CenterLedgerGroup from(CenterAgentRepository.LedgerGroupRow row) {
+            return new CenterLedgerGroup(row.groupType(), row.groupReferenceId(), row.latestEntryAt(),
+                    row.entryCount(), row.centerOrderId(), row.agentOrderNo(), row.localBetId(),
+                    row.gameCode(), row.issueNumber(), row.playType(), row.playText(), row.orderAmount(),
+                    row.orderStatus(), row.settleResult(), row.settleAmount(), row.bucket(), row.entryType(),
+                    row.direction(), row.amount(), row.balanceBefore(), row.balanceAfter(), row.reason(),
+                    row.sourceReferenceType(), row.sourceReferenceId());
+        }
+    }
+
+    public record CenterLedgerEntryView(long id, String bucket, String entryType, String direction,
+                                        BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter,
+                                        String reason, String referenceType, String referenceId,
+                                        String idempotencyKey, Long operatorUserId, Instant createdAt) {
+        static CenterLedgerEntryView from(CenterAgentRepository.LedgerRow row) {
+            return new CenterLedgerEntryView(row.id(), row.bucket(), row.entryType(), row.direction(),
+                    row.amount(), row.balanceBefore(), row.balanceAfter(), row.reason(), row.referenceType(),
+                    row.referenceId(), row.idempotencyKey(), row.operatorUserId(), row.createdAt());
+        }
     }
 
     public record AccountStatusRequest(@NotBlank String status,
@@ -114,6 +193,19 @@ public class CenterUpstreamAccountAdminController {
 
     public record AccountExpiryRequest(@NotNull Instant expiresAt,
                                        @NotBlank @Size(max = 255) String reason) {
+    }
+
+    public record EditAccountRequest(@NotNull Instant expiresAt,
+                                     @Size(max = 72) String newPassword,
+                                     @NotNull @PositiveOrZero BigDecimal additionalQuota,
+                                     @NotNull @Positive BigDecimal maxSingleAmount,
+                                     @NotNull @Positive BigDecimal maxIssueExposure) {
+        @Override
+        public String toString() {
+            return "EditAccountRequest[expiresAt=" + expiresAt + ", newPassword=[REDACTED]"
+                    + ", additionalQuota=" + additionalQuota + ", maxSingleAmount=" + maxSingleAmount
+                    + ", maxIssueExposure=" + maxIssueExposure + "]";
+        }
     }
 
     public record ResetPasswordRequest(@NotBlank String newPassword,

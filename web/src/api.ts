@@ -66,7 +66,10 @@ import type {
   CenterMachineSession,
   CreatedCenterUpstreamAccount,
   CreateCenterUpstreamAccountRequest,
+  EditCenterUpstreamAccountRequest,
   CenterAgentLedgerPage,
+  CenterLedgerGroupPage,
+  CenterLedgerGroupEntry,
   CenterOrderPage,
   CenterOrderSummary,
   CenterRiskHit,
@@ -712,6 +715,10 @@ export const api = {
     request<CreatedCenterUpstreamAccount>('/api/admin/center/accounts/generated', {
       method: 'POST', body: JSON.stringify(body),
     }),
+  editCenterUpstreamAccount: (id: number, body: EditCenterUpstreamAccountRequest) =>
+    request<CenterUpstreamAccount>(`/api/admin/center/accounts/${id}`, {
+      method: 'PATCH', body: JSON.stringify(body),
+    }),
   changeCenterUpstreamAccountStatus: (id: number, status: Exclude<CenterUpstreamAccountStatus, 'EXPIRED'>, reason: string) =>
     request<CenterUpstreamAccount>(`/api/admin/center/accounts/${id}/status`, {
       method: 'PATCH', body: JSON.stringify({ status, reason }),
@@ -749,6 +756,16 @@ export const api = {
     search.set('pageSize', String(params.pageSize || 20))
     return request<CenterAgentLedgerPage>(`/api/admin/center/agents/${id}/ledger?${search.toString()}`)
   },
+  centerAccountLedgerGroups: (id: number, params: { page?: number; pageSize?: number } = {}) => {
+    const search = new URLSearchParams()
+    search.set('page', String(params.page || 1))
+    search.set('pageSize', String(params.pageSize || 20))
+    return request<CenterLedgerGroupPage>(`/api/admin/center/accounts/${id}/ledger-groups?${search.toString()}`)
+  },
+  centerAccountLedgerGroupEntries: (id: number, groupType: 'ORDER' | 'ENTRY', referenceId: string) =>
+    request<CenterLedgerGroupEntry[]>(
+      `/api/admin/center/accounts/${id}/ledger-groups/${groupType}/${encodeURIComponent(referenceId)}/entries`,
+    ),
   listCenterOrders: (params: {
     centerAgentId?: number; groupId?: number; machineId?: number; localBetId?: number;
     centerOrderNo?: string; gameCode?: string; issueNumber?: string; status?: string;
@@ -1076,8 +1093,8 @@ export const api = {
     }),
   updatePlayerNickname: (userId: number, displayName: string) => request<PlayerDeskDetail>(`/api/admin/player-desk/players/${userId}/nickname`, { method: 'PUT', body: JSON.stringify({ displayName }) }),
   getPlayerNameHistory: (userId: number) => request<PlayerNameHistory>(`/api/admin/player-desk/players/${userId}/name-history`),
-  getPlayerDeskPointRecords: (kind: 'NORMAL' | 'BOT', businessDate: string) => {
-    const query = new URLSearchParams({ kind, date: businessDate })
+  getPlayerDeskPointRecords: (kind: 'NORMAL' | 'BOT', businessDate: string, cutoffHour: 0 | 6 = 6) => {
+    const query = new URLSearchParams({ kind, date: businessDate, cutoffHour: String(cutoffHour) })
     return request<PlayerDeskPointRecords>(`/api/admin/player-desk/points-records?${query.toString()}`)
   },
   getPendingPointRequests: (limit = 100) =>

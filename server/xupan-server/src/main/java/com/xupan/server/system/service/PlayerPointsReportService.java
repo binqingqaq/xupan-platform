@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -27,6 +28,7 @@ public class PlayerPointsReportService {
 
     public static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Shanghai");
     private static final LocalTime BUSINESS_CUTOFF = LocalTime.of(6, 0);
+    private static final LocalTime MIDNIGHT_CUTOFF = LocalTime.MIDNIGHT;
     private static final int DEFAULT_DETAIL_LIMIT = 500;
     private static final int MAX_DETAIL_LIMIT = 1000;
 
@@ -40,10 +42,16 @@ public class PlayerPointsReportService {
 
     @Transactional(readOnly = true)
     public Report report(String kind, String date, int detailLimit, long operator) {
+        return report(kind, date, detailLimit, 6, operator);
+    }
+
+    @Transactional(readOnly = true)
+    public Report report(String kind, String date, int detailLimit, int cutoffHour, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         String playerKind = normalizeKind(kind);
         int safeDetailLimit = normalizeDetailLimit(detailLimit);
-        BusinessDay businessDay = resolveBusinessDay(date);
+        cutoffTime(cutoffHour);
+        BusinessDay businessDay = resolveBusinessDay(date, cutoffHour);
 
         List<PlayerPointsReportRepository.PlayerAccount> players = repository.findPlayers(
                 playerKind, businessDay.fromInclusive(), businessDay.toExclusive(), scope);
@@ -89,22 +97,29 @@ public class PlayerPointsReportService {
                 ? normalizeRebateMode(repository.findAgentRebateMode(machine.agentId()))
                 : reportRebateMode(resultCards);
         return new Report(businessDay.businessDate(), businessDay.fromInclusive(), businessDay.toExclusive(),
-                availableDates(businessDay.businessDate()), playerKind, rebateMode,
+                cutoffHour, availableDates(businessDay.businessDate(), cutoffHour),
+                availableDates(businessDay.businessDate(), 0), availableDates(businessDay.businessDate(), 6),
+                playerKind, rebateMode,
                 summary(resultCards), resultCards, safeDetailLimit);
     }
 
-    private static List<LocalDate> availableDates(LocalDate selectedDate) {
-        LocalDate current = currentBusinessDate();
+    private static List<LocalDate> availableDates(LocalDate selectedDate, int cutoffHour) {
+        LocalDate current = currentBusinessDate(cutoffHour);
         List<LocalDate> dates = IntStream.rangeClosed(0, 6)
                 .mapToObj(current::minusDays)
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
-        if (!dates.contains(selectedDate)) dates.add(selectedDate);
+        if (!selectedDate.isAfter(current) && !dates.contains(selectedDate)) dates.add(selectedDate);
         dates.sort(Comparator.reverseOrder());
         return List.copyOf(dates);
     }
 
     static BusinessDay resolveBusinessDay(String requestedDate) {
-        LocalDate currentBusinessDate = currentBusinessDate();
+        return resolveBusinessDay(requestedDate, 6);
+    }
+
+    static BusinessDay resolveBusinessDay(String requestedDate, int cutoffHour) {
+        LocalTime cutoff = cutoffTime(cutoffHour);
+        LocalDate currentBusinessDate = currentBusinessDate(cutoffHour);
         LocalDate date;
         if (requestedDate == null || requestedDate.isBlank()) {
             date = currentBusinessDate;
@@ -118,13 +133,24 @@ public class PlayerPointsReportService {
                 throw BusinessException.badRequest("POINTS_REPORT_DATE_INVALID", "不能查询未来业务日");
             }
         }
-        ZonedDateTime start = date.atTime(BUSINESS_CUTOFF).atZone(BUSINESS_ZONE);
+        ZonedDateTime start = date.atTime(cutoff).atZone(BUSINESS_ZONE);
         return new BusinessDay(date, start.toInstant(), start.plusDays(1).toInstant());
     }
 
     static LocalDate currentBusinessDate() {
+        return currentBusinessDate(6);
+    }
+
+    static LocalDate currentBusinessDate(int cutoffHour) {
+        LocalTime cutoff = cutoffTime(cutoffHour);
         ZonedDateTime now = Instant.now().atZone(BUSINESS_ZONE);
-        return now.toLocalDate().minusDays(now.toLocalTime().isBefore(BUSINESS_CUTOFF) ? 1 : 0);
+        return now.toLocalDate().minusDays(now.toLocalTime().isBefore(cutoff) ? 1 : 0);
+    }
+
+    private static LocalTime cutoffTime(int cutoffHour) {
+        if (cutoffHour == 0) return MIDNIGHT_CUTOFF;
+        if (cutoffHour == 6) return BUSINESS_CUTOFF;
+        throw BusinessException.badRequest("POINTS_REPORT_CUTOFF_INVALID", "业务日截点只能是 0 点或 6 点");
     }
 
     static int normalizeDetailLimit(int detailLimit) {
@@ -160,7 +186,7 @@ public class PlayerPointsReportService {
     }
 
     private static BigDecimal money(BigDecimal value) {
-        return (value == null ? BigDecimal.ZERO : value).setScale(2);
+        return (value == null ? BigDecimal.ZERO : value).setScale(2, RoundingMode.HALF_UP);
     }
 
     private static final class SummaryBuilder {
@@ -279,8 +305,9 @@ public class PlayerPointsReportService {
 
     public record BusinessDay(LocalDate businessDate, Instant fromInclusive, Instant toExclusive) {}
 
-    public record Report(LocalDate businessDate, Instant fromInclusive, Instant toExclusive, List<LocalDate> availableDates, String playerKind,
-                         String rebateMode,
+    public record Report(LocalDate businessDate, Instant fromInclusive, Instant toExclusive, int cutoffHour,
+                         List<LocalDate> availableDates, List<LocalDate> availableDatesAt00,
+                         List<LocalDate> availableDatesAt06, String playerKind, String rebateMode,
                          Summary summary, List<Card> players, int detailLimit) {}
 
     public record Summary(int playerCount, long betCount, long settledBetCount, BigDecimal turnover,

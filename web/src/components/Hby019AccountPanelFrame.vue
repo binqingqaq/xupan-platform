@@ -62,7 +62,7 @@ function currentState() {
       ball: bet.ballNumber > (props.maxBallNumber ?? 7) ? '历史订单' : `第${bet.ballNumber}球`,
       text: bet.ballNumber > (props.maxBallNumber ?? 7) ? '历史订单' : props.betText(bet),
       result: props.betResult(bet),
-      resultColor: bet.settlementStatus !== 'PENDING',
+      resultColor: bet.settlementStatus !== 'PENDING' && Number(bet.netProfit ?? 0) > 0,
       refunded: bet.settlementStatus === 'CANCELED',
       colorIndex,
       expanded,

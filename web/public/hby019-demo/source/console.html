@@ -1469,34 +1469,18 @@
 			}
 		</style>
 		<div style="display:none;font-size:15px;height: 40px;background: #fff;line-height: 35px;">
-						<span id="day1_0">2026-10-07</span>
-						<span id="day1_1">2026-10-08</span>
-						<span id="day1_2">2026-10-09</span>
-						<span id="day1_3">2026-10-10</span>
-						<span id="day1_4">2026-10-11</span>
-						<span id="day1_5">2026-10-12</span>
-						<span id="day1_6">2026-10-13</span>
-						<span id="day1_7">2026-10-14</span>
-						<span id="day0_0">2026-10-07</span>
-						<span id="day0_1">2026-10-08</span>
-						<span id="day0_2">2026-10-09</span>
-						<span id="day0_3">2026-10-10</span>
-						<span id="day0_4">2026-10-11</span>
-						<span id="day0_5">2026-10-12</span>
-						<span id="day0_6">2026-10-13</span>
-						<span id="day0_7">2026-10-14</span>
+						<span id="day1_0"></span><span id="day1_1"></span><span id="day1_2"></span><span id="day1_3"></span>
+						<span id="day1_4"></span><span id="day1_5"></span><span id="day1_6"></span><span id="day1_7"></span>
+						<span id="day0_0"></span><span id="day0_1"></span><span id="day0_2"></span><span id="day0_3"></span>
+						<span id="day0_4"></span><span id="day0_5"></span><span id="day0_6"></span><span id="day0_7"></span>
 					</div>
 
 		<div style="width:100%;font-size:15px;height: 40px;background: #fff;line-height: 35px;">
 			<div class="dates" style="font-size:15px;display: flex;justify-content: space-around;">
-								<span id="day0" data-full="2026-10-07">10-07</span>
-								<span id="day1" data-full="2026-10-08">10-08</span>
-								<span id="day2" data-full="2026-10-09">10-09</span>
-								<span id="day3" data-full="2026-10-10">10-10</span>
-								<span id="day4" data-full="2026-10-11">10-11</span>
-								<span id="day5" data-full="2026-10-12">10-12</span>
-								<span id="day6" data-full="2026-10-13">10-13</span>
-								<span id="day7" data-full="2026-10-14" class="sele">2026-10-14</span>
+								<span id="day0" data-full=""></span><span id="day1" data-full=""></span>
+								<span id="day2" data-full=""></span><span id="day3" data-full=""></span>
+								<span id="day4" data-full=""></span><span id="day5" data-full=""></span>
+								<span id="day6" data-full=""></span><span id="day7" data-full=""></span>
 							</div>
 		</div>
 
@@ -1564,6 +1548,30 @@
 			var totalDays = 8;
 			var dayIndex = totalDays - 1; //天的索引，最后一天（今天）
 			var timeType = 1; //0点还是6点一天， 0是0点一天，1是6点一天
+			function switchReportDayMode(nextTimeType) {
+				var selectedDate = $("#day" + dayIndex).attr("data-full") || "";
+				var dates = [];
+				for (var i = 0; i < totalDays; i++) {
+					var value = $("#day" + nextTimeType + "_" + i).attr("data-full")
+						|| $("#day" + nextTimeType + "_" + i).text();
+					if (/^\d{4}-\d{2}-\d{2}$/.test(value)) dates.push(value);
+				}
+				if (!dates.length) return;
+				var nextIndex = dates.indexOf(selectedDate);
+				if (nextIndex < 0) nextIndex = dates.length - 1;
+				timeType = nextTimeType;
+				dayIndex = nextIndex;
+				for (var j = 0; j < totalDays; j++) {
+					var date = dates[j] || "";
+					var $day = $("#day" + j);
+					if (!date) {
+						$day.hide().removeClass("sele").attr("data-full", "");
+						continue;
+					}
+					$day.show().attr("data-full", date).toggleClass("sele", j === dayIndex)
+						.text(j === dayIndex ? date : date.substring(5));
+				}
+			}
 			
 			
 		    function gen_fanshui_option() {
@@ -2053,31 +2061,9 @@
 				});
 				//切换0点6点
 				$("#btnTime").bind("click", function() {
-					if (timeType == 0) {
-						timeType = 1;
-						$("#btnTime").text("6点一天");
-						for (var i = 0; i < totalDays; i++) {
-							var full = $("#day1_" + i).html();
-							$("#day" + i).attr('data-full', full);
-							if ($("#day" + i).hasClass('sele')) {
-								$("#day" + i).html(full);
-							} else {
-								$("#day" + i).html(full.substring(5));
-							}
-						}
-					} else {
-						timeType = 0;
-						$("#btnTime").text("0点一天");
-						for (var i = 0; i < totalDays; i++) {
-							var full = $("#day0_" + i).html();
-							$("#day" + i).attr('data-full', full);
-							if ($("#day" + i).hasClass('sele')) {
-								$("#day" + i).html(full);
-							} else {
-								$("#day" + i).html(full.substring(5));
-							}
-						}
-					}
+					var nextTimeType = timeType == 0 ? 1 : 0;
+					switchReportDayMode(nextTimeType);
+					$("#btnTime").text(timeType == 0 ? "0点一天" : "6点一天");
 					if (nowIndex == 1) { LoadWay1(); }
 					else if (nowIndex == 2) { LoadWay2(); }
 					else if (nowIndex == 3) { LoadWay3(); }
@@ -2115,14 +2101,14 @@
                                     <div style="width: 100%;">
                                         <div style="width:100%;font-size:15px;height:40px;background:#fff;line-height:35px;">
                                             <div class="dates tuo-dates" style="font-size:15px;display:flex;justify-content:space-around;">
-                                                                                                <span class="tuo-day-item" data-full="2026-10-07">10-07</span>
-                                                                                                <span class="tuo-day-item" data-full="2026-10-08">10-08</span>
-                                                                                                <span class="tuo-day-item" data-full="2026-10-09">10-09</span>
-                                                                                                <span class="tuo-day-item" data-full="2026-10-10">10-10</span>
-                                                                                                <span class="tuo-day-item" data-full="2026-10-11">10-11</span>
-                                                                                                <span class="tuo-day-item" data-full="2026-10-12">10-12</span>
-                                                                                                <span class="tuo-day-item" data-full="2026-10-13">10-13</span>
-                                                                                                <span class="tuo-day-item sele" data-full="2026-10-14">2026-10-14</span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
+                                                                                                <span class="tuo-day-item" data-full=""></span>
                                                                                             </div>
                                         </div>
                                         <div style="padding: 5px;">
@@ -3635,7 +3621,8 @@
                 });
                 $("#jifenExpandLink").click(function() {
                     var day = $(".jifenKuang .dates .sele").attr("data-full") || $("#day" + dayIndex).attr("data-full") || "";
-                    window.open("/hby019-demo/showdetails?day=" + encodeURIComponent(day), "_blank");
+                    window.open("/hby019-demo/showdetails?day=" + encodeURIComponent(day)
+                        + "&timeType=" + encodeURIComponent(timeType), "_blank");
                 });
                 $("#jifenTuo").click(function() {
                     //载入托积分数据

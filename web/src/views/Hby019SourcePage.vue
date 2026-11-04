@@ -313,7 +313,10 @@ function legacyPointReport(report: Awaited<ReturnType<typeof api.getPlayerDeskPo
   return {
     bOK: 0,
     businessDate: report.businessDate,
+    cutoffHour: report.cutoffHour,
     availableDates: report.availableDates,
+    availableDatesAt00: report.availableDatesAt00,
+    availableDatesAt06: report.availableDatesAt06,
     totalFanShui: summary.effectiveRebate,
     totalYingKui: summary.netProfit,
     totalLiuShui: summary.turnover,
@@ -503,10 +506,11 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
       const requestedKind = String(requestData.kind ?? '').toUpperCase()
       const kind = requestedKind === 'NORMAL' ? 'NORMAL'
         : requestedKind === 'BOT' || data.path === '/rbt/index/getscorehistuo' || Number(requestData.type) === 1 ? 'BOT' : 'NORMAL'
-      let report = await api.getPlayerDeskPointRecords(kind, String(requestData.day ?? ''))
+      const cutoffHour = Number(requestData.timeType) === 0 ? 0 : 6
+      let report = await api.getPlayerDeskPointRecords(kind, String(requestData.day ?? ''), cutoffHour)
       if (data.path === '/rbt/index/getscorehisdetail'
         && !report.players.some(player => String(player.userId) === String(requestData.wxid))) {
-        report = await api.getPlayerDeskPointRecords(kind === 'BOT' ? 'NORMAL' : 'BOT', String(requestData.day ?? ''))
+        report = await api.getPlayerDeskPointRecords(kind === 'BOT' ? 'NORMAL' : 'BOT', String(requestData.day ?? ''), cutoffHour)
       }
       let response: unknown
       if (data.path === '/rbt/index/getscorehisdetail') response = legacyHistoryDetail(report, requestData.wxid)

@@ -403,7 +403,10 @@ export interface PlayerDeskPointRecords {
   businessDate: string
   fromInclusive: string
   toExclusive: string
+  cutoffHour: 0 | 6
   availableDates: string[]
+  availableDatesAt00: string[]
+  availableDatesAt06: string[]
   rebateMode: 'SINGLE' | 'DOUBLE' | 'MIXED'
   summary: PlayerDeskPointRecordSummary
   players: PlayerDeskPointRecordPlayer[]
@@ -1014,6 +1017,8 @@ export interface CenterUpstreamAccount {
   lastLoginAt: string | null
   online: boolean
   onlineMachineCount: number
+  maxSingleAmount: number
+  maxIssueExposure: number
 }
 
 export interface CreatedCenterUpstreamAccount {
@@ -1023,8 +1028,20 @@ export interface CreatedCenterUpstreamAccount {
 
 export interface CreateCenterUpstreamAccountRequest {
   groupId: number
+  username?: string
+  password?: string
   initialQuota: number
   expiresAt: string | null
+  maxSingleAmount: number
+  maxIssueExposure: number
+}
+
+export interface EditCenterUpstreamAccountRequest {
+  expiresAt: string
+  newPassword?: string
+  additionalQuota: number
+  maxSingleAmount: number
+  maxIssueExposure: number
 }
 
 /** 中心业务代理（额度三层是三个不同事实，见账本原则 1）。 */
@@ -1140,6 +1157,48 @@ export interface CenterAgentLedgerPage {
   total: number
   /** 账本与额度三层是否一致（对账标志） */
   balanced: boolean
+}
+
+export interface CenterLedgerGroup {
+  groupType: 'ORDER' | 'ENTRY'
+  groupReferenceId: string
+  latestEntryAt: string
+  entryCount: number
+  centerOrderId: number | null
+  agentOrderNo: string | null
+  localBetId: number | null
+  gameCode: string | null
+  issueNumber: string | null
+  playType: string | null
+  playText: string | null
+  orderAmount: number | null
+  orderStatus: string | null
+  settleResult: string | null
+  settleAmount: number | null
+  bucket: string | null
+  entryType: string | null
+  direction: 'IN' | 'OUT' | null
+  amount: number | null
+  balanceBefore: number | null
+  balanceAfter: number | null
+  reason: string | null
+  sourceReferenceType: string | null
+  sourceReferenceId: string | null
+}
+
+export interface CenterLedgerGroupPage {
+  items: CenterLedgerGroup[]
+  page: number
+  pageSize: number
+  total: number
+  balanced: boolean
+}
+
+export interface CenterLedgerGroupEntry extends CenterAgentLedgerEntry {
+  referenceType: string | null
+  referenceId: string | null
+  idempotencyKey: string | null
+  operatorUserId: number | null
 }
 
 export interface CenterOrderItem {

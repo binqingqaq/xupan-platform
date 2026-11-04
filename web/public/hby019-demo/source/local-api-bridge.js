@@ -119,10 +119,28 @@
   let reportDatesInitialized = false;
   let initialDetailReportDay = new URLSearchParams(location.search).get('day') || '';
 
-  function updateReportDates(dates, selectedDate) {
-    if (!Array.isArray(dates) || dates.length === 0) return;
-    const orderedDates = dates.map(String).filter(function (date) { return /^\d{4}-\d{2}-\d{2}$/.test(date); }).sort();
+  function normalizeReportDates(dates) {
+    if (!Array.isArray(dates)) return [];
+    return dates.map(String).filter(function (date) { return /^\d{4}-\d{2}-\d{2}$/.test(date); }).sort();
+  }
+
+  function updateHiddenReportDates(selector, dates) {
+    const values = normalizeReportDates(dates);
+    $(selector).toArray().forEach(function (node, index) {
+      const date = values[index] || '';
+      $(node).text(date).attr('data-full', date);
+    });
+  }
+
+  function updateReportDates(report) {
+    if (!report || !Array.isArray(report.availableDates)) return;
+    const datesAt00 = normalizeReportDates(report.availableDatesAt00 || report.availableDates);
+    const datesAt06 = normalizeReportDates(report.availableDatesAt06 || report.availableDates);
+    updateHiddenReportDates('span[id^="day0_"]', datesAt00);
+    updateHiddenReportDates('span[id^="day1_"]', datesAt06);
+    const orderedDates = normalizeReportDates(report.availableDates);
     if (!orderedDates.length) return;
+    const selectedDate = String(report.businessDate || '');
     function update(selector, syncDayIndex) {
       const nodes = $(selector).toArray();
       let selectedIndex = -1;
@@ -173,7 +191,7 @@
       return;
     }
     if (['/rbt/index/getscorehis', '/rbt/index/getscorehistuo'].indexOf(pending.path) !== -1 && message.data) {
-      updateReportDates(message.data.availableDates, message.data.businessDate);
+      updateReportDates(message.data);
     }
     if (pending.path === '/xupan/player/detail' && message.data && message.data.wxid) {
       xupanPlayerDetails[String(message.data.wxid)] = clone(message.data);

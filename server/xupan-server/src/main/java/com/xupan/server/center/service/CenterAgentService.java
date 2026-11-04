@@ -255,6 +255,42 @@ public class CenterAgentService {
         return repository.countInconsistentBuckets(id) == 0;
     }
 
+    @Transactional(readOnly = true)
+    public LedgerGroupPage ledgerGroups(long id, int page, int pageSize, Long operator) {
+        requireManage(operator);
+        require(id);
+        if (page < 1 || pageSize < 1 || pageSize > 100) {
+            throw BusinessException.badRequest("CENTER_LEDGER_QUERY_INVALID", "分页参数必须为 1 到 100");
+        }
+        return new LedgerGroupPage(repository.findLedgerGroups(id, page, pageSize), page, pageSize,
+                repository.countLedgerGroups(id), ledgerBalanced(id));
+    }
+
+    @Transactional(readOnly = true)
+    public List<CenterAgentRepository.LedgerRow> ledgerGroupEntries(long id, String groupType,
+                                                                    String referenceId, Long operator) {
+        requireManage(operator);
+        require(id);
+        if (referenceId == null || !referenceId.matches("[1-9][0-9]{0,18}")) {
+            throw BusinessException.badRequest("CENTER_LEDGER_GROUP_INVALID", "流水分组编号无效");
+        }
+        long parsedId;
+        try {
+            parsedId = Long.parseLong(referenceId);
+        } catch (NumberFormatException exception) {
+            throw BusinessException.badRequest("CENTER_LEDGER_GROUP_INVALID", "流水分组编号无效");
+        }
+        List<CenterAgentRepository.LedgerRow> entries = switch (groupType == null ? "" : groupType) {
+            case "ORDER" -> repository.findOrderLedgerEntries(id, parsedId);
+            case "ENTRY" -> repository.findStandaloneLedgerEntry(id, parsedId).stream().toList();
+            default -> throw BusinessException.badRequest("CENTER_LEDGER_GROUP_INVALID", "流水分组类型无效");
+        };
+        if (entries.isEmpty()) {
+            throw BusinessException.notFound("CENTER_LEDGER_GROUP_NOT_FOUND", "流水分组不存在");
+        }
+        return entries;
+    }
+
     private CenterAgentRepository.AgentRow lock(long id) {
         return repository.lockById(id)
                 .orElseThrow(() -> BusinessException.notFound("CENTER_AGENT_NOT_FOUND", "中心代理不存在"));
@@ -294,5 +330,9 @@ public class CenterAgentService {
 
     /** 创建结果：账户快照 + **只返回一次**的 Token 原文。 */
     public record Created(CenterAgentRepository.AgentRow agent, String token) {
+    }
+
+    public record LedgerGroupPage(List<CenterAgentRepository.LedgerGroupRow> items, int page,
+                                  int pageSize, long total, boolean balanced) {
     }
 }

@@ -17,6 +17,7 @@ vi.mock('./api', () => ({
     listCenterAgents: vi.fn(),
     listCenterUpstreamAccounts: vi.fn(),
     createCenterUpstreamAccount: vi.fn(),
+    editCenterUpstreamAccount: vi.fn(),
     changeCenterUpstreamAccountStatus: vi.fn(),
     renewCenterUpstreamAccount: vi.fn(),
     resetCenterUpstreamAccountPassword: vi.fn(),
@@ -25,7 +26,8 @@ vi.mock('./api', () => ({
     listCenterOrders: vi.fn(),
     centerOrderSummary: vi.fn(),
     centerReconciliation: vi.fn(),
-    centerAgentLedger: vi.fn(),
+    centerAccountLedgerGroups: vi.fn(),
+    centerAccountLedgerGroupEntries: vi.fn(),
     changeCenterAgentStatus: vi.fn(),
     grantCenterAgent: vi.fn(),
     setCenterAgentCreditLimit: vi.fn(),
@@ -82,6 +84,8 @@ const centerAccount = {
   lastLoginAt: '2026-10-24T12:30:00Z',
   online: true,
   onlineMachineCount: 2,
+  maxSingleAmount: 1000,
+  maxIssueExposure: 5000,
 }
 
 const agentGroups = [
@@ -167,9 +171,10 @@ beforeEach(() => {
   vi.mocked(api.listCenterOrders).mockResolvedValue({ items: [order], page: 1, pageSize: 20, total: 1 } as never)
   vi.mocked(api.centerOrderSummary).mockResolvedValue([{ status: 'SETTLED', total: 1, amount: 100 }] as never)
   vi.mocked(api.centerReconciliation).mockResolvedValue(reconciliation as never)
-  vi.mocked(api.centerAgentLedger).mockResolvedValue({
+  vi.mocked(api.centerAccountLedgerGroups).mockResolvedValue({
     items: [], page: 1, pageSize: 20, total: 0, balanced: true,
   } as never)
+  vi.mocked(api.centerAccountLedgerGroupEntries).mockResolvedValue([] as never)
   vi.mocked(api.centerAccountSessions).mockResolvedValue([] as never)
   vi.mocked(api.centerRiskHitSummary).mockResolvedValue([] as never)
   vi.mocked(api.centerAgentRiskHits).mockResolvedValue([] as never)
@@ -184,24 +189,20 @@ afterEach(() => {
 })
 
 describe('中心上游管理页', () => {
-  it('loads overview data and keeps the three balance buckets separate', async () => {
+  it('opens on center accounts and hides the overview tab while retaining summary data loading', async () => {
     const host = mountPage()
     await settle()
 
     expect(api.listCenterAgents).toHaveBeenCalled()
     expect(api.listCenterOrders).toHaveBeenCalled()
+    expect(api.centerOrderSummary).toHaveBeenCalled()
     expect(api.centerReconciliation).toHaveBeenCalled()
 
     const text = host.textContent ?? ''
-    // 原则 1：三层是三个不同事实，不能合成一个"余额"
-    expect(text).toContain('可用额度合计')
-    expect(text).toContain('冻结额度合计')
-    expect(text).toContain('上游未结算合计')
-    expect(text).toContain('9,000.00')
-    expect(text).toContain('100.00')
-    expect(text).toContain('200.00')
-    // 对账状态来自后端而非前端推断
-    expect(text).toContain('已对平')
+    expect(host.querySelector('.center-tabs')?.textContent).not.toContain('总览')
+    expect(host.querySelector('.center-tabs')?.textContent).not.toContain('财务流水')
+    expect(text).toContain('分配中心账号')
+    expect(text).not.toContain('订单状态汇总')
   })
 
   it('lists center orders with status and settlement labels', async () => {
@@ -354,7 +355,7 @@ describe('中心上游管理页', () => {
     openButton.click()
     await settle()
 
-    const groupSelect = host.querySelector('.account-form .el-select__wrapper') as HTMLElement
+    const groupSelect = host.querySelector('.center-account-form .el-select__wrapper') as HTMLElement
     groupSelect.click()
     await settle()
     const groupOption = Array.from(document.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
@@ -363,11 +364,11 @@ describe('中心上游管理页', () => {
     groupOption!.click()
     await settle()
 
-    expect(host.textContent ?? '').toContain('账号名与密码将在创建时自动生成')
-    expect(host.textContent ?? '').not.toContain('初始密码')
+    expect(host.textContent ?? '').toContain('留空使用默认密码 test123456')
+    expect(host.textContent ?? '').toContain('留空用户名沿用系统账号命名规则')
     await settle()
 
-    const createButton = Array.from(host.querySelectorAll('.account-form button'))
+    const createButton = Array.from(host.querySelectorAll('.center-account-form button'))
       .find(item => item.textContent?.trim() === '创建账号') as HTMLButtonElement
     createButton.click()
     await settle()
@@ -376,7 +377,10 @@ describe('中心上游管理页', () => {
       groupId: 32,
       initialQuota: 0,
       expiresAt: expect.any(String),
+      maxSingleAmount: 1000,
+      maxIssueExposure: 5000,
     }))
+    expect(api.createCenterUpstreamAccount).toHaveBeenCalledWith(expect.not.objectContaining({ username: expect.any(String), password: expect.any(String) }))
     expect(document.body.textContent ?? '').toContain('random123abc456xy')
     expect(document.body.textContent ?? '').toContain('只在本次操作后展示一次')
 
@@ -387,10 +391,9 @@ describe('中心上游管理页', () => {
     expect(document.body.textContent ?? '').not.toContain('random123abc456xy')
   })
 
-  it('supports account status, renewal, password reset and account deletion', async () => {
+  it('supports account status, unified edit and account deletion', async () => {
     vi.mocked(api.changeCenterUpstreamAccountStatus).mockResolvedValue({ ...centerAccount, status: 'DISABLED' } as never)
-    vi.mocked(api.renewCenterUpstreamAccount).mockResolvedValue(centerAccount as never)
-    vi.mocked(api.resetCenterUpstreamAccountPassword).mockResolvedValue(centerAccount as never)
+    vi.mocked(api.editCenterUpstreamAccount).mockResolvedValue(centerAccount as never)
     const host = mountPage()
     await settle()
     clickTab(host, '中心账号')
@@ -410,31 +413,32 @@ describe('中心上游管理页', () => {
     await settle()
     expect(api.changeCenterUpstreamAccountStatus).toHaveBeenCalledWith(41, 'DISABLED', '安全策略停用')
 
-    button('续期').click()
+    button('编辑').click()
     await settle()
-    form = Array.from(host.querySelectorAll<HTMLElement>('.account-action-form'))
-      .find(item => item.textContent?.includes('续期：'))
-    const renewalReason = Array.from(form?.querySelectorAll<HTMLInputElement>('input') ?? [])
-      .find(input => input.closest('.el-form-item')?.textContent?.includes('续期原因'))
-    setValue(renewalReason as HTMLInputElement, '代理续期申请')
+    const editForm = host.querySelector('.center-account-edit-form') as HTMLElement
+    const setEditField = (label: string, value: string) => {
+      const item = Array.from(editForm.querySelectorAll<HTMLElement>('.el-form-item'))
+        .find(candidate => candidate.textContent?.includes(label))
+      const input = item?.querySelector('input') as HTMLInputElement | null
+      if (!input) throw new Error(`找不到中心账号编辑字段：${label}`)
+      setValue(input, value)
+    }
+    setEditField('有效期', '2037-01-01T00:00')
+    setEditField('新密码', 'UpdatedCenterPass456')
+    setEditField('追加可用额度', '300')
+    setEditField('单笔上限', '1200')
+    setEditField('单期敞口上限', '6000')
     await settle()
-    button('确认续期').click()
+    button('保存').click()
     await settle()
-    expect(api.renewCenterUpstreamAccount).toHaveBeenCalledWith(41, expect.any(String), '代理续期申请')
-
-    button('重置密码').click()
-    await settle()
-    const resetInput = host.querySelector('.account-action-form input[type="password"]') as HTMLInputElement
-    setValue(resetInput, 'reset-secret-456')
-    const resetForm = resetInput.closest('.account-action-form') as HTMLElement
-    const passwordResetReasonInput = Array.from(resetForm.querySelectorAll<HTMLInputElement>('input'))
-      .find(input => input.type !== 'password') as HTMLInputElement
-    setValue(passwordResetReasonInput, '定期凭据轮换')
-    await settle()
-    button('确认重置').click()
-    await settle()
-    expect(api.resetCenterUpstreamAccountPassword).toHaveBeenCalledWith(41, 'reset-secret-456', '定期凭据轮换')
-    expect(document.body.textContent ?? '').toContain('reset-secret-456')
+    expect(api.editCenterUpstreamAccount).toHaveBeenCalledWith(41, expect.objectContaining({
+      expiresAt: expect.any(String),
+      newPassword: 'UpdatedCenterPass456',
+      additionalQuota: 300,
+      maxSingleAmount: 1200,
+      maxIssueExposure: 6000,
+    }))
+    expect(document.body.textContent ?? '').toContain('UpdatedCenterPass456')
     expect(Array.from(host.querySelectorAll('button')).some(item => item.textContent?.trim() === '删除')).toBe(true)
   })
 
@@ -483,10 +487,33 @@ describe('中心上游管理页', () => {
     expect(host.textContent ?? '').toContain('2026-10-25 08:00:00')
   })
 
-  it('loads center ledger pages and preserves the backend total', async () => {
-    vi.mocked(api.centerAgentLedger).mockResolvedValue({
-      items: [], page: 1, pageSize: 20, total: 45, balanced: true,
+  it('opens grouped center ledger in a drawer and expands order entries', async () => {
+    vi.mocked(api.centerAccountLedgerGroups).mockResolvedValue({
+      items: [
+        {
+          groupType: 'ORDER', groupReferenceId: '71', latestEntryAt: '2026-10-25T08:00:00Z', entryCount: 8,
+          centerOrderId: 71, agentOrderNo: 'BET-71', localBetId: 171, gameCode: 'AU8', issueNumber: '3000052',
+          playType: 'FAN', playText: 'params=3', orderAmount: 10, orderStatus: 'SETTLED',
+          settleResult: 'AGENT_WIN', settleAmount: 9.6, bucket: null, entryType: null, direction: null,
+          amount: null, balanceBefore: null, balanceAfter: null, reason: null,
+          sourceReferenceType: 'CENTER_ORDER', sourceReferenceId: '71',
+        },
+        {
+          groupType: 'ENTRY', groupReferenceId: '91', latestEntryAt: '2026-10-25T07:00:00Z', entryCount: 1,
+          centerOrderId: null, agentOrderNo: null, localBetId: null, gameCode: null, issueNumber: null,
+          playType: null, playText: null, orderAmount: null, orderStatus: null, settleResult: null,
+          settleAmount: null, bucket: 'AVAILABLE', entryType: 'CREDIT_GRANT', direction: 'IN', amount: 200,
+          balanceBefore: 0, balanceAfter: 200, reason: '追加额度',
+          sourceReferenceType: 'CENTER_AGENT', sourceReferenceId: '41',
+        },
+      ], page: 1, pageSize: 20, total: 45, balanced: true,
     } as never)
+    vi.mocked(api.centerAccountLedgerGroupEntries).mockResolvedValue([{
+      id: 201, bucket: 'FROZEN', entryType: 'BET_FREEZE', direction: 'IN', amount: 9.6,
+      balanceBefore: 0, balanceAfter: 9.6, reason: '中心风险冻结', referenceType: 'CENTER_ORDER',
+      referenceId: '71', idempotencyKey: 'ledger-201', operatorUserId: null,
+      createdAt: '2026-10-25T07:59:00Z',
+    }] as never)
     const host = mountPage()
     await settle()
     clickTab(host, '中心账号')
@@ -496,42 +523,52 @@ describe('中心上游管理页', () => {
     ledgerButton.click()
     await settle()
 
-    expect(api.centerAgentLedger).toHaveBeenCalledWith(41, { page: 1, pageSize: 20 })
-    expect(host.textContent ?? '').toContain('共 45 笔')
-    host.querySelector<HTMLButtonElement>('.center-list-pagination .btn-next')?.click()
+    expect(api.centerAccountLedgerGroups).toHaveBeenCalledWith(41, { page: 1, pageSize: 20 })
+    expect(document.body.textContent ?? '').toContain('中心账号流水')
+    expect(document.body.textContent ?? '').toContain('BET-71')
+    expect(document.body.textContent ?? '').toContain('追加额度')
+    expect(document.body.textContent ?? '').toContain('共 45 条汇总记录')
+
+    document.body.querySelector<HTMLButtonElement>('.ledger-groups-table .el-table__expand-icon')?.click()
     await settle()
-    expect(api.centerAgentLedger).toHaveBeenLastCalledWith(41, { page: 2, pageSize: 20 })
+    expect(api.centerAccountLedgerGroupEntries).toHaveBeenCalledWith(41, 'ORDER', '71')
+    expect(document.body.textContent ?? '').toContain('中心风险冻结')
+
+    document.body.querySelector<HTMLButtonElement>('.ledger-drawer-header button')?.click()
+    await new Promise(resolve => setTimeout(resolve, 350))
+    await settle()
+    expect(document.body.textContent ?? '').not.toContain('中心账号流水')
   })
 
-  it('keeps assigned center accounts out of the legacy list and supports audited quota grants', async () => {
+  it('keeps assigned center accounts out of the legacy list and includes quota in account edits', async () => {
     vi.mocked(api.listCenterAgents).mockResolvedValue([
       { ...agent, id: centerAccount.accountId, agentCode: centerAccount.username },
     ] as never)
-    vi.mocked(api.grantCenterAgent).mockResolvedValue(agent as never)
+    vi.mocked(api.editCenterUpstreamAccount).mockResolvedValue(centerAccount as never)
     const host = mountPage()
     await settle()
     clickTab(host, '中心账号')
     await settle()
 
-    const addQuota = Array.from(host.querySelectorAll('button'))
-      .find(item => item.textContent?.trim() === '追加额度') as HTMLButtonElement
-    addQuota.click()
+    const edit = Array.from(host.querySelectorAll('button'))
+      .find(item => item.textContent?.trim() === '编辑') as HTMLButtonElement
+    edit.click()
     await settle()
-    const form = host.querySelector('.account-action-form') as HTMLElement
-    const amountInput = form.querySelector('input[type="number"]') as HTMLInputElement
-    const reasonInput = form.querySelector('input:not([type="number"])') as HTMLInputElement
-    setValue(amountInput, '250.50')
-    setValue(reasonInput, '首期额度补充')
+    const form = host.querySelector('.center-account-edit-form') as HTMLElement
+    const amountItem = Array.from(form.querySelectorAll<HTMLElement>('.el-form-item'))
+      .find(item => item.textContent?.includes('追加可用额度'))
+    const amountInput = amountItem?.querySelector('input') as HTMLInputElement
+    setValue(amountInput, '250')
     await settle()
     const confirm = Array.from(form.querySelectorAll('button'))
-      .find(item => item.textContent?.trim() === '确认追加') as HTMLButtonElement
+      .find(item => item.textContent?.trim() === '保存') as HTMLButtonElement
     confirm.click()
     await settle()
 
-    expect(api.grantCenterAgent).toHaveBeenCalledWith(centerAccount.accountId, expect.objectContaining({
-      amount: 250.5,
-      reason: '首期额度补充',
-      idempotencyKey: expect.stringContaining(`center-quota-${centerAccount.accountId}-`),
+    expect(api.editCenterUpstreamAccount).toHaveBeenCalledWith(centerAccount.accountId, expect.objectContaining({
+      additionalQuota: 250,
+      maxSingleAmount: 1000,
+      maxIssueExposure: 5000,
     }))
 
     clickTab(host, '代理管理')
@@ -556,31 +593,14 @@ describe('中心上游管理页', () => {
     expect(text).toContain('单期敞口上限')
   })
 
-  it('saves per-agent risk limits with null when the field is left blank', async () => {
-    vi.mocked(api.setCenterAgentRiskLimits).mockResolvedValue(agent as never)
+  it('shows account risk limits in the risk page without a duplicate editor', async () => {
     const host = mountPage()
     await settle()
     clickTab(host, '风险')
     await settle()
 
-    const select = host.querySelector('.center-form .el-select__wrapper') as HTMLElement
-    select.click()
-    await settle()
-    const option = Array.from(document.querySelectorAll<HTMLElement>('.el-select-dropdown__item')).find(item => item.textContent?.trim() === 'CENTER_A')
-    expect(option).toBeDefined()
-    option!.click()
-    await settle()
-
-    const saveButton = Array.from(host.querySelectorAll('.center-form button'))
-      .find(item => item.textContent?.trim() === '保存代理级风控') as HTMLButtonElement
-    saveButton.click()
-    await settle()
-
-    // 两个输入都留空 → 传 null，表示回退全局默认
-    expect(api.setCenterAgentRiskLimits).toHaveBeenCalledWith(1, {
-      maxSingleAmount: null,
-      maxIssueExposure: null,
-    })
+    expect(host.textContent ?? '').toContain('全局默认')
+    expect(host.textContent ?? '').not.toContain('保存代理级风控')
   })
 
   it('lists risk hits with observed value and threshold', async () => {
