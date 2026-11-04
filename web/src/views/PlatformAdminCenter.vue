@@ -7,7 +7,6 @@ import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { AgentGroup } from '../types/agent'
 import type {
-  CenterAgent,
   CenterUpstreamAccount,
   CenterMachineSession,
   CreateCenterUpstreamAccountRequest,
@@ -15,16 +14,10 @@ import type {
   CenterLedgerGroupEntry,
   CenterOrderItem,
   CenterOrderSummary,
-  CenterReconciliation,
   CenterSettlementResult,
-  CenterRiskHit,
-  CenterRiskRuleSummary,
   CenterOrderDispositionRecord,
   CenterDispositionAction,
   EditCenterUpstreamAccountRequest,
-  ReconciliationDisposition,
-  ReconciliationRetention,
-  ReconciliationResolution,
 } from '../types'
 
 /**
@@ -33,16 +26,13 @@ import type {
  * 中心账号生命周期管理与现有中心代理账务、订单和对账视图共用此入口。
  */
 
-type Tab = 'accounts' | 'orders' | 'risk' | 'reconcile'
+type Tab = 'accounts' | 'orders'
 const tab = ref<Tab>('accounts')
 const tabs: { key: Tab; label: string }[] = [
   { key: 'accounts', label: '中心账号' },
   { key: 'orders', label: '实时订单' },
-  { key: 'risk', label: '风险' },
-  { key: 'reconcile', label: '对账' },
 ]
 
-const agents = ref<CenterAgent[]>([])
 const centerAccounts = ref<CenterUpstreamAccount[]>([])
 const agentGroups = ref<AgentGroup[]>([])
 const orders = ref<CenterOrderItem[]>([])
@@ -77,16 +67,7 @@ let ledgerLoadSequence = 0
 const sessionAccount = ref<CenterUpstreamAccount | null>(null)
 const machineSessions = ref<CenterMachineSession[]>([])
 const sessionsLoading = ref(false)
-const reconciliation = ref<CenterReconciliation | null>(null)
-const reconciliationFilters = ref({ centerAgentId: null as number | null, issueNumber: '' })
-const reconciliationLoading = ref(false)
 const settlement = ref<CenterSettlementResult | null>(null)
-
-// C-2 ② / C-4 ③：对账差异处置与保留策略
-const reconForm = ref<{ resolution: ReconciliationResolution; reason: string }>({
-  resolution: 'ACKNOWLEDGED',
-  reason: '',
-})
 
 const loading = ref(false)
 const error = ref('')
@@ -119,28 +100,15 @@ const oneTimeCredential = ref<{ username: string; password: string; action: stri
 const oneTimeCredentialVisible = ref(false)
 const settleForm = ref({ gameCode: 'AU8', issueNumber: '' })
 
-const riskHits = ref<CenterRiskHit[]>([])
-const riskAgentId = ref<number | null>(null)
-const riskSummary = ref<CenterRiskRuleSummary[]>([])
-
 // P1-C2 / C-3：订单处置
 const disposeForm = ref({ reason: '' })
 const disposeHistory = ref<CenterOrderDispositionRecord[]>([])
 const disposeHistoryOrderId = ref<number | null>(null)
 
 const assignedCenterGroupIds = computed(() => new Set(centerAccounts.value.map(item => item.groupId)))
-const centerAccountIds = computed(() => new Set(centerAccounts.value.map(item => item.accountId)))
-const currentCenterAgents = computed(() => agents.value.filter(item => centerAccountIds.value.has(item.id)))
-const activeCenterAccounts = computed(() => centerAccounts.value.filter(item => item.status === 'ACTIVE'))
 const availableAgentGroups = computed(() => agentGroups.value.filter(group =>
   group.status === 'ACTIVE' && !assignedCenterGroupIds.value.has(group.id),
 ))
-const totals = computed(() => ({
-  available: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.availableBalance), 0),
-  frozen: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.frozenBalance), 0),
-  unsettled: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.upstreamUnsettled), 0),
-  risk: currentCenterAgents.value.reduce((sum, item) => sum + Number(item.frozenBalance) + Number(item.upstreamUnsettled), 0),
-}))
 
 function money(value: number | null | undefined) {
   return Number(value ?? 0).toFixed(2)
@@ -195,20 +163,6 @@ function bucketLabel(bucket: string) {
     CREDIT_LIMIT: '信用额度',
   }
   return map[bucket] ?? bucket
-}
-
-function differenceLabel(type: string) {
-  const map: Record<string, string> = {
-    MISSING_IN_CENTER: '本地有上报、中心无订单',
-    MISSING_IN_LOCAL: '中心有订单、本地无记录',
-    STATUS_MISMATCH: '两侧状态不一致',
-    AMOUNT_MISMATCH: '两侧金额不一致',
-  }
-  return map[type] ?? type
-}
-
-async function loadAgents() {
-  agents.value = await api.listCenterAgents()
 }
 
 async function loadCenterAccounts() {
@@ -395,31 +349,11 @@ function closeMachineSessions() {
   machineSessions.value = []
 }
 
-async function loadReconciliation() {
-  reconciliation.value = await api.centerReconciliation({
-    centerAgentId: reconciliationFilters.value.centerAgentId ?? undefined,
-    issueNumber: reconciliationFilters.value.issueNumber.trim() || undefined,
-    limit: 50,
-  })
-}
-
-async function searchReconciliation() {
-  error.value = ''
-  reconciliationLoading.value = true
-  try {
-    await loadReconciliation()
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '对账查询失败'))
-  } finally {
-    reconciliationLoading.value = false
-  }
-}
-
 async function refresh() {
   loading.value = true
   error.value = ''
   try {
-    await Promise.all([loadAgents(), loadCenterAccounts(), loadOrders(1), loadSummaries(), loadReconciliation()])
+    await Promise.all([loadCenterAccounts(), loadOrders(1), loadSummaries()])
     if (ledgerDrawerOpen.value && ledgerAccount.value) {
       await loadLedgerGroups(ledgerGroupPage.value)
     }
@@ -667,15 +601,6 @@ async function settle() {
   }
 }
 
-async function loadRiskHits(agentId: number) {
-  riskAgentId.value = agentId
-  riskHits.value = await api.centerAgentRiskHits(agentId, { limit: 20 })
-}
-
-async function loadRiskSummary() {
-  riskSummary.value = await api.centerRiskHitSummary({ windowMinutes: 1440 })
-}
-
 // ---------------------------------------------------------------
 // P1-C2 / C-3：订单处置
 // ---------------------------------------------------------------
@@ -730,92 +655,8 @@ async function showDispositions(orderId: number) {
   disposeHistory.value = await api.centerOrderDispositions(orderId)
 }
 
-// ---------------------------------------------------------------
-// C-2 ② / C-4 ③：对账差异处置与保留策略
-// ---------------------------------------------------------------
-
-const RESOLUTION_LABELS: Record<ReconciliationResolution, string> = {
-  ACKNOWLEDGED: '已知悉',
-  ACCEPTED: '接受差异',
-  FIXED: '已修复',
-  IGNORED: '忽略',
-}
-
-function resolutionLabel(value: string) {
-  return RESOLUTION_LABELS[value as ReconciliationResolution] ?? value
-}
-
-function disposedLabel(type: string, betId: number, centerAgentId: number | null) {
-  const key = `${type}-${betId}`
-  return reconDisposedKeys.value.has(`${key}-${centerAgentId ?? ''}`)
-    || (centerAgentId !== null && reconDisposedKeys.value.has(`${key}-`))
-    ? '已处置'
-    : '待处置'
-}
-
-/** 生效中的差异处置键集合；与后端"未撤销且未过期"的口径一致。 */
-const reconDisposedKeys = ref<Set<string>>(new Set())
-const reconDispositions = ref<ReconciliationDisposition[]>([])
-const reconRetention = ref<ReconciliationRetention | null>(null)
-
-async function loadReconDispositions() {
-  reconDispositions.value = await api.listReconciliationDispositions({ limit: 50 })
-  reconDisposedKeys.value = new Set(
-    reconDispositions.value.map(item => `${item.differenceType}-${item.betId}-${item.centerAgentId ?? ''}`),
-  )
-  reconRetention.value = await api.reconciliationRetention()
-}
-
-/**
- * 处置一条差异。
- *
- * 注意：这会**只**写一条处置记录，不改订单、不改账本。
- * 差异的事实仍然显示在列表里（带"已处置"标记），不会被隐藏。
- */
-async function disposeDifference(row: { type: string; betId: number; centerAgentId: number | null }) {
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    const result = await api.disposeReconciliationDifference({
-      differenceType: row.type,
-      betId: row.betId,
-      centerAgentId: row.centerAgentId,
-      resolution: reconForm.value.resolution,
-      reason: reconForm.value.reason.trim() || resolutionLabel(reconForm.value.resolution),
-      // 默认 7 天生效：到期后差异重新回到待处置，避免"标一次已知就永远不再看"。
-      effectiveDays: 7,
-      idempotencyKey: `center-recon-${row.type}-${row.betId}-${row.centerAgentId ?? 'all'}-${Date.now()}`,
-    })
-    feedback.value = `差异 ${row.type}/${row.betId} 已标记为「${resolutionLabel(result.resolution)}」`
-    reconForm.value.reason = ''
-    await Promise.all([loadReconciliation(), loadReconDispositions()])
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '对账差异处置失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
-async function revokeDifference(item: ReconciliationDisposition) {
-  busy.value = true
-  error.value = ''
-  feedback.value = ''
-  try {
-    await api.revokeReconciliationDisposition(item.id)
-    feedback.value = `已撤销差异处置 ${item.differenceType}/${item.betId}，该差异重新变为待处置`
-    await Promise.all([loadReconciliation(), loadReconDispositions()])
-  } catch (cause) {
-    adminNotice.error(apiErrorMessage(cause, '撤销差异处置失败'))
-  } finally {
-    busy.value = false
-  }
-}
-
 onMounted(async () => {
   await refresh()
-  await loadRiskSummary()
-  await loadReconDispositions()
 })
 </script>
 
@@ -908,6 +749,8 @@ onMounted(async () => {
         <el-table-column label="可用额度" width="130" align="right"><template #default="{ row }">{{ money(row.availableBalance) }}</template></el-table-column>
         <el-table-column label="冻结额度" width="130" align="right"><template #default="{ row }">{{ money(row.frozenBalance) }}</template></el-table-column>
         <el-table-column label="未结押注" width="130" align="right"><template #default="{ row }">{{ money(row.openStake) }}</template></el-table-column>
+        <el-table-column label="单笔上限" width="130" align="right"><template #default="{ row }">{{ money(row.maxSingleAmount) }}</template></el-table-column>
+        <el-table-column label="单期敞口上限" width="145" align="right"><template #default="{ row }">{{ money(row.maxIssueExposure) }}</template></el-table-column>
         <el-table-column label="有效期至" min-width="170"><template #default="{ row }">{{ row.expiresAt ? row.expiresAt.replace('T', ' ').slice(0, 19) : '—' }}</template></el-table-column>
         <el-table-column label="最近登录" min-width="170"><template #default="{ row }">{{ row.lastLoginAt ? row.lastLoginAt.replace('T', ' ').slice(0, 19) : '—' }}</template></el-table-column>
         <el-table-column label="操作" fixed="right" width="350">
@@ -1044,131 +887,6 @@ onMounted(async () => {
       <div class="center-list-pagination"><span>共 {{ orderTotal }} 笔</span><el-pagination background layout="prev, pager, next" :current-page="orderPage" :page-size="orderPageSize" :total="orderTotal" @current-change="loadOrders" /></div>
     </section>
 
-    <section v-else-if="tab === 'risk'" class="center-panel">
-      <el-row :gutter="12" class="center-stats">
-        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="冻结敞口" :value="totals.frozen" :precision="2" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="未结算敞口" :value="totals.unsettled" :precision="2" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="总敞口" :value="totals.risk" :precision="2" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="24h 风控命中" :value="riskSummary.reduce((sum, item) => sum + item.hitCount, 0)" /></el-col>
-      </el-row>
-      <el-alert class="center-hint" type="info" :closable="false" title="敞口 = 冻结额度 + 上游未结算。中心对每笔订单做单笔上限、单期敞口上限、可用额度与异常行为校验；超限的订单会被拒绝并留下命中记录，代理侧据此走失败退单。" />
-
-      <el-table scrollbar-always-on :data="agents" row-key="id" border stripe class="center-table" empty-text="还没有中心代理">
-        <el-table-column prop="agentCode" label="代理编号" min-width="130" />
-        <el-table-column label="可用" width="120" align="right"><template #default="{ row }">{{ money(row.availableBalance) }}</template></el-table-column>
-        <el-table-column label="冻结" width="120" align="right"><template #default="{ row }">{{ money(row.frozenBalance) }}</template></el-table-column>
-        <el-table-column label="未结算" width="120" align="right"><template #default="{ row }">{{ money(row.upstreamUnsettled) }}</template></el-table-column>
-        <el-table-column label="敞口" width="120" align="right"><template #default="{ row }">{{ money(Number(row.frozenBalance) + Number(row.upstreamUnsettled)) }}</template></el-table-column>
-        <el-table-column label="信用额度" width="120" align="right"><template #default="{ row }">{{ money(row.creditLimit) }}</template></el-table-column>
-        <el-table-column label="单笔上限" min-width="130"><template #default="{ row }">{{ row.maxSingleAmount === null ? '全局默认' : money(row.maxSingleAmount) }}</template></el-table-column>
-        <el-table-column label="单期敞口上限" min-width="145"><template #default="{ row }">{{ row.maxIssueExposure === null ? '全局默认' : money(row.maxIssueExposure) }}</template></el-table-column>
-        <el-table-column label="最近拒绝" min-width="130"><template #default="{ row }">{{ row.lastRejectCode ?? '—' }}</template></el-table-column>
-        <el-table-column prop="rejectCount" label="拒绝次数" width="100" align="right" />
-        <el-table-column label="命中记录" width="110" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="loadRiskHits(row.id)">{{ riskAgentId === row.id ? '刷新' : '查看' }}</el-button></template></el-table-column>
-        <template #empty><el-empty description="还没有中心代理" /></template>
-      </el-table>
-
-      <div v-if="riskAgentId !== null" class="center-data-block">
-        <p class="center-hint">代理 #{{ riskAgentId }} 最近的风控命中</p>
-      <el-table scrollbar-always-on :data="riskHits" row-key="id" border stripe class="center-table" empty-text="该代理暂无风控命中">
-          <el-table-column prop="ruleCode" label="规则" min-width="130" />
-          <el-table-column prop="ruleCategory" label="类别" min-width="130" />
-          <el-table-column label="观测值" width="130" align="right"><template #default="{ row }">{{ row.observedValue === null ? '—' : money(row.observedValue) }}</template></el-table-column>
-          <el-table-column label="阈值" width="130" align="right"><template #default="{ row }">{{ row.thresholdValue === null ? '—' : money(row.thresholdValue) }}</template></el-table-column>
-          <el-table-column label="期号" min-width="160"><template #default="{ row }">{{ row.gameCode ?? '—' }} / {{ row.issueNumber ?? '—' }}</template></el-table-column>
-          <el-table-column label="说明" min-width="200"><template #default="{ row }">{{ row.detail ?? '—' }}</template></el-table-column>
-          <el-table-column label="时间" min-width="170"><template #default="{ row }">{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
-          <template #empty><el-empty description="该代理暂无风控命中" /></template>
-        </el-table>
-      </div>
-
-      <div class="center-data-block">
-        <p class="center-hint">近 24 小时全量命中按规则聚合</p>
-        <el-table scrollbar-always-on :data="riskSummary" row-key="ruleCode" border stripe class="center-table" empty-text="近 24 小时没有风控命中">
-          <el-table-column prop="ruleCode" label="规则" min-width="150" />
-          <el-table-column prop="ruleCategory" label="类别" min-width="150" />
-          <el-table-column prop="hitCount" label="命中次数" width="130" align="right" />
-          <el-table-column prop="agentCount" label="涉及代理数" width="150" align="right" />
-          <template #empty><el-empty description="近 24 小时没有风控命中" /></template>
-        </el-table>
-      </div>
-    </section>
-
-    <section v-else class="center-panel">
-      <el-form :model="reconciliationFilters" inline class="center-form" @submit.prevent="searchReconciliation">
-        <el-form-item label="中心账号">
-          <el-select v-model="reconciliationFilters.centerAgentId" clearable placeholder="全部中心账号" style="width: 220px">
-            <el-option v-for="agent in agents" :key="agent.id" :label="`${agent.agentName}（${agent.agentCode}）`" :value="agent.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="期号"><el-input v-model="reconciliationFilters.issueNumber" clearable placeholder="全部期号" maxlength="32" /></el-form-item>
-        <el-form-item><el-button type="primary" :loading="reconciliationLoading" @click="searchReconciliation">查询</el-button></el-form-item>
-      </el-form>
-      <el-row :gutter="12" class="center-stats">
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="对账结果" :formatter="() => reconciliation?.balanced ? '已对平' : '有差异'" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="差异总数" :value="reconciliation?.differenceCount ?? 0" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="账务异常" :value="reconciliation?.financialIssueCount ?? 0" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="本地未解决" :value="reconciliation?.counts.localUnresolved ?? 0" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心未解决" :value="reconciliation?.counts.centerUnresolved ?? 0" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="中心账本" :formatter="() => reconciliation?.inconsistentCenterBuckets ? '不一致' : '一致'" /></el-col>
-        <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="本地代理账本" :formatter="() => reconciliation?.inconsistentAgentBuckets ? '不一致' : '一致'" /></el-col>
-      </el-row>
-      <p class="center-hint">
-        本地总数 {{ reconciliation?.counts.localTotal ?? 0 }} · 中心总数 {{ reconciliation?.counts.centerTotal ?? 0 }}；
-        缺口分类：缺中心 {{ reconciliation?.missingInCenterCount ?? 0 }}、
-        缺本地 {{ reconciliation?.missingInLocalCount ?? 0 }}、
-        状态不一致 {{ reconciliation?.statusMismatchCount ?? 0 }}、
-        金额不一致 {{ reconciliation?.amountMismatchCount ?? 0 }}
-      </p>
-      <el-row v-if="reconciliation?.financial" :gutter="12" class="center-stats">
-        <el-col :xs="24" :lg="8"><p class="center-hint">风险预留：{{ reconciliation.financial.reservedOrders }} 单，风险 {{ money(reconciliation.financial.reservedRiskAmount) }}；中心冻结 {{ money(reconciliation.financial.centerFrozenAmount) }}，机器冻结 {{ money(reconciliation.financial.machineFrozenAmount) }}；不一致 {{ reconciliation.financial.reservationMismatchCount }}</p></el-col>
-        <el-col :xs="24" :lg="8"><p class="center-hint">结算：{{ reconciliation.financial.settledOrders }} 单，结算额 {{ money(reconciliation.financial.settledAmount) }}；单边结算 {{ reconciliation.financial.oneSidedSettlementCount }}；账本净额 {{ money(reconciliation.financial.settlementLedgerNetAmount) }} / 应有 {{ money(reconciliation.financial.settlementLedgerExpectedNetAmount) }}；不一致 {{ reconciliation.financial.settlementLedgerMismatchCount }}</p></el-col>
-        <el-col :xs="24" :lg="8"><p class="center-hint">退款 {{ reconciliation.financial.refundedOrders }} 单（风险 {{ money(reconciliation.financial.refundedRiskAmount) }} / 处置 {{ money(reconciliation.financial.refundDispositionAmount) }}，不一致 {{ reconciliation.financial.refundMismatchCount }}）；撤单 {{ reconciliation.financial.cancelledOrders }} 单（风险 {{ money(reconciliation.financial.cancelledRiskAmount) }} / 处置 {{ money(reconciliation.financial.cancelDispositionAmount) }}，不一致 {{ reconciliation.financial.cancelMismatchCount }}）</p></el-col>
-      </el-row>
-      <el-table scrollbar-always-on :data="reconciliation?.differences ?? []" border stripe class="center-table" empty-text="没有差异">
-        <el-table-column label="差异类型" min-width="180"><template #default="{ row }">{{ differenceLabel(row.type) }}</template></el-table-column>
-        <el-table-column prop="betId" label="注单" min-width="100" />
-        <el-table-column label="中心账号" min-width="140"><template #default="{ row }">{{ centerAccounts.find(account => account.accountId === row.centerAgentId)?.username ?? agents.find(agent => agent.id === row.centerAgentId)?.agentCode ?? row.centerAgentId ?? '—' }}</template></el-table-column>
-        <el-table-column prop="issueNumber" label="期号" min-width="120" />
-        <el-table-column label="本地状态" min-width="130"><template #default="{ row }">{{ row.localStatus ?? '—' }}</template></el-table-column>
-        <el-table-column label="中心状态" min-width="130"><template #default="{ row }">{{ row.centerStatus ?? '—' }}</template></el-table-column>
-        <el-table-column label="本地金额" width="130" align="right"><template #default="{ row }">{{ row.localAmount === null ? '—' : money(row.localAmount) }}</template></el-table-column>
-        <el-table-column label="中心金额" width="130" align="right"><template #default="{ row }">{{ row.centerAmount === null ? '—' : money(row.centerAmount) }}</template></el-table-column>
-        <el-table-column label="处置" min-width="110"><template #default="{ row }"><el-tag :type="row.disposed ? 'success' : 'warning'" effect="plain">{{ disposedLabel(row.type, row.betId, row.centerAgentId) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="120" fixed="right"><template #default="{ row }"><el-button link type="primary" :disabled="busy || row.disposed" @click="disposeDifference(row as { type: string; betId: number; centerAgentId: number | null })">标记处置</el-button></template></el-table-column>
-        <template #empty><el-empty description="没有差异" /></template>
-      </el-table>
-
-      <el-alert class="center-hint" type="info" :closable="false" title="处置只记录判断，不修改订单或账本；差异事实仍会显示在列表中并带「已处置」标记。处置默认 7 天后失效，届时差异会重新回到待处置状态。" />
-      <el-form :model="reconForm" inline class="center-form">
-        <el-form-item label="处置结论">
-          <el-select v-model="reconForm.resolution">
-            <el-option label="已知悉" value="ACKNOWLEDGED" />
-            <el-option label="接受差异" value="ACCEPTED" />
-            <el-option label="已修复" value="FIXED" />
-            <el-option label="忽略" value="IGNORED" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="处置理由"><el-input v-model="reconForm.reason" placeholder="留空则用结论名" /></el-form-item>
-        <el-form-item v-if="reconRetention">
-          <span class="center-hint">保留策略：生效中 {{ reconRetention.effective }} 条、已失效 {{ reconRetention.expired }} 条（处置记录只追加不删除，供审计追溯）</span>
-        </el-form-item>
-      </el-form>
-
-      <div class="center-data-block">
-        <p class="center-hint">生效中的差异处置</p>
-        <el-table scrollbar-always-on :data="reconDispositions" row-key="id" border stripe class="center-table" empty-text="没有生效中的处置">
-          <el-table-column label="差异类型" min-width="180"><template #default="{ row }">{{ differenceLabel(row.differenceType) }}</template></el-table-column>
-          <el-table-column prop="betId" label="注单" min-width="100" />
-          <el-table-column label="结论" min-width="130"><template #default="{ row }">{{ resolutionLabel(row.resolution) }}</template></el-table-column>
-          <el-table-column label="理由" min-width="200"><template #default="{ row }">{{ row.reason ?? '—' }}</template></el-table-column>
-          <el-table-column label="到期" min-width="170"><template #default="{ row }">{{ row.expiresAt ? row.expiresAt.replace('T', ' ').slice(0, 19) : '永久' }}</template></el-table-column>
-          <el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="danger" :disabled="busy" @click="revokeDifference(row as ReconciliationDisposition)">撤销</el-button></template></el-table-column>
-          <template #empty><el-empty description="没有生效中的处置" /></template>
-        </el-table>
-      </div>
-    </section>
-
     <el-drawer v-model="ledgerDrawerOpen" direction="rtl" size="min(96vw, 1480px)" :with-header="false" :destroy-on-close="true" class="center-ledger-drawer" @closed="closeAccountLedger">
       <div class="ledger-drawer-content">
         <header class="ledger-drawer-header">
@@ -1209,8 +927,8 @@ onMounted(async () => {
           <el-table-column label="记录类型" width="145"><template #default="{ row }"><el-tag :type="row.groupType === 'ORDER' ? 'primary' : row.sourceReferenceType === 'CENTER_ORDER' ? 'danger' : 'info'" effect="plain">{{ ledgerGroupKindLabel(row as CenterLedgerGroup) }}</el-tag></template></el-table-column>
           <el-table-column label="中心订单 / 流水" min-width="165"><template #default="{ row }">{{ row.groupType === 'ORDER' ? row.agentOrderNo : `流水 #${row.groupReferenceId}` }}</template></el-table-column>
           <el-table-column label="本地单" width="105"><template #default="{ row }">{{ row.localBetId ?? '—' }}</template></el-table-column>
-          <el-table-column label="期号 / 彩种" min-width="155"><template #default="{ row }">{{ row.groupType === 'ORDER' ? `${row.gameCode} / ${row.issueNumber}` : row.sourceReferenceType === 'CENTER_ORDER' ? `订单引用 ${row.sourceReferenceId ?? '无效'}` : '账号级变动' }}</template></el-table-column>
-          <el-table-column label="玩法" min-width="140"><template #default="{ row }">{{ row.groupType === 'ORDER' ? `${row.playType ?? ''} ${row.playText ?? ''}` : ledgerEntryTypeLabel(row.entryType) }}</template></el-table-column>
+          <el-table-column label="期号" min-width="125"><template #default="{ row }">{{ row.groupType === 'ORDER' ? row.issueNumber : row.sourceReferenceType === 'CENTER_ORDER' ? `订单引用 ${row.sourceReferenceId ?? '无效'}` : '账号级变动' }}</template></el-table-column>
+          <el-table-column label="下注内容" min-width="190"><template #default="{ row }">{{ row.groupType === 'ORDER' ? row.betDescription ?? '下注内容无法还原' : ledgerEntryTypeLabel(row.entryType) }}</template></el-table-column>
           <el-table-column label="本金 / 变动" width="125" align="right"><template #default="{ row }">{{ money(row.groupType === 'ORDER' ? row.orderAmount : row.amount) }}</template></el-table-column>
           <el-table-column label="结算 / 额度层" min-width="155"><template #default="{ row }">{{ ledgerGroupSettlementLabel(row as CenterLedgerGroup) }}</template></el-table-column>
           <el-table-column label="分录数" width="90" align="right"><template #default="{ row }">{{ row.entryCount }}</template></el-table-column>

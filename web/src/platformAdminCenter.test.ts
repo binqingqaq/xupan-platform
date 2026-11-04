@@ -193,14 +193,16 @@ describe('中心上游管理页', () => {
     const host = mountPage()
     await settle()
 
-    expect(api.listCenterAgents).toHaveBeenCalled()
     expect(api.listCenterOrders).toHaveBeenCalled()
     expect(api.centerOrderSummary).toHaveBeenCalled()
-    expect(api.centerReconciliation).toHaveBeenCalled()
+    expect(api.listCenterAgents).not.toHaveBeenCalled()
+    expect(api.centerReconciliation).not.toHaveBeenCalled()
 
     const text = host.textContent ?? ''
     expect(host.querySelector('.center-tabs')?.textContent).not.toContain('总览')
     expect(host.querySelector('.center-tabs')?.textContent).not.toContain('财务流水')
+    expect(host.querySelector('.center-tabs')?.textContent).not.toContain('风险')
+    expect(host.querySelector('.center-tabs')?.textContent).not.toContain('对账')
     expect(text).toContain('分配中心账号')
     expect(text).not.toContain('订单状态汇总')
   })
@@ -260,80 +262,6 @@ describe('中心上游管理页', () => {
     expect(api.listCenterOrders).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, machineId: 77 }))
   })
 
-  it('shows risk exposure as frozen plus unsettled', async () => {
-    const host = mountPage()
-    await settle()
-    clickTab(host, '风险')
-    await settle()
-
-    // 敞口 = 冻结 100 + 未结算 200 = 300
-    const text = host.textContent ?? ''
-    expect(text).toContain('总敞口')
-    expect(text).toContain('300.00')
-  })
-
-  it('reports reconciliation differences when the backend finds them', async () => {
-    vi.mocked(api.centerReconciliation).mockResolvedValue({
-      ...reconciliation,
-      balanced: false,
-      differenceCount: 1,
-      amountMismatchCount: 1,
-      differences: [
-        {
-          type: 'AMOUNT_MISMATCH',
-          betId: 100,
-          localStatus: 'ACCEPTED',
-          centerStatus: 'ACCEPTED',
-          localAmount: 100,
-          centerAmount: 90,
-        },
-      ],
-    } as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    const text = host.textContent ?? ''
-    expect(text).toContain('有差异')
-    expect(text).toContain('两侧金额不一致')
-    expect(text).toContain('90.00')
-  })
-
-  it('queries reconciliation by center account and issue number', async () => {
-    vi.mocked(api.listCenterUpstreamAccounts).mockResolvedValue([] as never)
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    const filterForm = host.querySelector('.center-form')
-    const accountInput = filterForm?.querySelector('.el-select input') as HTMLInputElement | null
-    accountInput?.click()
-    await settle()
-    const option = Array.from(document.querySelectorAll('.el-select-dropdown__item'))
-      .find(item => item.textContent?.includes('CENTER_A')) as HTMLElement | undefined
-    option?.click()
-    await settle()
-
-    const issueItem = Array.from(filterForm?.querySelectorAll('.el-form-item') ?? [])
-      .find(item => item.textContent?.includes('期号'))
-    const issueInput = issueItem?.querySelector('input') as HTMLInputElement | null
-    if (!issueInput) throw new Error('找不到对账期号筛选字段')
-    setValue(issueInput, '39999801')
-    await settle()
-    Array.from(filterForm?.querySelectorAll('button') ?? [])
-      .find(item => item.textContent?.trim() === '查询')?.click()
-    await settle()
-
-    expect(api.centerReconciliation).toHaveBeenLastCalledWith({
-      centerAgentId: agent.id,
-      issueNumber: '39999801',
-      limit: 50,
-    })
-  })
-
   it('creates an account bound to an active subaccount and shows its password once', async () => {
     vi.mocked(api.createCenterUpstreamAccount).mockResolvedValue({
       account: { ...centerAccount, accountId: 42, groupId: 32, groupName: '代理子账号B', username: 'center_agent_b' },
@@ -348,6 +276,8 @@ describe('中心上游管理页', () => {
     expect(host.textContent ?? '').toContain('8200.00')
     expect(host.textContent ?? '').toContain('300.00')
     expect(host.textContent ?? '').toContain('120.00')
+    expect(host.textContent ?? '').toContain('1000.00')
+    expect(host.textContent ?? '').toContain('5000.00')
     expect(host.textContent ?? '').not.toContain('新建中心代理')
 
     const openButton = Array.from(host.querySelectorAll('button'))
@@ -493,7 +423,8 @@ describe('中心上游管理页', () => {
         {
           groupType: 'ORDER', groupReferenceId: '71', latestEntryAt: '2026-10-25T08:00:00Z', entryCount: 8,
           centerOrderId: 71, agentOrderNo: 'BET-71', localBetId: 171, gameCode: 'AU8', issueNumber: '3000052',
-          playType: 'FAN', playText: 'params=3', orderAmount: 10, orderStatus: 'SETTLED',
+          ballNumber: 7, playType: 'FAN', betDescription: '第7球 / 3番10', playText: 'params=3',
+          orderAmount: 10, orderStatus: 'SETTLED',
           settleResult: 'AGENT_WIN', settleAmount: 9.6, bucket: null, entryType: null, direction: null,
           amount: null, balanceBefore: null, balanceAfter: null, reason: null,
           sourceReferenceType: 'CENTER_ORDER', sourceReferenceId: '71',
@@ -501,7 +432,8 @@ describe('中心上游管理页', () => {
         {
           groupType: 'ENTRY', groupReferenceId: '91', latestEntryAt: '2026-10-25T07:00:00Z', entryCount: 1,
           centerOrderId: null, agentOrderNo: null, localBetId: null, gameCode: null, issueNumber: null,
-          playType: null, playText: null, orderAmount: null, orderStatus: null, settleResult: null,
+          ballNumber: null, playType: null, betDescription: null, playText: null,
+          orderAmount: null, orderStatus: null, settleResult: null,
           settleAmount: null, bucket: 'AVAILABLE', entryType: 'CREDIT_GRANT', direction: 'IN', amount: 200,
           balanceBefore: 0, balanceAfter: 200, reason: '追加额度',
           sourceReferenceType: 'CENTER_AGENT', sourceReferenceId: '41',
@@ -526,6 +458,9 @@ describe('中心上游管理页', () => {
     expect(api.centerAccountLedgerGroups).toHaveBeenCalledWith(41, { page: 1, pageSize: 20 })
     expect(document.body.textContent ?? '').toContain('中心账号流水')
     expect(document.body.textContent ?? '').toContain('BET-71')
+    expect(document.body.textContent ?? '').toContain('第7球 / 3番10')
+    expect(document.body.textContent ?? '').toContain('3000052')
+    expect(document.body.textContent ?? '').not.toContain('AU8 / 3000052')
     expect(document.body.textContent ?? '').toContain('追加额度')
     expect(document.body.textContent ?? '').toContain('共 45 条汇总记录')
 
@@ -540,10 +475,7 @@ describe('中心上游管理页', () => {
     expect(document.body.textContent ?? '').not.toContain('中心账号流水')
   })
 
-  it('keeps assigned center accounts out of the legacy list and includes quota in account edits', async () => {
-    vi.mocked(api.listCenterAgents).mockResolvedValue([
-      { ...agent, id: centerAccount.accountId, agentCode: centerAccount.username },
-    ] as never)
+  it('includes quota in the unified account edit', async () => {
     vi.mocked(api.editCenterUpstreamAccount).mockResolvedValue(centerAccount as never)
     const host = mountPage()
     await settle()
@@ -570,69 +502,6 @@ describe('中心上游管理页', () => {
       maxSingleAmount: 1000,
       maxIssueExposure: 5000,
     }))
-
-    clickTab(host, '代理管理')
-    await settle()
-    expect(host.textContent ?? '').not.toContain(centerAccount.username)
-  })
-
-  // -----------------------------------------------------------------
-  // P1-C1：代理级风控
-  // -----------------------------------------------------------------
-
-  it('renders per-agent risk limits and falls back to global default when unset', async () => {
-    const host = mountPage()
-    await settle()
-    clickTab(host, '风险')
-    await settle()
-
-    const text = host.textContent ?? ''
-    // 未配置时明确写"全局默认"，而不是显示 0（0 会被误读成"不允许下单"）
-    expect(text).toContain('全局默认')
-    expect(text).toContain('单笔上限')
-    expect(text).toContain('单期敞口上限')
-  })
-
-  it('shows account risk limits in the risk page without a duplicate editor', async () => {
-    const host = mountPage()
-    await settle()
-    clickTab(host, '风险')
-    await settle()
-
-    expect(host.textContent ?? '').toContain('全局默认')
-    expect(host.textContent ?? '').not.toContain('保存代理级风控')
-  })
-
-  it('lists risk hits with observed value and threshold', async () => {
-    vi.mocked(api.centerAgentRiskHits).mockResolvedValue([
-      {
-        id: 7,
-        ruleCode: 'CENTER_AMOUNT_LIMIT_EXCEEDED',
-        ruleCategory: 'LIMIT',
-        observedValue: 200,
-        thresholdValue: 100,
-        gameCode: 'AU8',
-        issueNumber: '3006478',
-        agentOrderNo: 'BET-200',
-        detail: '单笔金额超过中心上限',
-        createdAt: '2026-10-02T00:00:00Z',
-      },
-    ] as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '风险')
-    await settle()
-
-    const viewButton = Array.from(host.querySelectorAll('.center-table button'))
-      .find(item => item.textContent?.trim() === '查看') as HTMLButtonElement
-    viewButton.click()
-    await settle()
-
-    const text = host.textContent ?? ''
-    expect(text).toContain('CENTER_AMOUNT_LIMIT_EXCEEDED')
-    expect(text).toContain('200.00')
-    expect(text).toContain('100.00')
   })
 
   // -----------------------------------------------------------------
@@ -716,140 +585,6 @@ describe('中心上游管理页', () => {
     expect(text).toContain('已接受')
   })
 
-  // -----------------------------------------------------------------
-  // C-2 ② / C-4 ③：对账差异处置
-  // -----------------------------------------------------------------
-
-  it('marks each reconciliation difference as pending or disposed', async () => {
-    vi.mocked(api.centerReconciliation).mockResolvedValue({
-      ...reconciliation,
-      balanced: false,
-      differenceCount: 1,
-      amountMismatchCount: 1,
-      differences: [
-        {
-          type: 'AMOUNT_MISMATCH', betId: 100, localStatus: 'ACCEPTED', centerStatus: 'ACCEPTED',
-          localAmount: 100, centerAmount: 90, disposed: false,
-        },
-      ],
-    } as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    expect(host.textContent ?? '').toContain('待处置')
-  })
-
-  it('shows a difference as disposed when an effective disposition exists', async () => {
-    vi.mocked(api.centerReconciliation).mockResolvedValue({
-      ...reconciliation,
-      balanced: false,
-      differenceCount: 1,
-      differences: [
-        {
-          type: 'AMOUNT_MISMATCH', betId: 100, localStatus: 'ACCEPTED', centerStatus: 'ACCEPTED',
-          localAmount: 100, centerAmount: 90, disposed: true,
-        },
-      ],
-    } as never)
-    vi.mocked(api.listReconciliationDispositions).mockResolvedValue([
-      {
-        id: 5, differenceType: 'AMOUNT_MISMATCH', betId: 100, resolution: 'ACCEPTED',
-        centerAgentId: null, reason: '已核对上游回执', expiresAt: '2026-10-10T00:00:00Z',
-        revokedAt: null, createdAt: '2026-10-03T00:00:00Z',
-      },
-    ] as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    const text = host.textContent ?? ''
-    expect(text).toContain('已处置')
-    expect(text).toContain('接受差异')
-    expect(text).toContain('已核对上游回执')
-  })
-
-  it('disposes a difference with an idempotency key and a 7-day window', async () => {
-    vi.mocked(api.centerReconciliation).mockResolvedValue({
-      ...reconciliation,
-      balanced: false,
-      differenceCount: 1,
-      differences: [
-        {
-          type: 'AMOUNT_MISMATCH', betId: 100, localStatus: 'ACCEPTED', centerStatus: 'ACCEPTED',
-          localAmount: 100, centerAmount: 90, disposed: false,
-        },
-      ],
-    } as never)
-    vi.mocked(api.disposeReconciliationDifference).mockResolvedValue({
-      id: 6, differenceType: 'AMOUNT_MISMATCH', betId: 100, resolution: 'ACKNOWLEDGED',
-      reason: '已知悉', expiresAt: '2026-10-10T00:00:00Z', revokedAt: null, duplicate: false,
-    } as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    const button = Array.from(host.querySelectorAll('button'))
-      .find(item => item.textContent?.trim() === '标记处置') as HTMLButtonElement
-    button.click()
-    await settle()
-
-    expect(api.disposeReconciliationDifference).toHaveBeenCalledTimes(1)
-    const [body] = vi.mocked(api.disposeReconciliationDifference).mock.calls[0]
-    expect(body.differenceType).toBe('AMOUNT_MISMATCH')
-    expect(body.betId).toBe(100)
-    // 幂等键必须存在
-    expect(body.idempotencyKey).toContain('center-recon-AMOUNT_MISMATCH-100')
-    // 默认 7 天生效——到期后差异重新回到待处置
-    expect(body.effectiveDays).toBe(7)
-  })
-
-  it('revokes a difference disposition so the difference becomes pending again', async () => {
-    vi.mocked(api.listReconciliationDispositions).mockResolvedValue([
-      {
-        id: 7, differenceType: 'STATUS_MISMATCH', betId: 200, resolution: 'IGNORED',
-        centerAgentId: null, reason: '误标', expiresAt: null,
-        revokedAt: null, createdAt: '2026-10-03T00:00:00Z',
-      },
-    ] as never)
-    vi.mocked(api.revokeReconciliationDisposition).mockResolvedValue({
-      id: 7, differenceType: 'STATUS_MISMATCH', betId: 200, resolution: 'IGNORED',
-      reason: '误标', expiresAt: null, revokedAt: '2026-10-03T01:00:00Z', duplicate: false,
-    } as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    const revokeButton = Array.from(host.querySelectorAll('button'))
-      .find(item => item.textContent?.trim() === '撤销') as HTMLButtonElement
-    revokeButton.click()
-    await settle()
-
-    expect(api.revokeReconciliationDisposition).toHaveBeenCalledWith(7)
-    expect(document.body.textContent ?? '').toContain('重新变为待处置')
-  })
-
-  it('shows retention stats for reconciliation dispositions', async () => {
-    vi.mocked(api.reconciliationRetention).mockResolvedValue({ effective: 3, expired: 2 } as never)
-
-    const host = mountPage()
-    await settle()
-    clickTab(host, '对账')
-    await settle()
-
-    const text = host.textContent ?? ''
-    expect(text).toContain('保留策略')
-    expect(text).toContain('生效中 3 条')
-    expect(text).toContain('已失效 2 条')
-  })
 })
 
 function setValue(input: HTMLInputElement, value: string) {

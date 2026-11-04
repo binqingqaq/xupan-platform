@@ -5,6 +5,8 @@ import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.service.CenterAgentService;
 import com.xupan.server.center.service.CenterUpstreamAccountService;
+import com.xupan.server.game.domain.BetCommandFormatter;
+import com.xupan.server.game.domain.PlayType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -24,7 +26,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 /** Super-admin endpoints for the internal center upstream accounts assigned to agent groups. */
 @RestController
@@ -160,7 +164,8 @@ public class CenterUpstreamAccountAdminController {
 
     public record CenterLedgerGroup(String groupType, String groupReferenceId, Instant latestEntryAt,
                                     long entryCount, Long centerOrderId, String agentOrderNo,
-                                    Long localBetId, String gameCode, String issueNumber, String playType,
+                                    Long localBetId, String gameCode, String issueNumber, Integer ballNumber,
+                                    String playType, String betDescription,
                                     String playText, BigDecimal orderAmount, String orderStatus,
                                     String settleResult, BigDecimal settleAmount, String bucket,
                                     String entryType, String direction, BigDecimal amount,
@@ -169,10 +174,37 @@ public class CenterUpstreamAccountAdminController {
         static CenterLedgerGroup from(CenterAgentRepository.LedgerGroupRow row) {
             return new CenterLedgerGroup(row.groupType(), row.groupReferenceId(), row.latestEntryAt(),
                     row.entryCount(), row.centerOrderId(), row.agentOrderNo(), row.localBetId(),
-                    row.gameCode(), row.issueNumber(), row.playType(), row.playText(), row.orderAmount(),
+                    row.gameCode(), row.issueNumber(), row.ballNumber(), row.playType(),
+                    betDescription(row), row.playText(), row.orderAmount(),
                     row.orderStatus(), row.settleResult(), row.settleAmount(), row.bucket(), row.entryType(),
                     row.direction(), row.amount(), row.balanceBefore(), row.balanceAfter(), row.reason(),
                     row.sourceReferenceType(), row.sourceReferenceId());
+        }
+
+        private static String betDescription(CenterAgentRepository.LedgerGroupRow row) {
+            if (!"ORDER".equals(row.groupType()) || row.playType() == null || row.ballNumber() == null
+                    || row.orderAmount() == null) {
+                return null;
+            }
+            try {
+                PlayType playType = PlayType.valueOf(row.playType().trim().toUpperCase(Locale.ROOT));
+                List<Integer> parameters = parseParameters(row.playText());
+                return "第" + row.ballNumber() + "球 / "
+                        + BetCommandFormatter.format(playType, parameters, row.orderAmount());
+            } catch (RuntimeException invalidSnapshot) {
+                return "下注内容无法还原（" + row.playType() + "）";
+            }
+        }
+
+        private static List<Integer> parseParameters(String playText) {
+            if (playText == null || playText.isBlank()) return List.of();
+            int marker = playText.indexOf("params=");
+            if (marker < 0) return List.of();
+            String raw = playText.substring(marker + "params=".length()).trim();
+            int end = raw.indexOf(';');
+            if (end >= 0) raw = raw.substring(0, end);
+            if (raw.isBlank()) return List.of();
+            return Arrays.stream(raw.split(",")).map(String::trim).map(Integer::parseInt).toList();
         }
     }
 

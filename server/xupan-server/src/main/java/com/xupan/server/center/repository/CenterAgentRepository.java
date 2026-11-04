@@ -243,7 +243,7 @@ public class CenterAgentRepository {
                     SELECT 'ORDER' AS group_type, order_entries.reference_id AS group_reference_id,
                            order_entries.sort_id, order_entries.latest_entry_at, order_entries.entry_count,
                            o.id AS center_order_id, o.agent_order_no, o.local_bet_id, o.game_code,
-                           o.issue_number, o.play_type, o.play_text, o.amount AS order_amount,
+                           o.issue_number, o.ball_number, o.play_type, o.play_text, o.amount AS order_amount,
                            o.status AS order_status, o.settle_result, o.settle_amount,
                            NULL AS bucket, NULL AS entry_type, NULL AS direction, NULL AS amount,
                            NULL AS balance_before, NULL AS balance_after, NULL AS reason,
@@ -262,14 +262,15 @@ public class CenterAgentRepository {
                     SELECT 'ENTRY' AS group_type, CAST(l.id AS CHAR) AS group_reference_id,
                            l.id AS sort_id, l.created_at AS latest_entry_at, 1 AS entry_count,
                            NULL AS center_order_id, NULL AS agent_order_no, NULL AS local_bet_id,
-                           NULL AS game_code, NULL AS issue_number, NULL AS play_type, NULL AS play_text,
+                           NULL AS game_code, NULL AS issue_number, NULL AS ball_number,
+                           NULL AS play_type, NULL AS play_text,
                            NULL AS order_amount, NULL AS order_status, NULL AS settle_result,
                            NULL AS settle_amount, l.bucket, l.entry_type, l.direction, l.amount,
                            l.balance_before, l.balance_after, l.reason, l.reference_type AS source_reference_type,
                            l.reference_id AS source_reference_id
                       FROM center_agent_ledger l
                      WHERE l.center_agent_id = ?
-                       AND NOT (l.reference_type = 'CENTER_ORDER' AND EXISTS (
+                       AND (l.reference_type IS NULL OR l.reference_type <> 'CENTER_ORDER' OR NOT EXISTS (
                            SELECT 1 FROM center_order o
                             WHERE o.center_agent_id = l.center_agent_id
                               AND l.reference_id = CAST(o.id AS CHAR)
@@ -281,7 +282,8 @@ public class CenterAgentRepository {
                 instant(rs.getTimestamp("latest_entry_at")), rs.getLong("entry_count"),
                 nullableLong(rs, "center_order_id"), rs.getString("agent_order_no"),
                 nullableLong(rs, "local_bet_id"), rs.getString("game_code"), rs.getString("issue_number"),
-                rs.getString("play_type"), rs.getString("play_text"), rs.getBigDecimal("order_amount"),
+                nullableInteger(rs, "ball_number"), rs.getString("play_type"), rs.getString("play_text"),
+                rs.getBigDecimal("order_amount"),
                 rs.getString("order_status"), rs.getString("settle_result"), rs.getBigDecimal("settle_amount"),
                 rs.getString("bucket"), rs.getString("entry_type"), rs.getString("direction"),
                 rs.getBigDecimal("amount"), rs.getBigDecimal("balance_before"),
@@ -305,7 +307,7 @@ public class CenterAgentRepository {
                     SELECT l.id AS group_id
                       FROM center_agent_ledger l
                      WHERE l.center_agent_id = ?
-                       AND NOT (l.reference_type = 'CENTER_ORDER' AND EXISTS (
+                       AND (l.reference_type IS NULL OR l.reference_type <> 'CENTER_ORDER' OR NOT EXISTS (
                            SELECT 1 FROM center_order o
                             WHERE o.center_agent_id = l.center_agent_id
                               AND l.reference_id = CAST(o.id AS CHAR)
@@ -337,7 +339,7 @@ public class CenterAgentRepository {
                        l.idempotency_key, l.operator_user_id, l.created_at
                   FROM center_agent_ledger l
                  WHERE l.center_agent_id = ? AND l.id = ?
-                   AND NOT (l.reference_type = 'CENTER_ORDER' AND EXISTS (
+                   AND (l.reference_type IS NULL OR l.reference_type <> 'CENTER_ORDER' OR NOT EXISTS (
                        SELECT 1 FROM center_order o
                         WHERE o.center_agent_id = l.center_agent_id
                           AND l.reference_id = CAST(o.id AS CHAR)
@@ -400,6 +402,11 @@ public class CenterAgentRepository {
         return rs.wasNull() ? null : value;
     }
 
+    private static Integer nullableInteger(ResultSet rs, String column) throws SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
     /** 一个中心代理身份（不含 token 原文，只含前缀与哈希存在性）。 */
     public record AgentRow(long id, String agentCode, String agentName, String upstreamAccount,
                            String tokenPrefix, String status, BigDecimal creditLimit,
@@ -419,7 +426,8 @@ public class CenterAgentRepository {
     public record LedgerGroupRow(String groupType, String groupReferenceId, long sortId,
                                  Instant latestEntryAt, long entryCount, Long centerOrderId,
                                  String agentOrderNo, Long localBetId, String gameCode, String issueNumber,
-                                 String playType, String playText, BigDecimal orderAmount, String orderStatus,
+                                 Integer ballNumber, String playType, String playText, BigDecimal orderAmount,
+                                 String orderStatus,
                                  String settleResult, BigDecimal settleAmount, String bucket, String entryType,
                                  String direction, BigDecimal amount, BigDecimal balanceBefore,
                                  BigDecimal balanceAfter, String reason,

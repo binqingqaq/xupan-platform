@@ -1169,7 +1169,9 @@ export interface CenterLedgerGroup {
   localBetId: number | null
   gameCode: string | null
   issueNumber: string | null
+  ballNumber: number | null
   playType: string | null
+  betDescription: string | null
   playText: string | null
   orderAmount: number | null
   orderStatus: string | null
