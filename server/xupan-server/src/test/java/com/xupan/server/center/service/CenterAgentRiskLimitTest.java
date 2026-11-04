@@ -182,8 +182,9 @@ class CenterAgentRiskLimitTest {
         jdbc.update("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                     play_type, parameters_text, stake, odds_snapshot, machine_id_snapshot, agent_id_snapshot)
-                VALUES ('AU8', NULL, ?, ?, '39999501', 1, 'FAN', '1', ?, 3.850, ?, ?)
+                     play_type, parameters_text, stake, odds_snapshot, machine_id_snapshot, agent_id_snapshot,
+                     player_kind_snapshot)
+                VALUES ('AU8', NULL, ?, ?, '39999501', 1, 'FAN', '1', ?, 3.850, ?, ?, 'NORMAL')
                 """, betCode, betCode, amount, machineId, machineId);
         long betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
         return orderService.accept(centerAgentId, orderNo, betId, machineId, "IGNORED", "IGNORED",

@@ -240,7 +240,6 @@ export interface PlayerDeskBehavior {
   stakeMax: number
   stakeRangeCode: string
   chaseEnabled: boolean
-  feidanEnabled: boolean
   machineChaseEnabled: boolean
   nextRunAt?: string | null
   lastIssueNumber?: string | null
@@ -461,7 +460,7 @@ export interface BetBoardBetItem {
   betText: string
   stake: number
   settlementStatus: SettlementStatus
-  /** 上报状态（BY220 下注榜每条注单的 `flyers_status`）；代理点它触发重新飞单。 */
+  /** 普通玩家报网状态；托使用 NOT_APPLICABLE 并只显示本地结算。 */
   reportStatus: ReportStatus
   createdAt: string
 }
@@ -663,7 +662,6 @@ export interface TestPlayerBehaviorRequest {
   mode: 'AUTOMATIC' | 'MANUAL'
   stakeRangeCode: string
   chaseEnabled: boolean
-  feidanEnabled: boolean
 }
 
 export interface TestPlayerMessageRequest {
@@ -915,9 +913,11 @@ export interface ReportConfigUpdateRequest {
  *
  * 对应需求文档《代理报网盘口与结算业务规则说明》§16.4：
  * 待处理/未发送/已接受/已拒绝/超时/已撤单/已退款/已结算。
- * 没有上报订单行时为 PENDING；存在未发送的上报批次但还未实际发送时为 NOT_SENT。
+ * 普通玩家没有上报订单行时为 PENDING；托或身份未知注单为 NOT_APPLICABLE。
+ * 存在未发送的上报批次但还未实际发送时为 NOT_SENT。
  */
 export type ReportStatus =
+  | 'NOT_APPLICABLE'
   | 'PENDING'
   | 'NOT_SENT'
   | 'ACCEPTED'

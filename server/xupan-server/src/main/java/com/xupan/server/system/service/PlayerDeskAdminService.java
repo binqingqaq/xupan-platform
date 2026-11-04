@@ -551,7 +551,7 @@ public class PlayerDeskAdminService {
 
     @Transactional
     public BehaviorConfig updateBehavior(long userId, String mode, String stakeRangeCode,
-                                         boolean chaseEnabled, boolean feidanEnabled, long operator) {
+                                         boolean chaseEnabled, long operator) {
         PlayerDeskScopeService.Scope scope = scopeService.requireAccess(operator);
         PlayerDeskRepository.PlayerRow player = row(userId, false, scope);
         if (!"BOT".equals(player.playerKind())) {
@@ -568,9 +568,9 @@ public class PlayerDeskAdminService {
             throw BusinessException.badRequest("PLAYER_CHASE_NOT_ENABLED", "机器账号尚未开通追单权限");
         }
         PlayerDeskRepository.Behavior result = repository.updateBehavior(userId, mode, bounds[0], bounds[1],
-                stakeRangeCode, chaseEnabled, feidanEnabled);
+                stakeRangeCode, chaseEnabled);
         audit(operator, "PUT", "/api/admin/player-desk/players/" + userId + "/behavior", Long.toString(userId),
-                "mode=" + mode + ",chase=" + chaseEnabled + ",feidan=" + feidanEnabled);
+                "mode=" + mode + ",chase=" + chaseEnabled);
         return new BehaviorConfig(result);
     }
 

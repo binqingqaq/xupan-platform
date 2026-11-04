@@ -373,6 +373,7 @@ public class ReportService {
     private ResubmitResult doResubmit(long operator, long targetAgentId, long betId, boolean allowManual) {
         ReportUpstreamOrderRepository.BetRow bet = orderRepository.findBetForAgentForUpdate(betId, targetAgentId)
                 .orElseThrow(() -> BusinessException.notFound("REPORT_BET_NOT_FOUND", "注单不存在或不在当前机器范围内"));
+        requireNormalPlayerBet(bet);
         if ("RECOVERY_CENTER_ACCOUNT_UNKNOWN".equals(bet.responseCode())) {
             throw BusinessException.conflict("REPORT_RECONCILIATION_REQUIRED",
                     "原中心账号归属无法确认，需先完成人工核对，不能直接换账号重报");
@@ -424,7 +425,8 @@ public class ReportService {
             return Optional.empty();
         }
         ReportUpstreamOrderRepository.BetRow bet = orderRepository.findBet(betId).orElse(null);
-        if (bet == null || !SUBMIT_FROM_STATUSES.contains(bet.reportStatus())) {
+        if (bet == null || !"NORMAL".equals(bet.playerKind())
+                || !SUBMIT_FROM_STATUSES.contains(bet.reportStatus())) {
             return Optional.empty();
         }
         if (!orderRepository.isReportableBet(betId, bet.agentId())) {
@@ -488,6 +490,9 @@ public class ReportService {
 
     private String recoverPendingAttempt(ReportUpstreamOrderRepository.BetRow bet,
                                          ReportUpstreamOrderRepository.AttemptRow attempt) {
+        if (!"NORMAL".equals(bet.playerKind())) {
+            return "NOT_APPLICABLE";
+        }
         if (attempt.centerAgentId() == null) {
             int updated = orderRepository.resolveAttempt(attempt.id(), attempt.attemptCount(), "MANUAL",
                     "RECOVERY_CENTER_ACCOUNT_UNKNOWN",
@@ -537,6 +542,12 @@ public class ReportService {
     private static boolean isRecoverableCenterAttempt(ReportUpstreamOrderRepository.AttemptRow attempt) {
         return attempt != null && CenterReportAdapter.CODE.equals(attempt.reportType())
                 && ("PENDING".equals(attempt.status()) || "TIMEOUT".equals(attempt.status()));
+    }
+
+    private static void requireNormalPlayerBet(ReportUpstreamOrderRepository.BetRow bet) {
+        if (!"NORMAL".equals(bet.playerKind())) {
+            throw BusinessException.conflict("REPORT_BOT_NOT_APPLICABLE", "托注单不参与中心报网");
+        }
     }
 
     /**

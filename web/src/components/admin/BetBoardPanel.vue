@@ -128,9 +128,9 @@ onBeforeUnmount(() => {
         <div v-else-if="!board?.items.length" class="bet-board-empty" aria-hidden="true"></div>
         <div v-else class="bet-board-list">
           <div v-for="item in board.items" :key="item.id" class="bet-board-row">
-            <!-- BY220 把上报状态与重报入口都放在注单这一行上（admin_list.html:1961-1992）：
-                 未发送/未报/失败/超时时点状态标记即"重新飞单"，已报的不可点。 -->
+            <!-- 普通玩家按 BY220 在注单状态处重报；托注单只展示本地结算状态。 -->
             <button
+              v-if="item.playerKind === 'NORMAL'"
               type="button"
               class="bet-board-copy"
               :class="[`is-report-${item.reportStatus.toLowerCase()}`, { 'is-resubmittable': betBoardCanResubmit(item.reportStatus) }]"
@@ -141,6 +141,10 @@ onBeforeUnmount(() => {
               [{{ item.displayName }}] "{{ item.betText }}" 合计：{{ formatBetBoardPoints(item.stake) }}
               <span class="bet-board-report-status">{{ resubmittingBetId === item.id ? '重报中' : betBoardReportStatusLabel(item.reportStatus) }}</span>
             </button>
+            <div v-else class="bet-board-copy is-report-not_applicable" aria-label="托注单仅本地结算">
+              [{{ item.displayName }}] "{{ item.betText }}" 合计：{{ formatBetBoardPoints(item.stake) }}
+              <span class="bet-board-report-status">本地结算</span>
+            </div>
             <button class="bet-board-remove" type="button" disabled title="管理员撤单功能暂未开放" aria-label="管理员撤单功能暂未开放">×</button>
           </div>
         </div>

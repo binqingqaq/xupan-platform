@@ -193,9 +193,9 @@ class ReportProcessRestartRecoveryTest {
             jdbc.update("""
                     INSERT INTO game_bet (game_code, user_id, bet_code, request_idempotency_key, issue_number,
                                           ball_number, play_type, parameters_text, stake, odds_snapshot,
-                                          settlement_status)
+                                          settlement_status, player_kind_snapshot)
                     VALUES ('AU8', ?, 'P4-RESTART-BET', 'P4-RESTART-BET', 'P4RESTART001', 1,
-                            'FAN', '1', 100.00, 3.850, 'PENDING')
+                            'FAN', '1', 100.00, 3.850, 'PENDING', 'NORMAL')
                     """, walletId);
             long betId = jdbc.queryForObject(
                     "SELECT id FROM game_bet WHERE bet_code = 'P4-RESTART-BET'", Long.class);

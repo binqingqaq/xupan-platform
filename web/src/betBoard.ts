@@ -22,11 +22,13 @@ export function betBoardFanClass(fan: number) {
  * 下注榜注单上的上报状态文字。
  *
  * 状态来自上游上报订单实体（Flyway V58 `report_upstream_order`）：
+ * BOT 使用 NOT_APPLICABLE 表示本地结算，不进入中心报网。
  * BY220 `admin_list.html:1964` 只区分两种（`flyers_status == 2 ? '成功' : '失败'`）；
  * xupan 按已确认的偏差把"失败"与"超时"拆开（超时订单要单独计数、单独重报），
  * 并保留"已撤单/已退款/已结算"给中心上游第二层结算使用。
  */
 export function betBoardReportStatusLabel(reportStatus: string | null | undefined) {
+  if (reportStatus === 'NOT_APPLICABLE') return '本地结算'
   if (reportStatus === 'NOT_SENT') return '未发送'
   if (reportStatus === 'ACCEPTED' || reportStatus === 'SETTLED') return '已报'
   if (reportStatus === 'REJECTED') return '失败'
@@ -43,6 +45,7 @@ export function betBoardReportStatusLabel(reportStatus: string | null | undefine
  * `index/reFeidan` 重新飞单；已报的注单不可重报。
  */
 export function betBoardCanResubmit(reportStatus: string | null | undefined) {
+  if (reportStatus === 'NOT_APPLICABLE') return false
   return reportStatus === 'PENDING' || reportStatus === 'NOT_SENT' || reportStatus === 'REJECTED'
     || reportStatus === 'TIMEOUT' || reportStatus === null || reportStatus === undefined
 }

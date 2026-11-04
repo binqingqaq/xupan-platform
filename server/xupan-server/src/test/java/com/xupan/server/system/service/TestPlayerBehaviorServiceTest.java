@@ -126,7 +126,7 @@ class TestPlayerBehaviorServiceTest {
     @Test
     void manualBotDoesNotReceiveAutomaticBetPlan() {
         playerDeskRepository.updateBehavior(botId, "MANUAL", new BigDecimal("30"), new BigDecimal("300"),
-                "30-300", false, false);
+                "30-300", false);
         assertThat(behaviorService.dispatch(botId)).isEmpty();
         assertThat(count("SELECT COUNT(*) FROM test_player_action WHERE user_id=? AND action_type='BET_TEXT'", botId)).isZero();
     }

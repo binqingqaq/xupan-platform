@@ -119,6 +119,13 @@ public class CenterOrderService {
         CenterAgentRepository.AgentRow agent = agentRepository.lockById(centerAgentId)
                 .orElseThrow(() -> BusinessException.unauthorized("CENTER_TOKEN_INVALID", "中心 Token 无效"));
 
+        if (localBetId == null || localAgentId == null || localBetId <= 0 || localAgentId <= 0) {
+            throw BusinessException.badRequest("CENTER_LOCAL_BET_REQUIRED", "中心接单必须关联普通玩家注单和报单机器");
+        }
+        if (!orderRepository.isNormalPlayerBet(localBetId)) {
+            throw BusinessException.badRequest("CENTER_LOCAL_BET_KIND_INVALID", "中心上游只接收普通玩家注单");
+        }
+
         // 幂等：同一代理同一订单号只受理一次，重复上报直接回放首次结果
         Optional<CenterOrderRepository.OrderRow> existing =
                 orderRepository.findByAgentAndOrderNo(centerAgentId, agentOrderNo);
@@ -128,9 +135,6 @@ public class CenterOrderService {
                     row.frozenAmount());
         }
 
-        if (localBetId == null || localAgentId == null || localBetId <= 0 || localAgentId <= 0) {
-            throw BusinessException.badRequest("CENTER_LOCAL_BET_REQUIRED", "中心接单必须关联本地注单和报单机器");
-        }
         CenterOrderRepository.LocalBetSnapshot bet = orderRepository
                 .findLocalBetSnapshot(centerAgentId, localBetId, localAgentId)
                 .orElseThrow(() -> BusinessException.badRequest("CENTER_LOCAL_BET_INVALID",

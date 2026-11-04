@@ -101,8 +101,8 @@ class CenterRejectWithdrawIntegrationTest {
         jdbc.update("""
                 INSERT INTO game_bet (game_code, user_id, bet_code, request_idempotency_key, issue_number,
                                       ball_number, play_type, parameters_text, stake, odds_snapshot,
-                                      settlement_status)
-                VALUES ('AU8', ?, ?, ?, '39999480', 1, 'FAN', '1', 100.00, 3.850, 'PENDING')
+                                      settlement_status, player_kind_snapshot)
+                VALUES ('AU8', ?, ?, ?, '39999480', 1, 'FAN', '1', 100.00, 3.850, 'PENDING', 'NORMAL')
                 """, accountId, BET_CODE, BET_CODE);
         betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, BET_CODE);
     }

@@ -199,8 +199,8 @@ class ReportClosureIntegrationTest {
         jdbc.update("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                     play_type, parameters_text, stake, odds_snapshot)
-                VALUES ('AU8', ?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850)
+                     play_type, parameters_text, stake, odds_snapshot, player_kind_snapshot)
+                VALUES ('AU8', ?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850, 'NORMAL')
                 """, playerAccountId, betCode, betCode, ISSUE_NUMBER);
         Long id = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = ?", Long.class, betCode);
         if (id == null) {

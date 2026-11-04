@@ -106,6 +106,7 @@ async function resolvePlayerUserId(wxid: unknown) {
 
 function betReportState(status: string) {
   switch (status) {
+    case 'NOT_APPLICABLE': return { code: 4, label: '本地结算' }
     case 'NOT_SENT': return { code: 0, label: '未发送' }
     case 'ACCEPTED': return { code: 2, label: '已报' }
     case 'REJECTED': return { code: 3, label: '驳回' }
@@ -735,7 +736,6 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
           mode: behavior.mode,
           stakeRangeCode: behavior.stakeRangeCode,
           chaseEnabled: behavior.chaseEnabled,
-          feidanEnabled: behavior.feidanEnabled,
           machineChaseEnabled: behavior.machineChaseEnabled,
         } : null,
       } })
@@ -822,7 +822,6 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
         mode: next.mode,
         stakeRangeCode: next.stakeRangeCode,
         chaseEnabled: next.chaseEnabled,
-        feidanEnabled: next.feidanEnabled,
       })
       sendToFrame({ type: 'xupan-player-response', requestId, data: 0 })
       return

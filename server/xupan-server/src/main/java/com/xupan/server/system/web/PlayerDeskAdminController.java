@@ -275,7 +275,7 @@ import java.util.List;
     @PutMapping("/players/{userId}/behavior")
     public Behavior updateBehavior(Authentication auth, @PathVariable long userId, @Valid @RequestBody BehaviorRequest request) {
         return Behavior.from(service.updateBehavior(userId, request.mode(), request.stakeRangeCode(),
-                request.chaseEnabled(), request.feidanEnabled(), user(auth)));
+                request.chaseEnabled(), user(auth)));
     }
 
     @PostMapping("/players/{userId}/behavior/run-now")
@@ -427,13 +427,13 @@ import java.util.List;
     public record Behavior(Long id, Long accountId, String mode, boolean enabled, BigDecimal stakeMin,
                            BigDecimal stakeMax, Instant nextRunAt, String lastIssueNumber, String lastErrorCode,
                            String lastErrorMessage, long version, Instant updatedAt, String stakeRangeCode,
-                           boolean chaseEnabled, boolean feidanEnabled, boolean machineChaseEnabled) {
+                           boolean chaseEnabled, boolean machineChaseEnabled) {
         static Behavior from(PlayerDeskAdminService.BehaviorConfig x) {
             if (x == null) return null;
             PlayerDeskRepository.Behavior b = x.behavior();
             return new Behavior(b.id(), b.accountId(), b.mode(), b.enabled(), b.stakeMin(), b.stakeMax(),
                     b.nextRunAt(), b.lastIssueNumber(), b.lastErrorCode(), b.lastErrorMessage(), b.version(),
-                    b.updatedAt(), b.stakeRangeCode(), b.chaseEnabled(), b.feidanEnabled(), b.machineChaseEnabled());
+                    b.updatedAt(), b.stakeRangeCode(), b.chaseEnabled(), b.machineChaseEnabled());
         }
     }
     public record Action(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status, int attempts, String errorCode, String errorMessage, Long messageId, Long betId, Instant createdAt, Instant updatedAt) {
@@ -485,7 +485,7 @@ import java.util.List;
         }
     }
     public record BehaviorRequest(@NotBlank String mode, @NotBlank String stakeRangeCode,
-                                  boolean chaseEnabled, boolean feidanEnabled) {}
+                                  boolean chaseEnabled) {}
     public record MessageRequest(@NotBlank String content, @NotBlank String clientMessageId) {}
     public record ReviewRequest(String reason) {}
     public record PointRequest(long id, long userId, String requestType, BigDecimal amount, String status,

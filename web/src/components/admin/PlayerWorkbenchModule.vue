@@ -48,7 +48,6 @@ const behaviorDraft = reactive({
   mode: 'AUTOMATIC' as 'AUTOMATIC' | 'MANUAL',
   stakeRangeCode: '30-300',
   chaseEnabled: false,
-  feidanEnabled: false,
   machineChaseEnabled: false,
 })
 
@@ -189,7 +188,7 @@ async function selectPlayer(userId: number) {
 function syncBehavior(behavior: PlayerDeskBehavior | null) {
   Object.assign(behaviorDraft, behavior ?? {
     mode: 'AUTOMATIC', stakeRangeCode: '30-300', chaseEnabled: false,
-    feidanEnabled: false, machineChaseEnabled: false,
+    machineChaseEnabled: false,
   })
 }
 
@@ -304,13 +303,11 @@ async function saveBehavior() {
   if (!selected.value) return
   behaviorError.value = ''; const errors = validateBehaviorDraft(behaviorDraft); if (errors.length) { behaviorError.value = errors[0]; return }
   saving.value = true
-  try { const behavior = await api.updatePlayerBehavior(selected.value.userId, { mode: behaviorDraft.mode, stakeRangeCode: behaviorDraft.stakeRangeCode, chaseEnabled: behaviorDraft.chaseEnabled, feidanEnabled: behaviorDraft.feidanEnabled }); syncBehavior(behavior); await refresh(selected.value.userId); actionMessage.value = '托配置已保存' }
+  try { const behavior = await api.updatePlayerBehavior(selected.value.userId, { mode: behaviorDraft.mode, stakeRangeCode: behaviorDraft.stakeRangeCode, chaseEnabled: behaviorDraft.chaseEnabled }); syncBehavior(behavior); await refresh(selected.value.userId); actionMessage.value = '托配置已保存' }
   catch (cause) { behaviorError.value = cause instanceof Error ? cause.message : '托配置保存失败' } finally { saving.value = false }
 }
 async function toggleBotMode() { behaviorDraft.mode = behaviorDraft.mode === 'AUTOMATIC' ? 'MANUAL' : 'AUTOMATIC'; await saveBehavior() }
 async function toggleBotChase() { behaviorDraft.chaseEnabled = !behaviorDraft.chaseEnabled; await saveBehavior() }
-async function toggleBotFeidan() { behaviorDraft.feidanEnabled = !behaviorDraft.feidanEnabled; await saveBehavior() }
-
 function avatar(player: PlayerDeskItem) { return player.avatarKey ? api.avatarUrl(player.avatarKey) : '' }
 function money(value: number) { return formatPoints(value) }
 function isPlayerBlacklisted(player: PlayerDeskItem) {

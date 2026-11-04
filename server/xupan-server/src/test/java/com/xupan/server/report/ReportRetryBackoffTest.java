@@ -186,8 +186,8 @@ class ReportRetryBackoffTest {
         return insertAndReturnId("""
                 INSERT INTO game_bet
                     (game_code, user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                     play_type, parameters_text, stake, odds_snapshot, settlement_status)
-                VALUES ('AU8', ?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850, 'PENDING')
+                     play_type, parameters_text, stake, odds_snapshot, settlement_status, player_kind_snapshot)
+                VALUES ('AU8', ?, ?, ?, ?, 1, 'FAN', '1', 10.00, 3.850, 'PENDING', 'NORMAL')
                 """, accountId, betCode, betCode, ISSUE_NUMBER);
     }
 

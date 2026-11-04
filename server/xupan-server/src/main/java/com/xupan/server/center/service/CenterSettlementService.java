@@ -146,6 +146,10 @@ public class CenterSettlementService {
         if (!"ACCEPTED".equals(order.status())) {
             return null;
         }
+        if (order.localBetId() == null || !orderRepository.isNormalPlayerBet(order.localBetId())) {
+            throw BusinessException.conflict("CENTER_ORDER_PLAYER_KIND_INVALID",
+                    "中心二层结算只处理普通玩家注单");
+        }
         // 中心侧只认已保存的玩法参数和赔率快照；解析或参数校验失败按"无法结算"处理，
         // 跳过并留给人工，绝不放任它把整期结算打断，也绝不静默赔钱。
         PlayType playType;

@@ -80,8 +80,19 @@ public class CenterOrderRepository {
     public List<OrderRow> findAcceptedByIssue(String gameCode, String issueNumber, int limit) {
         return jdbc.query(COLUMNS + """
                  WHERE game_code = ? AND issue_number = ? AND status = 'ACCEPTED'
+                   AND EXISTS (SELECT 1 FROM game_bet b
+                                WHERE b.id = center_order.local_bet_id
+                                  AND b.player_kind_snapshot = 'NORMAL')
                  ORDER BY id LIMIT ?
                 """, (rs, rowNum) -> orderRow(rs), gameCode, issueNumber, limit);
+    }
+
+    public boolean isNormalPlayerBet(long betId) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM game_bet
+                 WHERE id = ? AND player_kind_snapshot = 'NORMAL'
+                """, Integer.class, betId);
+        return count != null && count == 1;
     }
 
     public boolean hasConfirmedDraw(String gameCode, String issueNumber) {
@@ -287,7 +298,8 @@ public class CenterOrderRepository {
                   LEFT JOIN game_issue i ON i.game_code = b.game_code AND i.issue_number = b.issue_number
                   JOIN agent m ON m.id = COALESCE(b.machine_id_snapshot, b.agent_id_snapshot, a.agent_id)
                   JOIN center_agent c ON c.id = ? AND c.agent_group_id = m.group_id
-                 WHERE b.id = ? AND m.id = ? AND m.status = 'ACTIVE' AND m.system_owned = FALSE
+                 WHERE b.id = ? AND b.player_kind_snapshot = 'NORMAL'
+                   AND m.id = ? AND m.status = 'ACTIVE' AND m.system_owned = FALSE
                    AND m.deleted_at IS NULL
                 """, (rs, rowNum) -> new LocalBetSnapshot(rs.getLong("id"), rs.getString("game_code"),
                 rs.getString("issue_number"), rs.getInt("ball_number"),

@@ -114,8 +114,9 @@ class CenterReconciliationControllerTest {
 
         jdbc.update("""
                 INSERT INTO game_bet (user_id, bet_code, request_idempotency_key, issue_number, ball_number,
-                                      play_type, parameters_text, stake, odds_snapshot, settlement_status)
-                VALUES (?, 'RECON-BET-1', 'RECON-BET-1', ?, 1, 'FAN', '1', 100.00, 3.850, 'PENDING')
+                                      play_type, parameters_text, stake, odds_snapshot, settlement_status,
+                                      player_kind_snapshot)
+                VALUES (?, 'RECON-BET-1', 'RECON-BET-1', ?, 1, 'FAN', '1', 100.00, 3.850, 'PENDING', 'NORMAL')
                 """, accountId, au8Issue);
         betId = jdbc.queryForObject("SELECT id FROM game_bet WHERE bet_code = 'RECON-BET-1'", Long.class);
     }

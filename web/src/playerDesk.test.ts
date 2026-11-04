@@ -42,9 +42,9 @@ describe('player desk helpers', () => {
   })
 
   it('validates BY220 bot mode, fixed stake tiers, and state flags', () => {
-    expect(validateBehaviorDraft({ mode: 'AUTOMATIC', stakeRangeCode: '30-300', chaseEnabled: false, feidanEnabled: false })).toEqual([])
-    expect(validateBehaviorDraft({ mode: 'MANUAL', stakeRangeCode: '10000-30000', chaseEnabled: true, feidanEnabled: true })).toEqual([])
-    expect(validateBehaviorDraft({ mode: 'MANUAL', stakeRangeCode: 'RANDOM', chaseEnabled: false, feidanEnabled: false })).toContain('下注范围不在 BY220 的五档内')
+    expect(validateBehaviorDraft({ mode: 'AUTOMATIC', stakeRangeCode: '30-300', chaseEnabled: false })).toEqual([])
+    expect(validateBehaviorDraft({ mode: 'MANUAL', stakeRangeCode: '10000-30000', chaseEnabled: true })).toEqual([])
+    expect(validateBehaviorDraft({ mode: 'MANUAL', stakeRangeCode: 'RANDOM', chaseEnabled: false })).toContain('下注范围不在 BY220 的五档内')
   })
 
   it('validates points and manual message constraints', () => {

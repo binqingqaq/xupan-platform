@@ -95,13 +95,13 @@ public class PlayerDeskRepository {
     }
 
     public Behavior updateBehavior(long userId, String mode, BigDecimal min, BigDecimal max,
-                                   String stakeRangeCode, boolean chaseEnabled, boolean feidanEnabled) {
+                                   String stakeRangeCode, boolean chaseEnabled) {
         PlayerRow row = findByUserId(userId).orElseThrow();
         ensureBehavior(row.accountId());
         jdbc.update("UPDATE test_player_behavior SET run_mode=?, enabled=?, stake_min=?, stake_max=?, "
-                        + "stake_range_code=?, player_chase_enabled=?, player_feidan_enabled=?, "
+                        + "stake_range_code=?, player_chase_enabled=?, "
                         + "version=version+1, updated_at=CURRENT_TIMESTAMP(6) WHERE account_id=?",
-                mode, "AUTOMATIC".equals(mode), min, max, stakeRangeCode, chaseEnabled, feidanEnabled, row.accountId());
+                mode, "AUTOMATIC".equals(mode), min, max, stakeRangeCode, chaseEnabled, row.accountId());
         return ensureBehavior(row.accountId());
     }
 
@@ -111,7 +111,7 @@ public class PlayerDeskRepository {
                 instant(rs.getTimestamp("next_run_at")), rs.getString("last_issue_number"),
                 rs.getString("last_error_code"), rs.getString("last_error_message"), rs.getLong("version"),
                 instant(rs.getTimestamp("updated_at")), rs.getString("stake_range_code"),
-                rs.getBoolean("player_chase_enabled"), rs.getBoolean("player_feidan_enabled"),
+                rs.getBoolean("player_chase_enabled"),
                 rs.getBoolean("machine_chase_enabled"));
     }
 
@@ -183,8 +183,7 @@ public class PlayerDeskRepository {
     public record Behavior(long id, long accountId, String mode, boolean enabled, BigDecimal stakeMin,
                            BigDecimal stakeMax, Instant nextRunAt, String lastIssueNumber,
                            String lastErrorCode, String lastErrorMessage, long version, Instant updatedAt,
-                           String stakeRangeCode, boolean chaseEnabled, boolean feidanEnabled,
-                           boolean machineChaseEnabled) {}
+                           String stakeRangeCode, boolean chaseEnabled, boolean machineChaseEnabled) {}
     public record ActionRow(long id, String issueNumber, int actionNo, String actionType, String sourceText, String status,
                             int attempts, String errorCode, String errorMessage, Long messageId, Long betId,
                             Instant createdAt, Instant updatedAt) {}

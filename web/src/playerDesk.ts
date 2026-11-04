@@ -107,11 +107,11 @@ export const STAKE_RANGE_CODES = ['30-300', '300-1000', '1000-3000', '3000-10000
 export const STAKE_RANGE_LABELS: Record<string, string> = Object.fromEntries(STAKE_RANGE_CODES.map(code => [code, code]))
 
 export function validateBehaviorDraft(draft: Pick<PlayerDeskBehavior,
-  'mode' | 'stakeRangeCode' | 'chaseEnabled' | 'feidanEnabled'>): string[] {
+  'mode' | 'stakeRangeCode' | 'chaseEnabled'>): string[] {
   const errors: string[] = []
   if (draft.mode !== 'AUTOMATIC' && draft.mode !== 'MANUAL') errors.push('行为模式必须选择自动或手动')
   if (!(STAKE_RANGE_CODES as readonly string[]).includes(draft.stakeRangeCode)) errors.push('下注范围不在 BY220 的五档内')
-  if (typeof draft.chaseEnabled !== 'boolean' || typeof draft.feidanEnabled !== 'boolean') errors.push('托状态配置无效')
+  if (typeof draft.chaseEnabled !== 'boolean') errors.push('托状态配置无效')
   return errors
 }
 

@@ -46,9 +46,12 @@ public class BetBoardRepository {
         args.addAll(scope.agentIdParameters());
         args.add(limit);
         return jdbcTemplate.query("""
-                SELECT b.id, a.display_name, a.player_kind, b.play_type, b.parameters_text,
+                SELECT b.id, a.display_name, COALESCE(b.player_kind_snapshot, 'BOT') AS player_kind,
+                       b.play_type, b.parameters_text,
                        b.stake, b.settlement_status,
-                       COALESCE(o.status, 'PENDING') AS report_status, b.created_at
+                       CASE WHEN COALESCE(b.player_kind_snapshot, 'BOT') <> 'NORMAL'
+                            THEN 'NOT_APPLICABLE' ELSE COALESCE(o.status, 'PENDING') END AS report_status,
+                       b.created_at
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
                   LEFT JOIN report_upstream_order o
@@ -88,9 +91,8 @@ public class BetBoardRepository {
     /**
      * 下注榜的一条注单。
      *
-     * <p>{@code reportStatus} 对应 BY220 下注榜每条注单上的 {@code flyers_status}
-     * （{@code application/rbt/view/index/admin_list.html:1961-1992}）：代理就是在下注榜里点这个状态标记
-     * 来触发重新飞单，所以它必须随下注榜一起返回。</p>
+     * <p>NORMAL 注单的 {@code reportStatus} 对应 BY220 下注榜状态并提供重报入口；BOT 返回
+     * {@code NOT_APPLICABLE}，只显示本地结算，不参与中心报网。</p>
      */
     public record BetItem(long id, String displayName, String playerKind, String playType,
                           String parametersText, BigDecimal stake, String settlementStatus,

@@ -30,9 +30,11 @@ import java.util.Optional;
 @Repository
 public class ReportUpstreamOrderRepository {
 
-    /** 派生状态：取该注单最新一行上报订单的状态；没有行即"还没报"。 */
+    /** NORMAL 注单取最新报网状态；BOT 或身份未分类的注单不适用中心报网。 */
     private static final String DERIVED_STATUS =
-            "CASE WHEN b.center_report_deleted_at IS NOT NULL THEN 'NOT_SENT' ELSE COALESCE(o.status, 'PENDING') END";
+            "CASE WHEN COALESCE(b.player_kind_snapshot, 'BOT') <> 'NORMAL' THEN 'NOT_APPLICABLE' "
+                    + "WHEN b.center_report_deleted_at IS NOT NULL THEN 'NOT_SENT' "
+                    + "ELSE COALESCE(o.status, 'PENDING') END";
 
     private static final String LATEST_ORDER_JOIN = """
             LEFT JOIN report_upstream_order o
@@ -40,7 +42,7 @@ public class ReportUpstreamOrderRepository {
             """;
 
     private static final String BET_COLUMNS = """
-            SELECT b.id, b.user_id, a.sys_user_id,
+            SELECT b.id, b.user_id, a.sys_user_id, b.player_kind_snapshot,
                    COALESCE(b.player_name_snapshot, a.display_name, '匿名用户') AS display_name,
                    COALESCE(a.agent_id, b.agent_id_snapshot) AS agent_id,
                    b.issue_number, b.ball_number, b.play_type, b.parameters_text,
@@ -134,6 +136,9 @@ public class ReportUpstreamOrderRepository {
                        sent_at, resolved_at, created_at, next_retry_at
                   FROM report_upstream_order
                  WHERE report_type = 'CENTER' AND status IN ('PENDING', 'TIMEOUT')
+                   AND EXISTS (SELECT 1 FROM game_bet b
+                                WHERE b.id = report_upstream_order.bet_id
+                                  AND b.player_kind_snapshot = 'NORMAL')
                    AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
                  ORDER BY id
                  LIMIT ?
@@ -241,7 +246,8 @@ public class ReportUpstreamOrderRepository {
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
                 %s
-                 WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ?
+                 WHERE b.player_kind_snapshot = 'NORMAL'
+                   AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?
                 """.formatted(DERIVED_STATUS, DERIVED_STATUS, DERIVED_STATUS, LATEST_ORDER_JOIN),
                 (rs, rowNum) -> new StatusCounts(rs.getLong("timeout_count"),
                         rs.getLong("unreported_count"), rs.getLong("failed_count")), agentId);
@@ -252,7 +258,8 @@ public class ReportUpstreamOrderRepository {
         StringBuilder sql = new StringBuilder(ORDER_COLUMNS)
                 .append(LATEST_ORDER_JOIN)
                 .append(LOCAL_DISPOSITION_JOIN)
-                .append(" WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ?");
+                .append(" WHERE b.player_kind_snapshot = 'NORMAL' "
+                        + "AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?");
         List<Object> args = new ArrayList<>();
         args.add(agentId);
         if (status != null && !status.isBlank()) {
@@ -280,7 +287,8 @@ public class ReportUpstreamOrderRepository {
                 SELECT COUNT(*)
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
-                """).append(LATEST_ORDER_JOIN).append(" WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ?");
+                """).append(LATEST_ORDER_JOIN).append(" WHERE b.player_kind_snapshot = 'NORMAL' "
+                + "AND COALESCE(a.agent_id, b.agent_id_snapshot) = ?");
         List<Object> args = new ArrayList<>();
         args.add(agentId);
         if (status != null && !status.isBlank()) {
@@ -320,7 +328,8 @@ public class ReportUpstreamOrderRepository {
                   JOIN demo_user_account u ON u.id = b.user_id
                   JOIN agent a ON a.id = COALESCE(u.agent_id, b.agent_id_snapshot)
                   JOIN game_issue i ON i.game_code = b.game_code AND i.issue_number = b.issue_number
-                 WHERE b.id = ? AND a.id = ? AND b.center_report_deleted_at IS NULL
+                 WHERE b.id = ? AND b.player_kind_snapshot = 'NORMAL'
+                   AND a.id = ? AND b.center_report_deleted_at IS NULL
                  FOR UPDATE
                 """, (rs, rowNum) -> new ReportEligibility(rs.getString("settlement_status"),
                 rs.getTimestamp("settled_at"), rs.getString("issue_status"), rs.getString("issue_phase"),
@@ -372,6 +381,7 @@ public class ReportUpstreamOrderRepository {
                 + " WHERE " + DERIVED_STATUS + " IN (" + placeholders + ")\n"
                 + "   AND ag.deleted_at IS NULL AND ag.status = 'ACTIVE' AND ag.system_owned = FALSE\n"
                 + "   AND b.center_report_deleted_at IS NULL\n"
+                + "   AND b.player_kind_snapshot = 'NORMAL'\n"
                 + "   AND (o.id IS NULL OR NOT (o.report_type = 'CENTER' AND o.status IN ('PENDING', 'TIMEOUT')))\n"
                 + "   AND ag.report_auto = TRUE\n"
                 + "   AND b.settlement_status = 'PENDING' AND b.settled_at IS NULL\n"
@@ -459,7 +469,8 @@ public class ReportUpstreamOrderRepository {
                 SELECT COUNT(*)
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
-                """ + LATEST_ORDER_JOIN + " WHERE COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND " + DERIVED_STATUS + " = 'MANUAL'",
+                """ + LATEST_ORDER_JOIN + " WHERE b.player_kind_snapshot = 'NORMAL' "
+                        + "AND COALESCE(a.agent_id, b.agent_id_snapshot) = ? AND " + DERIVED_STATUS + " = 'MANUAL'",
                 Long.class, agentId);
         return total == null ? 0 : total;
     }
@@ -470,7 +481,8 @@ public class ReportUpstreamOrderRepository {
                 SELECT COUNT(*)
                   FROM game_bet b
                   LEFT JOIN demo_user_account a ON a.id = b.user_id
-                """ + LATEST_ORDER_JOIN + " WHERE " + DERIVED_STATUS + " = 'MANUAL'",
+                """ + LATEST_ORDER_JOIN + " WHERE b.player_kind_snapshot = 'NORMAL' "
+                        + "AND " + DERIVED_STATUS + " = 'MANUAL'",
                 Long.class);
         return total == null ? 0 : total;
     }
@@ -502,6 +514,7 @@ public class ReportUpstreamOrderRepository {
                 """ + LATEST_ORDER_JOIN
                 + "  JOIN agent ag ON ag.id = COALESCE(a.agent_id, b.agent_id_snapshot)\n"
                 + " WHERE " + DERIVED_STATUS + " IN (" + placeholders + ")\n"
+                + "   AND b.player_kind_snapshot = 'NORMAL'\n"
                 + "   AND ag.deleted_at IS NULL AND ag.status = 'ACTIVE' AND ag.system_owned = FALSE\n"
                 + "   AND b.center_report_deleted_at IS NULL\n"
                 + "   AND ag.report_auto = TRUE\n"
@@ -542,7 +555,8 @@ public class ReportUpstreamOrderRepository {
 
     private static BetRow betRow(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new BetRow(rs.getLong("id"), rs.getLong("user_id"), rs.getLong("sys_user_id"),
-                rs.getString("display_name"), rs.getLong("agent_id"), rs.getString("issue_number"),
+                rs.getString("display_name"), rs.getString("player_kind_snapshot"),
+                rs.getLong("agent_id"), rs.getString("issue_number"),
                 rs.getInt("ball_number"), rs.getString("play_type"),
                 rs.getString("parameters_text"), rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"),
                 rs.getString("report_status"), rs.getString("settlement_status"), rs.getString("response_code"));
@@ -571,7 +585,7 @@ public class ReportUpstreamOrderRepository {
 
     /** 注单快照 + 派生上报状态。 */
     public record BetRow(long betId, long accountId, long sysUserId, String displayName,
-                         long agentId, String issueNumber, int ballNumber,
+                         String playerKind, long agentId, String issueNumber, int ballNumber,
                          String playType, String parametersText, BigDecimal stake, BigDecimal odds,
                          String reportStatus, String settlementStatus, String responseCode) {
     }

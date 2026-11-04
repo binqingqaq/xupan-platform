@@ -189,7 +189,7 @@ class ReportDispatchTransactionIsolationTest {
     }
 
     private static ReportUpstreamOrderRepository.BetRow bet(long betId) {
-        return new ReportUpstreamOrderRepository.BetRow(betId, 1L, 2L, "测试玩家", 20L,
+        return new ReportUpstreamOrderRepository.BetRow(betId, 1L, 2L, "测试玩家", "NORMAL", 20L,
                 "39999901", 1, "FAN", "1", new BigDecimal("100.00"), new BigDecimal("3.850"),
                 "PENDING", "PENDING", null);
     }
