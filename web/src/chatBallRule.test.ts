@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { isSevenBallCutover } from './chatBallRule'
+import { resolveGameBallCount } from './chatBallRule'
 
-describe('seven-ball chat cutover', () => {
-  it('detects the first live transition from eight balls to seven', () => {
-    expect(isSevenBallCutover(8, 7)).toBe(true)
-    expect(isSevenBallCutover(null, 7)).toBe(false)
-    expect(isSevenBallCutover(7, 7)).toBe(false)
-    expect(isSevenBallCutover(8, 8)).toBe(false)
+describe('game ball count rules', () => {
+  it('keeps AU8 fixed at seven even when stale data says eight', () => {
+    expect(resolveGameBallCount('AU8', 8, 8)).toBe(7)
+    expect(resolveGameBallCount('au8', null, 8)).toBe(7)
+  })
+
+  it('preserves configured ball counts for other games', () => {
+    expect(resolveGameBallCount('OTHER', 8, 7)).toBe(8)
+    expect(resolveGameBallCount('OTHER', null, 7)).toBe(7)
   })
 })

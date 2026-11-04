@@ -48,6 +48,7 @@ public class GameDataRepository {
                 rs.getTimestamp("draw_confirmed_at") == null ? 0 : 1) : List.of(), gameCode, issueNumber);
         int ballCount = existing.isEmpty()
                 ? ballCountForIssue(gameCode, issueNumber) : existing.get(0);
+        requireAu8SevenBallCount(gameCode, ballCount);
         if (numbers != null && numbers.size() != ballCount) {
             throw new IllegalArgumentException("期号结果球数必须与该期球数规则一致");
         }
@@ -122,7 +123,8 @@ public class GameDataRepository {
                  WHERE game_code = ? AND status = 'ACTIVE' AND deleted_at IS NULL
                  FOR UPDATE
                 """, Integer.class, gameCode);
-        if (count == null || (count != 7 && count != 8)) {
+        if (count == null || (count != 7 && count != 8)
+                || (DEFAULT_GAME_CODE.equals(gameCode) && count != 7)) {
             throw new IllegalStateException("彩种下一期球数配置无效或彩种不可用");
         }
         return count;
@@ -364,7 +366,12 @@ public class GameDataRepository {
     /** Returns the archived rule for a missing issue number; existing issue rows always win. */
     public int ballCountForIssue(String gameCode, String issueNumber) {
         Optional<IssueRecord> existing = findIssueByGameCodeAndIssueNumber(gameCode, issueNumber);
-        if (existing.isPresent()) return existing.get().ballCount();
+        if (existing.isPresent()) {
+            int count = existing.get().ballCount();
+            requireAu8SevenBallCount(gameCode, count);
+            return count;
+        }
+        if (DEFAULT_GAME_CODE.equals(gameCode)) return 7;
         long issueSequence = issueSequence(gameCode, issueNumber);
         return jdbcTemplate.query("""
                 SELECT effective_issue_number, to_ball_count FROM game_ball_rule_change
@@ -383,9 +390,18 @@ public class GameDataRepository {
         }, gameCode);
     }
 
+    private static void requireAu8SevenBallCount(String gameCode, int ballCount) {
+        if (DEFAULT_GAME_CODE.equals(gameCode) && ballCount != 7) {
+            throw new IllegalStateException("AU8 仅支持七球，期次球数配置异常");
+        }
+    }
+
     public void recordBallRuleChange(String gameCode, String effectiveIssueNumber,
                                      int fromBallCount, int toBallCount, String idempotencyKey,
                                      String reason, long operatorUserId, Instant createdAt) {
+        if (DEFAULT_GAME_CODE.equals(gameCode)) {
+            throw new IllegalArgumentException("AU8 不支持球数切换");
+        }
         if ((fromBallCount != 7 && fromBallCount != 8) || (toBallCount != 7 && toBallCount != 8)
                 || idempotencyKey == null || idempotencyKey.isBlank()
                 || reason == null || reason.isBlank() || operatorUserId <= 0 || createdAt == null) {

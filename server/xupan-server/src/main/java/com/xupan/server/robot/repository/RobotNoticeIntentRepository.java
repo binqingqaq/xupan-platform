@@ -81,22 +81,6 @@ public class RobotNoticeIntentRepository {
                 "SELECT EXISTS(SELECT 1 FROM agent WHERE id = ?)", Boolean.class, agentId));
     }
 
-    public boolean isLegacyEightBallIssue(String gameCode, String issueNumber) {
-        if (!"AU8".equals(gameCode) || issueNumber == null || issueNumber.isBlank()) return false;
-        return Boolean.TRUE.equals(jdbc.queryForObject("""
-                SELECT EXISTS(
-                    SELECT 1 FROM game_issue legacy_issue
-                     WHERE legacy_issue.game_code = ? AND legacy_issue.issue_number = ?
-                       AND legacy_issue.ball_count = 8
-                       AND EXISTS (
-                           SELECT 1 FROM game_issue seven_issue
-                            WHERE seven_issue.game_code = legacy_issue.game_code
-                              AND seven_issue.ball_count = 7
-                       )
-                )
-                """, Boolean.class, gameCode, issueNumber));
-    }
-
     public boolean existsByKey(String key) {
         return Boolean.TRUE.equals(jdbc.queryForObject(
                 "SELECT EXISTS(SELECT 1 FROM robot_notice_intent WHERE idempotency_key = ?)",

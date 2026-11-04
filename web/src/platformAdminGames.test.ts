@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PlatformAdminGames from './views/PlatformAdminGames.vue'
 import { api } from './api'
-import { settleControls, dialogSubmit, clickText, formField, selectFormOption, setFormInput } from './platformAdminAccountTestHelpers'
+import { settleControls, dialogSubmit, clickText, formField } from './platformAdminAccountTestHelpers'
 
 vi.mock('./api', () => ({
   api: {
@@ -23,8 +23,8 @@ let container: HTMLDivElement | null = null
 let app: ReturnType<typeof createApp> | null = null
 
 const primary = {
-  id: 1, gameCode: 'AU8', displayName: '澳8番摊', ballIndexes: '1,2,3,4,5,6,7,8',
-  nextIssueBallCount: 8,
+  id: 1, gameCode: 'AU8', displayName: '澳8番摊', ballIndexes: '1,2,3,4,5,6,7',
+  nextIssueBallCount: 7,
   drawSourceUrl: null, sortOrder: 1, algorithm: 'SUM', playPrefix: null,
   switchEnabled: false, specialEnabled: true, specialModel: 'MODEL_ONE',
   keyboardEnabled: true, status: 'ACTIVE', version: 0, updatedAt: '2026-10-02T01:00:00Z',
@@ -114,30 +114,19 @@ describe('platform admin games', () => {
     expect(api.deleteGameSettings).toHaveBeenCalledWith(2)
   })
 
-  it('requires a reason when setting future AU8 issues to seven balls and keeps the change one-way', async () => {
+  it('keeps AU8 fixed at seven balls and exposes no eight-ball option', async () => {
     await mountGames()
     container?.querySelectorAll<HTMLButtonElement>('tbody tr:first-child button')[0]?.click()
     await settleControls()
 
-    await selectFormOption('后续新期球数', '7球')
-    formField('后续新期球数').querySelector<HTMLElement>('.el-select__wrapper')?.click()
-    await settleControls()
-    expect(Array.from(document.querySelectorAll<HTMLElement>('.el-select-dropdown__item')).map(item => item.textContent?.trim()))
-      .not.toContain('8球')
-    document.querySelector<HTMLElement>('.el-select-dropdown__item')?.click()
-    await settleControls()
-
-    dialogSubmit()
-    await settleControls()
-    expect(api.updateGameSettings).not.toHaveBeenCalled()
-
-    setFormInput('规则变更原因', '按新版七球规则切换')
+    expect(container?.textContent).toContain('固定 7 球')
+    expect(container?.textContent).not.toContain('8球')
+    expect(container?.textContent).not.toContain('规则变更原因')
     dialogSubmit()
     await settleControls()
     expect(api.updateGameSettings).toHaveBeenCalledWith(1, 0, expect.objectContaining({
       nextIssueBallCount: 7,
       ballIndexes: '1,2,3,4,5,6,7',
-      ballRuleChangeReason: '按新版七球规则切换',
     }))
   })
 })

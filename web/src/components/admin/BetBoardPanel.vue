@@ -54,7 +54,7 @@ async function resubmitBet(betId: number) {
 }
 
 const activeKind = computed<'NORMAL' | 'BOT'>(() => activeTab.value === 'BOT' ? 'BOT' : 'NORMAL')
-const visibleBallCount = computed(() => board.value?.ballCount ?? board.value?.history[0]?.balls.length ?? 8)
+const visibleBallCount = computed(() => 7)
 const visibleDrawHistory = computed(() => (board.value?.history ?? []).filter(history =>
   (history.ballCount ?? history.balls.length) === visibleBallCount.value
   && history.balls.length === visibleBallCount.value))
@@ -141,9 +141,8 @@ onBeforeUnmount(() => {
               [{{ item.displayName }}] "{{ item.betText }}" 合计：{{ formatBetBoardPoints(item.stake) }}
               <span class="bet-board-report-status">{{ resubmittingBetId === item.id ? '重报中' : betBoardReportStatusLabel(item.reportStatus) }}</span>
             </button>
-            <div v-else class="bet-board-copy is-report-not_applicable" aria-label="托注单仅本地结算">
+            <div v-else class="bet-board-copy is-report-not_applicable" aria-label="托注单">
               [{{ item.displayName }}] "{{ item.betText }}" 合计：{{ formatBetBoardPoints(item.stake) }}
-              <span class="bet-board-report-status">本地结算</span>
             </div>
             <button class="bet-board-remove" type="button" disabled title="管理员撤单功能暂未开放" aria-label="管理员撤单功能暂未开放">×</button>
           </div>

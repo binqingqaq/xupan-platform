@@ -284,6 +284,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'PLAYER_AVATAR_FORBIDDEN') return '已删除玩家不能更换头像'
   if (error.code === 'AUTH_INVALID_CREDENTIALS') return '用户名或密码错误'
   if (error.code === 'AUTH_SUB_ACCOUNT_EXPIRED') return '账号已过期'
+  if (error.code === 'CENTER_UPSTREAM_AUTH_INVALID') return '中心账号或密码错误，或该账号未绑定当前子账号'
   if (error.code === 'GAME_SETTINGS_CODE_EXISTS') return '彩种键名已存在'
   if (error.code === 'GAME_SETTINGS_CODE_IMMUTABLE') return '彩种键名创建后不能修改'
   if (error.code === 'GAME_PRIMARY_DELETE_FORBIDDEN') return '主彩种不能删除'
@@ -486,7 +487,11 @@ async function request<T>(url: string, options: RequestInit = {}, retryOnUnautho
     headers,
     credentials: 'include',
   })
-  if (response.status === 401) {
+  const body = await response.json().catch(() => ({}))
+  const errorCode = typeof body.code === 'string' ? body.code : undefined
+  const isPlatformAuthenticationFailure = errorCode === 'AUTH_UNAUTHENTICATED'
+    || errorCode === 'AUTH_TOKEN_REVOKED'
+  if (response.status === 401 && isPlatformAuthenticationFailure) {
     const retryableAuthRequest = url !== '/api/auth/login'
       && url !== '/api/auth/refresh'
       && url !== '/api/auth/logout'
@@ -495,7 +500,6 @@ async function request<T>(url: string, options: RequestInit = {}, retryOnUnautho
     }
     clearAccessToken()
   }
-  const body = await response.json().catch(() => ({}))
   if (!response.ok) {
     throw new ApiError(typeof body.message === 'string' ? body.message : `请求失败 (${response.status})`, response.status, body.code)
   }

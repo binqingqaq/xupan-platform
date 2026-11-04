@@ -23,10 +23,7 @@ public class PlatformUnsettledOrderService {
     private static final String DELETE_PERMISSION = "UNSETTLED_ORDER_DELETE";
     private static final String VISIBLE_ISSUE_BALLS = """
             AND (
-                NOT EXISTS (
-                    SELECT 1 FROM game_issue seven_issue
-                     WHERE seven_issue.game_code = b.game_code AND seven_issue.ball_count = 7
-                )
+                b.game_code <> 'AU8'
                 OR EXISTS (
                     SELECT 1 FROM game_issue seven_issue
                      WHERE seven_issue.game_code = b.game_code

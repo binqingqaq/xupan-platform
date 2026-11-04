@@ -1403,75 +1403,47 @@ class PlatformAdminResourceControllerTest {
                 """, Long.class, id)).isZero();
     }
     @Test
-    void changesFutureAu8BallCountAtAnIssueBoundaryAndDoesNotSwitchCurrentIssue() throws Exception {
+    @Transactional
+    void keepsAu8FixedAtSevenBallsAndRejectsEightBallSettingsAndIssues() throws Exception {
         String token = login(ADMIN, PASSWORD);
-        String legacyIssue = "399998765";
-        String nextIssue = "399998766";
+        String issue = "399998765";
         Instant startedAt = Instant.now().plusSeconds(3600);
-        jdbcTemplate.update("""
-                INSERT INTO game_issue
-                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at,
-                     betting_ends_at, draw_ends_at)
-                VALUES ('AU8', ?, 'OPEN', 'BETTING', 8, ?, ?, ?, ?)
-                """, legacyIssue, Timestamp.from(startedAt), Timestamp.from(startedAt),
-                Timestamp.from(startedAt.plusSeconds(180)), Timestamp.from(startedAt.plusSeconds(300)));
-
         MvcResult before = mockMvc.perform(get("/api/admin/game-settings/1")
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.nextIssueBallCount").value(8))
+                .andExpect(jsonPath("$.nextIssueBallCount").value(7))
+                .andExpect(jsonPath("$.ballIndexes").value("1,2,3,4,5,6,7"))
                 .andReturn();
         long version = ((Number) JsonPath.read(before.getResponse().getContentAsString(), "$.version")).longValue();
-        String sevenBallBody = """
-                {"gameCode":"AU8","displayName":"澳8七球测试","ballIndexes":"1,2,3,4,5,6,7",
+        String eightBallBody = """
+                {"gameCode":"AU8","displayName":"澳8固定七球","ballIndexes":"1,2,3,4,5,6,7,8",
                  "drawSourceUrl":null,"sortOrder":1,"algorithm":"SUM","playPrefix":null,
                  "switchEnabled":false,"specialEnabled":true,"specialModel":"MODEL_ONE",
-                 "keyboardEnabled":true,"status":"ACTIVE","nextIssueBallCount":7,
-                 "ballRuleChangeReason":"BALL_COUNT_CUTOVER_TEST",
+                 "keyboardEnabled":true,"status":"ACTIVE","nextIssueBallCount":8,
+                 "ballRuleChangeReason":"八球不允许",
                  "oddsAte":0,"oddsAdx":0,"oddsBte":0,"oddsBdx":0,
                  "oddsCte":0,"oddsCdx":0,"oddsDte":0,"oddsDdx":0}
                 """;
         mockMvc.perform(put("/api/admin/game-settings/1").param("version", Long.toString(version))
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(sevenBallBody))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.nextIssueBallCount").value(7))
-                .andExpect(jsonPath("$.ballIndexes").value("1,2,3,4,5,6,7"));
-
-        assertThat(jdbcTemplate.queryForObject("SELECT ball_count FROM game_issue WHERE game_code='AU8' AND issue_number=?",
-                Integer.class, legacyIssue)).isEqualTo(8);
-        assertThat(jdbcTemplate.queryForObject("SELECT effective_issue_number FROM game_ball_rule_change "
-                        + "WHERE game_code='AU8' AND reason='BALL_COUNT_CUTOVER_TEST'",
-                String.class)).isEqualTo(nextIssue);
+                        .content(eightBallBody))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("GAME_SETTINGS_AU8_SEVEN_BALLS_ONLY"));
         mockMvc.perform(get("/api/demo/game/catalog"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].nextIssueBallCount").value(7))
-                .andExpect(jsonPath("$[0].activeIssueBallCount").value(8))
-                .andExpect(jsonPath("$[0].firstSevenIssueNumber").isEmpty());
-
-        jdbcTemplate.update("UPDATE game_issue SET phase='SETTLED', status='CLOSED', settled_at=CURRENT_TIMESTAMP "
-                + "WHERE game_code='AU8' AND issue_number=?", legacyIssue);
-        gameDataRepository.saveBettingIssue("AU8", nextIssue, startedAt.plusSeconds(300));
+                .andExpect(jsonPath("$[0].activeIssueBallCount").value(7));
+        gameDataRepository.saveBettingIssue("AU8", issue, startedAt);
         assertThat(jdbcTemplate.queryForObject("SELECT ball_count FROM game_issue WHERE game_code='AU8' AND issue_number=?",
-                Integer.class, nextIssue)).isEqualTo(7);
-        mockMvc.perform(get("/api/demo/game/catalog"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].activeIssueBallCount").value(7))
-                .andExpect(jsonPath("$[0].firstSevenIssueNumber").value(nextIssue));
-
-        MvcResult after = mockMvc.perform(get("/api/admin/game-settings/1")
-                        .header("Authorization", bearer(token)))
-                .andExpect(status().isOk()).andReturn();
-        long nextVersion = ((Number) JsonPath.read(after.getResponse().getContentAsString(), "$.version")).longValue();
-        String eightBallBody = sevenBallBody.replace("澳8七球测试", "澳8测试彩种")
-                .replace("1,2,3,4,5,6,7", "1,2,3,4,5,6,7,8")
-                .replace("\"nextIssueBallCount\":7", "\"nextIssueBallCount\":8")
-                .replace("BALL_COUNT_CUTOVER_TEST", "BALL_COUNT_REVERT_TEST");
-        mockMvc.perform(put("/api/admin/game-settings/1").param("version", Long.toString(nextVersion))
-                        .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(eightBallBody))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("GAME_BALL_COUNT_REVERT_FORBIDDEN"));
+                Integer.class, issue)).isEqualTo(7);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbcTemplate.update("UPDATE game_definition "
+                + "SET next_issue_ball_count=8 WHERE game_code='AU8'"))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbcTemplate.update("""
+                INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                VALUES ('AU8', '399998764', 'CLOSED', 'SETTLED', 8)
+                """))
+                .isInstanceOf(org.springframework.dao.DataAccessException.class);
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT next_issue_ball_count FROM game_definition WHERE game_code='AU8'", Integer.class))
                 .isEqualTo(7);
@@ -2423,15 +2395,13 @@ class PlatformAdminResourceControllerTest {
     }
 
     private void clean() {
-        jdbcTemplate.update("DELETE FROM game_ball_rule_change WHERE reason IN "
-                + "('BALL_COUNT_CUTOVER_TEST', 'BALL_COUNT_REVERT_TEST')");
         jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number IN ('399998765', '399998766')");
         jdbcTemplate.update("DELETE FROM game_issue WHERE issue_number = 'CLEAR-CONFIRMED-ISSUE'");
         jdbcTemplate.update("DELETE FROM report_network WHERE network_code LIKE 'platform_test_%'");
         jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'PLATFORM_TEST_%')");
         jdbcTemplate.update("UPDATE game_route_odds SET special_odds = 0, big_small_odds = 0 WHERE game_id = 1");
         jdbcTemplate.update("UPDATE game_definition SET game_code = 'AU8', display_name = '澳8番摊', "
-                + "ball_indexes = '1,2,3,4,5,6,7,8', next_issue_ball_count = 8, draw_source_url = NULL, sort_order = 1, "
+                + "ball_indexes = '1,2,3,4,5,6,7', next_issue_ball_count = 7, draw_source_url = NULL, sort_order = 1, "
                 + "algorithm = 'SUM', play_prefix = NULL, switch_enabled = FALSE, special_enabled = TRUE, "
                 + "special_model = 'MODEL_ONE', keyboard_enabled = TRUE, status = 'ACTIVE', updated_by = NULL WHERE id = 1");
         jdbcTemplate.update("UPDATE platform_setting SET site_title = '公开大厅', announcement = NULL, "

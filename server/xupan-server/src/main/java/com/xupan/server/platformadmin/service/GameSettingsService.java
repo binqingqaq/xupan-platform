@@ -58,16 +58,13 @@ public class GameSettingsService {
                 SELECT g.game_code, g.display_name, g.sort_order, g.next_issue_ball_count,
                        COALESCE((SELECT i.ball_count FROM game_issue i
                                   WHERE i.game_code = g.game_code AND i.phase IN ('BETTING', 'DRAWING')
-                                  ORDER BY i.id DESC LIMIT 1), g.next_issue_ball_count) active_issue_ball_count,
-                       (SELECT i.issue_number FROM game_issue i
-                         WHERE i.game_code = g.game_code AND i.ball_count = 7
-                         ORDER BY i.id LIMIT 1) first_seven_issue_number
+                                  ORDER BY i.id DESC LIMIT 1), g.next_issue_ball_count) active_issue_ball_count
                   FROM game_definition g
                  WHERE g.status = 'ACTIVE' AND g.deleted_at IS NULL
                  ORDER BY g.sort_order, g.id
                 """, (rs, rowNum) -> new GameCatalogItem(rs.getString("game_code"),
                 rs.getString("display_name"), rs.getInt("sort_order"), rs.getInt("next_issue_ball_count"),
-                rs.getInt("active_issue_ball_count"), rs.getString("first_seven_issue_number")));
+                rs.getInt("active_issue_ball_count")));
     }
 
     @Transactional(readOnly = true)
@@ -113,11 +110,10 @@ public class GameSettingsService {
         if (!current.gameCode().equals(game.gameCode())) {
             throw BusinessException.badRequest("GAME_SETTINGS_CODE_IMMUTABLE", "彩种键名创建后不能修改");
         }
-        if (GameDataRepository.DEFAULT_GAME_CODE.equals(game.gameCode())
-                && game.nextIssueBallCount() == 8
-                && gameDataRepository.firstSevenBallIssueNumber(game.gameCode()).isPresent()) {
-            throw BusinessException.conflict("GAME_BALL_COUNT_REVERT_FORBIDDEN",
-                    "AU8 已切换为七球，不能通过常规设置恢复八球");
+        if (GameDataRepository.DEFAULT_GAME_CODE.equals(current.gameCode())
+                && current.nextIssueBallCount() != 7) {
+            throw BusinessException.conflict("GAME_SETTINGS_AU8_REQUIRES_REBUILD",
+                    "AU8 配置不是七球，请按开发计划重建数据库后再使用");
         }
         if (existsByCode(game.gameCode(), id)) {
             throw BusinessException.conflict("GAME_SETTINGS_CODE_EXISTS", "彩种键名已存在");
@@ -304,12 +300,19 @@ public class GameSettingsService {
         if (!code.matches("[A-Z0-9_-]+")) {
             throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "彩种键名只能包含字母、数字、下划线或短横线");
         }
+        int defaultBallCount = GameDataRepository.DEFAULT_GAME_CODE.equals(code) ? 7 : fallbackBallCount;
         int nextIssueBallCount = input.nextIssueBallCount() == null
-                ? fallbackBallCount : input.nextIssueBallCount();
+                ? defaultBallCount : input.nextIssueBallCount();
         if (nextIssueBallCount != 7 && nextIssueBallCount != 8) {
             throw BusinessException.badRequest("GAME_SETTINGS_INVALID", "下一期球数只能是 7 或 8");
         }
+        if (GameDataRepository.DEFAULT_GAME_CODE.equals(code) && nextIssueBallCount != 7) {
+            throw BusinessException.badRequest("GAME_SETTINGS_AU8_SEVEN_BALLS_ONLY", "AU8 业务固定为七球");
+        }
         String ballIndexes = normalizeBallIndexes(input.ballIndexes(), nextIssueBallCount);
+        if (GameDataRepository.DEFAULT_GAME_CODE.equals(code) && !"1,2,3,4,5,6,7".equals(ballIndexes)) {
+            throw BusinessException.badRequest("GAME_SETTINGS_AU8_BALL_INDEXES_FIXED", "AU8 开奖球号固定为 1,2,3,4,5,6,7");
+        }
         String drawUrl = optionalUrl(input.drawSourceUrl());
         String algorithm = enumValue(input.algorithm(), Set.of("SUM", "CONCAT"), "算法无效");
         String specialModel = enumValue(input.specialModel(), Set.of("MODEL_ONE", "MODEL_TWO"), "特模型无效");
@@ -425,8 +428,7 @@ public class GameSettingsService {
     private record RouteOdds(String routeCode, BigDecimal specialOdds, BigDecimal bigSmallOdds) {}
 
     public record GameCatalogItem(String gameCode, String displayName, int sortOrder,
-                                  int nextIssueBallCount, int activeIssueBallCount,
-                                  String firstSevenIssueNumber) {}
+                                  int nextIssueBallCount, int activeIssueBallCount) {}
 
     public record GameInput(String gameCode, String displayName, String ballIndexes, String drawSourceUrl,
                             int sortOrder, String algorithm, String playPrefix, boolean switchEnabled,

@@ -36,7 +36,7 @@ beforeEach(() => {
   vi.mocked(api.listDrawHistory).mockResolvedValue({
     items: [{
       gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999946',
-      balls: [1, 2, 3, 4, 5, 6, 7, 18], phase: 'SETTLED',
+      balls: [1, 2, 3, 4, 5, 6, 7], ballCount: 7, phase: 'SETTLED',
       openedAt: '2026-10-02T01:00:00Z', settledAt: '2026-10-02T01:01:00Z',
       drawConfirmedAt: '2026-10-02T01:01:00Z', drawResultVersion: 1,
       betCount: 1, pendingBetCount: 1, pendingCenterOrderCount: 0,
@@ -106,7 +106,7 @@ describe('platform admin draw history', () => {
     operationButton('补期并确认', container).click()
     await settleOperations()
     expect(api.supplementDrawHistory).not.toHaveBeenCalled()
-    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(3)
+    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(2)
     for (const call of vi.mocked(ElMessageBox.confirm).mock.calls) {
       expect(call[2]).toEqual(expect.objectContaining({ closeOnClickModal: false }))
     }
@@ -144,8 +144,13 @@ describe('platform admin draw history', () => {
     await fillOperationField('开奖号码', '1,2,3,4,5,6,7,18', container)
     operationButton('补期并确认', container).click()
     await settleOperations()
+    expect(api.supplementDrawHistory).not.toHaveBeenCalled()
+
+    await fillOperationField('开奖号码', '1,2,3,4,5,6,7', container)
+    operationButton('补期并确认', container).click()
+    await settleOperations()
     expect(api.supplementDrawHistory).toHaveBeenCalledWith(expect.objectContaining({
-      gameCode: 'AU8', issueNumber: '39999948', numbers: [1, 2, 3, 4, 5, 6, 7, 18],
+      gameCode: 'AU8', issueNumber: '39999948', numbers: [1, 2, 3, 4, 5, 6, 7],
     }))
   })
 

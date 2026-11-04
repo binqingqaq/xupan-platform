@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
 import { adminNotice } from '../services/adminNotice'
@@ -14,7 +14,7 @@ const currentUser = ref('超级管理员')
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const editingVersion = ref(0)
-const editingNextIssueBallCount = ref(8)
+const editingNextIssueBallCount = ref(7)
 
 function blankForm(): GameSettingsInput {
   return {
@@ -27,6 +27,14 @@ function blankForm(): GameSettingsInput {
 }
 
 const form = ref<GameSettingsInput>(blankForm())
+const isAu8 = computed(() => form.value.gameCode.trim().toUpperCase() === 'AU8')
+
+watch(isAu8, fixed => {
+  if (!fixed) return
+  form.value.nextIssueBallCount = 7
+  form.value.ballIndexes = '1,2,3,4,5,6,7'
+  form.value.ballRuleChangeReason = ''
+})
 
 async function load() {
   loading.value = true
@@ -51,12 +59,12 @@ function openCreate() {
 function openEdit(row: GameSettings) {
   editingId.value = row.id
   editingVersion.value = row.version
-  editingNextIssueBallCount.value = row.nextIssueBallCount ?? 8
+  editingNextIssueBallCount.value = row.gameCode === 'AU8' ? 7 : row.nextIssueBallCount ?? 8
   form.value = {
     gameCode: row.gameCode,
     displayName: row.displayName,
-    ballIndexes: row.ballIndexes,
-    nextIssueBallCount: row.nextIssueBallCount ?? 8,
+    ballIndexes: row.gameCode === 'AU8' ? '1,2,3,4,5,6,7' : row.ballIndexes,
+    nextIssueBallCount: row.gameCode === 'AU8' ? 7 : row.nextIssueBallCount ?? 8,
     ballRuleChangeReason: '',
     drawSourceUrl: row.drawSourceUrl || '',
     sortOrder: row.sortOrder,
@@ -80,6 +88,7 @@ function openEdit(row: GameSettings) {
 }
 
 function changeNextIssueBallCount(value: number) {
+  if (isAu8.value) return
   const previousCount = form.value.nextIssueBallCount ?? 8
   form.value.nextIssueBallCount = value
   const configured = form.value.ballIndexes.split(',').map(part => Number(part.trim())).filter(Number.isInteger)
@@ -94,6 +103,10 @@ async function save() {
   if (!form.value.displayName.trim() || !form.value.gameCode.trim()) {
     adminNotice.warning('请填写彩种名称和键名')
     return
+  }
+  if (isAu8.value) {
+    form.value.nextIssueBallCount = 7
+    form.value.ballIndexes = '1,2,3,4,5,6,7'
   }
   const futureBallCount = form.value.nextIssueBallCount ?? 8
   const configuredBalls = form.value.ballIndexes.split(',').map(part => Number(part.trim()))
@@ -159,8 +172,8 @@ onMounted(async () => {
       <el-table scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="games-table">
         <el-table-column prop="displayName" label="彩种名称" min-width="130" />
         <el-table-column prop="gameCode" label="彩种键名" min-width="120" />
-        <el-table-column label="后续新期球数" width="130" align="center"><template #default="{ row }">{{ row.nextIssueBallCount ?? 8 }} 球</template></el-table-column>
-        <el-table-column prop="ballIndexes" label="开奖球号" min-width="170" />
+        <el-table-column label="后续新期球数" width="130" align="center"><template #default="{ row }">{{ row.gameCode === 'AU8' ? 7 : row.nextIssueBallCount ?? 8 }} 球</template></el-table-column>
+        <el-table-column label="开奖球号" min-width="170"><template #default="{ row }">{{ row.gameCode === 'AU8' ? '1,2,3,4,5,6,7' : row.ballIndexes }}</template></el-table-column>
         <el-table-column label="采集链接" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.drawSourceUrl || '--' }}</template></el-table-column>
         <el-table-column label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '关闭' }}</el-tag></template></el-table-column>
         <el-table-column prop="sortOrder" label="排序" width="80" align="right" />
@@ -181,16 +194,17 @@ onMounted(async () => {
         <el-form-item label="彩种名称" required><el-input v-model="form.displayName" required maxlength="128" /></el-form-item>
         <el-form-item label="彩种键名" required><el-input v-model="form.gameCode" required maxlength="32" :disabled="editingId !== null" /></el-form-item>
         <el-form-item label="后续新期球数" required>
-          <el-select :model-value="form.nextIssueBallCount ?? 8" class="full-width" aria-label="选择后续新期球数" @update:model-value="value => changeNextIssueBallCount(Number(value))">
+          <span v-if="isAu8" class="fixed-ball-count">固定 7 球</span>
+          <el-select v-else :model-value="form.nextIssueBallCount ?? 8" class="full-width" aria-label="选择后续新期球数" @update:model-value="value => changeNextIssueBallCount(Number(value))">
             <el-option :value="7" label="7球" />
             <el-option v-if="(form.nextIssueBallCount ?? 8) === 8" :value="8" label="8球" />
           </el-select>
-          <small class="form-hint">仅影响之后新建的期次，当前期球数不变；AU8 切换到 7 球后不提供恢复 8 球入口。</small>
+          <small class="form-hint">{{ isAu8 ? 'AU8 业务固定为 7 球。' : '仅影响之后新建的期次，当前期球数不变。' }}</small>
         </el-form-item>
-        <el-form-item v-if="editingId !== null && (form.nextIssueBallCount ?? 8) !== editingNextIssueBallCount" label="规则变更原因" required>
+        <el-form-item v-if="!isAu8 && editingId !== null && (form.nextIssueBallCount ?? 8) !== editingNextIssueBallCount" label="规则变更原因" required>
           <el-input v-model="form.ballRuleChangeReason" maxlength="255" placeholder="说明调整后续新期球数的原因" />
         </el-form-item>
-        <el-form-item label="开奖球号" required class="wide"><el-input v-model="form.ballIndexes" required :placeholder="Array.from({ length: form.nextIssueBallCount ?? 7 }, (_, index) => index + 1).join(',')" /></el-form-item>
+        <el-form-item label="开奖球号" required class="wide"><el-input v-if="!isAu8" v-model="form.ballIndexes" required :placeholder="Array.from({ length: form.nextIssueBallCount ?? 7 }, (_, index) => index + 1).join(',')" /><span v-else class="fixed-ball-count">1,2,3,4,5,6,7</span></el-form-item>
         <el-form-item label="采集链接" class="wide"><el-input v-model="form.drawSourceUrl" maxlength="512" placeholder="可留空，当前不主动请求" /></el-form-item>
         <el-form-item label="排序"><el-input v-model.number="form.sortOrder" type="number" min="0" max="100000" /></el-form-item>
         <el-form-item label="算法"><el-select v-model="form.algorithm" class="full-width"><el-option label="相加" value="SUM" /><el-option label="相拼" value="CONCAT" /></el-select></el-form-item>
@@ -226,6 +240,7 @@ onMounted(async () => {
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .page-heading h1 { margin: 0; font-size: 26px; }
 .heading-actions { display: flex; gap: 8px; }
+.fixed-ball-count { display: inline-flex; min-height: 32px; align-items: center; color: var(--el-text-color-primary); }
 .page-alert { margin-bottom: 2px; }
 .games-table { width: 100%; }
 .actions { display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }

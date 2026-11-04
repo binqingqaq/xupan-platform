@@ -110,7 +110,7 @@ public class CenterOrderRepository {
                    AND number_5 BETWEEN 1 AND 20 AND number_6 BETWEEN 1 AND 20
                    AND number_7 BETWEEN 1 AND 20
                    AND ((ball_count = 7 AND number_8 IS NULL)
-                     OR (ball_count = 8 AND number_8 BETWEEN 1 AND 20))
+                     OR (game_code <> 'AU8' AND ball_count = 8 AND number_8 BETWEEN 1 AND 20))
                  FOR UPDATE
                 """, (rs, rowNum) -> {
             int ballCount = rs.getInt("ball_count");

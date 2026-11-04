@@ -813,7 +813,6 @@ export interface GameCatalogItem {
   sortOrder: number
   nextIssueBallCount?: number
   activeIssueBallCount?: number
-  firstSevenIssueNumber?: string | null
 }
 
 export interface GameView {

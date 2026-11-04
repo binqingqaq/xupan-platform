@@ -28,7 +28,7 @@ export function betBoardFanClass(fan: number) {
  * 并保留"已撤单/已退款/已结算"给中心上游第二层结算使用。
  */
 export function betBoardReportStatusLabel(reportStatus: string | null | undefined) {
-  if (reportStatus === 'NOT_APPLICABLE') return '本地结算'
+  if (reportStatus === 'NOT_APPLICABLE') return ''
   if (reportStatus === 'NOT_SENT') return '未发送'
   if (reportStatus === 'ACCEPTED' || reportStatus === 'SETTLED') return '已报'
   if (reportStatus === 'REJECTED') return '失败'

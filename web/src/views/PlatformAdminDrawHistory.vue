@@ -35,6 +35,7 @@ const savingDraft = ref(false)
 const confirmingDraw = ref(false)
 let refreshTimer: number | undefined
 const visibleBallCount = computed(() => {
+  if (historyGameCode === 'AU8') return 7
   const game = gameCatalog.value.find(item => item.gameCode === historyGameCode)
   return game?.activeIssueBallCount ?? game?.nextIssueBallCount ?? 8
 })

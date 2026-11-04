@@ -268,7 +268,7 @@ public class 自动轮期服务 {
     }
 
     public List<Integer> generateFinalNumbers() {
-        return generateFinalNumbers(8);
+        return generateFinalNumbers(7);
     }
 
     public List<Integer> generateFinalNumbers(int ballCount) {

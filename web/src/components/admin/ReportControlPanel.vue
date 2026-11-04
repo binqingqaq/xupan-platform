@@ -130,6 +130,7 @@ function toggleReportOrders() {
 
 function reportStatusLabel(status: ReportStatus): string {
   const labels: Record<ReportStatus, string> = {
+    NOT_APPLICABLE: '不适用',
     PENDING: '未报', NOT_SENT: '未发送', ACCEPTED: '已接受', REJECTED: '已拒绝',
     TIMEOUT: '待核实', MANUAL: '人工待处置', CANCELLED: '已撤单', REFUNDED: '已退单', SETTLED: '已结算',
   }

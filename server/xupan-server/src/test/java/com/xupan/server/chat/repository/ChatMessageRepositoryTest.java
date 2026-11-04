@@ -141,10 +141,10 @@ class ChatMessageRepositoryTest {
 
     @Test
     @Transactional
-    void hidesEightBallIssueMessagesFromNormalFeedAfterSevenBallIssueStartsAndKeepsCursorOrder() {
+    void includesAllIssueMessagesInNormalFeedAndKeepsCursorOrder() {
         String oldIssue = "39998001";
         String sevenIssue = "39998002";
-        insertIssue(oldIssue, 8, "SETTLED");
+        insertIssue(oldIssue, 7, "SETTLED");
         insertIssue(sevenIssue, 7, "BETTING");
 
         var room = roomRepository.findByCodeForUpdate("main").orElseThrow();
@@ -153,16 +153,15 @@ class ChatMessageRepositoryTest {
         ChatMessage currentGeneric = insertPlayerMessage(room, "current-generic", null, "大家好");
         ChatMessage currentSevenResult = insertRobotForIssue(room, "current-seven-result", sevenIssue, "七球开奖结果");
 
-        assertThat(messageRepository.isLegacyEightBallMessage(oldPlayerBet)).isTrue();
-        assertThat(messageRepository.isLegacyEightBallMessage(oldRobotResult)).isTrue();
-        assertThat(messageRepository.isLegacyEightBallMessage(currentGeneric)).isFalse();
-        assertThat(messageRepository.isLegacyEightBallMessage(currentSevenResult)).isFalse();
+        assertThat(messageRepository.findAfterSequence(room.id(), 0, 10, 101L))
+                .extracting(ChatMessage::id)
+                .containsExactly(oldPlayerBet.id(), oldRobotResult.id(), currentGeneric.id(), currentSevenResult.id());
         assertThat(messageRepository.findAfterSequence(room.id(), 0, 10, 101L))
                 .extracting(ChatMessage::sequenceNo)
-                .containsExactly(currentGeneric.sequenceNo(), currentSevenResult.sequenceNo());
+                .containsExactly(oldPlayerBet.sequenceNo(), oldRobotResult.sequenceNo(), currentGeneric.sequenceNo(), currentSevenResult.sequenceNo());
         assertThat(messageRepository.findBeforeSequence(room.id(), currentSevenResult.sequenceNo() + 1, 10, 101L))
                 .extracting(ChatMessage::sequenceNo)
-                .containsExactly(currentSevenResult.sequenceNo(), currentGeneric.sequenceNo());
+                .containsExactly(currentSevenResult.sequenceNo(), currentGeneric.sequenceNo(), oldRobotResult.sequenceNo(), oldPlayerBet.sequenceNo());
         assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM chat_message WHERE id IN (?, ?)",
                 Integer.class, oldPlayerBet.id(), oldRobotResult.id())).isEqualTo(2);
     }

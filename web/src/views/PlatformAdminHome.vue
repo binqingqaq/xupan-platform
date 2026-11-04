@@ -13,6 +13,7 @@ const error = ref('')
 let refreshTimer: number | undefined
 
 const visibleBallCount = computed(() => {
+  if (selectedGameCode.value === 'AU8') return 7
   const game = gameCatalog.value.find(item => item.gameCode === selectedGameCode.value)
   return game?.activeIssueBallCount ?? game?.nextIssueBallCount ?? 8
 })

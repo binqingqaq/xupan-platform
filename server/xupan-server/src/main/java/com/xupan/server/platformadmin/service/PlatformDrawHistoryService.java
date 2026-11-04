@@ -64,12 +64,13 @@ public class PlatformDrawHistoryService {
         }
         String normalizedGameCode = normalizeGameCode(gameCode);
         String keyword = issueNumber == null || issueNumber.isBlank() ? null : issueNumber.trim();
-        boolean hasSevenBallHistory = Boolean.TRUE.equals(jdbc.queryForObject("""
+        boolean hasSevenBallHistory = GameDataRepository.DEFAULT_GAME_CODE.equals(normalizedGameCode)
+                || Boolean.TRUE.equals(jdbc.queryForObject("""
                 SELECT EXISTS(SELECT 1 FROM game_issue WHERE game_code = ? AND ball_count = 7)
                 """, Boolean.class, normalizedGameCode));
         StringBuilder where = new StringBuilder(
                 " WHERE (i.number_1 IS NOT NULL OR i.phase = 'DRAWING') AND i.game_code = ?");
-        if (hasSevenBallHistory) {
+        if (GameDataRepository.DEFAULT_GAME_CODE.equals(normalizedGameCode) || hasSevenBallHistory) {
             where.append(" AND i.ball_count = 7");
         }
         List<Object> args = new ArrayList<>();
@@ -244,6 +245,7 @@ public class PlatformDrawHistoryService {
         int ballCount = created
                 ? gameDataRepository.ballCountForIssue(normalizedGameCode, normalizedIssue)
                 : existing.ballCount();
+        requireAu8SevenBallCount(normalizedGameCode, ballCount);
         List<Integer> normalizedNumbers = validateNumbers(numbers, ballCount);
         if (existing != null && ("BETTING".equals(existing.phase()) || "DRAWING".equals(existing.phase()))) {
             throw BusinessException.conflict("DRAW_SUPPLEMENT_ACTIVE_ISSUE", "当前期不能通过补期入口直接开奖");
@@ -304,6 +306,7 @@ public class PlatformDrawHistoryService {
         if (existing == null) {
             throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
         }
+        requireAu8SevenBallCount(normalizedGameCode, existing.ballCount());
         if (existing.drawConfirmedAt() != null) {
             throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
         }
@@ -344,6 +347,7 @@ public class PlatformDrawHistoryService {
         if (draft == null) {
             throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
         }
+        requireAu8SevenBallCount(normalizedGameCode, draft.ballCount());
         if (draft.drawConfirmedAt() != null) {
             List<Integer> numbers = validateNumbers(draft.numbers(), draft.ballCount());
             SettlementCounts recovered = settleLockedHistory(draft);
@@ -389,6 +393,7 @@ public class PlatformDrawHistoryService {
     }
 
     private SettlementCounts settleLockedHistory(HistoryTarget history) {
+        requireAu8SevenBallCount(history.gameCode(), history.ballCount());
         if (history.drawConfirmedAt() == null) {
             throw BusinessException.conflict("DRAW_RESULT_NOT_CONFIRMED", "开奖结果尚未确认，不能结算");
         }
@@ -483,6 +488,12 @@ public class PlatformDrawHistoryService {
                     "开奖号码数量必须与该期配置的 " + expectedCount + " 球一致，且每球为 1 到 20");
         }
         return List.copyOf(numbers);
+    }
+
+    private static void requireAu8SevenBallCount(String gameCode, int ballCount) {
+        if (GameDataRepository.DEFAULT_GAME_CODE.equals(gameCode) && ballCount != 7) {
+            throw BusinessException.badRequest("DRAW_HISTORY_AU8_SEVEN_BALLS_ONLY", "AU8 开奖固定为七球");
+        }
     }
 
     private static List<Integer> paddedNumbers(List<Integer> numbers) {

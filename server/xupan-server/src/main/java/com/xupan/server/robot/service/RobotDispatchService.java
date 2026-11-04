@@ -186,9 +186,6 @@ public class RobotDispatchService {
             if (event == null) {
                 return skip(dispatch, "GAME_EVENT_NOT_FOUND", now);
             }
-            if (isLegacyEightBallEvent(event)) {
-                return skip(dispatch, "LEGACY_EIGHT_BALL_EVENT_SUPPRESSED", now);
-            }
             RobotEventType checkedEventType = eventAdapter.eventType(event.eventType());
             ChatMessage message;
             if (checkedEventType == RobotEventType.BETTING_CLOSED) {
@@ -475,17 +472,6 @@ public class RobotDispatchService {
             return historyItems(ascending);
         }
         return historyItems(issues);
-    }
-
-    private boolean isLegacyEightBallEvent(RobotDispatchRepository.UnscheduledGameEvent event) {
-        GameDataRepository.IssueRecord source = gameDataRepository
-                .findIssueByGameCodeAndIssueNumber(event.gameCode(), event.issueNumber())
-                .orElse(null);
-        if (!GameDataRepository.DEFAULT_GAME_CODE.equals(event.gameCode())
-                || source == null || source.ballCount() != 8) return false;
-        return gameDataRepository.findLatestIssue(event.gameCode())
-                .map(latest -> latest.ballCount() == 7)
-                .orElse(false);
     }
 
     private static boolean isPermanentTemplateError(BusinessException exception) {

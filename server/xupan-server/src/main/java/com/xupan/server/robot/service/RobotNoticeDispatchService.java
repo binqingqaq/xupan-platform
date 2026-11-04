@@ -172,11 +172,6 @@ public class RobotNoticeDispatchService {
         }
         if (!intents.markProcessing(id, now.plusSeconds(30), now)) return false;
 
-        if (intents.isLegacyEightBallIssue(intent.gameCode(), intent.issueNumber())) {
-            intents.markSkipped(id, "LEGACY_EIGHT_BALL_NOTICE_SUPPRESSED", now);
-            return true;
-        }
-
         if (intent.visibility() == ChatMessageVisibility.MACHINE
                 && !intents.machineExists(intent.agentId())) {
             intents.markSkipped(id, "MACHINE_NOT_AVAILABLE", now);

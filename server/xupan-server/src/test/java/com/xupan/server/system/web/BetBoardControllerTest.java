@@ -91,8 +91,9 @@ class BetBoardControllerTest {
         Instant now = Instant.now();
         jdbc.update("""
                 INSERT INTO game_issue
-                    (issue_number, status, phase, opened_at, issue_started_at, betting_ends_at, draw_ends_at)
-                VALUES (?, 'OPEN', 'BETTING', ?, ?, ?, ?)
+                    (game_code, issue_number, status, phase, ball_count, opened_at, issue_started_at,
+                     betting_ends_at, draw_ends_at)
+                VALUES ('AU8', ?, 'OPEN', 'BETTING', 7, ?, ?, ?, ?)
                 """, CURRENT_ISSUE, Timestamp.from(now), Timestamp.from(now),
                 Timestamp.from(now.plusSeconds(180)), Timestamp.from(now.plusSeconds(300)));
 
@@ -106,7 +107,7 @@ class BetBoardControllerTest {
             String issue = String.format("85%05d", index + 1);
             gameDataRepository.saveIssue(issue, "CLOSED", List.of(
                     1 + (index % 4), 2 + (index % 4), 3 + (index % 4), 4 + (index % 4),
-                    5 + (index % 4), 6 + (index % 4), 7 + (index % 4), 8 + (index % 4)));
+                    5 + (index % 4), 6 + (index % 4), 7 + (index % 4)));
         }
     }
 
@@ -124,7 +125,7 @@ class BetBoardControllerTest {
                         .header("Authorization", bearer(token)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.issueNumber").value(CURRENT_ISSUE))
-                .andExpect(jsonPath("$.ballCount").value(8))
+                .andExpect(jsonPath("$.ballCount").value(7))
                 .andExpect(jsonPath("$.normalCount").value(1))
                 .andExpect(jsonPath("$.botCount").value(3))
                 .andExpect(jsonPath("$.normalStake").value(116.00))
@@ -133,7 +134,7 @@ class BetBoardControllerTest {
                 .andExpect(jsonPath("$.items[0].displayName").value("托下注玩家"))
                 .andExpect(jsonPath("$.items[0].betText").value("12角/80"))
                 .andExpect(jsonPath("$.history", hasSize(18)))
-                .andExpect(jsonPath("$.history[0].balls", hasSize(8)))
+                .andExpect(jsonPath("$.history[0].balls", hasSize(7)))
                 .andExpect(jsonPath("$.history[0].balls[0].fan").isNumber());
 
         mockMvc.perform(get("/api/admin/player-desk/bet-board")
@@ -145,21 +146,12 @@ class BetBoardControllerTest {
     }
 
     @Test
-    void sevenBallBoardDoesNotExposeLegacyEightBallHistory() throws Exception {
+    void sevenBallBoardUsesOnlySevenBallHistory() throws Exception {
         String token = login(MACHINE_USER, PASSWORD);
         Instant now = Instant.now();
         jdbc.update("UPDATE game_issue SET phase='SETTLED', status='CLOSED', settled_at=? "
                         + "WHERE game_code='AU8' AND issue_number=?",
                 Timestamp.from(now), CURRENT_ISSUE);
-        jdbc.update("UPDATE game_definition SET next_issue_ball_count=7, ball_indexes='1,2,3,4,5,6,7' "
-                + "WHERE game_code='AU8'");
-        Long adminId = jdbc.queryForObject("SELECT id FROM sys_user WHERE username=?", Long.class, ADMIN);
-        jdbc.update("""
-                INSERT INTO game_ball_rule_change
-                    (game_code, effective_issue_number, from_ball_count, to_ball_count,
-                     idempotency_key, reason, operator_user_id)
-                VALUES ('AU8', '8500021', 8, 7, 'BETBOARD-CUTOVER-1', '下注榜七球测试切换', ?)
-                """, adminId);
         gameDataRepository.saveBettingIssue("8500021", now);
         gameDataRepository.saveIssue("8500022", "CLOSED", List.of(1, 2, 3, 4, 5, 6, 7));
 
@@ -251,7 +243,6 @@ class BetBoardControllerTest {
     }
 
     private void clean() {
-        jdbc.update("DELETE FROM game_ball_rule_change WHERE idempotency_key LIKE 'BETBOARD-CUTOVER-%'");
         jdbc.update("DELETE FROM auth_ws_ticket");
         jdbc.update("DELETE FROM auth_session");
         jdbc.update("DELETE FROM sys_login_log");
@@ -268,8 +259,6 @@ class BetBoardControllerTest {
         jdbc.update("DELETE FROM sys_user_role WHERE user_id IN "
                 + "(SELECT id FROM sys_user WHERE username IN (?, ?, ?, ?))", NORMAL, BOT, ADMIN, MACHINE_USER);
         jdbc.update("DELETE FROM sys_user WHERE username IN (?, ?, ?, ?)", NORMAL, BOT, ADMIN, MACHINE_USER);
-        jdbc.update("UPDATE game_definition SET next_issue_ball_count=8, ball_indexes='1,2,3,4,5,6,7,8' "
-                + "WHERE game_code='AU8'");
     }
 
     private static String bearer(String token) {

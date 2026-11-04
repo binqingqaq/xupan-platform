@@ -106,7 +106,7 @@ async function resolvePlayerUserId(wxid: unknown) {
 
 function betReportState(status: string) {
   switch (status) {
-    case 'NOT_APPLICABLE': return { code: 4, label: '本地结算' }
+    case 'NOT_APPLICABLE': return { code: 4, label: '' }
     case 'NOT_SENT': return { code: 0, label: '未发送' }
     case 'ACCEPTED': return { code: 2, label: '已报' }
     case 'REJECTED': return { code: 3, label: '驳回' }
@@ -162,7 +162,7 @@ async function loadHbyBetBoard(commandType: number) {
     return { total1: 0, total2: 0, totalPu: 0, totalTuo: 0, totalChi: 0, isPrev: true, detail: [] }
   }
   const board = await api.getBetBoard(commandType === 1 ? 'BOT' : 'NORMAL', 500)
-  const ballCount = board.ballCount ?? board.history[0]?.balls.length ?? 8
+  const ballCount = 7
   return {
     total1: board.normalStake,
     total2: board.botStake,
@@ -182,7 +182,7 @@ async function loadHbyBetBoard(commandType: number) {
         isTuo: item.playerKind === 'BOT' ? 1 : 0,
         chi: 0,
         flyers_status: report.code,
-        reportStatusText: report.label,
+        reportStatusText: item.playerKind === 'BOT' ? '' : report.label,
       }
     }),
   }
@@ -190,7 +190,7 @@ async function loadHbyBetBoard(commandType: number) {
 
 async function loadHbyOpenResults() {
   const board = await api.getBetBoard('NORMAL', 1)
-  const ballCount = board.ballCount ?? board.history[0]?.balls.length ?? 8
+  const ballCount = 7
   const phaseLabel = board.phase === 'DRAWING' ? '开奖中' : board.phase === 'BETTING' ? '下注中' : '已开奖'
   const serverNow = Date.parse(board.serverNow)
   const phaseEndsAt = board.phaseEndsAt ? Date.parse(board.phaseEndsAt) : NaN

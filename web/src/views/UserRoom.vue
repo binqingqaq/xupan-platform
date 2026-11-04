@@ -6,9 +6,9 @@ import Hby019AccountPanelFrame from '../components/Hby019AccountPanelFrame.vue'
 import RobotDrawMessage from '../components/RobotDrawMessage.vue'
 import QuickBetPanel from '../components/QuickBetPanel.vue'
 import { toHistoryRows } from '../gameHistory'
+import { resolveGameBallCount } from '../chatBallRule'
 import { parseRobotDrawPayload } from '../robotDrawMessage'
 import { shouldShowRobotTimestamp } from '../chatMessageTime'
-import { isSevenBallCutover } from '../chatBallRule'
 import { ChatSocket } from '../services/chatSocket'
 import { isPointRequestCommand, submissionAffectsAccount } from '../chatSubmission'
 import { DEFAULT_QUICK_BET_AMOUNTS } from '../quickBet'
@@ -179,20 +179,12 @@ const oddsCards: OddsCard[] = [
 const currentBallCount = computed(() => {
   const game = current.value
   if (!game) return 7
-  return game.ballCount ?? (game.balls.length === 7 ? 7 : 8)
+  return resolveGameBallCount(game.gameCode, game.ballCount, game.balls.length)
 })
-const firstSevenIssueNumber = computed(() => gameCatalog.value.find(game => game.gameCode === 'AU8')?.firstSevenIssueNumber ?? null)
 watch(currentBallCount, count => {
   if (selectedBallNumber.value > count) selectedBallNumber.value = count
   if (selectedBallNumber.value < 1) selectedBallNumber.value = 1
 }, { immediate: true })
-watch(currentBallCount, (count, previousCount) => {
-  if (selectedGameCode.value !== 'AU8' || !isSevenBallCutover(previousCount, count)) return
-  const wasAwayFromBottom = chatAwayFromBottom.value
-  const previousScrollTop = messageScroll.value?.scrollTop ?? 0
-  chatUnread.value = 0
-  void loadChatHistory({ preserveScroll: wasAwayFromBottom, preserveCurrentMessages: true, scrollTop: previousScrollTop })
-})
 
 const ballNumbers = computed(() => {
   const game = current.value
@@ -362,47 +354,9 @@ function ledgerOperationLabel(operationType: string) {
   return operationType
 }
 
-function issuePrecedesSevenBallCutover(issueNumber: string, boundary: string): boolean {
-  const issueDigits = issueNumber.match(/(\d+)$/)?.[1]
-  const boundaryDigits = boundary.match(/(\d+)$/)?.[1]
-  if (!issueDigits || !boundaryDigits) return false
-  const left = issueDigits.replace(/^0+(?=\d)/, '')
-  const right = boundaryDigits.replace(/^0+(?=\d)/, '')
-  return left.length !== right.length ? left.length < right.length : left < right
-}
-
-function payloadContainsEightBallResult(payloadJson: string | null): boolean {
-  const payload = parseRobotDrawPayload(payloadJson)
-  if (!payload) return false
-  if (payload.component === 'DRAW_SUMMARY') return payload.data.numbers.length === 8
-  if (payload.component === 'DRAW_HISTORY') {
-    return [...payload.data.items, ...(payload.data.routeItems ?? [])].some(item => item.numbers.length === 8)
-  }
-  if (payload.component === 'WINNER_LIST') return payload.data.numbers?.length === 8
-  return false
-}
-
-function hidePreSevenMessage(message: ChatMessage): boolean {
-  if (selectedGameCode.value !== 'AU8' || currentBallCount.value !== 7) return false
-  const boundary = firstSevenIssueNumber.value
-  if (boundary && message.issueNumber && issuePrecedesSevenBallCutover(message.issueNumber, boundary)) return true
-  if (payloadContainsEightBallResult(message.payloadJson)) return true
-  if (!message.issueNumber && message.messageType === 'RESULT') return true
-  if (!message.issueNumber && message.payloadJson) {
-    try {
-      const payload: unknown = JSON.parse(message.payloadJson)
-      if (typeof payload === 'object' && payload !== null
-          && 'eventType' in payload && payload.eventType === 'DRAW_RESULT') return true
-    } catch {
-      return false
-    }
-  }
-  return false
-}
-
 const messages = computed<RoomMessage[]>(() => [
-  ...chatMessages.value.filter(message => !hidePreSevenMessage(message)).map(toRoomMessage),
-  ...adminNotices.value.filter(message => !hidePreSevenMessage(message)).map(toRoomMessage),
+  ...chatMessages.value.map(toRoomMessage),
+  ...adminNotices.value.map(toRoomMessage),
 ])
 const chatOldestSequence = computed(() => chatMessages.value[0]?.sequenceNo ?? null)
 const displayMessages = computed<RoomMessage[]>(() => {
@@ -614,8 +568,6 @@ async function loadChatHistory(options: { preserveScroll?: boolean; preserveCurr
       chatMessages.value = []
       chatLastSequence.value = 0
       chatReadCursorSaved.value = 0
-    } else {
-      chatMessages.value = chatMessages.value.filter(message => !hidePreSevenMessage(message))
     }
     chatHistoryExhausted.value = false
     const latestSequence = page.items.length ? page.items[page.items.length - 1].sequenceNo : 0

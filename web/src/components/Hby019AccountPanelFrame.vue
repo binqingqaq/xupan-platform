@@ -59,8 +59,8 @@ function currentState() {
     rows: props.rows.map(({ bet, colorIndex, expanded }) => ({
       id: bet.id,
       issue: props.issueLabel(bet.issueNumber),
-      ball: bet.ballNumber > (props.maxBallNumber ?? 8) ? '历史订单' : `第${bet.ballNumber}球`,
-      text: bet.ballNumber > (props.maxBallNumber ?? 8) ? '历史订单' : props.betText(bet),
+      ball: bet.ballNumber > (props.maxBallNumber ?? 7) ? '历史订单' : `第${bet.ballNumber}球`,
+      text: bet.ballNumber > (props.maxBallNumber ?? 7) ? '历史订单' : props.betText(bet),
       result: props.betResult(bet),
       resultColor: bet.settlementStatus !== 'PENDING',
       refunded: bet.settlementStatus === 'CANCELED',

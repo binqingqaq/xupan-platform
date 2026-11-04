@@ -47,7 +47,6 @@ class GameBallCountCutoverMySqlTest {
     private String startIssue;
     private String nextIssue;
     private String au8TestIssueNumber;
-    private String au8TestRuleReason;
     private String legacyOrderCode;
     private String legacyIssueNumber;
 
@@ -62,12 +61,6 @@ class GameBallCountCutoverMySqlTest {
         }
         if (au8TestIssueNumber != null) {
             jdbc.update("DELETE FROM game_issue WHERE game_code='AU8' AND issue_number=?", au8TestIssueNumber);
-        }
-        if (au8TestRuleReason != null) {
-            jdbc.update("DELETE FROM game_ball_rule_change WHERE game_code='AU8' AND reason LIKE ?",
-                    au8TestRuleReason + "%");
-            jdbc.update("UPDATE game_definition SET next_issue_ball_count=8, ball_indexes='1,2,3,4,5,6,7,8' "
-                    + ", updated_by=NULL WHERE game_code='AU8'");
         }
         if (legacyOrderCode != null) {
             jdbc.update("DELETE FROM center_order WHERE agent_order_no = ?", legacyOrderCode);
@@ -159,42 +152,31 @@ class GameBallCountCutoverMySqlTest {
     }
 
     @Test
-    void au8DatabaseRuleRejectsRevertingToEightAfterSevenBallCutover() {
+    void au8RejectsEightBallConfigurationAndIssueWrites() {
         operatorUsername = "cutover-au8-" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         operatorId = users.insert(operatorUsername, "AU8切换测试操作员",
                 passwords.encode("CutoverTestPassword123"), "ACTIVE");
         users.assignRole(operatorId, "ADMIN");
         GameSettingsService.GameRow current = settings.get(1, operatorId);
-        String reason = "AU8-RULE-REVERT-TEST-" + UUID.randomUUID().toString().replace("-", "");
-        au8TestRuleReason = reason;
-        GameSettingsService.GameRow armed = settings.update(1, gameInput(current, 7, reason + "-ARM"),
-                current.version(), operatorId);
-        assertThat(gameData.firstSevenBallIssueNumber("AU8")).isEmpty();
-
-        GameSettingsService.GameRow revertedBeforeStart = settings.update(1,
-                gameInput(armed, 8, reason + "-REVERT-BEFORE-START"), armed.version(), operatorId);
-        assertThat(revertedBeforeStart.nextIssueBallCount()).isEqualTo(8);
-        assertThat(gameData.ballCountForIssue("AU8", "3000000")).isEqualTo(8);
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM game_ball_rule_change "
-                        + "WHERE game_code='AU8' AND reason LIKE ? AND from_ball_count=7 AND to_ball_count=8",
-                Integer.class, reason + "%")).isEqualTo(1);
-
-        GameSettingsService.GameRow rearmed = settings.update(1,
-                gameInput(revertedBeforeStart, 7, reason + "-ARM-ACTIVE"), revertedBeforeStart.version(), operatorId);
-        au8TestIssueNumber = "3000000";
-        gameData.saveBettingIssue("AU8", au8TestIssueNumber, Instant.now());
-        assertThat(jdbc.queryForObject("SELECT ball_count FROM game_issue WHERE game_code='AU8' "
-                + "AND issue_number=?", Integer.class, au8TestIssueNumber)).isEqualTo(7);
-        assertThat(gameData.firstSevenBallIssueNumber("AU8")).contains(au8TestIssueNumber);
-
-        assertThatThrownBy(() -> settings.update(1,
-                gameInput(rearmed, 8, reason + "-REVERT-AFTER-START"), rearmed.version(), operatorId))
+        assertThat(current.nextIssueBallCount()).isEqualTo(7);
+        assertThat(current.ballIndexes()).isEqualTo("1,2,3,4,5,6,7");
+        GameSettingsService.GameInput eightBallInput = gameInput(current, 8, "not-allowed");
+        assertThatThrownBy(() -> settings.update(1, eightBallInput, current.version(), operatorId))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("GAME_BALL_COUNT_REVERT_FORBIDDEN");
+                .hasMessage("GAME_SETTINGS_AU8_SEVEN_BALLS_ONLY");
         assertThatThrownBy(() -> jdbc.update("UPDATE game_definition SET next_issue_ball_count=8 "
                 + "WHERE game_code='AU8'"))
                 .isInstanceOf(DataAccessException.class)
-                .hasMessageContaining("AU8 ball count cannot revert to eight");
+                .hasMessageContaining("AU8 supports seven balls only");
+        assertThatThrownBy(() -> jdbc.update("""
+                INSERT INTO game_issue (game_code, issue_number, status, phase, ball_count)
+                VALUES ('AU8', '399999999', 'CLOSED', 'SETTLED', 8)
+                """))
+                .isInstanceOf(DataAccessException.class);
+        au8TestIssueNumber = "399999998";
+        gameData.saveBettingIssue("AU8", au8TestIssueNumber, Instant.now());
+        assertThat(jdbc.queryForObject("SELECT ball_count FROM game_issue WHERE game_code='AU8' "
+                + "AND issue_number=?", Integer.class, au8TestIssueNumber)).isEqualTo(7);
         assertThat(jdbc.queryForObject("SELECT next_issue_ball_count FROM game_definition "
                 + "WHERE game_code='AU8'", Integer.class)).isEqualTo(7);
     }
