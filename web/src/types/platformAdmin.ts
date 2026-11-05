@@ -270,6 +270,7 @@ export interface BettingPlayBallStats {
 }
 
 export interface BettingPlayRank {
+  ruleKey: string
   playType: string
   playName: string
   orderCount: number

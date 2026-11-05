@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from './api'
 import type { BettingPlayStats } from './types/platformAdmin'
-import { operationButton, settleOperations } from './platformAdminOperationsTestHelpers'
+import { fillOperationField, operationButton, settleOperations } from './platformAdminOperationsTestHelpers'
 import PlatformAdminBettingPlayStats from './views/PlatformAdminBettingPlayStats.vue'
 
 vi.mock('./api', () => ({
@@ -31,15 +31,19 @@ function emptyBall(ballNumber: number) {
 }
 
 function currentStats(): BettingPlayStats {
+  const serverNow = new Date()
   return {
     gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999950', phase: 'BETTING', ballCount: 7,
-    bettingEndsAt: '2026-11-04T12:03:00Z', drawEndsAt: '2026-11-04T12:05:00Z', serverNow: '2026-11-04T12:00:00Z',
+    bettingEndsAt: new Date(serverNow.getTime() + 180_000).toISOString(),
+    drawEndsAt: new Date(serverNow.getTime() + 300_000).toISOString(),
+    serverNow: serverNow.toISOString(),
     balls: Array.from({ length: 7 }, (_, index) => emptyBall(index + 1)),
   }
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
+  window.localStorage.removeItem('xupan.platform-admin.betting-play-stats.include-bots')
   stats = currentStats()
   vi.mocked(api.me).mockResolvedValue({
     displayName: '超级管理员', username: 'admin', permissions: ['BETTING_PLAY_STATS_READ', 'BETTING_DRAW_PRESET_MANAGE'],
@@ -84,22 +88,55 @@ describe('platform admin betting play statistics', () => {
     expect(root.textContent).toContain('当前没有进行中的期次')
     expect(root.querySelectorAll('.ball-card')).toHaveLength(0)
     expect(root.textContent).not.toContain('第 1 球玩法排行')
+    expect(root.querySelector('.el-table')).toBeNull()
+  })
+
+  it('toggles bot orders in the aggregate and is off by default', async () => {
+    const root = await mountPage()
+
+    expect(root.textContent).toContain('托开关：关')
+    expect(root.textContent).toContain('仅统计普通玩家的当前期下注')
+    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', false)
+
+    operationButton('托开关：关', root).click()
+    await settleOperations()
+
+    expect(root.textContent).toContain('托开关：开')
+    expect(root.textContent).toContain('统计普通玩家和托的当前期下注')
+    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', true)
+    expect(window.localStorage.getItem('xupan.platform-admin.betting-play-stats.include-bots')).toBe('true')
+
+    app?.unmount()
+    app = null
+    container?.remove()
+    container = null
+    const reloadedRoot = await mountPage()
+    expect(reloadedRoot.textContent).toContain('托开关：开')
+    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', true)
+
+    operationButton('托开关：开', reloadedRoot).click()
+    await settleOperations()
+    expect(window.localStorage.getItem('xupan.platform-admin.betting-play-stats.include-bots')).toBe('false')
   })
 
   it('renders seven ball summaries and ranks the selected ball by order count', async () => {
     stats.balls[6] = {
       ballNumber: 7, presetNumber: null, orderCount: 15, totalStake: 260,
       plays: [
-        { playType: 'FAN', playName: '番', orderCount: 10, totalStake: 150 },
-        { playType: 'STRICT', playName: '严', orderCount: 5, totalStake: 110 },
+        { ruleKey: 'FAN:2', playType: 'FAN', playName: '2番', orderCount: 10, totalStake: 150 },
+        { ruleKey: 'POSITIVE:1', playType: 'POSITIVE', playName: '1正', orderCount: 3, totalStake: 60 },
+        { ruleKey: 'POSITIVE:2', playType: 'POSITIVE', playName: '2正', orderCount: 2, totalStake: 50 },
       ],
     }
     const root = await mountPage()
 
     expect(root.querySelectorAll('.ball-card')).toHaveLength(7)
+    expect(root.querySelector('.el-table')).toBeNull()
     expect(root.textContent).toContain('澳8番摊')
     expect(root.textContent).toContain('39999950')
-    expect(root.textContent).toContain('15 单')
+    expect(root.querySelector('.rank-section')?.textContent).not.toContain('el-table')
+    expect(root.querySelector('.ball-card')?.textContent).not.toContain('开奖随机')
+    expect(root.querySelector('.ball-card')?.textContent).not.toContain('番 ·')
 
     const seventhBall = [...root.querySelectorAll<HTMLButtonElement>('.ball-card')]
       .find(button => button.textContent?.includes('第 7 球'))
@@ -107,12 +144,17 @@ describe('platform admin betting play statistics', () => {
     await settleOperations()
 
     expect(root.textContent).toContain('第 7 球玩法排行')
-    const rows = [...root.querySelectorAll('.rank-section tbody tr')]
-    expect(rows).toHaveLength(2)
-    expect(rows[0].textContent).toContain('番')
+    expect(root.querySelector('.rank-total')?.textContent).toContain('15单')
+    const rows = [...root.querySelectorAll('.play-rank-row')]
+    expect(rows).toHaveLength(3)
+    expect(rows[0].textContent).toContain('2番')
     expect(rows[0].textContent).toContain('10')
-    expect(rows[1].textContent).toContain('严')
-    expect(rows[1].textContent).toContain('5')
+    expect(rows[1].textContent).toContain('1正')
+    expect(rows[1].textContent).toContain('3')
+    expect(rows[2].textContent).toContain('2正')
+    expect(rows[2].textContent).toContain('2')
+    expect(rows[0].querySelector('.rank-bar span')?.getAttribute('style')).toContain('100%')
+    expect(rows[2].querySelector('.rank-bar span')?.getAttribute('style')).toContain('20%')
     expect(root.textContent).toContain('150.00')
   })
 
@@ -125,23 +167,16 @@ describe('platform admin betting play statistics', () => {
     seventhBall?.click()
     await settleOperations()
 
-    const selectInput = root.querySelector<HTMLInputElement>('.preset-controls .el-select input')
-    selectInput?.click()
-    await settleOperations()
-    const option = [...document.body.querySelectorAll<HTMLElement>('.el-select-dropdown__item')]
-      .find(item => item.textContent?.trim() === '08')
-    expect(option).toBeDefined()
-    option?.click()
-    await settleOperations()
-    operationButton('保存预设', root).click()
+    await fillOperationField('号码', '1', root)
+    operationButton('保存', root).click()
     await settleOperations()
 
-    expect(api.setBettingPlayBallPreset).toHaveBeenNthCalledWith(1, 7, 'AU8', '39999950', 8)
-    expect(root.textContent).toContain('已固定 08')
+    expect(api.setBettingPlayBallPreset).toHaveBeenNthCalledWith(1, 7, 'AU8', '39999950', 1)
+    expect(root.querySelector('.ball-card.selected .ball-result')?.textContent).toContain('01')
 
-    operationButton('恢复随机', root).click()
+    operationButton('重置', root).click()
     await settleOperations()
     expect(api.setBettingPlayBallPreset).toHaveBeenNthCalledWith(2, 7, 'AU8', '39999950', null)
-    expect(root.textContent).toContain('开奖随机')
+    expect(root.querySelector('.ball-card.selected .ball-result')?.textContent?.trim()).toBe('')
   })
 })

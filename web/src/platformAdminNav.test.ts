@@ -129,7 +129,7 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     vi.mocked(api.me).mockResolvedValue(me({
       displayName: '超级管理员',
       permissions: [
-        'PLATFORM_HOME_READ', 'SUB_ACCOUNT_MANAGE', 'MACHINE_MANAGE', 'REPORT_READ', 'DRAW_HISTORY_READ',
+        'PLATFORM_HOME_READ', 'SUB_ACCOUNT_MANAGE', 'MACHINE_MANAGE', 'REPORT_READ', 'DRAW_HISTORY_READ', 'BETTING_PLAY_STATS_READ',
         'UNSETTLED_ORDER_READ', 'ORDER_CORRECTION_READ', 'ONLINE_PLAYER_READ', 'PLATFORM_SETTINGS_READ',
         'CENTER_AGENT_MANAGE', 'REPORT_NETWORK_READ', 'GAME_SETTINGS_READ', 'PLATFORM_PASSWORD_MANAGE',
       ],
@@ -139,9 +139,9 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     await mountNav('超级管理员')
     const labels = navLabels()
     expect(labels).not.toContain('玩家工作台')
-    // BY220 head.html:173-190 的菜单顺序；「中心上游」是 xupan 自有菜单（BY220 无），保留在 BY220「设置」之后
+    // 当前产品要求开奖历史、玩法统计、报表统计连续排列；「中心上游」是 xupan 自有菜单（BY220 无）。
     expect(labels).toEqual([
-      '开奖信息', '子账号', '机器管理', '报表统计', '开奖历史',
+      '开奖信息', '子账号', '机器管理', '开奖历史', '玩法统计', '报表统计',
       '未结订单', '订单改单', '在线玩家', '设置', '中心上游',
       '网盘设置', '游戏设置', '修改密码',
     ])
@@ -150,14 +150,14 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
   it('子账号只看到 BY220 允许的项，且没有「玩家工作台」', async () => {
     vi.mocked(api.me).mockResolvedValue(me({
       displayName: '子账号甲',
-      permissions: ['PLATFORM_HOME_READ', 'MACHINE_MANAGE', 'REPORT_READ', 'DRAW_HISTORY_READ', 'PLATFORM_PASSWORD_MANAGE'],
+      permissions: ['PLATFORM_HOME_READ', 'MACHINE_MANAGE', 'REPORT_READ', 'DRAW_HISTORY_READ', 'BETTING_PLAY_STATS_READ', 'PLATFORM_PASSWORD_MANAGE'],
       roles: ['SUB_ACCOUNT'],
     }))
 
     await mountNav('子账号甲')
     const labels = navLabels()
     expect(labels).not.toContain('玩家工作台')
-    expect(labels).toEqual(['开奖信息', '机器管理', '报表统计', '开奖历史', '修改密码'])
+    expect(labels).toEqual(['开奖信息', '机器管理', '开奖历史', '玩法统计', '报表统计', '修改密码'])
     // BY220 head.html:180-189 只在 user_uid==1 内的菜单对子账号不可见（本文件既有口径不变）
     expect(labels).not.toContain('未结订单')
     expect(labels).not.toContain('设置')

@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class PlatformBettingPlayStatsService {
@@ -33,7 +34,7 @@ public class PlatformBettingPlayStatsService {
     }
 
     @Transactional(readOnly = true)
-    public CurrentStats current(String gameCode, long operator) {
+    public CurrentStats current(String gameCode, boolean includeBots, long operator) {
         require(operator, READ_PERMISSION);
         String normalizedGameCode = normalizeGameCode(gameCode);
         GameInfo game = jdbc.query("""
@@ -57,37 +58,46 @@ public class PlatformBettingPlayStatsService {
                     null, null, now, List.of());
         }
 
+        String playerKindPredicate = includeBots
+                ? "AND COALESCE(player_account.player_kind, b.player_kind_snapshot) IN ('NORMAL', 'BOT')"
+                : "AND COALESCE(player_account.player_kind, b.player_kind_snapshot) = 'NORMAL'";
         List<PlayRow> playRows = jdbc.query("""
-                SELECT b.ball_number, b.play_type, COUNT(*) AS order_count,
+                SELECT b.ball_number, b.play_type, b.parameters_text, COUNT(*) AS order_count,
                        COALESCE(SUM(b.stake), 0) AS total_stake
                   FROM game_bet b
                   LEFT JOIN demo_user_account player_account ON player_account.id = b.user_id
                  WHERE b.game_code = ? AND b.issue_number = ? AND b.settlement_status = 'PENDING'
                    AND COALESCE(player_account.agent_id, b.agent_id_snapshot) IS NOT NULL
-                   AND COALESCE(player_account.player_kind, b.player_kind_snapshot) = 'NORMAL'
+                """ + playerKindPredicate + """
                    AND b.ball_number BETWEEN 1 AND ?
-                 GROUP BY b.ball_number, b.play_type
+                 GROUP BY b.ball_number, b.play_type, b.parameters_text
                 """, (rs, rowNum) -> new PlayRow(rs.getInt("ball_number"), rs.getString("play_type"),
+                rs.getString("parameters_text"),
                 rs.getLong("order_count"), money(rs.getBigDecimal("total_stake"))),
                 normalizedGameCode, issue.issueNumber(), issue.ballCount());
 
-        Map<Integer, List<PlayStats>> playsByBall = new LinkedHashMap<>();
+        Map<Integer, Map<String, PlayAccumulator>> playsByBall = new LinkedHashMap<>();
         for (int ballNumber = 1; ballNumber <= issue.ballCount(); ballNumber++) {
-            playsByBall.put(ballNumber, new ArrayList<>());
+            playsByBall.put(ballNumber, new LinkedHashMap<>());
         }
         for (PlayRow row : playRows) {
-            List<PlayStats> ballPlays = playsByBall.get(row.ballNumber());
+            Map<String, PlayAccumulator> ballPlays = playsByBall.get(row.ballNumber());
             if (ballPlays != null) {
-                ballPlays.add(new PlayStats(row.playType(), playName(row.playType()), row.orderCount(), row.totalStake()));
+                RuleDescriptor descriptor = ruleDescriptor(row.playType(), row.parametersText());
+                PlayAccumulator accumulator = ballPlays.computeIfAbsent(descriptor.ruleKey(),
+                        ignored -> new PlayAccumulator(descriptor));
+                accumulator.orderCount += row.orderCount();
+                accumulator.totalStake = accumulator.totalStake.add(row.totalStake());
             }
         }
 
         Comparator<PlayStats> ranking = Comparator.comparingLong(PlayStats::orderCount).reversed()
                 .thenComparing(PlayStats::totalStake, Comparator.reverseOrder())
-                .thenComparingInt(play -> playOrder(play.playType()));
+                .thenComparing(PlayStats::ruleKey);
         List<BallStats> balls = new ArrayList<>();
         for (int ballNumber = 1; ballNumber <= issue.ballCount(); ballNumber++) {
-            List<PlayStats> ranked = playsByBall.get(ballNumber);
+            List<PlayStats> ranked = playsByBall.get(ballNumber).values().stream()
+                    .map(PlayAccumulator::toStats).collect(Collectors.toCollection(ArrayList::new));
             ranked.sort(ranking);
             long orderCount = ranked.stream().mapToLong(PlayStats::orderCount).sum();
             BigDecimal totalStake = ranked.stream().map(PlayStats::totalStake)
@@ -124,8 +134,9 @@ public class PlatformBettingPlayStatsService {
         if (ballNumber > issue.ballCount()) {
             throw BusinessException.badRequest("BETTING_DRAW_PRESET_BALL_INVALID", "球位超出当前期球数范围");
         }
-        if (issue.drawEndsAt() == null || !Instant.now().isBefore(issue.drawEndsAt())) {
-            throw BusinessException.conflict("BETTING_DRAW_PRESET_CLOSED", "已到开奖时间，不能再修改预设号码");
+        Instant now = Instant.now();
+        if (issue.drawEndsAt() == null || !now.isBefore(issue.drawEndsAt().minusSeconds(10))) {
+            throw BusinessException.conflict("BETTING_DRAW_PRESET_CLOSED", "开奖前10秒内不能再修改开奖结果预设");
         }
 
         Integer previous = issue.numbers().get(ballNumber - 1);
@@ -139,7 +150,7 @@ public class PlatformBettingPlayStatsService {
         }
         audit(operator, issue, ballNumber, previous, number);
         return new PresetSummary(issue.gameCode(), issue.issueNumber(), issue.phase(), ballNumber,
-                number, issue.drawEndsAt(), Instant.now());
+                number, issue.drawEndsAt(), now);
     }
 
     private CurrentIssue currentIssue(String gameCode) {
@@ -229,32 +240,116 @@ public class PlatformBettingPlayStatsService {
         return java.util.Collections.unmodifiableList(numbers);
     }
 
-    private static String playName(String playType) {
+    private static RuleDescriptor ruleDescriptor(String rawPlayType, String parametersText) {
+        final PlayType sourceType;
         try {
-            return switch (PlayType.valueOf(playType)) {
-                case FAN -> "番";
-                case ANGLE -> "角";
-                case CAR -> "车";
-                case STRICT -> "严";
-                case ADD -> "加";
-                case POSITIVE -> "正";
-                case TONG -> "通";
-                case NONE -> "无";
-                case ODD_EVEN -> "单双";
-                case BIG_SMALL -> "大小";
-                case SPECIAL -> "特";
-            };
+            sourceType = PlayType.valueOf(rawPlayType);
         } catch (IllegalArgumentException | NullPointerException exception) {
-            return playType;
+            return new RuleDescriptor("UNKNOWN:" + rawPlayType + ":" + parametersText,
+                    rawPlayType + " " + parametersText, rawPlayType);
+        }
+        List<Integer> parameters = parseParameters(parametersText);
+        try {
+            return normalizedRule(sourceType, rawPlayType, parametersText, parameters);
+        } catch (IllegalArgumentException exception) {
+            String key = rawPlayType + ":" + parametersText;
+            return new RuleDescriptor(key, rawPlayType + " " + parametersText, rawPlayType);
         }
     }
 
-    private static int playOrder(String playType) {
-        try {
-            return PlayType.valueOf(playType).ordinal();
-        } catch (IllegalArgumentException | NullPointerException exception) {
-            return Integer.MAX_VALUE;
+    private static RuleDescriptor normalizedRule(PlayType sourceType, String rawPlayType,
+                                                  String parametersText, List<Integer> parameters) {
+        PlayType normalizedType = sourceType;
+        List<Integer> normalizedParameters = parameters;
+        String name = rawPlayType + " " + parametersText;
+        switch (sourceType) {
+            case FAN -> name = parameter(parameters, 0) + "番";
+            case ANGLE -> {
+                normalizedParameters = sorted(parameters);
+                name = joinDigits(normalizedParameters) + "角";
+            }
+            case CAR -> {
+                if (parameters.size() != 3) break;
+                int excluded = java.util.stream.IntStream.rangeClosed(1, 4)
+                        .filter(value -> !parameters.contains(value)).findFirst().orElse(0);
+                if (excluded == 0) break;
+                normalizedParameters = List.of(excluded);
+                name = excluded + "车";
+            }
+            case STRICT -> name = parameter(parameters, 0) + "严" + parameter(parameters, 1);
+            case ADD -> {
+                if (parameters.size() != 3) break;
+                normalizedParameters = List.of(parameters.get(0), sorted(parameters.subList(1, 3)).get(0),
+                        sorted(parameters.subList(1, 3)).get(1));
+                name = parameters.get(0) + "加" + joinDigits(normalizedParameters.subList(1, 3));
+            }
+            case POSITIVE -> name = parameter(parameters, 0) + "正";
+            case TONG -> {
+                if (parameters.size() != 3) break;
+                normalizedParameters = List.of(parameters.get(0), sorted(parameters.subList(1, 3)).get(0),
+                        sorted(parameters.subList(1, 3)).get(1));
+                name = normalizedParameters.get(0) + "通" + joinDigits(normalizedParameters.subList(1, 3));
+            }
+            case NONE -> {
+                if (parameters.size() == 2) {
+                    int winner = parameters.get(0);
+                    int loser = parameters.get(1);
+                    if (Math.abs(winner - loser) == 2) {
+                        normalizedType = PlayType.POSITIVE;
+                        normalizedParameters = List.of(winner);
+                        name = winner + "正";
+                    } else {
+                        normalizedType = PlayType.ADD;
+                        normalizedParameters = List.of(winner, sorted(List.of(1, 2, 3, 4).stream()
+                                .filter(value -> value != winner && value != loser).toList()).get(0),
+                                sorted(List.of(1, 2, 3, 4).stream()
+                                        .filter(value -> value != winner && value != loser).toList()).get(1));
+                        name = winner + "加" + joinDigits(normalizedParameters.subList(1, 3));
+                    }
+                } else if (parameters.size() == 3) {
+                    normalizedType = PlayType.TONG;
+                    normalizedParameters = List.of(parameters.get(2), sorted(parameters.subList(0, 2)).get(0),
+                            sorted(parameters.subList(0, 2)).get(1));
+                    name = normalizedParameters.get(0) + "通" + joinDigits(normalizedParameters.subList(1, 3));
+                } else {
+                    break;
+                }
+            }
+            case ODD_EVEN -> name = parameter(parameters, 0) == 1 ? "单" : "双";
+            case BIG_SMALL -> name = parameter(parameters, 0) == 1 ? "大" : "小";
+            case SPECIAL -> {
+                normalizedParameters = sorted(parameters);
+                name = normalizedParameters.stream().map(value -> String.format("%02d", value))
+                        .collect(Collectors.joining("/")) + "特";
+            }
+            default -> throw new IllegalStateException("未处理的下注玩法");
         }
+        String key = normalizedType.name() + ":" + normalizedParameters.stream()
+                .map(String::valueOf).collect(Collectors.joining(","));
+        return new RuleDescriptor(key, name, normalizedType.name());
+    }
+
+    private static List<Integer> parseParameters(String text) {
+        try {
+            if (text == null || text.isBlank()) return List.of();
+            return java.util.Arrays.stream(text.split(","))
+                    .map(String::trim).map(Integer::valueOf).toList();
+        } catch (RuntimeException exception) {
+            return List.of();
+        }
+    }
+
+    private static List<Integer> sorted(List<Integer> values) {
+        return values.stream().sorted().toList();
+    }
+
+    private static int parameter(List<Integer> values, int index) {
+        if (index >= values.size()) throw new IllegalArgumentException("玩法参数不完整");
+        return values.get(index);
+    }
+
+    private static String joinDigits(List<Integer> values) {
+        return values.stream().map(String::valueOf).collect(Collectors.joining());
     }
 
     private static String value(Integer number) {
@@ -278,7 +373,7 @@ public class PlatformBettingPlayStatsService {
                             List<PlayStats> plays) {
     }
 
-    public record PlayStats(String playType, String playName, long orderCount, BigDecimal totalStake) {
+    public record PlayStats(String ruleKey, String playType, String playName, long orderCount, BigDecimal totalStake) {
     }
 
     public record PresetSummary(String gameCode, String issueNumber, String phase, int ballNumber,
@@ -288,7 +383,26 @@ public class PlatformBettingPlayStatsService {
     private record GameInfo(String displayName, int nextIssueBallCount) {
     }
 
-    private record PlayRow(int ballNumber, String playType, long orderCount, BigDecimal totalStake) {
+    private record PlayRow(int ballNumber, String playType, String parametersText,
+                           long orderCount, BigDecimal totalStake) {
+    }
+
+    private record RuleDescriptor(String ruleKey, String playName, String playType) {
+    }
+
+    private static final class PlayAccumulator {
+        private final RuleDescriptor descriptor;
+        private long orderCount;
+        private BigDecimal totalStake = BigDecimal.ZERO.setScale(2);
+
+        private PlayAccumulator(RuleDescriptor descriptor) {
+            this.descriptor = descriptor;
+        }
+
+        private PlayStats toStats() {
+            return new PlayStats(descriptor.ruleKey(), descriptor.playType(), descriptor.playName(),
+                    orderCount, money(totalStake));
+        }
     }
 
     private record CurrentIssue(String gameCode, String issueNumber, String phase, int ballCount,

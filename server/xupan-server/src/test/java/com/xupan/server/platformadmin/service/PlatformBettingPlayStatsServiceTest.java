@@ -37,25 +37,43 @@ class PlatformBettingPlayStatsServiceTest {
 
         bet(issue, normalAccount, "FAN", 7, "10.00", "PENDING", null, "NORMAL");
         bet(issue, normalAccount, "FAN", 7, "5.00", "PENDING", null, "NORMAL");
+        betWithParameters(issue, normalAccount, "POSITIVE", "1", 7, "11.00", "PENDING", null, "NORMAL");
+        betWithParameters(issue, normalAccount, "POSITIVE", "2", 7, "13.00", "PENDING", null, "NORMAL");
+        betWithParameters(issue, normalAccount, "NONE", "1,3", 7, "17.00", "PENDING", null, "NORMAL");
         bet(issue, botAccount, "FAN", 7, "20.00", "PENDING", null, "BOT");
         bet(issue, botAccount, "ODD_EVEN", 7, "7.00", "PENDING", null, "BOT");
         bet(issue, normalAccount, "SPECIAL", 7, "999.00", "CANCELED", null, "NORMAL");
         bet(issue, null, "FAN", 7, "1.00", "PENDING", machineOne, "NORMAL");
         bet(issue, null, "FAN", 7, "50.00", "PENDING", machineTwo, "BOT");
 
-        PlatformBettingPlayStatsService.CurrentStats stats = service.current("AU8", admin);
+        PlatformBettingPlayStatsService.CurrentStats stats = service.current("AU8", false, admin);
 
         assertThat(stats.issueNumber()).isEqualTo(issue);
         assertThat(stats.phase()).isEqualTo("BETTING");
         assertThat(stats.ballCount()).isEqualTo(7);
         PlatformBettingPlayStatsService.BallStats ball = stats.balls().get(6);
         assertThat(ball.ballNumber()).isEqualTo(7);
-        assertThat(ball.orderCount()).isEqualTo(3);
-        assertThat(ball.totalStake()).isEqualByComparingTo("16.00");
+        assertThat(ball.orderCount()).isEqualTo(6);
+        assertThat(ball.totalStake()).isEqualByComparingTo("57.00");
         assertThat(ball.plays()).extracting(PlatformBettingPlayStatsService.PlayStats::playType)
-                .containsExactly("FAN");
-        assertThat(ball.plays().get(0).orderCount()).isEqualTo(3);
-        assertThat(ball.plays().get(0).totalStake()).isEqualByComparingTo("16.00");
+                .containsExactly("FAN", "POSITIVE", "POSITIVE");
+        assertThat(ball.plays()).extracting(PlatformBettingPlayStatsService.PlayStats::playName)
+                .containsExactly("1番", "1正", "2正");
+        assertThat(ball.plays().get(1).orderCount()).isEqualTo(2);
+        assertThat(ball.plays().get(1).totalStake()).isEqualByComparingTo("28.00");
+        assertThat(ball.plays().get(2).orderCount()).isEqualTo(1);
+        assertThat(ball.plays().get(2).totalStake()).isEqualByComparingTo("13.00");
+
+        PlatformBettingPlayStatsService.CurrentStats includingBots = service.current("AU8", true, admin);
+        PlatformBettingPlayStatsService.BallStats allMachineBall = includingBots.balls().get(6);
+        assertThat(allMachineBall.orderCount()).isEqualTo(9);
+        assertThat(allMachineBall.totalStake()).isEqualByComparingTo("134.00");
+        assertThat(allMachineBall.plays()).extracting(PlatformBettingPlayStatsService.PlayStats::playType)
+                .containsExactly("FAN", "POSITIVE", "POSITIVE", "ODD_EVEN");
+        assertThat(allMachineBall.plays().get(0).orderCount()).isEqualTo(5);
+        assertThat(allMachineBall.plays().get(0).totalStake()).isEqualByComparingTo("86.00");
+        assertThat(allMachineBall.plays()).extracting(PlatformBettingPlayStatsService.PlayStats::playName)
+                .contains("1正", "2正", "单双");
     }
 
     @Test
@@ -70,7 +88,7 @@ class PlatformBettingPlayStatsServiceTest {
                 VALUES (?, ?, '玩法统计测试', '1,2,3,4,5,6,7', 7, 'ACTIVE')
                 """, nextId, gameCode);
 
-        PlatformBettingPlayStatsService.CurrentStats stats = service.current(gameCode, admin);
+        PlatformBettingPlayStatsService.CurrentStats stats = service.current(gameCode, false, admin);
 
         assertThat(stats.gameCode()).isEqualTo(gameCode);
         assertThat(stats.gameName()).isEqualTo("玩法统计测试");
@@ -114,13 +132,13 @@ class PlatformBettingPlayStatsServiceTest {
 
     @Test
     @Transactional
-    void rejectsPresetAfterTheDrawDeadlineAndRequiresSeparatePresetPermission() {
+    void rejectsPresetWithinTheFinalTenSecondsAndRequiresSeparatePresetPermission() {
         long admin = admin();
-        String issue = issue(Instant.now().minusSeconds(1));
+        String issue = issue(Instant.now().plusSeconds(8));
         long subAccount = users.insert("stats-sub-" + suffix(), "统计子账号", "test-hash", "ACTIVE");
         users.assignRole(subAccount, "SUB_ACCOUNT");
 
-        assertThat(service.current("AU8", subAccount).phase()).isEqualTo("BETTING");
+        assertThat(service.current("AU8", false, subAccount).phase()).isEqualTo("BETTING");
 
         assertThatThrownBy(() -> service.preset("AU8", issue, 1, 2, admin))
                 .isInstanceOf(BusinessException.class)
@@ -170,12 +188,19 @@ class PlatformBettingPlayStatsServiceTest {
 
     private void bet(String issue, Long accountId, String playType, int ballNumber, String stake,
                      String settlementStatus, Long agentIdSnapshot, String playerKindSnapshot) {
+        betWithParameters(issue, accountId, playType, "1", ballNumber, stake,
+                settlementStatus, agentIdSnapshot, playerKindSnapshot);
+    }
+
+    private void betWithParameters(String issue, Long accountId, String playType, String parametersText,
+                                   int ballNumber, String stake, String settlementStatus,
+                                   Long agentIdSnapshot, String playerKindSnapshot) {
         jdbc.update("""
                 INSERT INTO game_bet (user_id, bet_code, issue_number, game_code, ball_number,
                                       play_type, parameters_text, stake, odds_snapshot, settlement_status,
                                       agent_id_snapshot, player_kind_snapshot)
-                VALUES (?, ?, ?, 'AU8', ?, ?, '1', ?, 3.850, ?, ?, ?)
-                """, accountId, "STATS-BET-" + suffix(), issue, ballNumber, playType,
+                VALUES (?, ?, ?, 'AU8', ?, ?, ?, ?, 3.850, ?, ?, ?)
+                """, accountId, "STATS-BET-" + suffix(), issue, ballNumber, playType, parametersText,
                 new java.math.BigDecimal(stake), settlementStatus, agentIdSnapshot, playerKindSnapshot);
     }
 

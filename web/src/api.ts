@@ -709,8 +709,8 @@ export const api = {
     request<DrawHistorySupplementResult>('/api/admin/draw-history/supplement', { method: 'POST', body: JSON.stringify(payload) }),
   forceSettleAllDrawHistory: (payload: { confirm: string; preview: boolean }) =>
     request<DrawHistorySettlementResult>('/api/admin/draw-history/force-settle-all', { method: 'POST', body: JSON.stringify(payload) }),
-  getBettingPlayStats: (gameCode = 'AU8') => request<BettingPlayStats>(
-    `/api/admin/betting-play-stats/current?gameCode=${encodeURIComponent(gameCode)}`,
+  getBettingPlayStats: (gameCode = 'AU8', includeBots = false) => request<BettingPlayStats>(
+    `/api/admin/betting-play-stats/current?gameCode=${encodeURIComponent(gameCode)}&includeBots=${includeBots}`,
   ),
   setBettingPlayBallPreset: (ballNumber: number, gameCode: string, issueNumber: string, number: number | null) =>
     request<BettingPlayBallPresetResult>(`/api/admin/betting-play-stats/current/balls/${ballNumber}`, {

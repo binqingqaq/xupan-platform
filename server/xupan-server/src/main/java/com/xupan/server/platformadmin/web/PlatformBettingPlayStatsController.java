@@ -30,8 +30,9 @@ public class PlatformBettingPlayStatsController {
 
     @GetMapping("/current")
     public CurrentResponse current(Authentication authentication,
-                                   @RequestParam(defaultValue = "AU8") String gameCode) {
-        return CurrentResponse.from(service.current(gameCode, operator(authentication).getUserId()));
+                                   @RequestParam(defaultValue = "AU8") String gameCode,
+                                   @RequestParam(defaultValue = "false") boolean includeBots) {
+        return CurrentResponse.from(service.current(gameCode, includeBots, operator(authentication).getUserId()));
     }
 
     @PutMapping("/current/balls/{ballNumber}")
@@ -70,9 +71,9 @@ public class PlatformBettingPlayStatsController {
         }
     }
 
-    public record PlayResponse(String playType, String playName, long orderCount, BigDecimal totalStake) {
+    public record PlayResponse(String ruleKey, String playType, String playName, long orderCount, BigDecimal totalStake) {
         static PlayResponse from(PlatformBettingPlayStatsService.PlayStats play) {
-            return new PlayResponse(play.playType(), play.playName(), play.orderCount(), play.totalStake());
+            return new PlayResponse(play.ruleKey(), play.playType(), play.playName(), play.orderCount(), play.totalStake());
         }
     }
 

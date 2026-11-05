@@ -1362,7 +1362,7 @@ onUnmounted(() => {
       </div>
       <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar" :aria-label="ballNumbersLabel">
         <span class="reference-issue-number">{{ displayIssueNumber }}</span>
-        <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === selectedBallNumber }" :aria-label="current?.phase === 'DRAWING' ? `${ball.ballNumber}球，开奖滚动中` : `${ball.ballNumber}球 ${ball.number ?? '未开奖'}`">
+        <span v-for="ball in ballNumbers" :key="ball.ballNumber" class="reference-ball" :class="{ 'is-red': selectedGameCode === 'AU8' && ball.ballNumber === 7 }" :aria-label="current?.phase === 'DRAWING' ? `${ball.ballNumber}球，开奖滚动中` : `${ball.ballNumber}球 ${ball.number ?? '未开奖'}`">
           <span v-if="current?.phase === 'DRAWING'" class="reference-ball-roll-window" aria-hidden="true">
             <span class="reference-ball-roll-track" :style="{ '--roll-offset': drawingRollOffset(ball.ballNumber) }">
               <span v-for="(number, index) in DRAWING_BALL_NUMBERS" :key="`${ball.ballNumber}-${index}`" class="reference-ball-roll-value">{{ String(number).padStart(2, '0') }}</span>
