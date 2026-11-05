@@ -155,6 +155,13 @@ export interface ScoreFlow {
   subAccount: string | null
 }
 
+export interface ScoreFlowPage {
+  items: ScoreFlow[]
+  page: number
+  pageSize: number
+  total: number
+}
+
 export interface MachineProfit {
   machineId: number
   machineCode: string
@@ -298,6 +305,13 @@ export interface DrawHistoryBet {
   explanation: string | null
   createdAt: string
   settledAt: string | null
+}
+
+export interface DrawHistoryBetPage {
+  items: DrawHistoryBet[]
+  page: number
+  pageSize: number
+  total: number
 }
 
 export interface UnsettledOrderItem {

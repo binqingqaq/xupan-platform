@@ -47,10 +47,12 @@ public class PlatformDrawHistoryController {
     }
 
     @GetMapping("/{gameCode}/{issueNumber}/bets")
-    public List<BetResponse> bets(Authentication authentication, @PathVariable String gameCode,
-                                  @PathVariable String issueNumber) {
-        return service.bets(gameCode, issueNumber, operator(authentication).getUserId()).stream()
-                .map(BetResponse::from).toList();
+    public BetPageResponse bets(Authentication authentication, @PathVariable String gameCode,
+                                @PathVariable String issueNumber,
+                                @RequestParam(defaultValue = "1") int page,
+                                @RequestParam(defaultValue = "20") int pageSize) {
+        return BetPageResponse.from(service.bets(gameCode, issueNumber, page, pageSize,
+                operator(authentication).getUserId()));
     }
 
     @PostMapping("/{issueNumber}/force-settle")
@@ -138,6 +140,13 @@ public class PlatformDrawHistoryController {
             return new BetResponse(row.betCode(), row.playerName(), row.memberCode(), row.playType(),
                     row.parametersText(), row.stake(), row.odds(), row.settlementStatus(), row.netProfit(),
                     row.explanation(), row.createdAt(), row.settledAt());
+        }
+    }
+
+    public record BetPageResponse(List<BetResponse> items, int page, int pageSize, long total) {
+        static BetPageResponse from(PlatformDrawHistoryService.BetPage page) {
+            return new BetPageResponse(page.items().stream().map(BetResponse::from).toList(),
+                    page.page(), page.pageSize(), page.total());
         }
     }
 

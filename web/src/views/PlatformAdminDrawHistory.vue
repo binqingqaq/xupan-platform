@@ -9,6 +9,10 @@ import type { DrawHistoryBet, DrawHistoryItem } from '../types/platformAdmin'
 
 const rows = ref<DrawHistoryItem[]>([])
 const bets = ref<DrawHistoryBet[]>([])
+const betsPage = ref(1)
+const betsPageSize = ref(20)
+const betsTotal = ref(0)
+const betsLoading = ref(false)
 const gameCatalog = ref<GameCatalogItem[]>([])
 const historyGameCode = 'AU8'
 const issueNumber = ref('')
@@ -27,7 +31,9 @@ const supplementOpenedAt = ref('')
 const supplementing = ref(false)
 const betsOpen = ref(false)
 const selectedIssue = ref('')
+const selectedGameCode = ref(historyGameCode)
 let refreshTimer: number | undefined
+let betsRequestSequence = 0
 const visibleBallCount = computed(() => {
   if (historyGameCode === 'AU8') return 7
   const game = gameCatalog.value.find(item => item.gameCode === historyGameCode)
@@ -80,7 +86,38 @@ function changePageSize(size: number) {
   currentPage.value = 1
   void load()
 }
-async function showBets(row: DrawHistoryItem) { selectedIssue.value = row.issueNumber; betsOpen.value = true; bets.value = []; try { bets.value = await api.listDrawHistoryBets(row.gameCode, row.issueNumber) } catch (cause) { adminNotice.error(apiErrorMessage(cause, '投注记录加载失败')) } }
+async function loadBets(page = betsPage.value, pageSize = betsPageSize.value) {
+  if (!selectedIssue.value) return
+  const requestSequence = ++betsRequestSequence
+  betsLoading.value = true
+  const issueSnapshot = selectedIssue.value
+  const gameSnapshot = selectedGameCode.value
+  try {
+    const result = await api.listDrawHistoryBets(gameSnapshot, issueSnapshot, page, pageSize)
+    if (requestSequence !== betsRequestSequence || selectedIssue.value !== issueSnapshot
+      || selectedGameCode.value !== gameSnapshot) return
+    bets.value = result.items
+    betsPage.value = result.page
+    betsPageSize.value = result.pageSize
+    betsTotal.value = result.total
+  } catch (cause) {
+    if (requestSequence === betsRequestSequence) adminNotice.error(apiErrorMessage(cause, '投注记录加载失败'))
+  } finally {
+    if (requestSequence === betsRequestSequence) betsLoading.value = false
+  }
+}
+function showBets(row: DrawHistoryItem) {
+  selectedGameCode.value = row.gameCode
+  selectedIssue.value = row.issueNumber
+  betsPage.value = 1
+  betsPageSize.value = 20
+  betsTotal.value = 0
+  bets.value = []
+  betsOpen.value = true
+  void loadBets(1, 20)
+}
+function changeBetsPage(page: number) { void loadBets(page, betsPageSize.value) }
+function changeBetsPageSize(size: number) { void loadBets(1, size) }
 async function forceSettleIssue(row: DrawHistoryItem) {
   if (forcing.value) return
   try {
@@ -194,7 +231,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
       </div>
     </section>
     <el-dialog v-model="betsOpen" :title="`${selectedIssue} 投注记录`" width="min(1000px, 94vw)" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
-      <el-table scrollbar-always-on :data="bets" stripe border empty-text="暂无投注">
+      <el-table scrollbar-always-on v-loading="betsLoading" :data="bets" stripe border empty-text="暂无投注">
         <el-table-column label="玩家" min-width="150"><template #default="{ row }">{{ row.memberCode }} {{ row.playerName }}</template></el-table-column>
         <el-table-column prop="playType" label="玩法" min-width="100" />
         <el-table-column prop="parametersText" label="内容" min-width="180" show-overflow-tooltip />
@@ -203,6 +240,19 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
         <el-table-column prop="settlementStatus" label="结果" min-width="100" />
         <el-table-column label="盈亏" min-width="100" align="right"><template #default="{ row }">{{ row.netProfit === null ? '--' : row.netProfit.toFixed(2) }}</template></el-table-column>
       </el-table>
+      <div class="bets-pagination">
+        <el-pagination
+          background
+          :current-page="betsPage"
+          :page-size="betsPageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="betsTotal"
+          layout="total, sizes, prev, pager, next, jumper"
+          :disabled="betsLoading"
+          @current-change="changeBetsPage"
+          @size-change="changeBetsPageSize"
+        />
+      </div>
       <template #footer><el-button @click="betsOpen = false">关闭</el-button></template>
     </el-dialog>
   </main>
@@ -215,6 +265,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .filters { padding: 14px 16px 0; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
 .supplement-form { border-color: #dcdfe6; }
 .history-pagination { display: flex; justify-content: flex-end; padding: 12px 4px; }
+.bets-pagination { display: flex; justify-content: flex-end; padding: 12px 4px 0; }
 .ball { min-width: 28px; justify-content: center; }
 </style>
 

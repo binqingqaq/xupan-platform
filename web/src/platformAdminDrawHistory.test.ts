@@ -43,7 +43,9 @@ beforeEach(() => {
     }],
     page: 1, pageSize: 30, total: 1,
   })
-  vi.mocked(api.listDrawHistoryBets).mockResolvedValue([])
+  vi.mocked(api.listDrawHistoryBets).mockImplementation(async (_gameCode, _issueNumber, page = 1, pageSize = 20) => ({
+    items: [], page, pageSize, total: 338,
+  }))
   vi.mocked(api.forceSettleDrawIssue).mockResolvedValue({
     preview: false, histories: 1, orders: 1, message: '已强制结算 1 条订单',
   })
@@ -178,6 +180,28 @@ describe('platform admin draw history', () => {
       gameCode: 'AU8', issueNumber: undefined, page: 1,
     }))
     expect((container.querySelector('input') as HTMLInputElement).value).toBe('')
+  })
+
+  it('loads draw-history betting records in 20-row pages', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminDrawHistory)
+    app.mount(container)
+    await settleOperations()
+
+    operationButton('投注记录', container).click()
+    await settleOperations()
+
+    expect(api.listDrawHistoryBets).toHaveBeenLastCalledWith('AU8', '39999946', 1, 20)
+    expect(container.querySelector('.el-dialog')?.textContent).toContain('338')
+    expect(container.querySelectorAll('.el-dialog .el-pagination')).toHaveLength(1)
+
+    const nextPage = container.querySelector<HTMLButtonElement>('.el-dialog .el-pagination .btn-next')
+    expect(nextPage).not.toBeNull()
+    nextPage?.click()
+    await settleOperations()
+
+    expect(api.listDrawHistoryBets).toHaveBeenLastCalledWith('AU8', '39999946', 2, 20)
   })
 
   it('hides archived eight-ball rows and exposes only seven-ball entries after cutover', async () => {

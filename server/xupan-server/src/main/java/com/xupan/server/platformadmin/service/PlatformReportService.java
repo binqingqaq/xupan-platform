@@ -38,16 +38,15 @@ public class PlatformReportService {
     }
 
     @Transactional(readOnly = true)
-    public List<ScoreFlowRow> scoreFlow(String day, String day3, Long subAccountId, long operator) {
+    public ScoreFlowPage scoreFlow(String day, String day3, Long subAccountId,
+                                   int page, int pageSize, long operator) {
         require(operator);
+        if (page < 1 || pageSize < 1 || pageSize > 100) {
+            throw BusinessException.badRequest("REPORT_QUERY_INVALID", "分页参数必须为 1 到 100");
+        }
         BusinessRange range = resolveRange(day, day3);
         Long scopedSubAccountId = accessService.scopedGroupId(operator, subAccountId);
-        StringBuilder sql = new StringBuilder("""
-                SELECT l.id, l.created_at, l.operation_type, l.amount, l.balance_after, l.reason,
-                       COALESCE(a.member_code, l.player_code_snapshot) member_code,
-                       COALESCE(a.display_name, l.player_name_snapshot) player_name,
-                       ag.id machine_id,
-                       ag.display_name machine_name, g.username sub_account
+        StringBuilder fromWhere = new StringBuilder("""
                   FROM demo_balance_ledger l
                   LEFT JOIN demo_user_account a ON a.id = l.user_id
                   JOIN agent ag ON ag.id = COALESCE(a.agent_id, l.agent_id_snapshot)
@@ -55,13 +54,22 @@ public class PlatformReportService {
                  WHERE l.created_at >= ? AND l.created_at < ?
                 """);
         List<Object> args = new ArrayList<>(List.of(Timestamp.from(range.from()), Timestamp.from(range.to())));
-        if (scopedSubAccountId != null) { sql.append(" AND g.id = ?"); args.add(scopedSubAccountId); }
-        sql.append(" ORDER BY l.id DESC LIMIT 2000");
-        return jdbc.query(sql.toString(), (rs, n) -> new ScoreFlowRow(rs.getLong("id"),
+        if (scopedSubAccountId != null) { fromWhere.append(" AND g.id = ?"); args.add(scopedSubAccountId); }
+        Long total = jdbc.queryForObject("SELECT COUNT(*) " + fromWhere, Long.class, args.toArray());
+        List<Object> pageArgs = new ArrayList<>(args);
+        pageArgs.add(pageSize);
+        pageArgs.add((long) (page - 1) * pageSize);
+        List<ScoreFlowRow> items = jdbc.query("""
+                SELECT l.id, l.created_at, l.operation_type, l.amount, l.balance_after, l.reason,
+                       COALESCE(a.member_code, l.player_code_snapshot) member_code,
+                       COALESCE(a.display_name, l.player_name_snapshot) player_name,
+                       ag.id machine_id, ag.display_name machine_name, g.username sub_account
+                """ + fromWhere + " ORDER BY l.id DESC LIMIT ? OFFSET ?", (rs, n) -> new ScoreFlowRow(rs.getLong("id"),
                 instant(rs.getTimestamp("created_at")), rs.getString("operation_type"),
                 rs.getBigDecimal("amount"), rs.getBigDecimal("balance_after"), rs.getString("reason"),
                 rs.getString("member_code"), rs.getString("player_name"), rs.getLong("machine_id"),
-                rs.getString("machine_name"), rs.getString("sub_account")), args.toArray());
+                rs.getString("machine_name"), rs.getString("sub_account")), pageArgs.toArray());
+        return new ScoreFlowPage(items, page, pageSize, total == null ? 0 : total);
     }
 
     @Transactional(readOnly = true)
@@ -240,6 +248,8 @@ public class PlatformReportService {
     public record ScoreFlowRow(long id, Instant createdAt, String operationType, BigDecimal amount,
                                BigDecimal balanceAfter, String reason, String memberCode, String playerName,
                                long machineId, String machineName, String subAccount) {}
+
+    public record ScoreFlowPage(List<ScoreFlowRow> items, int page, int pageSize, long total) {}
     public record MachineProfitRow(long machineId, String machineCode, String machineName, Long groupId,
                                    String groupUsername, BigDecimal score, BigDecimal playerBalance,
                                    BigDecimal totalFlow, BigDecimal totalSingleFlow, BigDecimal totalDoubleFlow,

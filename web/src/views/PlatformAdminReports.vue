@@ -13,14 +13,54 @@ const subAccountId = ref<string | number | null>(0)
 const loading = ref(false)
 const error = ref('')
 const scoreFlow = ref<ScoreFlow[]>([])
+const scoreFlowPage = ref(1)
+const scoreFlowPageSize = ref(20)
+const scoreFlowTotal = ref(0)
 const report = ref<ProfitReport | null>(null)
 const currentUser = ref('超级管理员')
 const title = computed(() => tab.value === 'flow' ? '积分流水' : tab.value === 'profit' ? '盈亏报表' : '飞单记录')
 
 function shiftDate(days: number) { const d = new Date(); d.setDate(d.getDate() + days); day.value = d.toISOString().slice(0, 10); day3.value = '' }
 function setWeek(previous = false) { const now = new Date(); const dayIndex = now.getDay() || 7; const monday = new Date(now); monday.setDate(now.getDate() - dayIndex + 1 - (previous ? 7 : 0)); const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6); day.value = monday.toISOString().slice(0, 10); day3.value = sunday.toISOString().slice(0, 10) }
-async function load() { loading.value = true; error.value = ''; try { const params = { day: day.value, day3: day3.value || undefined, subAccountId: Number(subAccountId.value) || undefined }; if (tab.value === 'flow') scoreFlow.value = await api.getScoreFlow(params); if (tab.value === 'profit') report.value = await api.getProfitReport(params) } catch (cause) { error.value = apiErrorMessage(cause, '报表统计加载失败') } finally { loading.value = false } }
-function selectTab(next: Tab) { tab.value = next; if (next !== 'report-network') void load() }
+async function load(page = scoreFlowPage.value, pageSize = scoreFlowPageSize.value) {
+  loading.value = true
+  error.value = ''
+  try {
+    const params = { day: day.value, day3: day3.value || undefined, subAccountId: Number(subAccountId.value) || undefined }
+    if (tab.value === 'flow') {
+      const result = await api.getScoreFlow({ ...params, page, pageSize })
+      scoreFlow.value = result.items
+      scoreFlowPage.value = result.page
+      scoreFlowPageSize.value = result.pageSize
+      scoreFlowTotal.value = result.total
+    }
+    if (tab.value === 'profit') report.value = await api.getProfitReport(params)
+  } catch (cause) {
+    error.value = apiErrorMessage(cause, '报表统计加载失败')
+  } finally {
+    loading.value = false
+  }
+}
+function queryReports() {
+  scoreFlowPage.value = 1
+  void load(1, scoreFlowPageSize.value)
+}
+function changeScoreFlowPage(page: number) {
+  scoreFlowPage.value = page
+  void load(page, scoreFlowPageSize.value)
+}
+function changeScoreFlowPageSize(pageSize: number) {
+  scoreFlowPage.value = 1
+  scoreFlowPageSize.value = pageSize
+  void load(1, pageSize)
+}
+function selectTab(next: Tab) {
+  tab.value = next
+  if (next === 'flow') {
+    scoreFlowPage.value = 1
+    void load(1, scoreFlowPageSize.value)
+  } else if (next === 'profit') void load()
+}
 onMounted(async () => { const me = await api.me(); currentUser.value = me.displayName || '超级管理员'; subAccounts.value = me.permissions.includes('SUB_ACCOUNT_MANAGE') ? await api.listSubAccounts() : []; await load() })
 </script>
 
@@ -30,7 +70,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
     <section class="content">
       <header class="page-heading"><h1>报表统计</h1></header>
 
-      <el-form inline class="filters" @submit.prevent="load">
+      <el-form inline class="filters" @submit.prevent="queryReports">
         <el-form-item label="开始日期">
           <el-date-picker v-model="day" type="date" value-format="YYYY-MM-DD" />
         </el-form-item>
@@ -44,7 +84,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="load">查询</el-button>
+          <el-button type="primary" @click="queryReports">查询</el-button>
           <el-button @click="shiftDate(0)">今天</el-button>
           <el-button @click="shiftDate(-1)">昨天</el-button>
           <el-button @click="setWeek(false)">本周</el-button>
@@ -56,8 +96,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
 
       <el-tabs v-model="tab" @tab-change="selectTab(tab)">
         <el-tab-pane label="积分流水" name="flow">
-          <el-skeleton v-if="loading" :rows="5" animated />
-          <el-table scrollbar-always-on v-else :data="scoreFlow" stripe border empty-text="暂无数据">
+          <el-table scrollbar-always-on v-loading="loading" :data="scoreFlow" stripe border empty-text="暂无数据">
             <el-table-column label="时间" min-width="170"><template #default="{ row }">{{ new Date(row.createdAt).toLocaleString('zh-CN',{hour12:false}) }}</template></el-table-column>
             <el-table-column prop="subAccount" label="子账号" min-width="110"><template #default="{ row }">{{ row.subAccount || '未设置' }}</template></el-table-column>
             <el-table-column prop="machineName" label="机器" min-width="120" />
@@ -67,6 +106,19 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
             <el-table-column label="变动后积分" min-width="130" align="right"><template #default="{ row }">{{ row.balanceAfter.toFixed(2) }}</template></el-table-column>
             <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
           </el-table>
+          <div v-if="scoreFlowTotal > 0" class="score-flow-pagination">
+            <el-pagination
+              background
+              :current-page="scoreFlowPage"
+              :page-size="scoreFlowPageSize"
+              :page-sizes="[10, 20, 50, 100]"
+              :total="scoreFlowTotal"
+              layout="total, sizes, prev, pager, next, jumper"
+              :disabled="loading"
+              @current-change="changeScoreFlowPage"
+              @size-change="changeScoreFlowPageSize"
+            />
+          </div>
         </el-tab-pane>
 
         <el-tab-pane label="盈亏报表" name="profit">
@@ -117,6 +169,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
 .page-heading h1 { margin: 0; font-size: 26px; }
 .filters { padding: 14px 16px 0; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
 .summary { row-gap: 14px; margin: 0 0 16px; padding: 16px; border: 1px solid #ebeef5; border-radius: 4px; background: #fff; }
+.score-flow-pagination { display: flex; justify-content: flex-end; padding: 12px 4px; }
 .positive { color: #b42318; }
 .negative { color: #177245; }
 </style>

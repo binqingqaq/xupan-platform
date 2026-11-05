@@ -123,6 +123,39 @@ public class PlatformDrawHistoryService {
         return queryBets(normalizeGameCode(gameCode), requiredIssue(issueNumber));
     }
 
+    @Transactional(readOnly = true)
+    public BetPage bets(String gameCode, String issueNumber, int page, int pageSize, long operator) {
+        require(operator, READ_PERMISSION, "DRAW_HISTORY_FORBIDDEN", "没有开奖历史权限");
+        if (page < 1 || pageSize < 1 || pageSize > 100) {
+            throw BusinessException.badRequest("DRAW_HISTORY_QUERY_INVALID", "分页参数必须为 1 到 100");
+        }
+        String normalizedGameCode = normalizeGameCode(gameCode);
+        String normalizedIssueNumber = requiredIssue(issueNumber);
+        Long total = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id=b.user_id
+                 WHERE b.game_code=? AND b.issue_number=? AND a.player_kind='NORMAL'
+                """, Long.class, normalizedGameCode, normalizedIssueNumber);
+        List<BetRow> items = jdbc.query("""
+                SELECT b.bet_code, b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
+                       b.settlement_status, b.net_profit, b.explanation, b.created_at, b.settled_at,
+                       a.member_code, u.display_name
+                  FROM game_bet b
+                  JOIN demo_user_account a ON a.id=b.user_id
+                  JOIN sys_user u ON u.id=a.sys_user_id
+                 WHERE b.game_code=? AND b.issue_number=? AND a.player_kind='NORMAL'
+                 ORDER BY b.id
+                 LIMIT ? OFFSET ?
+                """, (rs, n) -> new BetRow(rs.getString("bet_code"), rs.getString("display_name"),
+                rs.getString("member_code"), rs.getString("play_type"), rs.getString("parameters_text"),
+                rs.getBigDecimal("stake"), rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"),
+                rs.getBigDecimal("net_profit"), rs.getString("explanation"), instant(rs.getTimestamp("created_at")),
+                instant(rs.getTimestamp("settled_at"))), normalizedGameCode, normalizedIssueNumber,
+                pageSize, (long) (page - 1) * pageSize);
+        return new BetPage(items, page, pageSize, total == null ? 0 : total);
+    }
+
     private List<BetRow> queryBets(String gameCode, String issueNumber) {
         String gamePredicate = gameCode == null ? "" : " AND b.game_code=?";
         List<Object> args = new ArrayList<>();
@@ -557,6 +590,8 @@ public class PlatformDrawHistoryService {
     private static Instant instant(Timestamp value) { return value == null ? null : value.toInstant(); }
 
     public record Page(List<HistoryRow> items, int page, int pageSize, long total) {}
+
+    public record BetPage(List<BetRow> items, int page, int pageSize, long total) {}
     public record HistoryRow(String gameCode, String gameName, String issueNumber, int ballCount, List<Integer> balls,
                              String phase, Instant openedAt, Instant settledAt,
                              Instant drawConfirmedAt, int drawResultVersion,

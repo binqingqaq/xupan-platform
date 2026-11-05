@@ -106,6 +106,7 @@ import type {
   MachineInput,
   MachinePlayer,
   DrawHistoryBet,
+  DrawHistoryBetPage,
   OrderCorrectionDetail,
   OrderCorrectionInput,
   OrderCorrectionPage,
@@ -138,7 +139,7 @@ import type {
   BettingPlayStats,
   BettingPlayBallPresetResult,
   ProfitReport,
-  ScoreFlow,
+  ScoreFlowPage,
   SubAccount,
   SubAccountInput,
 } from './types/platformAdmin'
@@ -692,8 +693,8 @@ export const api = {
       signal: AbortSignal.timeout(15_000),
     })
   },
-  listDrawHistoryBets: (gameCode: string, issueNumber: string) => request<DrawHistoryBet[]>(
-    `/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/bets`,
+  listDrawHistoryBets: (gameCode: string, issueNumber: string, page = 1, pageSize = 20) => request<DrawHistoryBetPage>(
+    `/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/bets?page=${page}&pageSize=${pageSize}`,
   ),
   forceSettleDrawIssue: (gameCode: string, issueNumber: string) =>
     request<DrawHistorySettlementResult>(`/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/force-settle`, { method: 'POST' }),
@@ -964,12 +965,14 @@ export const api = {
     request<ReportNetworkItem>(`/api/admin/report-networks/${id}/status?version=${version}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   deleteReportNetwork: (id: number, version: number) =>
     request<void>(`/api/admin/report-networks/${id}?version=${version}`, { method: 'DELETE' }),
-  getScoreFlow: (params: { day?: string; day3?: string; subAccountId?: number } = {}) => {
+  getScoreFlow: (params: { day?: string; day3?: string; subAccountId?: number; page?: number; pageSize?: number } = {}) => {
     const search = new URLSearchParams()
     if (params.day) search.set('day', params.day)
     if (params.day3) search.set('day3', params.day3)
     if (params.subAccountId) search.set('subAccountId', String(params.subAccountId))
-    return request<ScoreFlow[]>(`/api/admin/reports/score-flow?${search.toString()}`)
+    search.set('page', String(params.page ?? 1))
+    search.set('pageSize', String(params.pageSize ?? 20))
+    return request<ScoreFlowPage>(`/api/admin/reports/score-flow?${search.toString()}`)
   },
   getProfitReport: (params: { day?: string; day3?: string; subAccountId?: number } = {}) => {
     const search = new URLSearchParams()

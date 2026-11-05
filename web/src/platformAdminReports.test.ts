@@ -32,7 +32,9 @@ async function settle(ticks = 6) {
 beforeEach(() => {
   vi.mocked(api.me).mockResolvedValue({ displayName: '超级管理员', permissions: ['SUB_ACCOUNT_MANAGE'] } as never)
   vi.mocked(api.listSubAccounts).mockResolvedValue([])
-  vi.mocked(api.getScoreFlow).mockResolvedValue([])
+  vi.mocked(api.getScoreFlow).mockImplementation(async params => ({
+    items: [], page: params.page ?? 1, pageSize: params.pageSize ?? 20, total: 0,
+  }))
   vi.mocked(api.getProfitReport).mockResolvedValue({
     day: '2026-10-02', day3: '2026-10-02',
     fromInclusive: '2026-10-01T22:00:00Z', toExclusive: '2026-10-02T22:00:00Z',
@@ -81,6 +83,32 @@ describe('platform admin reports', () => {
     expect(container.textContent).toContain('0.05')
     expect(container.textContent).toContain('0.09')
     expect(container.textContent).not.toContain('待规则确认')
+  })
+
+  it('loads score flow by server pages and requests the next page', async () => {
+    vi.mocked(api.getScoreFlow).mockImplementation(async params => ({
+      items: [], page: params.page ?? 1, pageSize: params.pageSize ?? 20, total: 338,
+    }))
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminReports)
+    app.mount(container)
+    await settle()
+
+    const flowTab = [...container.querySelectorAll<HTMLElement>('[role="tab"]')]
+      .find(button => button.textContent?.includes('积分流水'))
+    flowTab?.click()
+    await settle()
+
+    expect(api.getScoreFlow).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, pageSize: 20 }))
+    expect(container.querySelector('.score-flow-pagination')?.textContent).toContain('338')
+
+    const nextPage = container.querySelector<HTMLButtonElement>('.score-flow-pagination .btn-next')
+    expect(nextPage).not.toBeNull()
+    nextPage?.click()
+    await settle()
+
+    expect(api.getScoreFlow).toHaveBeenLastCalledWith(expect.objectContaining({ page: 2, pageSize: 20 }))
   })
 })
 

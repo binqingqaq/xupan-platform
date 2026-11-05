@@ -25,12 +25,14 @@ public class PlatformReportController {
     }
 
     @GetMapping("/score-flow")
-    public List<ScoreFlowResponse> scoreFlow(Authentication authentication,
-                                             @RequestParam(required = false) String day,
-                                             @RequestParam(required = false) String day3,
-                                             @RequestParam(required = false) Long subAccountId) {
-        return service.scoreFlow(day, day3, subAccountId, operator(authentication).getUserId()).stream()
-                .map(ScoreFlowResponse::from).toList();
+    public ScoreFlowPageResponse scoreFlow(Authentication authentication,
+                                           @RequestParam(required = false) String day,
+                                           @RequestParam(required = false) String day3,
+                                           @RequestParam(required = false) Long subAccountId,
+                                           @RequestParam(defaultValue = "1") int page,
+                                           @RequestParam(defaultValue = "20") int pageSize) {
+        return ScoreFlowPageResponse.from(service.scoreFlow(day, day3, subAccountId,
+                page, pageSize, operator(authentication).getUserId()));
     }
 
     @GetMapping("/profit")
@@ -56,6 +58,13 @@ public class PlatformReportController {
             return new ScoreFlowResponse(row.id(), row.createdAt(), row.operationType(), row.amount(),
                     row.balanceAfter(), row.reason(), row.memberCode(), row.playerName(), row.machineId(),
                     row.machineName(), row.subAccount());
+        }
+    }
+
+    public record ScoreFlowPageResponse(List<ScoreFlowResponse> items, int page, int pageSize, long total) {
+        static ScoreFlowPageResponse from(PlatformReportService.ScoreFlowPage page) {
+            return new ScoreFlowPageResponse(page.items().stream().map(ScoreFlowResponse::from).toList(),
+                    page.page(), page.pageSize(), page.total());
         }
     }
 
