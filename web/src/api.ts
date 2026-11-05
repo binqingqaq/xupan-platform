@@ -135,6 +135,8 @@ import type {
   DrawHistoryConfirmationResult,
   DrawHistorySettlementResult,
   DrawHistorySupplementResult,
+  BettingPlayStats,
+  BettingPlayBallPresetResult,
   ProfitReport,
   ScoreFlow,
   SubAccount,
@@ -352,6 +354,10 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'DRAW_HISTORY_CONFIRM_REQUIRED') return '缺少强制结算确认参数'
   if (error.code === 'DRAW_HISTORY_FORCE_CONFLICT') return '注单已被其他操作结算，请刷新后重试'
   if (error.code === 'DRAW_HISTORY_QUERY_INVALID') return '开奖历史查询参数不合法'
+  if (error.code === 'BETTING_DRAW_PRESET_STALE_ISSUE') return '当前期已切换，请刷新后重试'
+  if (error.code === 'BETTING_DRAW_PRESET_CLOSED') return '开奖时间已到或期次已结束，不能修改开奖结果预设'
+  if (error.code === 'DRAW_DRAFT_MOVED_TO_BETTING_STATS') return '当前期开奖号码预设已移至“下注玩法统计”页面'
+  if (error.code === 'DRAW_CONFIRM_MOVED_TO_AUTOMATION') return '开奖结果将在开奖时间自动确认并结算，无需手动确认'
   if (error.code === 'DRAW_RESULT_LOCKED') return '开奖结果已确认，不能再修改'
   if (error.code === 'DRAW_RESULT_NOT_READY') return '当前期还未进入开奖阶段'
   if (error.code === 'DRAW_RESULT_NOT_CONFIRMED') return '开奖结果尚未确认，不能结算'
@@ -703,6 +709,13 @@ export const api = {
     request<DrawHistorySupplementResult>('/api/admin/draw-history/supplement', { method: 'POST', body: JSON.stringify(payload) }),
   forceSettleAllDrawHistory: (payload: { confirm: string; preview: boolean }) =>
     request<DrawHistorySettlementResult>('/api/admin/draw-history/force-settle-all', { method: 'POST', body: JSON.stringify(payload) }),
+  getBettingPlayStats: (gameCode = 'AU8') => request<BettingPlayStats>(
+    `/api/admin/betting-play-stats/current?gameCode=${encodeURIComponent(gameCode)}`,
+  ),
+  setBettingPlayBallPreset: (ballNumber: number, gameCode: string, issueNumber: string, number: number | null) =>
+    request<BettingPlayBallPresetResult>(`/api/admin/betting-play-stats/current/balls/${ballNumber}`, {
+      method: 'PUT', body: JSON.stringify({ gameCode, issueNumber, number }),
+    }),
   listUnsettledOrders: (params: { page?: number; pageSize?: number } = {}) => {
     const search = new URLSearchParams()
     search.set('page', String(params.page || 1))

@@ -44,10 +44,11 @@ const items: PlatformAdminNavItem[] = [
   { label: '子账号', to: '/platform-admin/sub-accounts', permission: 'SUB_ACCOUNT_MANAGE' },
   // BY220 head.html：第 177 行，不在 {if user_uid==1} 内 → 子账号可见
   { label: '机器管理', to: '/platform-admin/machines', permission: 'MACHINE_MANAGE' },
-  // BY220 head.html：第 178 行，不在 {if user_uid==1} 内 → 子账号可见
-  { label: '报表统计', to: '/platform-admin/reports', permission: 'REPORT_READ' },
   // BY220 head.html：第 179 行，不在 {if user_uid==1} 内 → 子账号可见
   { label: '开奖历史', to: '/platform-admin/draw-history', permission: 'DRAW_HISTORY_READ' },
+  { label: '下注玩法统计', to: '/platform-admin/betting-play-stats', permission: 'BETTING_PLAY_STATS_READ' },
+  // BY220 head.html：第 178 行，不在 {if user_uid==1} 内 → 子账号可见
+  { label: '报表统计', to: '/platform-admin/reports', permission: 'REPORT_READ' },
   // BY220 head.html：第 181 行，在 {if user_uid==1} 内 → 仅超级管理员可见
   { label: '未结订单', to: '/platform-admin/unsettled-orders', permission: 'UNSETTLED_ORDER_READ' },
   // BY220 head.html：第 183 行，在 {if user_uid==1} 内 → 仅超级管理员可见

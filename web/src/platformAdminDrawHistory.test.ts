@@ -80,6 +80,8 @@ describe('platform admin draw history', () => {
       expect(button.disabled).toBe(true)
       button.click()
     }
+    expect(container.textContent).not.toContain('编辑开奖草稿')
+    expect(container.textContent).not.toContain('确认并结算')
     await settleOperations()
     expect(api.forceSettleAllDrawHistory).not.toHaveBeenCalled()
     expect(api.forceSettleDrawIssue).not.toHaveBeenCalled()
@@ -154,6 +156,30 @@ describe('platform admin draw history', () => {
     }))
   })
 
+  it('resets issue filtering and reloads all draw history from the first page', async () => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    app = createApp(PlatformAdminDrawHistory)
+    app.mount(container)
+    await settleOperations()
+
+    vi.mocked(api.listDrawHistory).mockClear()
+    await fillOperationField('期号', '39999946', container)
+    operationButton('查询', container).click()
+    await settleOperations()
+    expect(api.listDrawHistory).toHaveBeenCalledWith(expect.objectContaining({
+      gameCode: 'AU8', issueNumber: '39999946', page: 1,
+    }))
+
+    vi.mocked(api.listDrawHistory).mockClear()
+    operationButton('重置', container).click()
+    await settleOperations()
+    expect(api.listDrawHistory).toHaveBeenCalledWith(expect.objectContaining({
+      gameCode: 'AU8', issueNumber: undefined, page: 1,
+    }))
+    expect((container.querySelector('input') as HTMLInputElement).value).toBe('')
+  })
+
   it('hides archived eight-ball rows and exposes only seven-ball entries after cutover', async () => {
     vi.mocked(api.getGameCatalog).mockResolvedValue([
       { gameCode: 'AU8', displayName: '七球番摊', sortOrder: 1, nextIssueBallCount: 7, activeIssueBallCount: 7 },
@@ -178,9 +204,10 @@ describe('platform admin draw history', () => {
     const visibleBallCells = container.querySelectorAll('tbody .el-tag.ball')
     expect(visibleBallCells).toHaveLength(7)
     expect(container.textContent).not.toContain('39999946')
-    operationButton('编辑开奖草稿', container).click()
-    await settleOperations()
-    expect(container.querySelectorAll('.el-dialog .el-form-item__label')).toHaveLength(7)
-    expect(container.querySelector('.el-dialog')?.textContent).not.toContain('第 8 球')
+    expect(container.textContent).not.toContain('编辑开奖草稿')
+    expect(container.textContent).not.toContain('确认并结算')
+    expect(container.querySelector('.el-dialog')).toBeNull()
+    expect(container.textContent).toContain('补期并确认')
+    expect(container.textContent).toContain('重置')
   })
 })

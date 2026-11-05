@@ -27,12 +27,6 @@ const supplementOpenedAt = ref('')
 const supplementing = ref(false)
 const betsOpen = ref(false)
 const selectedIssue = ref('')
-const draftOpen = ref(false)
-const draftTarget = ref<DrawHistoryItem | null>(null)
-const draftNumbers = ref<Array<number | null>>(Array.from({ length: 7 }, () => null))
-const draftSaved = ref(false)
-const savingDraft = ref(false)
-const confirmingDraw = ref(false)
 let refreshTimer: number | undefined
 const visibleBallCount = computed(() => {
   if (historyGameCode === 'AU8') return 7
@@ -72,6 +66,11 @@ function searchHistory() {
   currentPage.value = 1
   void load()
 }
+function resetHistorySearch() {
+  issueNumber.value = ''
+  currentPage.value = 1
+  void load()
+}
 function changePage(page: number) {
   currentPage.value = page
   void load()
@@ -82,52 +81,6 @@ function changePageSize(size: number) {
   void load()
 }
 async function showBets(row: DrawHistoryItem) { selectedIssue.value = row.issueNumber; betsOpen.value = true; bets.value = []; try { bets.value = await api.listDrawHistoryBets(row.gameCode, row.issueNumber) } catch (cause) { adminNotice.error(apiErrorMessage(cause, '投注记录加载失败')) } }
-function editDraft(row: DrawHistoryItem) {
-  draftTarget.value = row
-  draftNumbers.value = Array.from({ length: row.ballCount ?? row.balls.length }, (_, index) => {
-    const value = row.balls[index]
-    return value >= 1 && value <= 20 ? value : null
-  })
-  draftSaved.value = false
-  draftOpen.value = true
-}
-function readDraftNumbers(): number[] | null {
-  const expectedCount = draftTarget.value?.ballCount ?? draftTarget.value?.balls.length ?? visibleBallCount.value
-  if (draftNumbers.value.length !== expectedCount || draftNumbers.value.some(value => value === null || value < 1 || value > 20)) return null
-  return draftNumbers.value as number[]
-}
-async function saveDraft() {
-  const target = draftTarget.value
-  const numbers = readDraftNumbers()
-  if (!target || !numbers) { adminNotice.warning(`请输入 ${draftNumbers.value.length} 个 1 到 20 的开奖号码`); return }
-  savingDraft.value = true; error.value = ''
-  try {
-    const result = await api.updateDrawDraft(target.gameCode, target.issueNumber, numbers)
-    draftSaved.value = true
-    draftTarget.value = { ...target, balls: result.numbers, drawResultVersion: result.resultVersion }
-    adminNotice.success(result.message)
-    await load()
-  } catch (cause) { adminNotice.error(apiErrorMessage(cause, '开奖草稿保存失败')) }
-  finally { savingDraft.value = false }
-}
-async function confirmDraft() {
-  const target = draftTarget.value
-  if (!target || !draftSaved.value || confirmingDraw.value) return
-  try {
-    await ElMessageBox.confirm(
-      `确认 ${target.issueNumber} 的 ${draftNumbers.value.length} 个开奖号码？确认后不可修改，并会在同一事务中结算玩家注单与中心订单。`,
-      '确认开奖结果', { type: 'warning', confirmButtonText: '确认并结算', cancelButtonText: '返回修改', closeOnClickModal: false },
-    )
-  } catch { return }
-  confirmingDraw.value = true; error.value = ''
-  try {
-    const result = await api.confirmDrawResult(target.gameCode, target.issueNumber)
-    adminNotice.success(`${result.message}（本地 ${result.localOrders} 条，中心 ${result.centerOrders} 条）`)
-    draftOpen.value = false
-    await load()
-  } catch (cause) { adminNotice.error(apiErrorMessage(cause, '开奖确认失败')) }
-  finally { confirmingDraw.value = false }
-}
 async function forceSettleIssue(row: DrawHistoryItem) {
   if (forcing.value) return
   try {
@@ -200,6 +153,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
       <el-form inline class="filters" @submit.prevent="searchHistory">
         <el-form-item label="期号"><el-input v-model="issueNumber" placeholder="请输入期号" @keyup.enter="searchHistory" /></el-form-item>
         <el-form-item><el-button type="primary" :loading="loading" @click="searchHistory">查询</el-button></el-form-item>
+        <el-form-item><el-button :disabled="loading" @click="resetHistorySearch">重置</el-button></el-form-item>
         <el-form-item><el-button type="danger" :disabled="!canForceSettle || forcing" :loading="forcing" @click="forceSettleAll">强制结算全部</el-button></el-form-item>
       </el-form>
 
@@ -222,7 +176,6 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
         <el-table-column prop="betCount" label="下注数量" min-width="110" align="right" />
         <el-table-column label="操作" min-width="190" fixed="right"><template #default="{ row }">
           <el-button link type="primary" @click="showBets(row as DrawHistoryItem)">投注记录</el-button>
-          <el-button v-if="!row.drawConfirmedAt && row.phase === 'DRAWING'" link type="primary" :disabled="!canSupplement" @click="editDraft(row as DrawHistoryItem)">编辑开奖草稿</el-button>
           <el-button v-if="row.drawConfirmedAt && (row.pendingBetCount > 0 || row.pendingCenterOrderCount > 0)" link type="danger" :disabled="!canForceSettle || forcing" :loading="forcing" @click="forceSettleIssue(row as DrawHistoryItem)">补齐结算</el-button>
         </template></el-table-column>
       </el-table>
@@ -251,20 +204,6 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
         <el-table-column label="盈亏" min-width="100" align="right"><template #default="{ row }">{{ row.netProfit === null ? '--' : row.netProfit.toFixed(2) }}</template></el-table-column>
       </el-table>
       <template #footer><el-button @click="betsOpen = false">关闭</el-button></template>
-    </el-dialog>
-    <el-dialog v-model="draftOpen" :title="`${draftTarget?.issueNumber || ''} 开奖草稿`" width="min(720px, 94vw)" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
-      <el-row :gutter="12">
-        <el-col v-for="(_, index) in draftNumbers" :key="index" :xs="12" :sm="6">
-          <el-form-item :label="`第 ${index + 1} 球`">
-            <el-input-number v-model="draftNumbers[index]" :min="1" :max="20" :precision="0" controls-position="right" @change="draftSaved = false" />
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <template #footer>
-        <el-button @click="draftOpen = false">关闭</el-button>
-        <el-button type="primary" :loading="savingDraft" @click="saveDraft">保存草稿</el-button>
-        <el-button type="danger" :disabled="!draftSaved || savingDraft" :loading="confirmingDraw" @click="confirmDraft">确认并结算</el-button>
-      </template>
     </el-dialog>
   </main>
 </template>

@@ -197,9 +197,19 @@ public class 自动轮期服务 {
 
     private void finalizeIssue(String gameCode, GameDataRepository.IssueRecord issue, Instant now) {
         List<Integer> existingNumbers = issue.numbers();
-        List<Integer> numbers = existingNumbers != null && existingNumbers.size() == issue.ballCount()
-                && existingNumbers.stream().allMatch(number -> number != null && number >= 1 && number <= 20)
-                ? existingNumbers : generateFinalNumbers(issue.ballCount());
+        if (existingNumbers == null || existingNumbers.size() != issue.ballCount()) {
+            throw new IllegalStateException("期次预设号码数量与球数不一致");
+        }
+        List<Integer> numbers = new ArrayList<>(issue.ballCount());
+        for (Integer preset : existingNumbers) {
+            if (preset == null) {
+                numbers.add(RANDOM.nextInt(1, 21));
+            } else if (preset < 1 || preset > 20) {
+                throw new IllegalStateException("期次预设号码必须在 1 到 20 之间");
+            } else {
+                numbers.add(preset);
+            }
+        }
         if (!gameRepository.saveFinalResult(gameCode, issue.issueNumber(), numbers, now)) {
             return;
         }

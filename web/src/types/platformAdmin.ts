@@ -249,6 +249,41 @@ export interface DrawHistoryPage {
   total: number
 }
 
+export interface BettingPlayStats {
+  gameCode: string
+  gameName: string
+  issueNumber: string | null
+  phase: 'BETTING' | 'DRAWING' | 'NONE' | string
+  ballCount: number
+  bettingEndsAt: string | null
+  drawEndsAt: string | null
+  serverNow: string
+  balls: BettingPlayBallStats[]
+}
+
+export interface BettingPlayBallStats {
+  ballNumber: number
+  presetNumber: number | null
+  orderCount: number
+  totalStake: number
+  plays: BettingPlayRank[]
+}
+
+export interface BettingPlayRank {
+  playType: string
+  playName: string
+  orderCount: number
+  totalStake: number
+}
+
+export interface BettingPlayBallPresetResult {
+  gameCode: string
+  issueNumber: string
+  ballNumber: number
+  presetNumber: number | null
+  message: string
+}
+
 export interface DrawHistoryBet {
   betCode: string
   playerName: string

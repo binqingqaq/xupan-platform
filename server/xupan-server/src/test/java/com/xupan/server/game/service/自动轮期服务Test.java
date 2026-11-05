@@ -147,6 +147,28 @@ class 自动轮期服务Test {
     }
 
     @Test
+    void finalizesPresetBallsAndRandomizesOnlyEmptyBalls() {
+        Instant start = Instant.parse("2026-01-01T00:00:00Z");
+        jdbcTemplate.update("UPDATE game_definition SET next_issue_ball_count=7, ball_indexes='1,2,3,4,5,6,7' "
+                + "WHERE game_code='AU8'");
+
+        automationService.advance(start);
+        automationService.advance(start.plusSeconds(180));
+        jdbcTemplate.update("UPDATE game_issue SET number_2=8, number_7=19 "
+                + "WHERE game_code='AU8' AND issue_number='3000000' AND phase='DRAWING' "
+                + "AND draw_confirmed_at IS NULL");
+
+        automationService.advance(start.plusSeconds(300));
+
+        GameDataRepository.IssueRecord settled = gameRepository.findLatestSettledIssue().orElseThrow();
+        assertThat(settled.numbers()).hasSize(7).allSatisfy(number -> assertThat(number).isBetween(1, 20));
+        assertThat(settled.numbers().get(1)).isEqualTo(8);
+        assertThat(settled.numbers().get(6)).isEqualTo(19);
+        assertThat(jdbcTemplate.queryForObject("SELECT phase FROM game_issue WHERE game_code='AU8' "
+                + "AND issue_number='3000000'", String.class)).isEqualTo(自动轮期服务.SETTLED);
+    }
+
+    @Test
     void finalizesBetIntoItsOwnerWalletWithoutAnOnlineSession() {
         long userId = userRepository.insert(AUTO_USER, "自动结算用户", "test-password-hash", "ACTIVE");
         long accountId = walletService.ensureWalletForUser(userId, "自动结算用户");

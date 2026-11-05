@@ -13,6 +13,7 @@ public class SpaController {
             "/platform-admin/machines", "/platform-admin/machines/",
             "/platform-admin/reports", "/platform-admin/reports/",
             "/platform-admin/draw-history", "/platform-admin/draw-history/",
+            "/platform-admin/betting-play-stats", "/platform-admin/betting-play-stats/",
             "/platform-admin/unsettled-orders", "/platform-admin/unsettled-orders/",
             "/platform-admin/order-corrections", "/platform-admin/order-corrections/",
             "/platform-admin/online-players", "/platform-admin/online-players/",

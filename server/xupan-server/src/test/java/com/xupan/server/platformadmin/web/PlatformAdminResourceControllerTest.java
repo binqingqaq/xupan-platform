@@ -410,7 +410,7 @@ class PlatformAdminResourceControllerTest {
     }
 
     @Test
-    void confirmsDrawDraftSettlesBothLayersAndAllowsSafeRetry() throws Exception {
+    void drawHistoryDraftEndpointsRejectManualCurrentIssueConfirmation() throws Exception {
         long playerUserId = userRepository.insert("platform-admin-test-confirm-player", "开奖确认测试玩家",
                 passwordPolicy.encode(PASSWORD), "ACTIVE");
         jdbcTemplate.update("""
@@ -438,39 +438,36 @@ class PlatformAdminResourceControllerTest {
         mockMvc.perform(put("/api/admin/draw-history/AU8/39999999/draft")
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("{\"numbers\":[1,2,3,4,5,6,7,18]}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.resultVersion").value(1));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DRAW_DRAFT_MOVED_TO_BETTING_STATS"));
         mockMvc.perform(post("/api/admin/draw-history/AU8/39999999/confirm")
                         .header("Authorization", bearer(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.resultVersion").value(2))
-                .andExpect(jsonPath("$.localOrders").value(1))
-                .andExpect(jsonPath("$.centerOrders").value(0));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DRAW_CONFIRM_MOVED_TO_AUTOMATION"));
 
         assertThat(jdbcTemplate.queryForObject(
-                "SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId)).isEqualTo("WIN");
+                "SELECT settlement_status FROM game_bet WHERE id = ?", String.class, betId)).isEqualTo("PENDING");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT balance FROM demo_user_account WHERE id = ?", java.math.BigDecimal.class, accountId))
-                .isEqualByComparingTo("138.50");
+                .isEqualByComparingTo("100.00");
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM game_issue_event
                  WHERE game_code = 'AU8' AND issue_number = '39999999' AND event_type = 'DRAW_RESULT'
-                """, Long.class)).isEqualTo(1);
+                """, Long.class)).isZero();
 
         mockMvc.perform(post("/api/admin/draw-history/AU8/39999999/confirm")
                         .header("Authorization", bearer(token)))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.resultVersion").value(2))
-                .andExpect(jsonPath("$.localOrders").value(0));
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DRAW_CONFIRM_MOVED_TO_AUTOMATION"));
         mockMvc.perform(put("/api/admin/draw-history/AU8/39999999/draft")
                         .header("Authorization", bearer(token)).contentType("application/json")
                         .content("{\"numbers\":[2,2,3,4,5,6,7,18]}"))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("DRAW_RESULT_LOCKED"));
+                .andExpect(jsonPath("$.code").value("DRAW_DRAFT_MOVED_TO_BETTING_STATS"));
         assertThat(jdbcTemplate.queryForObject("""
                 SELECT COUNT(*) FROM demo_balance_ledger
                  WHERE related_bet_id = ? AND operation_type = 'SETTLEMENT_CREDIT'
-                """, Long.class, betId)).isEqualTo(1);
+                """, Long.class, betId)).isZero();
     }
 
     @Test

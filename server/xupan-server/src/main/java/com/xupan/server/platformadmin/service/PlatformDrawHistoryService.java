@@ -300,42 +300,8 @@ public class PlatformDrawHistoryService {
     @Transactional
     public DraftSummary updateDraft(String gameCode, String issueNumber, List<Integer> numbers, long operator) {
         require(operator, SUPPLEMENT_PERMISSION, "DRAW_HISTORY_SUPPLEMENT_FORBIDDEN", "没有开奖编辑权限");
-        String normalizedGameCode = normalizeGameCode(gameCode);
-        String normalizedIssue = requiredIssue(issueNumber);
-        HistoryTarget existing = lockExistingHistory(normalizedGameCode, normalizedIssue);
-        if (existing == null) {
-            throw BusinessException.notFound("DRAW_HISTORY_NOT_FOUND", "未找到待开奖期号");
-        }
-        requireAu8SevenBallCount(normalizedGameCode, existing.ballCount());
-        if (existing.drawConfirmedAt() != null) {
-            throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
-        }
-        if (!"DRAWING".equals(existing.phase()) && !"CLOSED".equals(existing.phase())) {
-            throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
-        }
-        List<Integer> normalizedNumbers = validateNumbers(numbers, existing.ballCount());
-        List<Integer> columns = paddedNumbers(normalizedNumbers);
-        int updated = jdbc.update("""
-                UPDATE game_issue
-                   SET number_1=?, number_2=?, number_3=?, number_4=?, number_5=?, number_6=?, number_7=?, number_8=?,
-                       draw_result_version=draw_result_version + 1, updated_at=CURRENT_TIMESTAMP
-                 WHERE game_code=? AND issue_number=? AND draw_confirmed_at IS NULL
-                """, columns.get(0), columns.get(1), columns.get(2), columns.get(3), columns.get(4),
-                columns.get(5), columns.get(6), columns.get(7), normalizedGameCode, normalizedIssue);
-        if (updated != 1) {
-            throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已确认，不能修改");
-        }
-        jdbc.update("""
-                INSERT INTO sys_operation_log
-                    (operator_user_id, permission_code, http_method, request_path, resource_id,
-                     result, error_code, request_summary, ip_digest, created_at)
-                VALUES (?, ?, 'PUT', ?, ?, 'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
-                """, operator, SUPPLEMENT_PERMISSION,
-                "/api/admin/draw-history/" + normalizedGameCode + "/" + normalizedIssue + "/draft",
-                normalizedIssue, "before=" + numberText(existing.numbers()) + ",after=" + numberText(normalizedNumbers)
-                        + ",version=" + (existing.resultVersion() + 1));
-        return new DraftSummary(normalizedGameCode, normalizedIssue, normalizedNumbers,
-                existing.resultVersion() + 1, "开奖草稿已保存");
+        throw BusinessException.conflict("DRAW_DRAFT_MOVED_TO_BETTING_STATS",
+                "当前期开奖预设已迁移到下注玩法统计页面");
     }
 
     @Transactional
@@ -349,43 +315,13 @@ public class PlatformDrawHistoryService {
         }
         requireAu8SevenBallCount(normalizedGameCode, draft.ballCount());
         if (draft.drawConfirmedAt() != null) {
-            List<Integer> numbers = validateNumbers(draft.numbers(), draft.ballCount());
             SettlementCounts recovered = settleLockedHistory(draft);
             return new ConfirmationSummary(normalizedGameCode, normalizedIssue, draft.resultVersion(),
                     draft.drawConfirmedAt(), recovered.localOrders(), recovered.centerOrders(),
                     "开奖结果已确认；已补齐尚未完成的结算");
         }
-        if (!"DRAWING".equals(draft.phase()) && !"CLOSED".equals(draft.phase())) {
-            throw BusinessException.conflict("DRAW_RESULT_NOT_READY", "当前期还未进入开奖阶段");
-        }
-        List<Integer> numbers = validateNumbers(draft.numbers(), draft.ballCount());
-        Instant confirmedAt = Instant.now();
-        int updated = jdbc.update("""
-                UPDATE game_issue
-                   SET status='CLOSED', phase='SETTLED', opened_at=COALESCE(opened_at, ?),
-                       closed_at=COALESCE(closed_at, ?), settled_at=?,
-                       draw_result_version=draw_result_version + 1, draw_confirmed_at=?, draw_confirmed_by=?,
-                       updated_at=CURRENT_TIMESTAMP
-                 WHERE game_code=? AND issue_number=? AND draw_confirmed_at IS NULL
-                """, Timestamp.from(confirmedAt), Timestamp.from(confirmedAt), Timestamp.from(confirmedAt),
-                Timestamp.from(confirmedAt), operator, normalizedGameCode, normalizedIssue);
-        if (updated != 1) {
-            throw BusinessException.conflict("DRAW_RESULT_LOCKED", "开奖结果已被其他操作确认");
-        }
-        SettlementCounts settled = settleLockedHistory(lockHistory(normalizedGameCode, normalizedIssue));
-        eventRepository.appendOnce(normalizedGameCode, normalizedIssue, "DRAW_RESULT",
-                resultMessage(normalizedIssue, numbers), confirmedAt);
-        jdbc.update("""
-                INSERT INTO sys_operation_log
-                    (operator_user_id, permission_code, http_method, request_path, resource_id,
-                     result, error_code, request_summary, ip_digest, created_at)
-                VALUES (?, ?, 'POST', ?, ?, 'SUCCESS', NULL, ?, NULL, CURRENT_TIMESTAMP)
-                """, operator, SUPPLEMENT_PERMISSION,
-                "/api/admin/draw-history/" + normalizedGameCode + "/" + normalizedIssue + "/confirm",
-                normalizedIssue, "numbers=" + numberText(numbers) + ",version=" + (draft.resultVersion() + 1)
-                        + ",localOrders=" + settled.localOrders() + ",centerOrders=" + settled.centerOrders());
-        return new ConfirmationSummary(normalizedGameCode, normalizedIssue, draft.resultVersion() + 1,
-                confirmedAt, settled.localOrders(), settled.centerOrders(), "开奖结果已确认并完成双层结算");
+        throw BusinessException.conflict("DRAW_CONFIRM_MOVED_TO_AUTOMATION",
+                "未确认期次由自动轮期按预设号码和开奖时间处理，不能从开奖历史提前确认");
     }
 
     private int settleIssue(String gameCode, String issueNumber) {
