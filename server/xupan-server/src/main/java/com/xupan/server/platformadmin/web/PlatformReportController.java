@@ -51,20 +51,11 @@ public class PlatformReportController {
         return user;
     }
 
-    public record ScoreFlowResponse(long id, Instant createdAt, String operationType, BigDecimal amount,
-                                    BigDecimal balanceAfter, String reason, String memberCode,
-                                    String playerName, long machineId, String machineName, String subAccount) {
-        static ScoreFlowResponse from(PlatformReportService.ScoreFlowRow row) {
-            return new ScoreFlowResponse(row.id(), row.createdAt(), row.operationType(), row.amount(),
-                    row.balanceAfter(), row.reason(), row.memberCode(), row.playerName(), row.machineId(),
-                    row.machineName(), row.subAccount());
-        }
-    }
-
-    public record ScoreFlowPageResponse(List<ScoreFlowResponse> items, int page, int pageSize, long total) {
+    public record ScoreFlowPageResponse(List<PlatformReportService.ScoreFlowPlayerRow> items, int page,
+                                        int pageSize, long total,
+                                        PlatformReportService.ScoreFlowSummary summary) {
         static ScoreFlowPageResponse from(PlatformReportService.ScoreFlowPage page) {
-            return new ScoreFlowPageResponse(page.items().stream().map(ScoreFlowResponse::from).toList(),
-                    page.page(), page.pageSize(), page.total());
+            return new ScoreFlowPageResponse(page.items(), page.page(), page.pageSize(), page.total(), page.summary());
         }
     }
 
@@ -88,13 +79,15 @@ public class PlatformReportController {
 
     public record MachineProfitResponse(long machineId, String machineCode, String machineName, Long groupId,
                                         String groupUsername, BigDecimal score, BigDecimal playerBalance,
+                                        BigDecimal totalRemaining,
                                         BigDecimal totalFlow, BigDecimal totalSingleFlow, BigDecimal totalDoubleFlow, BigDecimal totalProfit,
                                         BigDecimal totalFanShui, BigDecimal rebateDouble,
                                         BigDecimal totalUp, BigDecimal totalDown,
                                         String rebateMode, BigDecimal effectiveRebate) {
         static MachineProfitResponse from(PlatformReportService.MachineProfitRow row) {
             return new MachineProfitResponse(row.machineId(), row.machineCode(), row.machineName(), row.groupId(),
-                    row.groupUsername(), row.score(), row.playerBalance(), row.totalFlow(), row.totalSingleFlow(),
+                    row.groupUsername(), row.score(), row.playerBalance(), row.totalRemaining(),
+                    row.totalFlow(), row.totalSingleFlow(),
                     row.totalDoubleFlow(),
                     row.totalProfit(), row.totalFanShui(), row.rebateDouble(), row.totalUp(), row.totalDown(),
                     row.rebateMode(), row.effectiveRebate());

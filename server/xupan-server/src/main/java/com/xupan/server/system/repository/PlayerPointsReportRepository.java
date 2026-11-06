@@ -74,24 +74,51 @@ public class PlayerPointsReportRepository {
         args.addAll(scope.agentIdParameters());
         args.add(perPlayerLimit);
         return jdbc.query("""
-                SELECT x.id, x.account_id, x.bet_code, x.issue_number, x.ball_number, x.play_type,
+                SELECT x.id, x.account_id, x.bet_code, x.game_code, x.issue_number, x.ball_number, x.play_type,
                        x.parameters_text, x.stake, x.odds_snapshot, x.rebate_rate_snapshot,
                        x.special_rebate_rate_snapshot, x.selection_unit_stake, x.settlement_status,
-                       x.net_profit, x.explanation, x.created_at, x.settled_at
+                       x.net_profit, x.explanation, x.created_at, x.settled_at,
+                       x.report_status, x.report_response_code, x.draw_numbers
                   FROM (
-                        SELECT b.id, b.user_id AS account_id, b.bet_code, b.issue_number, b.ball_number,
+                        SELECT b.id, b.user_id AS account_id, b.bet_code, b.game_code,
+                               b.issue_number, b.ball_number,
                                b.play_type, b.parameters_text, b.stake, b.odds_snapshot,
                                b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
                                (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
                                    AS selection_unit_stake,
                                b.settlement_status, b.net_profit, b.explanation,
                                b.created_at, b.settled_at,
+                               CASE
+                                 WHEN COALESCE(b.player_kind_snapshot, a.player_kind) <> 'NORMAL' THEN 'NOT_APPLICABLE'
+                                 WHEN b.center_report_deleted_at IS NOT NULL THEN 'NOT_SENT'
+                                 WHEN o.id IS NULL THEN 'NOT_SENT'
+                                 ELSE o.status
+                               END AS report_status,
+                               CASE WHEN b.center_report_deleted_at IS NOT NULL THEN 'CENTER_ACCOUNT_DELETED'
+                                    ELSE o.response_code END AS report_response_code,
+                               CASE
+                                 WHEN i.draw_confirmed_at IS NULL OR i.ball_count NOT IN (7, 8) THEN NULL
+                                 WHEN i.ball_count = 7 AND i.number_1 IS NOT NULL AND i.number_2 IS NOT NULL
+                                   AND i.number_3 IS NOT NULL AND i.number_4 IS NOT NULL AND i.number_5 IS NOT NULL
+                                   AND i.number_6 IS NOT NULL AND i.number_7 IS NOT NULL
+                                   AND i.number_8 IS NULL THEN CONCAT_WS(',', i.number_1, i.number_2, i.number_3,
+                                     i.number_4, i.number_5, i.number_6, i.number_7)
+                                 WHEN i.ball_count = 8 AND i.number_1 IS NOT NULL AND i.number_2 IS NOT NULL
+                                   AND i.number_3 IS NOT NULL AND i.number_4 IS NOT NULL AND i.number_5 IS NOT NULL
+                                   AND i.number_6 IS NOT NULL AND i.number_7 IS NOT NULL AND i.number_8 IS NOT NULL
+                                     THEN CONCAT_WS(',', i.number_1, i.number_2, i.number_3, i.number_4,
+                                       i.number_5, i.number_6, i.number_7, i.number_8)
+                                 ELSE NULL
+                               END AS draw_numbers,
                                ROW_NUMBER() OVER (
                                    PARTITION BY b.user_id ORDER BY b.created_at DESC, b.id DESC
                                ) AS row_no
                           FROM game_bet b
                           JOIN demo_user_account a ON a.id = b.user_id
                           JOIN sys_user u ON u.id = a.sys_user_id
+                          LEFT JOIN game_issue i ON i.game_code = b.game_code AND i.issue_number = b.issue_number
+                          LEFT JOIN report_upstream_order o
+                                 ON o.id = (SELECT MAX(o2.id) FROM report_upstream_order o2 WHERE o2.bet_id = b.id)
                          WHERE a.identity_type IN ('REAL', 'TEST')
                            AND a.player_kind = ?
                            AND u.status <> 'DELETED'
@@ -102,8 +129,25 @@ public class PlayerPointsReportRepository {
                   ) x
                  WHERE x.row_no <= ?
                  ORDER BY x.account_id, x.created_at DESC, x.id DESC
-                """, (rs, rowNum) -> mapBetEvent(rs),
+                """, (rs, rowNum) -> mapBetDetailEvent(rs),
                 args.toArray());
+    }
+
+    private static BetEvent mapBetDetailEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
+        String encodedDraw = rs.getString("draw_numbers");
+        List<Integer> drawNumbers = encodedDraw == null || encodedDraw.isBlank()
+                ? List.of()
+                : java.util.Arrays.stream(encodedDraw.split(","))
+                        .map(Integer::valueOf).toList();
+        return new BetEvent(rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
+                rs.getString("game_code"), rs.getString("issue_number"), rs.getInt("ball_number"),
+                rs.getString("play_type"), rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
+                rs.getBigDecimal("odds_snapshot"), rs.getBigDecimal("rebate_rate_snapshot"),
+                rs.getBigDecimal("special_rebate_rate_snapshot"),
+                nullableMoney(rs.getBigDecimal("selection_unit_stake")), rs.getString("settlement_status"),
+                money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
+                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at")),
+                rs.getString("report_status"), rs.getString("report_response_code"), drawNumbers);
     }
 
     public void forEachBetEvent(String playerKind, Instant fromInclusive, Instant toExclusive,
@@ -116,18 +160,36 @@ public class PlayerPointsReportRepository {
                        b.rebate_rate_snapshot, b.special_rebate_rate_snapshot,
                        (SELECT MIN(s.unit_stake) FROM game_bet_selection s WHERE s.bet_id = b.id)
                            AS selection_unit_stake,
-                       b.settlement_status, b.net_profit, b.explanation, b.created_at, b.settled_at
+                       b.settlement_status, b.net_profit, b.explanation, b.created_at, b.settled_at,
+                       CASE WHEN b.center_report_deleted_at IS NOT NULL THEN 'NOT_SENT'
+                            WHEN latest.id IS NULL THEN 'NOT_SENT' ELSE latest.status END report_status,
+                       CASE WHEN b.center_report_deleted_at IS NOT NULL THEN 'CENTER_ACCOUNT_DELETED'
+                            ELSE latest.response_code END report_response_code
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
                   JOIN sys_user u ON u.id = a.sys_user_id
+                  LEFT JOIN report_upstream_order latest ON latest.id =
+                       (SELECT MAX(o2.id) FROM report_upstream_order o2 WHERE o2.bet_id = b.id)
                  WHERE a.identity_type IN ('REAL', 'TEST')
                    AND a.player_kind = ?
                    AND u.status <> 'DELETED'
                    AND a.status <> 'DELETED'
                    AND b.settlement_status <> 'CANCELED'
                    AND b.created_at >= ? AND b.created_at < ?
-                """ + scope.agentIdCondition() + " ORDER BY b.user_id, b.created_at, b.id",
-                (RowCallbackHandler) rs -> consumer.accept(mapBetEvent(rs)), args.toArray());
+                 """ + scope.agentIdCondition() + " ORDER BY b.user_id, b.created_at, b.id",
+                (RowCallbackHandler) rs -> consumer.accept(mapBetAggregateEvent(rs)), args.toArray());
+    }
+
+    private static BetEvent mapBetAggregateEvent(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new BetEvent(rs.getLong("id"), rs.getLong("account_id"), rs.getString("bet_code"),
+                null, rs.getString("issue_number"), rs.getInt("ball_number"), rs.getString("play_type"),
+                rs.getString("parameters_text"), money(rs.getBigDecimal("stake")),
+                rs.getBigDecimal("odds_snapshot"), rs.getBigDecimal("rebate_rate_snapshot"),
+                rs.getBigDecimal("special_rebate_rate_snapshot"),
+                nullableMoney(rs.getBigDecimal("selection_unit_stake")), rs.getString("settlement_status"),
+                money(rs.getBigDecimal("net_profit")), rs.getString("explanation"),
+                instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("settled_at")),
+                rs.getString("report_status"), rs.getString("report_response_code"), List.of());
     }
 
     public List<LedgerEvent> findLedgerEvents(String playerKind, Instant fromInclusive, Instant toExclusive,
@@ -265,18 +327,29 @@ public class PlayerPointsReportRepository {
                                 String displayName, String playerKind, BigDecimal openingBalance,
                                 BigDecimal closingBalance) {}
 
-    public record BetEvent(long id, long accountId, String betCode, String issueNumber, int ballNumber,
+    public record BetEvent(long id, long accountId, String betCode, String gameCode, String issueNumber, int ballNumber,
                            String playType, String parametersText, BigDecimal stake, BigDecimal odds,
                            BigDecimal rebateRate, BigDecimal specialRebateRate,
                            BigDecimal selectionUnitStake, String settlementStatus,
-                           BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {
+                           BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt,
+                           String reportStatus, String reportResponseCode, List<Integer> drawNumbers) {
+        public BetEvent(long id, long accountId, String betCode, String issueNumber, int ballNumber,
+                        String playType, String parametersText, BigDecimal stake, BigDecimal odds,
+                        BigDecimal rebateRate, BigDecimal specialRebateRate, BigDecimal selectionUnitStake,
+                        String settlementStatus, BigDecimal netProfit, String explanation,
+                        Instant createdAt, Instant settledAt) {
+            this(id, accountId, betCode, null, issueNumber, ballNumber, playType, parametersText, stake, odds,
+                    rebateRate, specialRebateRate, selectionUnitStake, settlementStatus, netProfit, explanation,
+                    createdAt, settledAt, null, null, List.of());
+        }
+
         public BetEvent(long id, long accountId, String betCode, String issueNumber, int ballNumber,
                         String playType, String parametersText, BigDecimal stake, BigDecimal odds,
                         BigDecimal rebateRate, BigDecimal specialRebateRate, String settlementStatus,
                         BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {
-            this(id, accountId, betCode, issueNumber, ballNumber, playType, parametersText, stake, odds,
-                    rebateRate, specialRebateRate, null, settlementStatus, netProfit, explanation,
-                    createdAt, settledAt);
+            this(id, accountId, betCode, null, issueNumber, ballNumber, playType, parametersText, stake, odds,
+                    rebateRate, specialRebateRate, null, settlementStatus, netProfit, explanation, createdAt,
+                    settledAt, null, null, List.of());
         }
     }
 

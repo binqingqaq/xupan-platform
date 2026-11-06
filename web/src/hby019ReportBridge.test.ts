@@ -125,6 +125,7 @@ describe('HBY019 center report bridge', () => {
       summary: {
         effectiveRebate: 0, netProfit: 0, turnover: 0, effectiveFlow: 0,
         topUp: 0, down: 0, openingBalance: 0, closingBalance: 0,
+        flyersWait: 0, flyersSuccess: 0, flyersFail: 0,
       },
     } as never)
     const frame = await mount()
@@ -136,5 +137,38 @@ describe('HBY019 center report bridge', () => {
       availableDatesAt00: ['2026-11-04'],
       availableDatesAt06: ['2026-11-03'],
     })
+  })
+
+  it('maps full-scope fly amounts returned by the NORMAL report API', async () => {
+    vi.mocked(api.getPlayerDeskPointRecords).mockResolvedValue({
+      businessDate: '2026-11-04', cutoffHour: 6,
+      availableDates: ['2026-11-04'], availableDatesAt00: ['2026-11-04'],
+      availableDatesAt06: ['2026-11-04'],
+      players: [{
+        userId: 7, accountId: 70, memberCode: 'v1002', userCode: 'P-2', displayName: '萝卜',
+        playerKind: 'NORMAL', openingBalance: 10, closingBalance: 20, betCount: 3, settledBetCount: 3,
+        turnover: 30, netProfit: 2, topUp: 0, down: 0, singleFlow: 20, doubleFlow: 25,
+        singleRebate: 1, doubleRebate: 1, effectiveFlow: 20, effectiveRebate: 1, rebateMode: 'SINGLE',
+        flyersWait: 11, flyersSuccess: 13, flyersFail: 24,
+        bets: [{
+          id: 91, betCode: 'B-91', gameCode: 'AU8', issueNumber: '20261104', ballNumber: 1,
+          playType: 'FAN', parametersText: '1', stake: 30, odds: 3.85, settlementStatus: 'PENDING',
+          netProfit: null, explanation: null, createdAt: '2026-11-04T10:00:00Z', settledAt: null,
+          reportStatus: 'ACCEPTED', reportResponseCode: 'ACCEPTED', drawNumbers: [],
+        }], pointOperations: [], botActions: [],
+      }],
+      summary: {
+        playerCount: 1, betCount: 3, settledBetCount: 3, turnover: 30, netProfit: 2,
+        topUp: 0, down: 0, openingBalance: 10, closingBalance: 20, singleFlow: 20,
+        doubleFlow: 25, singleRebate: 1, doubleRebate: 1, effectiveFlow: 20,
+        effectiveRebate: 1, flyersWait: 11, flyersSuccess: 13, flyersFail: 24,
+      },
+      detailLimit: 500,
+    } as never)
+    const frame = await mount()
+    const result = await request(frame, '/rbt/index/getscorehis', { day: '2026-11-04', timeType: 1 })
+
+    expect(result).toMatchObject({ flyersWait: 11, flyersSuc: 13, flyersFail: 24 })
+    expect(api.getPlayerDeskPointRecords).toHaveBeenCalledWith('NORMAL', '2026-11-04', 6)
   })
 })

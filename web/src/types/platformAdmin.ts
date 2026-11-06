@@ -141,25 +141,97 @@ export interface MachinePlayer {
   lastLoginAt: string | null
 }
 
-export interface ScoreFlow {
+export interface ScoreFlowBet {
   id: number
+  issueNumber: string
+  playType: string
+  parametersText: string | null
+  stake: number
+  netProfit: number | null
+  settlementStatus: string
   createdAt: string
+}
+
+export interface ScoreFlowPointOperation {
+  id: number
   operationType: string
   amount: number
+  balanceBefore: number
   balanceAfter: number
-  reason: string
+  reason: string | null
+  createdAt: string
+}
+
+export interface ScoreFlowMetrics {
+  openingBalance: number | null
+  closingBalance: number | null
+  turnover: number
+  singleFlow: number
+  doubleFlow: number
+  netProfit: number
+  singleRebate: number
+  doubleRebate: number
+  effectiveRebate: number
+  totalUp: number
+  totalDown: number
+  upDown: number
+}
+
+export interface ScoreFlowPlayer extends ScoreFlowMetrics {
+  userId: number | null
+  accountId: number | null
   memberCode: string
   playerName: string
   machineId: number
   machineName: string
   subAccount: string | null
+  bets: ScoreFlowBet[]
+  pointOperations: ScoreFlowPointOperation[]
 }
 
 export interface ScoreFlowPage {
-  items: ScoreFlow[]
+  items: ScoreFlowPlayer[]
   page: number
   pageSize: number
   total: number
+  summary: ScoreFlowMetrics
+}
+
+export type FlyOrderStatus = 'UNREPORTED' | 'REPORTED' | 'FAILED'
+
+export interface FlyOrderSummary {
+  unreportedCount: number
+  unreportedAmount: number
+  reportedCount: number
+  reportedAmount: number
+  failedCount: number
+  failedAmount: number
+}
+
+export interface PlatformFlyOrder {
+  betId: number
+  createdAt: string
+  memberCode: string
+  playerName: string
+  issueNumber: string
+  ballNumber: number
+  playType: string
+  parametersText: string | null
+  stake: number
+  odds: number
+  reportStatus: string
+  responseCode: string | null
+}
+
+export interface PlatformFlyOrderPage {
+  day: string
+  cutoffHour: 0 | 6
+  status: FlyOrderStatus
+  page: number
+  pageSize: number
+  total: number
+  summary: FlyOrderSummary
+  items: PlatformFlyOrder[]
 }
 
 export interface MachineProfit {
@@ -170,6 +242,7 @@ export interface MachineProfit {
   groupUsername: string | null
   score: number
   playerBalance: number
+  totalRemaining: number | null
   totalFlow: number
   totalSingleFlow: number
   totalDoubleFlow: number
@@ -188,7 +261,7 @@ export interface ProfitReport {
   fromInclusive: string
   toExclusive: string
   machines: MachineProfit[]
-  totalRemaining: number
+  totalRemaining: number | null
   totalFlow: number
   totalSingleFlow: number
   totalDoubleFlow: number

@@ -309,6 +309,7 @@ export interface PlayerDeskDeleteResult {
 export interface PlayerDeskPointRecordBet {
   id: number
   betCode: string
+  gameCode: string
   issueNumber: string
   ballNumber: number
   playType: string
@@ -320,6 +321,9 @@ export interface PlayerDeskPointRecordBet {
   explanation: string | null
   createdAt: string
   settledAt: string | null
+  reportStatus: string
+  reportResponseCode: string | null
+  drawNumbers: number[]
 }
 
 export interface PlayerDeskPointOperation {
@@ -374,6 +378,9 @@ export interface PlayerDeskPointRecordPlayer {
   doubleRebate: number
   effectiveFlow: number
   effectiveRebate: number
+  flyersWait: number
+  flyersSuccess: number
+  flyersFail: number
   rebateMode: 'SINGLE' | 'DOUBLE'
   bets: PlayerDeskPointRecordBet[]
   pointOperations: PlayerDeskPointOperation[]
@@ -396,6 +403,9 @@ export interface PlayerDeskPointRecordSummary {
   doubleRebate: number
   effectiveFlow: number
   effectiveRebate: number
+  flyersWait: number
+  flyersSuccess: number
+  flyersFail: number
 }
 
 export interface PlayerDeskPointRecords {

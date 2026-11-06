@@ -138,7 +138,9 @@ import type {
   DrawHistorySupplementResult,
   BettingPlayStats,
   BettingPlayBallPresetResult,
+  FlyOrderStatus,
   ProfitReport,
+  PlatformFlyOrderPage,
   ScoreFlowPage,
   SubAccount,
   SubAccountInput,
@@ -980,7 +982,24 @@ export const api = {
     if (params.day3) search.set('day3', params.day3)
     if (params.subAccountId) search.set('subAccountId', String(params.subAccountId))
     return request<ProfitReport>(`/api/admin/reports/profit?${search.toString()}`)
-  },  getGameCatalog: () => request<GameCatalogItem[]>('/api/demo/game/catalog'),
+  },
+  getPlatformFlyOrders: (params: {
+    day: string
+    cutoffHour: 0 | 6
+    status: FlyOrderStatus
+    page?: number
+    pageSize?: number
+  }) => {
+    const search = new URLSearchParams({
+      day: params.day,
+      cutoffHour: String(params.cutoffHour),
+      status: params.status,
+      page: String(params.page ?? 1),
+      pageSize: String(params.pageSize ?? 20),
+    })
+    return request<PlatformFlyOrderPage>(`/api/admin/reports/fly-orders?${search.toString()}`)
+  },
+  getGameCatalog: () => request<GameCatalogItem[]>('/api/demo/game/catalog'),
   getPlayerPreferences: () => request<{ countdownVisible: boolean }>('/api/demo/preferences'),
   current: (gameCode = 'AU8') => request<GameView>(`/api/demo/game/current?gameCode=${encodeURIComponent(gameCode)}`),
   getMyBetSummary: () => request<MyBetSummaryResponse>('/api/demo/game/bets/summary'),

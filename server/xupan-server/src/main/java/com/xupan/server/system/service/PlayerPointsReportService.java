@@ -204,6 +204,9 @@ public class PlayerPointsReportService {
         private BigDecimal doubleRebate = BigDecimal.ZERO;
         private BigDecimal effectiveFlow = BigDecimal.ZERO;
         private BigDecimal effectiveRebate = BigDecimal.ZERO;
+        private BigDecimal flyersWait = BigDecimal.ZERO;
+        private BigDecimal flyersSuccess = BigDecimal.ZERO;
+        private BigDecimal flyersFail = BigDecimal.ZERO;
 
         void add(Card card) {
             betCount += card.betCount();
@@ -220,12 +223,16 @@ public class PlayerPointsReportService {
             doubleRebate = doubleRebate.add(card.doubleRebate());
             effectiveFlow = effectiveFlow.add(card.effectiveFlow());
             effectiveRebate = effectiveRebate.add(card.effectiveRebate());
+            flyersWait = flyersWait.add(card.flyersWait());
+            flyersSuccess = flyersSuccess.add(card.flyersSuccess());
+            flyersFail = flyersFail.add(card.flyersFail());
         }
 
         Summary build(int playerCount) {
             return new Summary(playerCount, betCount, settledBetCount, money(turnover), money(netProfit),
                     money(topUp), money(down), money(openingBalance), money(closingBalance), money(singleFlow),
-                    money(doubleFlow), money(singleRebate), money(doubleRebate), money(effectiveFlow), money(effectiveRebate));
+                    money(doubleFlow), money(singleRebate), money(doubleRebate), money(effectiveFlow), money(effectiveRebate),
+                    money(flyersWait), money(flyersSuccess), money(flyersFail));
         }
     }
 
@@ -242,6 +249,9 @@ public class PlayerPointsReportService {
         private BigDecimal doubleFlow = BigDecimal.ZERO;
         private BigDecimal singleRebate = BigDecimal.ZERO;
         private BigDecimal doubleRebate = BigDecimal.ZERO;
+        private BigDecimal flyersWait = BigDecimal.ZERO;
+        private BigDecimal flyersSuccess = BigDecimal.ZERO;
+        private BigDecimal flyersFail = BigDecimal.ZERO;
         private final List<BetDetail> bets = new ArrayList<>();
         private final List<PointsOperation> pointOperations = new ArrayList<>();
         private final List<BotAction> botActions = new ArrayList<>();
@@ -267,12 +277,22 @@ public class PlayerPointsReportService {
             doubleFlow = doubleFlow.add(metrics.doubleFlow());
             singleRebate = singleRebate.add(metrics.fanShui());
             doubleRebate = doubleRebate.add(metrics.doubleFanShui());
+            if ("NORMAL".equals(player.playerKind())) {
+                BigDecimal flyAmount = value.stake();
+                switch (flyBucket(value.reportStatus(), value.reportResponseCode())) {
+                    case "WAIT" -> flyersWait = flyersWait.add(flyAmount);
+                    case "SUCCESS" -> flyersSuccess = flyersSuccess.add(flyAmount);
+                    case "FAIL" -> flyersFail = flyersFail.add(flyAmount);
+                    default -> { }
+                }
+            }
         }
 
         void addBetDetail(PlayerPointsReportRepository.BetEvent value) {
             bets.add(new BetDetail(value.id(), value.betCode(), value.issueNumber(), value.ballNumber(),
                     value.playType(), value.parametersText(), value.stake(), value.odds(), value.settlementStatus(),
-                    value.netProfit(), value.explanation(), value.createdAt(), value.settledAt()));
+                    value.netProfit(), value.explanation(), value.createdAt(), value.settledAt(), value.gameCode(),
+                    value.reportStatus(), value.reportResponseCode(), value.drawNumbers()));
         }
 
         void addLedgerTotals(PlayerPointsReportRepository.LedgerTotals value) {
@@ -299,8 +319,21 @@ public class PlayerPointsReportService {
                     betCount, settledBetCount, money(turnover), money(netProfit), money(topUp), money(down),
                     money(singleFlow), money(doubleFlow), money(singleRebate), money(doubleRebate),
                     money(doubleMode ? doubleFlow : singleFlow), money(doubleMode ? doubleRebate : singleRebate),
+                    money(flyersWait), money(flyersSuccess), money(flyersFail),
                     rebateMode, bets, pointOperations, botActions);
         }
+    }
+
+    private static String flyBucket(String status, String responseCode) {
+        if ("CENTER_CANCELLED".equals(responseCode) || "CENTER_REFUNDED".equals(responseCode)) return "SUCCESS";
+        if ("NOT_APPLICABLE".equals(status)) return "";
+        return switch (status == null ? "NOT_SENT" : status) {
+            case "NOT_SENT", "PENDING" -> "WAIT";
+            case "ACCEPTED", "SETTLED" -> "SUCCESS";
+            case "REJECTED", "TIMEOUT" -> "FAIL";
+            case "MANUAL" -> "RETRY_EXHAUSTED".equals(responseCode) ? "FAIL" : "";
+            default -> "";
+        };
     }
 
     public record BusinessDay(LocalDate businessDate, Instant fromInclusive, Instant toExclusive) {}
@@ -314,19 +347,23 @@ public class PlayerPointsReportService {
                           BigDecimal netProfit, BigDecimal topUp, BigDecimal down,
                           BigDecimal openingBalance, BigDecimal closingBalance, BigDecimal singleFlow,
                           BigDecimal doubleFlow, BigDecimal singleRebate, BigDecimal doubleRebate,
-                          BigDecimal effectiveFlow, BigDecimal effectiveRebate) {}
+                          BigDecimal effectiveFlow, BigDecimal effectiveRebate, BigDecimal flyersWait,
+                          BigDecimal flyersSuccess, BigDecimal flyersFail) {}
 
     public record Card(long userId, long accountId, String memberCode, String userCode, String displayName,
                        String playerKind, BigDecimal openingBalance, BigDecimal closingBalance,
                        long betCount, long settledBetCount, BigDecimal turnover, BigDecimal netProfit,
                        BigDecimal topUp, BigDecimal down, BigDecimal singleFlow, BigDecimal doubleFlow,
                        BigDecimal singleRebate, BigDecimal doubleRebate, BigDecimal effectiveFlow,
-                       BigDecimal effectiveRebate, String rebateMode, List<BetDetail> bets,
+                        BigDecimal effectiveRebate, BigDecimal flyersWait, BigDecimal flyersSuccess,
+                        BigDecimal flyersFail, String rebateMode, List<BetDetail> bets,
                        List<PointsOperation> pointOperations, List<BotAction> botActions) {}
 
     public record BetDetail(long id, String betCode, String issueNumber, int ballNumber, String playType,
                             String parametersText, BigDecimal stake, BigDecimal odds, String settlementStatus,
-                            BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {}
+                            BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt,
+                            String gameCode, String reportStatus, String reportResponseCode,
+                            List<Integer> drawNumbers) {}
 
     public record PointsOperation(long id, String operationType, BigDecimal amount, BigDecimal balanceBefore,
                                   BigDecimal balanceAfter, Long operatorUserId, String operatorName,

@@ -4,7 +4,7 @@ import { api } from './api'
 describe('avatar pool URLs', () => {
   it('serves preset avatars from the static avatar pool', () => {
     expect(api.avatarUrl('preset-01.jpg')).toBe('/avatars/presets/preset-01.jpg')
-    expect(api.avatarUrl('preset-40.png')).toBe('/avatars/presets/preset-40.png')
+    expect(api.avatarUrl('preset-96.jpg')).toBe('/avatars/presets/preset-96.jpg')
   })
 
   it('serves the default chat robot avatar as a bundled asset', () => {

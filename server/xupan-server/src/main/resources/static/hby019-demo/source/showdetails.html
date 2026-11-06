@@ -595,6 +595,10 @@
 						$(data).each(function (i) {
                             var mingxi = data[i];
                             var t = mingxi.dttype;
+                            var flyersText = '报网状态：' + (mingxi.flyersStatus || '未报');
+                            var resultText = (mingxi.code || mingxi.lastResult || mingxi.fan)
+                                ? '开奖结果：' + [mingxi.code, mingxi.lastResult, mingxi.fan].filter(Boolean).join('=&gt;')
+                                : (mingxi.settlementStatus === 'PENDING' ? '开奖结果：待开奖' : '开奖结果：暂无');
                             if (t == 0) {
                                 //手动上分
                                 subDiv += '<div class="infoitem_row type2" style="margin-top: 10px; margin-bottom: 10px;"><span class="rowtype">积分操作：</span><span class="rowqi"></span><span class="rowcontent sf">机器人上分+' + parseFloat(mingxi.score) + '</span><br><span class="rowresult" style="display: block;"></span><span class="rowbefore"></span><span class="rowchange win">+' + parseFloat(mingxi.score) + '</span><span class="fanshui"></span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '</span></div>';
@@ -627,15 +631,15 @@
                                 lastMingXi = mingxi;
 
                                 if (mingxi.count > 0) {
-                                    subDiv += '<div class="infoitem_row type1" ' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + mingxi.flyersStatus + '</span><br><span class="rowresult" style="display: block;">' + mingxi.code + '=&gt;' + mingxi.lastResult + '=&gt;' + mingxi.fan + '</span><span class="rowbefore"></span><span class="rowchange win">+' + parseFloat(mingxi.count) + '</span><span class="fanshui">[抽水' + mingxi.dtfanshui + ']</span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>';
+                                    subDiv += '<div class="infoitem_row type1" ' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + flyersText + '</span><br><span class="rowresult" style="display: block;">' + resultText + '</span><span class="rowbefore"></span><span class="rowchange win">+' + parseFloat(mingxi.count) + '</span><span class="fanshui">[抽水' + mingxi.dtfanshui + ']</span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>';
                                 }
                                 else if (mingxi.count == 0) {
                                     var fs = mingxi.ying==1?'[抽水' + mingxi.dtfanshui + ']':'';
-                                    subDiv += '<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + mingxi.flyersStatus + '</span><br><span class="rowresult" style="display: block;">' + mingxi.code + '=&gt;' + mingxi.lastResult + '=&gt;' + mingxi.fan + '</span><span class="rowbefore"></span><span class="rowchange win">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>';
+                                    subDiv += '<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + flyersText + '</span><br><span class="rowresult" style="display: block;">' + resultText + '</span><span class="rowbefore"></span><span class="rowchange win">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>';
                                 }
                                 else {
                                     var fs = mingxi.ying==1?'[抽水' + mingxi.dtfanshui + ']':'';
-                                    subDiv += '<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + mingxi.flyersStatus + '</span><br><span class="rowresult" style="display: block;">' + mingxi.code + '=&gt;' + mingxi.lastResult + '=&gt;' + mingxi.fan + '</span><span class="rowbefore"></span><span class="rowchange lose">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>';
+                                    subDiv += '<div class="infoitem_row type1"' + topMargin + '><span class="rowtype">盈亏操作：</span><span class="rowqi">' + mingxi.qihao + '</span><span class="rowcontent">' + mingxi.cmdText + '</span><span class="rowcontent '+mingxi.flyersColor+'">' + flyersText + '</span><br><span class="rowresult" style="display: block;">' + resultText + '</span><span class="rowbefore"></span><span class="rowchange lose">' + parseFloat(mingxi.count) + '</span><span class="fanshui">'+fs+'</span><span class="rowscore">' + mingxi.afterScore + '</span><br><span class="rowtime">' + mingxi.dtJieSuan + '&nbsp;<=&nbsp;' + mingxi.dtCmd + '</span></div>';
                                 }
                             }
 
@@ -645,7 +649,7 @@
 						var $detail = divclicked.children('.item_detail');
 						$detail.append($detail.children().get().reverse());
 					} else {
-						var subDiv = "<div><span>暂无明细数据</span></div>";
+						var subDiv = "<div class='item_detail'><span>暂无明细数据</span></div>";
 						divclicked.append(subDiv);
 					}
                 },

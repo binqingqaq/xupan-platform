@@ -8,6 +8,7 @@ import { machineConfigPayload } from '../machineConfigConsole'
 import type { MachineConfigUpdatePatch } from '../machineConfigConsole'
 import type { MachineConfigView } from '../types'
 import { adminNotice } from '../services/adminNotice'
+import { formatReportBetCommand } from '../reportDisplay'
 
 const route = useRoute()
 const router = useRouter()
@@ -242,12 +243,23 @@ function pointRecordLegacyCard(player: Awaited<ReturnType<typeof api.getPlayerDe
     totalUpDown: amount(player.topUp) - amount(player.down),
     ZuoYu: amount(player.openingBalance),
     JieYu: amount(player.closingBalance),
+    flyersWait: amount(player.flyersWait),
+    flyersSuc: amount(player.flyersSuccess),
+    flyersFail: amount(player.flyersFail),
   }
+}
+
+function isLegacyPointOperation(operationType: string) {
+  return operationType === 'ADMIN_GRANT' || operationType === 'ADMIN_ADJUST'
+}
+
+function hasLegacyPointRecord(player: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]) {
+  return player.bets.length > 0 || player.pointOperations.some(operation => isLegacyPointOperation(operation.operationType))
 }
 
 function legacyPointOperation(operation: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]['pointOperations'][number],
                               player: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>['players'][number]) {
-  if (operation.operationType !== 'ADMIN_GRANT' && operation.operationType !== 'ADMIN_ADJUST') return null
+  if (!isLegacyPointOperation(operation.operationType)) return null
   const up = operation.amount > 0
   const score = Math.abs(operation.amount)
   return {
@@ -269,34 +281,64 @@ function legacyBetDetail(bet: Awaited<ReturnType<typeof api.getPlayerDeskPointRe
   const relatedLedger = player.pointOperations
     .filter(operation => operation.relatedBetId === bet.id)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
-  const unresolved = bet.netProfit === null
-  const detailText = [bet.explanation || `${bet.playType} ${bet.parametersText} ${bet.stake}`.trim(),
-    unresolved ? '待结算' : ''].filter(Boolean).join(' ')
+  const drawNumbers = bet.drawNumbers ?? []
+  const resultNumber = drawNumbers[bet.ballNumber - 1]
+  const resultFan = resultNumber == null ? null : (resultNumber % 4 || 4)
+  const resultCode = drawNumbers.map(number => String(number).padStart(2, '0')).join(',')
+  const reportState = legacyFlyersStatus(bet.reportStatus, bet.reportResponseCode)
   return {
     dttype: 5,
     count: bet.netProfit ?? 0,
     settlementStatus: bet.settlementStatus,
     afterScore: relatedLedger?.balanceAfter ?? '',
     qihao: bet.issueNumber,
-    cmdText: detailText,
+    cmdText: `第${bet.ballNumber}球/${formatReportBetCommand(bet.playType, bet.parametersText, bet.stake)}`,
     dtJieSuan: legacyDateTime(bet.settledAt),
     dtCmd: legacyDateTime(bet.createdAt),
-    code: '',
-    lastResult: '',
-    fan: '',
+    code: resultCode,
+    lastResult: resultNumber == null ? '' : String(resultNumber),
+    fan: resultFan == null ? '' : `${resultFan}番`,
     dtfanshui: '',
     ying: bet.netProfit === null ? '' : bet.netProfit > 0 ? 1 : 0,
-    flyersStatus: '',
-    flyersColor: '',
-        wxid: player.memberCode || player.userCode,
+    flyersStatus: reportState.label,
+    flyersColor: reportState.color,
+    wxid: player.memberCode || player.userCode,
     NickName: player.displayName,
   }
 }
 
+function legacyFlyersStatus(status: string, responseCode: string | null) {
+  if (responseCode === 'CENTER_CANCELLED') return { label: '中心已撤单', color: '' }
+  if (responseCode === 'CENTER_REFUNDED') return { label: '中心已退款', color: '' }
+  if (responseCode === 'CENTER_ACCOUNT_DELETED') return { label: '中心账号删除，未上报', color: '' }
+  if (status === 'NOT_APPLICABLE') return { label: '不参与中心上报', color: '' }
+  switch (status) {
+    case 'NOT_SENT': return { label: '未报', color: '' }
+    case 'PENDING': return { label: '中心处理中', color: '' }
+    case 'ACCEPTED': return { label: '已飞单', color: 'green' }
+    case 'SETTLED': return { label: '已飞单/中心已结算', color: 'green' }
+    case 'REJECTED': return { label: '飞单失败', color: 'red' }
+    case 'TIMEOUT': return { label: '上报超时，待核', color: 'red' }
+    case 'MANUAL':
+      return responseCode === 'RETRY_EXHAUSTED'
+        ? { label: '重试结束，待人工核对', color: 'red' }
+        : { label: '转人工核对', color: '' }
+    case 'CANCELLED': return { label: '中心已撤单', color: '' }
+    case 'REFUNDED': return { label: '中心已退款', color: '' }
+    default: return { label: '上报状态待核', color: '' }
+  }
+}
+
+function legacyHistoryPlayer(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>, identity: unknown) {
+  const key = String(identity ?? '').trim()
+  if (!key) return undefined
+  return report.players.find(item => [item.userId, item.accountId, item.memberCode, item.userCode]
+    .some(candidate => candidate != null && String(candidate) === key))
+}
+
 function legacyHistoryDetail(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>, wxid: unknown) {
-  const player = report.players.find(item => String(item.userId) === String(wxid)
-    || item.memberCode === String(wxid) || item.userCode === String(wxid))
-  if (!player) return []
+  const player = legacyHistoryPlayer(report, wxid)
+  if (!player || !hasLegacyPointRecord(player)) return []
   return [
     ...player.pointOperations.map(operation => legacyPointOperation(operation, player)).filter(item => item !== null),
     ...player.bets.map(bet => legacyBetDetail(bet, player)),
@@ -308,8 +350,11 @@ function legacyHistoryDetail(report: Awaited<ReturnType<typeof api.getPlayerDesk
 }
 
 function legacyPointReport(report: Awaited<ReturnType<typeof api.getPlayerDeskPointRecords>>) {
-  const summary = report.summary
-  const detail = report.players.map(pointRecordLegacyCard)
+  const detail = report.players.filter(hasLegacyPointRecord).map(pointRecordLegacyCard)
+  const total = (field: 'totalFanShui' | 'totalYingKui' | 'totalLiuShui' | 'totalValidLiuShuis'
+    | 'totalUp' | 'totalDown' | 'totalUpDown' | 'ZuoYu' | 'JieYu'
+    | 'flyersWait' | 'flyersSuc' | 'flyersFail') =>
+    detail.reduce((sum, player) => sum + Number(player[field] ?? 0), 0)
   return {
     bOK: 0,
     businessDate: report.businessDate,
@@ -317,16 +362,19 @@ function legacyPointReport(report: Awaited<ReturnType<typeof api.getPlayerDeskPo
     availableDates: report.availableDates,
     availableDatesAt00: report.availableDatesAt00,
     availableDatesAt06: report.availableDatesAt06,
-    totalFanShui: summary.effectiveRebate,
-    totalYingKui: summary.netProfit,
-    totalLiuShui: summary.turnover,
-    totalYouXiaoLiuShui: summary.effectiveFlow,
-    totalYouXiaoLiuShuis: summary.effectiveFlow,
-    totalUp: summary.topUp,
-    totalDown: summary.down,
-    totalUpDown: summary.topUp - summary.down,
-    totalZuoYu: summary.openingBalance,
-    totalJieYu: summary.closingBalance,
+    totalFanShui: total('totalFanShui'),
+    totalYingKui: total('totalYingKui'),
+    totalLiuShui: total('totalLiuShui'),
+    totalYouXiaoLiuShui: total('totalValidLiuShuis'),
+    totalYouXiaoLiuShuis: total('totalValidLiuShuis'),
+    totalUp: total('totalUp'),
+    totalDown: total('totalDown'),
+    totalUpDown: total('totalUpDown'),
+    totalZuoYu: total('ZuoYu'),
+    totalJieYu: total('JieYu'),
+    flyersWait: total('flyersWait'),
+    flyersSuc: total('flyersSuc'),
+    flyersFail: total('flyersFail'),
     detail,
     data: detail,
   }
@@ -504,13 +552,18 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
       || data.path === '/rbt/index/getway3data') {
       const requestData = data.data && typeof data.data === 'object' ? data.data as Record<string, unknown> : {}
       const requestedKind = String(requestData.kind ?? '').toUpperCase()
+      const isTuoReport = data.path === '/rbt/index/getscorehistuo' || Number(requestData.type) === 1
       const kind = requestedKind === 'NORMAL' ? 'NORMAL'
-        : requestedKind === 'BOT' || data.path === '/rbt/index/getscorehistuo' || Number(requestData.type) === 1 ? 'BOT' : 'NORMAL'
+        : requestedKind === 'BOT' || isTuoReport ? 'BOT' : 'NORMAL'
+      const hasExplicitKind = requestedKind === 'NORMAL' || requestedKind === 'BOT'
+        || isTuoReport || Number(requestData.type) === 0
       const cutoffHour = Number(requestData.timeType) === 0 ? 0 : 6
       let report = await api.getPlayerDeskPointRecords(kind, String(requestData.day ?? ''), cutoffHour)
-      if (data.path === '/rbt/index/getscorehisdetail'
-        && !report.players.some(player => String(player.userId) === String(requestData.wxid))) {
-        report = await api.getPlayerDeskPointRecords(kind === 'BOT' ? 'NORMAL' : 'BOT', String(requestData.day ?? ''), cutoffHour)
+      if (data.path === '/rbt/index/getscorehisdetail' && !hasExplicitKind
+        && !legacyHistoryPlayer(report, requestData.wxid)) {
+        const otherKind = kind === 'BOT' ? 'NORMAL' : 'BOT'
+        const otherReport = await api.getPlayerDeskPointRecords(otherKind, String(requestData.day ?? ''), cutoffHour)
+        if (legacyHistoryPlayer(otherReport, requestData.wxid)) report = otherReport
       }
       let response: unknown
       if (data.path === '/rbt/index/getscorehisdetail') response = legacyHistoryDetail(report, requestData.wxid)

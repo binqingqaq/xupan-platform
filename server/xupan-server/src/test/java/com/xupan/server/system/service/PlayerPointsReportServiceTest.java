@@ -129,6 +129,49 @@ class PlayerPointsReportServiceTest {
     }
 
     @Test
+    void reportAggregatesFlyAmountsFromAllLatestStatusesNotCappedDetails() {
+        when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
+        Instant createdAt = Instant.parse("2026-09-21T10:00:00Z");
+        PlayerPointsReportRepository.PlayerAccount player = new PlayerPointsReportRepository.PlayerAccount(
+                7L, 70L, 9L, "SINGLE", "v1001", "P-001", "普通玩家", "NORMAL", money("10"), money("20"));
+        when(repository.findPlayers(eq("NORMAL"), any(Instant.class), any(Instant.class), any()))
+                .thenReturn(List.of(player));
+        List<PlayerPointsReportRepository.BetEvent> bets = List.of(
+                flyBet(1, "11", "NOT_SENT", null, createdAt),
+                flyBet(2, "13", "ACCEPTED", "ACCEPTED", createdAt),
+                flyBet(3, "7", "REJECTED", "REJECTED", createdAt),
+                flyBet(4, "17", "MANUAL", "RETRY_EXHAUSTED", createdAt),
+                flyBet(5, "19", "NOT_APPLICABLE", null, createdAt));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<PlayerPointsReportRepository.BetEvent> consumer = invocation.getArgument(4);
+            bets.forEach(consumer);
+            return null;
+        }).when(repository).forEachBetEvent(eq("NORMAL"), any(Instant.class), any(Instant.class), any(), any());
+        when(repository.findBetEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(1), any()))
+                .thenReturn(List.of());
+        when(repository.findLedgerTotals(eq("NORMAL"), any(Instant.class), any(Instant.class), any()))
+                .thenReturn(List.of());
+        when(repository.findLedgerEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(1), any()))
+                .thenReturn(List.of());
+        when(repository.findActionEvents(eq("NORMAL"), any(Instant.class), any(Instant.class), eq(1), any()))
+                .thenReturn(List.of());
+
+        PlayerPointsReportService.Report report = new PlayerPointsReportService(repository, scopeService)
+                .report("NORMAL", "2026-09-21", 1, 7L);
+
+        assertThat(report.summary().flyersWait()).isEqualByComparingTo("11.00");
+        assertThat(report.summary().flyersSuccess()).isEqualByComparingTo("13.00");
+        assertThat(report.summary().flyersFail()).isEqualByComparingTo("24.00");
+        assertThat(report.players()).singleElement().satisfies(card -> {
+            assertThat(card.flyersWait()).isEqualByComparingTo("11.00");
+            assertThat(card.flyersSuccess()).isEqualByComparingTo("13.00");
+            assertThat(card.flyersFail()).isEqualByComparingTo("24.00");
+            assertThat(card.bets()).isEmpty();
+        });
+    }
+
+    @Test
     void reportSelectsDoubleMetricsFromMachineConfiguration() {
         when(scopeService.requireAccess(7L)).thenReturn(PlayerDeskScopeService.Scope.Global.INSTANCE);
         Instant createdAt = Instant.parse("2026-09-21T10:00:00Z");
@@ -158,6 +201,9 @@ class PlayerPointsReportServiceTest {
         assertThat(report.rebateMode()).isEqualTo("DOUBLE");
         assertThat(report.summary().effectiveFlow()).isEqualByComparingTo("10.00");
         assertThat(report.summary().doubleRebate()).isEqualByComparingTo("0.50");
+        assertThat(report.summary().flyersWait()).isEqualByComparingTo("0.00");
+        assertThat(report.summary().flyersSuccess()).isEqualByComparingTo("0.00");
+        assertThat(report.summary().flyersFail()).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -209,5 +255,12 @@ class PlayerPointsReportServiceTest {
 
     private static BigDecimal money(String value) {
         return new BigDecimal(value).setScale(2);
+    }
+
+    private static PlayerPointsReportRepository.BetEvent flyBet(long id, String stake, String status,
+                                                                 String responseCode, Instant createdAt) {
+        return new PlayerPointsReportRepository.BetEvent(id, 70L, "B-FLY-" + id, null, "20260921", 1,
+                "FAN", "1", money(stake), money("3.850"), money("0"), money("0"), null,
+                "PENDING", BigDecimal.ZERO, null, createdAt, null, status, responseCode, List.of());
     }
 }

@@ -371,11 +371,13 @@ import java.util.List;
                                 BigDecimal netProfit, BigDecimal topUp, BigDecimal down,
                                 BigDecimal openingBalance, BigDecimal closingBalance, BigDecimal singleFlow,
                                 BigDecimal doubleFlow, BigDecimal singleRebate, BigDecimal doubleRebate,
-                                BigDecimal effectiveFlow, BigDecimal effectiveRebate) {
+                                BigDecimal effectiveFlow, BigDecimal effectiveRebate,
+                                BigDecimal flyersWait, BigDecimal flyersSuccess, BigDecimal flyersFail) {
         static PointsSummary from(PlayerPointsReportService.Summary x) {
             return new PointsSummary(x.playerCount(), x.betCount(), x.settledBetCount(), x.turnover(), x.netProfit(),
                     x.topUp(), x.down(), x.openingBalance(), x.closingBalance(), x.singleFlow(), x.doubleFlow(),
-                    x.singleRebate(), x.doubleRebate(), x.effectiveFlow(), x.effectiveRebate());
+                    x.singleRebate(), x.doubleRebate(), x.effectiveFlow(), x.effectiveRebate(),
+                    x.flyersWait(), x.flyersSuccess(), x.flyersFail());
         }
     }
     public record PointsCard(long userId, long accountId, String memberCode, String userCode, String displayName,
@@ -383,23 +385,27 @@ import java.util.List;
                              long betCount, long settledBetCount, BigDecimal turnover, BigDecimal netProfit,
                              BigDecimal topUp, BigDecimal down, BigDecimal singleFlow, BigDecimal doubleFlow,
                              BigDecimal singleRebate, BigDecimal doubleRebate, BigDecimal effectiveFlow,
-                             BigDecimal effectiveRebate, String rebateMode, List<BetDetail> bets,
+                              BigDecimal effectiveRebate, BigDecimal flyersWait, BigDecimal flyersSuccess,
+                              BigDecimal flyersFail, String rebateMode, List<BetDetail> bets,
                              List<PointsOperation> pointOperations, List<BotAction> botActions) {
         static PointsCard from(PlayerPointsReportService.Card x) {
             return new PointsCard(x.userId(), x.accountId(), x.memberCode(), x.userCode(), x.displayName(), x.playerKind(),
                     x.openingBalance(), x.closingBalance(), x.betCount(), x.settledBetCount(), x.turnover(), x.netProfit(),
                     x.topUp(), x.down(), x.singleFlow(), x.doubleFlow(), x.singleRebate(), x.doubleRebate(),
-                    x.effectiveFlow(), x.effectiveRebate(), x.rebateMode(), x.bets().stream().map(BetDetail::from).toList(),
+                    x.effectiveFlow(), x.effectiveRebate(), x.flyersWait(), x.flyersSuccess(), x.flyersFail(),
+                    x.rebateMode(), x.bets().stream().map(BetDetail::from).toList(),
                     x.pointOperations().stream().map(PointsOperation::from).toList(),
                     x.botActions().stream().map(BotAction::from).toList());
         }
     }
     public record BetDetail(long id, String betCode, String issueNumber, int ballNumber, String playType,
                             String parametersText, BigDecimal stake, BigDecimal odds, String settlementStatus,
-                            BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt) {
+                            BigDecimal netProfit, String explanation, Instant createdAt, Instant settledAt,
+                            String gameCode, String reportStatus, String reportResponseCode, List<Integer> drawNumbers) {
         static BetDetail from(PlayerPointsReportService.BetDetail x) {
             return new BetDetail(x.id(), x.betCode(), x.issueNumber(), x.ballNumber(), x.playType(), x.parametersText(),
-                    x.stake(), x.odds(), x.settlementStatus(), x.netProfit(), x.explanation(), x.createdAt(), x.settledAt());
+                    x.stake(), x.odds(), x.settlementStatus(), x.netProfit(), x.explanation(), x.createdAt(), x.settledAt(),
+                    x.gameCode(), x.reportStatus(), x.reportResponseCode(), x.drawNumbers());
         }
     }
     public record PointsOperation(long id, String operationType, BigDecimal amount, BigDecimal balanceBefore,

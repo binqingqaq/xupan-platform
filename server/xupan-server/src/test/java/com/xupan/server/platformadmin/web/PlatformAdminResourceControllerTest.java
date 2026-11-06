@@ -660,6 +660,65 @@ class PlatformAdminResourceControllerTest {
     }
 
     @Test
+    void platformReportsExcludeBotsAndUnknownSnapshotsButKeepPendingStakeInTurnover() throws Exception {
+        ReportFixture fixture = createReportFixture("identity_scope");
+        insertReportBet(fixture.accountId(), "PLATFORM_TEST_REPORT_NORMAL_PENDING", "FAN", "1", "25.00",
+                "3.850", "0.00", "PENDING", "1.0000", "0.0000");
+        insertReportBet(fixture.accountId(), "PLATFORM_TEST_REPORT_UNKNOWN_SNAPSHOT", "FAN", "1", "40.00",
+                "3.850", "0.00", "PENDING", "1.0000", "0.0000");
+        jdbcTemplate.update("UPDATE game_bet SET player_kind_snapshot='UNKNOWN' WHERE bet_code=?",
+                "PLATFORM_TEST_REPORT_UNKNOWN_SNAPSHOT");
+
+        long botUserId = userRepository.insert("platform-admin-test-report-bot-identity",
+                "报表测试托", passwordPolicy.encode(PASSWORD), "ACTIVE");
+        jdbcTemplate.update("""
+                INSERT INTO demo_user_account
+                    (user_code, display_name, balance, status, sys_user_id, agent_id,
+                     identity_type, player_kind, member_code)
+                VALUES ('PLATFORM_TEST_REPORT_BOT_IDENTITY', '报表测试托', 900.00, 'ACTIVE', ?, ?, 'REAL', 'BOT',
+                        'V-REPORT-BOT-IDENTITY')
+                """, botUserId, fixture.machineId());
+        long botAccountId = jdbcTemplate.queryForObject(
+                "SELECT id FROM demo_user_account WHERE sys_user_id=?", Long.class, botUserId);
+        insertReportBet(botAccountId, "PLATFORM_TEST_REPORT_BOT_WIN", "FAN", "1", "300.00",
+                "3.850", "855.00", "WIN", "1.0000", "0.0000");
+
+        String token = login(ADMIN, PASSWORD);
+        mockMvc.perform(get("/api/admin/reports/score-flow")
+                        .header("Authorization", bearer(token)).param("day", "2026-10-02")
+                        .param("subAccountId", Long.toString(fixture.groupId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].memberCode").value("V-REPORT-identity_scope"))
+                .andExpect(jsonPath("$.items[0].turnover").value(25.00))
+                .andExpect(jsonPath("$.items[0].bets.length()").value(1))
+                .andExpect(jsonPath("$.summary.turnover").value(25.00));
+
+        mockMvc.perform(get("/api/admin/reports/profit")
+                        .header("Authorization", bearer(token)).param("day", "2026-10-02")
+                        .param("subAccountId", Long.toString(fixture.groupId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.machines[0].totalFlow").value(25.00))
+                .andExpect(jsonPath("$.machines[0].playerBalance").value(100.00))
+                .andExpect(jsonPath("$.machines[0].totalRemaining").value(100.00))
+                .andExpect(jsonPath("$.totalProfit").value(0.00));
+    }
+
+    @Test
+    void profitReportUsesMachineScoreWhenThereAreNoNormalReportParticipants() throws Exception {
+        ReportFixture fixture = createReportFixture("empty_machine_remaining");
+        jdbcTemplate.update("UPDATE agent SET score=555.00 WHERE id=?", fixture.machineId());
+        String token = login(ADMIN, PASSWORD);
+
+        mockMvc.perform(get("/api/admin/reports/profit")
+                        .header("Authorization", bearer(token)).param("day", "2026-10-02")
+                        .param("subAccountId", Long.toString(fixture.groupId())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.machines[0].totalRemaining").value(555.00))
+                .andExpect(jsonPath("$.machines[0].totalFlow").value(0.00));
+    }
+
+    @Test
     void reportsEffectiveRebateFollowsMachineRebateMode() throws Exception {
         ReportFixture fixture = createReportFixture("mode");
         long accountId = fixture.accountId();
@@ -1571,6 +1630,13 @@ class PlatformAdminResourceControllerTest {
                 "V-REPORT-" + suffix);
         long accountId = jdbcTemplate.queryForObject(
                 "SELECT id FROM demo_user_account WHERE sys_user_id = ?", Long.class, playerUserId);
+        jdbcTemplate.update("""
+                INSERT INTO demo_balance_ledger
+                    (user_id, operation_type, amount, balance_before, balance_after, reason, operator_name,
+                     player_code_snapshot, player_name_snapshot, agent_id_snapshot, player_kind_snapshot, created_at)
+                VALUES (?, 'ADMIN_GRANT', 100.00, 0.00, 100.00, '报表测试期初余额', 'SYSTEM',
+                        ?, ?, ?, 'NORMAL', '2026-10-01 12:00:00')
+                """, accountId, "V-REPORT-" + suffix, "报表测试玩家" + suffix, machineId);
         return new ReportFixture(groupId, machineId, accountId);
     }
 
