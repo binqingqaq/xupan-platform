@@ -19,7 +19,20 @@ public record MobileDisplayHomeResponse(
             String countdownFormat,
             List<String> numbers,
             List<String> numberColors,
-            List<String> summary
+            List<String> summary,
+            String upcomingIssue
     ) {
+        public LotteryCard(String key,
+                           int lotCode,
+                           String name,
+                           String issue,
+                           Instant nextDrawAt,
+                           String countdownFormat,
+                           List<String> numbers,
+                           List<String> numberColors,
+                           List<String> summary) {
+            this(key, lotCode, name, issue, nextDrawAt, countdownFormat,
+                    numbers, numberColors, summary, null);
+        }
     }
 }

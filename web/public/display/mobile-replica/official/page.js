@@ -2,9 +2,16 @@ const lotteryNames = ['新澳彩', '老澳彩', '香港彩', '快乐8'];
 const liveLotteries = new Map([
   ['hong-kong', '香港彩'],
 ]);
+const macauLotteries = new Map([
+  ['macau-new', '新澳彩'],
+  ['macau-old', '老澳彩'],
+]);
 const liveDrawTimes = new Map();
 let liveRetryTimer;
 let liveRetryDelay = 10_000;
+let macauRetryTimer;
+let macauRetryDelay = 10_000;
+let macauRefreshInFlight = false;
 let displayObserverHref = null;
 let middleContentHtml = null;
 
@@ -116,7 +123,10 @@ function applyLiveCard(name, card) {
     liveDrawTimes.set(name, nextDrawAt);
     const nextDrawSummary = selected.querySelector('.baomalaodaInfo3 > div:first-child');
     if (nextDrawSummary) {
-      nextDrawSummary.textContent = `${name}下期开奖时间: ${formatNextDrawAt(nextDrawAt)}`;
+        const nextIssue = card.upcomingIssue ? issueForDisplay(card.upcomingIssue) : '';
+        nextDrawSummary.textContent = nextIssue
+          ? `${name}第${nextIssue}期: ${formatNextDrawAt(nextDrawAt)}`
+          : `${name}下期开奖时间: ${formatNextDrawAt(nextDrawAt)}`;
     }
   }
 
@@ -169,6 +179,39 @@ async function refreshLiveDraws() {
       liveRetryDelay = Math.min(liveRetryDelay * 2, 60_000);
       void refreshLiveDraws();
     }, liveRetryDelay);
+  }
+}
+
+async function refreshMacauDraws() {
+  if (macauRefreshInFlight) return;
+  macauRefreshInFlight = true;
+  try {
+    const response = await fetch('/api/display/mobile/macau', {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('MOBILE_DISPLAY_MACAU_API_UNAVAILABLE');
+    const result = await response.json();
+    if (result.stale) throw new Error('MOBILE_DISPLAY_MACAU_API_STALE');
+    window.clearTimeout(macauRetryTimer);
+    macauRetryDelay = 10_000;
+    const matched = [];
+    for (const card of result.cards || []) {
+      const name = macauLotteries.get(card.key);
+      if (name && applyLiveCard(name, card)) matched.push(name);
+    }
+
+    const active = document.querySelector('#baomaqgBtn4BoxFatherBoxCopy25Father .bnav-activeam, #baomaqgBtn4BoxFatherBoxCopy25Father .bnav-activexg');
+    const activeName = active?.textContent.trim();
+    if (matched.includes(activeName)) selectLottery(activeName);
+  } catch {
+    window.clearTimeout(macauRetryTimer);
+    macauRetryTimer = window.setTimeout(() => {
+      macauRetryDelay = Math.min(macauRetryDelay * 2, 60_000);
+      void refreshMacauDraws();
+    }, macauRetryDelay);
+  } finally {
+    macauRefreshInFlight = false;
   }
 }
 
@@ -452,6 +495,7 @@ document.addEventListener('submit', (event) => event.preventDefault());
 
 initializeMiddleContentToggle();
 void refreshLiveDraws();
+void refreshMacauDraws();
 renderAu8Unavailable('正在读取本地七球开奖');
 void refreshAu8Draw();
 void refreshDisplayObserverLink();
@@ -459,6 +503,7 @@ window.setInterval(refreshCountdowns, 1000);
 window.setInterval(() => {
   if (!document.hidden) {
     void refreshLiveDraws();
+    void refreshMacauDraws();
     void refreshAu8Draw();
     void refreshDisplayObserverLink();
   }
@@ -466,6 +511,7 @@ window.setInterval(() => {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     void refreshLiveDraws();
+    void refreshMacauDraws();
     void refreshAu8Draw();
     void refreshDisplayObserverLink();
   }

@@ -27,6 +27,8 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -41,6 +43,8 @@ public class RobotDispatchService {
 
     private static final Logger log = LoggerFactory.getLogger(RobotDispatchService.class);
     private static final String ROOM_CODE = "main";
+    private static final DateTimeFormatter DRAW_TIME_FORMAT = DateTimeFormatter
+            .ofPattern("yyyy/MM/dd HH:mm:ss").withZone(ZoneId.of("Asia/Shanghai"));
 
     private final RobotDispatchRepository dispatchRepository;
     private final RobotRepository robotRepository;
@@ -375,27 +379,103 @@ public class RobotDispatchService {
                         && value.numbers().stream().allMatch(number -> number != null && number >= 1 && number <= 20))
                 .orElseThrow(() -> BusinessException.badRequest("ROBOT_DRAW_DATA_NOT_FOUND",
                         "开奖事件对应的期号数据不存在或不完整"));
-        String content = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
+        String templateContent = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
         ChatMessage latest = null;
-        for (RobotDrawComponentConfig config : drawComponentRepository.findEnabledOrdered(robot.id())) {
+        List<RobotDrawComponentConfig> components = drawComponentRepository.findEnabledOrdered(robot.id());
+        List<Long> machineIds = chatMessageService.activeMachineIds();
+        for (RobotDrawComponentConfig config : components) {
             String component = config.component().name();
             String baseKey = idempotency.idempotencyKey(event.id(), config.component());
-            if (config.component() == RobotDrawComponent.WINNER_LIST
-                    || config.component() == RobotDrawComponent.TOTAL_BOARD) {
-                for (Long agentId : chatMessageService.activeMachineIds()) {
-                    String componentPayload = structuredPayload(component, event.issueNumber(), issue, agentId);
+            if (config.component() == RobotDrawComponent.WINNER_LIST) {
+                for (Long agentId : machineIds) {
                     latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
-                            event.issueNumber(), machineKey(baseKey, agentId), content, componentPayload,
+                            event.issueNumber(), machineKey(baseKey, agentId),
+                            winnerAnnouncementText(event.issueNumber(), issue, agentId), "{}",
+                            ChatMessageVisibility.MACHINE, agentId, now);
+                }
+            } else if (config.component() == RobotDrawComponent.TOTAL_BOARD) {
+                for (Long agentId : machineIds) {
+                    latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
+                            event.issueNumber(), machineKey(baseKey, agentId),
+                            totalBoardText(event.issueNumber(), issue, agentId), "{}",
                             ChatMessageVisibility.MACHINE, agentId, now);
                 }
             } else {
                 String componentPayload = structuredPayload(component, event.issueNumber(), issue, null);
                 latest = chatMessageService.publishRobotMessage(robot.id(), robot.displayName(), ROOM_CODE,
-                        event.issueNumber(), baseKey, content, componentPayload,
+                        event.issueNumber(), baseKey,
+                        config.component() == RobotDrawComponent.DRAW_SUMMARY
+                                ? templateContent : event.issueNumber() + "期历史开奖数据",
+                        componentPayload,
                         ChatMessageVisibility.PUBLIC, null, now);
             }
         }
         return Optional.ofNullable(latest);
+    }
+
+    private String winnerAnnouncementText(String issueNumber,
+                                          GameDataRepository.IssueRecord issue, long agentId) {
+        List<Integer> numbers = issue.numbers();
+        int last = numbers.get(numbers.size() - 1);
+        String numberText = numbers.stream().map(number -> String.format("%02d", number))
+                .collect(Collectors.joining(","));
+        String parity = last % 2 == 0 ? "双" : "单";
+        String size = last >= 11 ? "大" : "小";
+        StringBuilder content = new StringBuilder(issueNumber).append("结果:\n")
+                .append(numberText).append(" => ").append(fan(last)).append(',')
+                .append(parity).append(',').append(size).append('\n');
+        for (int index = 0; index < numbers.size(); index++) {
+            int number = numbers.get(index);
+            content.append("第").append(index + 1).append("球/")
+                    .append(String.format("%02d", number)).append("=>")
+                    .append(fan(number)).append(',').append(number >= 11 ? "大" : "小")
+                    .append(',').append(number % 2 == 0 ? "双" : "单").append('\n');
+        }
+        content.append("----------\n获胜名单：\n");
+        List<GameDataRepository.WinnerBetAuditRecord> winners = gameDataRepository
+                .findWinningBetAuditByGameIssueAndAgent(GameDataRepository.DEFAULT_GAME_CODE, issueNumber, agentId);
+        if (winners.isEmpty()) {
+            content.append("暂无获胜记录\n");
+        } else {
+            for (GameDataRepository.WinnerBetAuditRecord winner : winners) {
+                content.append('(').append(normalizeDisplayName(winner.displayName())).append(") \"")
+                        .append(formatBetText(winner.playType(), winner.parameters(), winner.stake()))
+                        .append("\" 盈:").append(formatAmount(winner.netProfit())).append('\n');
+            }
+        }
+        return content.append("时间:").append(DRAW_TIME_FORMAT.format(issue.settledAt())).toString();
+    }
+
+    private String totalBoardText(String issueNumber,
+                                  GameDataRepository.IssueRecord issue, long agentId) {
+        List<GameDataRepository.IssuePlayerTotal> items = gameDataRepository
+                .findIssuePlayerTotalsByAgent(issueNumber, agentId, 30);
+        BigDecimal totalTurnover = items.stream().map(GameDataRepository.IssuePlayerTotal::turnover)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        List<Integer> numbers = issue.numbers();
+        int last = numbers.get(numbers.size() - 1);
+        String numberText = numbers.stream().map(number -> String.format("%02d", number))
+                .collect(Collectors.joining(","));
+        String result = numberText + " => " + fan(last) + "," + (last % 2 == 0 ? "双" : "单")
+                + "," + (last >= 11 ? "大" : "小");
+        StringBuilder content = new StringBuilder(issueNumber).append("结果:\n")
+                .append(result).append("\n--------------------\n总榜: 【")
+                .append(formatAmount(totalTurnover)).append("】\n");
+        if (items.isEmpty()) {
+            return content.append("本期暂无已结注单").toString();
+        }
+        for (GameDataRepository.IssuePlayerTotal item : items) {
+            BigDecimal netProfit = item.netProfit() == null ? BigDecimal.ZERO : item.netProfit();
+            content.append(normalizeDisplayName(item.displayName())).append(" [")
+                    .append(formatAmount(item.turnover())).append("] (")
+                    .append(netProfit.signum() > 0 ? "+" : "")
+                    .append(formatAmount(netProfit)).append(")\n");
+        }
+        return content.toString().stripTrailing();
+    }
+
+    private static int fan(int number) {
+        return number % 4 == 0 ? 4 : number % 4;
     }
 
     private String structuredPayload(String component, String issueNumber,
@@ -461,16 +541,15 @@ public class RobotDispatchService {
     }
 
     private List<DrawHistoryItem> historyItems(int ballCount, int limit) {
+        if (limit == 60) {
+            return historyItems(gameDataRepository.findLatestSettledBlock(
+                    GameDataRepository.DEFAULT_GAME_CODE, ballCount, limit));
+        }
         List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues(
                         GameDataRepository.DEFAULT_GAME_CODE, 100).stream()
                 .filter(issue -> issue.ballCount() == ballCount)
                 .limit(limit)
                 .toList();
-        if (limit == 60) {
-            List<GameDataRepository.IssueRecord> ascending = new ArrayList<>(issues);
-            java.util.Collections.reverse(ascending);
-            return historyItems(ascending);
-        }
         return historyItems(issues);
     }
 

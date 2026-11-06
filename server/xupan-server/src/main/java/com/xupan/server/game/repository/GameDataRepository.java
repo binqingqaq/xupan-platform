@@ -455,11 +455,7 @@ public class GameDataRepository {
                 """, gameCode, limit);
     }
 
-    /**
-     * Reads the current fixed-size settled block from oldest to newest.
-     * The complete history remains in game_issue; this only selects the block
-     * currently visible in a bounded trend chart.
-     */
+    /** Reads the latest fixed-size settled window from oldest to newest. */
     public List<IssueRecord> findLatestSettledBlock(int blockSize) {
         return findLatestSettledBlock(DEFAULT_GAME_CODE, blockSize);
     }
@@ -468,10 +464,21 @@ public class GameDataRepository {
         if (blockSize < 1 || blockSize > 100) {
             throw new IllegalArgumentException("开奖走势分组数量必须在 1 到 100 之间");
         }
-        Long total = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
+        List<IssueRecord> latestWindow = new ArrayList<>(findSettledIssues(gameCode, blockSize));
+        Collections.reverse(latestWindow);
+        return List.copyOf(latestWindow);
+    }
+
+    public List<IssueRecord> findLatestSettledBlock(String gameCode, int ballCount, int blockSize) {
+        if (ballCount < 7 || ballCount > 8 || blockSize < 1 || blockSize > 100) {
+            throw new IllegalArgumentException("开奖走势球数或窗口数量无效");
+        }
+        List<IssueRecord> latestWindow = new ArrayList<>(findIssues("""
+                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                       number_5, number_6, number_7, number_8, issue_started_at,
+                       betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
-                 WHERE game_code = ?
+                 WHERE game_code = ? AND ball_count = ?
                    AND phase = 'SETTLED' AND settled_at IS NOT NULL
                    AND number_1 IS NOT NULL AND number_2 IS NOT NULL
                    AND number_3 IS NOT NULL AND number_4 IS NOT NULL
@@ -479,17 +486,11 @@ public class GameDataRepository {
                    AND number_7 IS NOT NULL
                    AND ((ball_count = 7 AND number_8 IS NULL)
                         OR (ball_count = 8 AND number_8 IS NOT NULL))
-                """, Long.class, gameCode);
-        if (total == null || total == 0) {
-            return List.of();
-        }
-        int currentBlockSize = (int) (total % blockSize);
-        if (currentBlockSize == 0) {
-            currentBlockSize = blockSize;
-        }
-        List<IssueRecord> currentBlock = new ArrayList<>(findSettledIssues(gameCode, currentBlockSize));
-        Collections.reverse(currentBlock);
-        return List.copyOf(currentBlock);
+                 ORDER BY settled_at DESC, id DESC
+                 LIMIT ?
+                """, gameCode, ballCount, blockSize));
+        Collections.reverse(latestWindow);
+        return List.copyOf(latestWindow);
     }
 
     public List<WinnerRecord> findWinningBets(String issueNumber) {

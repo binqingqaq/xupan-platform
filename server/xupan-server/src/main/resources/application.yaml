@@ -40,6 +40,16 @@ xupan:
         connect-timeout: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_CONNECT_TIMEOUT:3s}
         request-timeout: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_REQUEST_TIMEOUT:8s}
         cache-ttl: ${XUPAN_DISPLAY_MOBILE_EXTERNAL_CACHE_TTL:2s}
+      macau:
+        enabled: ${XUPAN_DISPLAY_MOBILE_MACAU_ENABLED:true}
+        base-url: ${XUPAN_DISPLAY_MOBILE_MACAU_BASE_URL:https://h9.wanpz.com}
+        new-script-path: ${XUPAN_DISPLAY_MOBILE_MACAU_NEW_SCRIPT_PATH:/script/12359/temps_result_1.js?v=37ba719b}
+        old-script-path: ${XUPAN_DISPLAY_MOBILE_MACAU_OLD_SCRIPT_PATH:/script/12359/temps_result_3.js?v=37ba719b}
+        connect-timeout: ${XUPAN_DISPLAY_MOBILE_MACAU_CONNECT_TIMEOUT:4s}
+        request-timeout: ${XUPAN_DISPLAY_MOBILE_MACAU_REQUEST_TIMEOUT:12s}
+        cache-ttl: ${XUPAN_DISPLAY_MOBILE_MACAU_CACHE_TTL:30s}
+        new-draw-time: ${XUPAN_DISPLAY_MOBILE_MACAU_NEW_DRAW_TIME:21:30}
+        old-draw-time: ${XUPAN_DISPLAY_MOBILE_MACAU_OLD_DRAW_TIME:21:32}
   avatar:
     storage-dir: ${XUPAN_AVATAR_STORAGE_DIR:${user.dir}/var/uploads/avatars}
     max-size-bytes: ${XUPAN_AVATAR_MAX_SIZE_BYTES:5242880}

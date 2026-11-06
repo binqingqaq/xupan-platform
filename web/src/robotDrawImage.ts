@@ -45,10 +45,6 @@ function fanOf(number: number) {
   return number % 4 || 4
 }
 
-function resultAttributeText(result: { fan: number; parity: string; size: string }): string {
-  return (result.size === 'BIG' ? '大' : '小') + (result.parity === 'EVEN' ? '双' : '单')
-}
-
 function ball(number: number, x: number, y: number, radius: number, last = false) {
   const fill = last ? '#f1010a' : '#008edd'
   return `<circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}"/><text x="${x}" y="${y + radius * .35}" fill="#fff" font-family="${FONT}" font-size="${Math.max(12, radius * .78)}" font-weight="700" text-anchor="middle">${displayNumber(number)}</text>`
@@ -59,36 +55,45 @@ function svgDocument(width: number, height: number, body: string) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
 }
 
-function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMMARY' }>): RobotDrawImage {
-  const width = 960
-  const height = 252
+function responsiveCanvasWidth(availableWidth: number | undefined, minWidth: number, maxWidth: number) {
+  if (availableWidth == null || !Number.isFinite(availableWidth)) return maxWidth
+  return Math.round(Math.max(minWidth, Math.min(maxWidth, availableWidth)))
+}
+
+function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMMARY' }>,
+                      availableWidth?: number): RobotDrawImage {
+  const width = responsiveCanvasWidth(availableWidth, 440, 960)
+  const height = 236
   const numbers = payload.data.numbers
-  const ballResults = payload.data.ballResults ?? numbers.map(number => ({
-    number, fan: fanOf(number), parity: number % 2 === 0 ? 'EVEN' : 'ODD',
-    size: number >= 11 ? 'BIG' : 'SMALL',
-  }))
-  const xPositions = numbers.map((_, index) => 74 + index * (numbers.length === 7 ? 130 : 116))
+  const sidePadding = Math.min(74, Math.max(24, width * 74 / 960))
+  const ballSpacing = numbers.length > 1
+    ? Math.min(numbers.length === 7 ? 130 : 116, (width - sidePadding * 2) / (numbers.length - 1))
+    : 0
+  const xPositions = numbers.map((_, index) => sidePadding + index * ballSpacing)
   const terminalNumber = numbers[numbers.length - 1]!
   const fan = fanOf(terminalNumber)
+  const fanBoxX = width - 170
   const body = `
     <text x="28" y="47" fill="#f1010a" font-family="${FONT}" font-size="25" font-weight="400">开盘结果</text>
     <text x="166" y="47" fill="#111" font-family="${FONT}" font-size="20">第${escapeXml(payload.issueNumber)}期</text>
     <text x="28" y="111" fill="#111" font-family="${FONT}" font-size="19">${escapeXml(formatDate(payload.data.settledAt))}</text>
-    <rect x="790" y="34" width="135" height="111" fill="#f1010a"/>
-    <text x="857.5" y="106" fill="#fff" font-family="${FONT}" font-size="48" font-weight="700" text-anchor="middle">${fan}番</text>
+    <rect x="${fanBoxX}" y="34" width="135" height="111" fill="#f1010a"/>
+    <text x="${fanBoxX + 67.5}" y="106" fill="#fff" font-family="${FONT}" font-size="48" font-weight="700" text-anchor="middle">${fan}番</text>
     ${numbers.map((number, index) => ball(number, xPositions[index], 192, 24, index === numbers.length - 1)).join('')}
-    ${numbers.map((_, index) => '<text x="' + xPositions[index] + '" y="228" fill="#444" font-family="' + FONT + '" font-size="13" text-anchor="middle">' + resultAttributeText(ballResults[index]) + '</text>').join('')}
   `
   return {
     dataUrl: svgDocument(width, height, body),
     width,
     height,
-    alt: `第${payload.issueNumber}期开奖，号码${numbers.map(displayNumber).join('、')}，${fan}番，球位属性${ballResults.map(resultAttributeText).join('、')}，开奖时间${formatDate(payload.data.settledAt)}`,
+    alt: `第${payload.issueNumber}期开奖，号码${numbers.map(displayNumber).join('、')}，${fan}番，开奖时间${formatDate(payload.data.settledAt)}`,
   }
 }
 
-function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HISTORY' }>): RobotDrawImage {
-  const width = 1120
+function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HISTORY' }>,
+                      availableWidth?: number): RobotDrawImage {
+  const width = responsiveCanvasWidth(availableWidth, 780, 1120)
+  const horizontalScale = width / 1120
+  const gridCellWidth = width / 12
   const rowHeight = 34
   const tableTop = 38
   const gridTop = tableTop + Math.max(payload.data.items.length, 1) * rowHeight + 8
@@ -99,36 +104,39 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
   const items = payload.data.items
   const rows = items.map((item, rowIndex) => {
     const y = tableTop + rowIndex * rowHeight
-    const numberStart = 345
-    const circles = item.numbers.map((number, index) => ball(number, numberStart + index * 43, y + 17, 12, index === item.numbers.length - 1)).join('')
+    const numberStart = 345 * horizontalScale
+    const circles = item.numbers.map((number, index) => ball(
+      number, numberStart + index * 43 * horizontalScale, y + 17, 12, index === item.numbers.length - 1)).join('')
     const special = item.numbers[item.numbers.length - 1]!
-    const highlight = rowIndex === 0 ? `<rect x="1" y="${y}" width="1118" height="${rowHeight}" fill="none" stroke="#ff4550"/>` : ''
-    return `${highlight}<text x="125" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="255" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="748" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="762.5" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="797" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
+    const fanCellX = 748 * horizontalScale
+    const highlight = rowIndex === 0 ? `<rect x="1" y="${y}" width="${width - 2}" height="${rowHeight}" fill="none" stroke="#ff4550"/>` : ''
+    return `${highlight}<text x="${125 * horizontalScale}" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="${255 * horizontalScale}" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="${fanCellX}" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="${762.5 * horizontalScale}" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="${797 * horizontalScale}" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
   }).join('')
   const routeItems = payload.data.routeItems ?? items.slice().reverse()
   const gridValues = routeItems.slice(-gridColumns * gridRows).map(item => fanOf(item.numbers[item.numbers.length - 1]!))
   const grid = Array.from({ length: gridColumns * gridRows }, (_, index) => {
     const value = gridValues[index]
-    const x = index % gridColumns * 93.25
+    const x = index % gridColumns * gridCellWidth
     const y = gridTop + gridHeaderHeight + Math.floor(index / gridColumns) * 37
-    return `<rect x="${x + 1}" y="${y}" width="92.25" height="36" fill="#fff" stroke="#888"/><rect x="${x + 32}" y="${y + 5}" width="28" height="26" fill="${value ? COLORS[value - 1] : '#fff'}" stroke="#111"/>${value ? `<text x="${x + 46}" y="${y + 24}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${value}</text>` : ''}`
+    const cellX = x + (gridCellWidth - 1 - 28) / 2
+    return `<rect x="${x + 1}" y="${y}" width="${gridCellWidth - 1}" height="36" fill="#fff" stroke="#888"/><rect x="${cellX}" y="${y + 5}" width="28" height="26" fill="${value ? COLORS[value - 1] : '#fff'}" stroke="#111"/>${value ? `<text x="${cellX + 14}" y="${y + 24}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${value}</text>` : ''}`
   }).join('')
   const gridHeader = Array.from({ length: gridColumns }, (_, index) => {
-    const x = index * 93.25
-    return `<rect x="${x + 1}" y="${gridTop}" width="92.25" height="${gridHeaderHeight}" fill="#d1d1d1" stroke="#888"/>`
+    const x = index * gridCellWidth
+    return `<rect x="${x + 1}" y="${gridTop}" width="${gridCellWidth - 1}" height="${gridHeaderHeight}" fill="#d1d1d1" stroke="#888"/>`
   }).join('')
   const body = `
-    <rect x="1" y="1" width="1118" height="37" rx="10" fill="#3db3d9"/>
-    <rect x="1" y="27" width="1118" height="11" fill="#3db3d9"/>
-    <text x="125" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">期数</text>
-    <text x="255" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">时间</text>
-    <text x="535" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">结果</text>
-    <text x="900" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">番</text>
+    <rect x="1" y="1" width="${width - 2}" height="37" rx="10" fill="#3db3d9"/>
+    <rect x="1" y="27" width="${width - 2}" height="11" fill="#3db3d9"/>
+    <text x="${125 * horizontalScale}" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">期数</text>
+    <text x="${255 * horizontalScale}" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">时间</text>
+    <text x="${535 * horizontalScale}" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">结果</text>
+    <text x="${900 * horizontalScale}" y="26" fill="#fff" font-family="${FONT}" font-size="15" font-weight="700" text-anchor="middle">番</text>
     ${rows || '<text x="560" y="70" fill="#777" font-family="' + FONT + '" font-size="16" text-anchor="middle">暂无历史开奖</text>'}
     ${gridHeader}
-    <text x="419.5" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">路</text>
-    <text x="512.75" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">字</text>
-    <text x="606" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">图</text>
+    <text x="${4.5 * gridCellWidth}" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">路</text>
+    <text x="${5.5 * gridCellWidth}" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">字</text>
+    <text x="${6.5 * gridCellWidth}" y="${gridTop + 18}" fill="#333" font-family="${FONT}" font-size="13" text-anchor="middle">图</text>
     ${grid}
   `
   return {
@@ -144,14 +152,26 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
   const lineHeight = 31
   const numbers = payload.data.numbers
   const exactResult = numbers && payload.data.settledAt
-  const height = exactResult
-    ? 220 + Math.max(payload.data.items.length, 1) * lineHeight
-    : 156 + Math.max(payload.data.items.length, 1) * lineHeight
+  const resultNumbers = numbers ?? []
+  const detailLineHeight = 23
+  const detailStartY = 102
+  const separatorY = detailStartY + resultNumbers.length * detailLineHeight + 6
+  const winnerHeadingY = separatorY + 31
+  const winnerLinesY = exactResult ? winnerHeadingY + 31 : 130
+  const timeY = winnerLinesY + Math.max(payload.data.items.length, 1) * lineHeight + 25
+  const height = exactResult ? timeY + 22 : 156 + Math.max(payload.data.items.length, 1) * lineHeight
+  const ballLines = exactResult
+    ? resultNumbers.map((number, index) => {
+      const parity = number % 2 === 0 ? '双' : '单'
+      const size = number >= 11 ? '大' : '小'
+      return `<text x="28" y="${detailStartY + index * detailLineHeight}" fill="#111" font-family="${FONT}" font-size="17">第${index + 1}球/${displayNumber(number)} =&gt; ${fanOf(number)},${size},${parity}</text>`
+    }).join('')
+    : ''
   const lines = payload.data.items.length
     ? payload.data.items.map((item, index) => exactResult
-      ? `<text x="28" y="${166 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">(${escapeXml(item.maskedUser)})　"${escapeXml(item.betText || item.playType)}"　净盈:${formatDrawMoney(item.netProfit)}</text>`
-      : `<text x="28" y="${130 + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
-    : `<text x="28" y="${exactResult ? 166 : 130}" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
+      ? `<text x="28" y="${winnerLinesY + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">(${escapeXml(item.maskedUser)})　"${escapeXml(item.betText || item.playType)}"　净盈:${formatDrawMoney(item.netProfit)}</text>`
+      : `<text x="28" y="${winnerLinesY + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
+    : `<text x="28" y="${winnerLinesY}" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
   const resultLine = exactResult
     ? `${numbers.map(displayNumber).join(',')} =&gt; ${fanOf(numbers[numbers.length - 1]!)},${numbers[numbers.length - 1]! % 2 === 0 ? '双' : '单'},${numbers[numbers.length - 1]! >= 11 ? '大' : '小'}`
     : `${payload.issueNumber}期开奖数据`
@@ -159,10 +179,11 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
     ? `
       <text x="28" y="40" fill="#111" font-family="${FONT}" font-size="22">${escapeXml(payload.issueNumber)}结果:</text>
       <text x="28" y="72" fill="#111" font-family="${FONT}" font-size="20">${resultLine}</text>
-      <text x="28" y="104" fill="#111" font-family="${FONT}" font-size="18">-----------</text>
-      <text x="28" y="135" fill="#111" font-family="${FONT}" font-size="19" font-weight="700">获胜名单:</text>
+      ${ballLines}
+      <text x="28" y="${separatorY}" fill="#111" font-family="${FONT}" font-size="18">-----------</text>
+      <text x="28" y="${winnerHeadingY}" fill="#111" font-family="${FONT}" font-size="19" font-weight="700">获胜名单:</text>
       ${lines}
-      <text x="28" y="${166 + Math.max(payload.data.items.length, 1) * lineHeight + 25}" fill="#111" font-family="${FONT}" font-size="18">时间:${slashDate(payload.data.settledAt || new Date().toISOString())}</text>
+      <text x="28" y="${timeY}" fill="#111" font-family="${FONT}" font-size="18">时间:${slashDate(payload.data.settledAt || new Date().toISOString())}</text>
     `
     : `
       <text x="28" y="40" fill="#111" font-family="${FONT}" font-size="22">${escapeXml(payload.issueNumber)}结果:</text>
@@ -179,9 +200,9 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
   }
 }
 
-export function renderRobotDrawImage(payload: RobotDrawPayload): RobotDrawImage {
-  if (payload.component === 'DRAW_SUMMARY') return summaryImage(payload)
-  if (payload.component === 'DRAW_HISTORY') return historyImage(payload)
+export function renderRobotDrawImage(payload: RobotDrawPayload, availableWidth?: number): RobotDrawImage {
+  if (payload.component === 'DRAW_SUMMARY') return summaryImage(payload, availableWidth)
+  if (payload.component === 'DRAW_HISTORY') return historyImage(payload, availableWidth)
   if (payload.component === 'WINNER_LIST') return winnerImage(payload)
   const width = 960
   const lineHeight = 34

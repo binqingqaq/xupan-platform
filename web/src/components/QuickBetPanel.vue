@@ -42,11 +42,19 @@ const displayOdds = computed(() => Object.fromEntries(props.displayOdds.map(item
 const topOptions = computed(() => QUICK_BET_OPTIONS.filter(option => option.section === 'top'))
 const lowerOptions = computed(() => QUICK_BET_OPTIONS.filter(option => option.section === 'lower'
   && (props.specialEnabled || option.playType !== 'SPECIAL')))
-const selectedSpecialCount = computed(() => selectedKeys.value.filter(key => key.startsWith('special-')).length)
-const specialStakeTotal = computed(() => {
-  const unitStake = Number(amount.value)
-  return Number.isFinite(unitStake) && unitStake > 0 ? unitStake * selectedSpecialCount.value : 0
-})
+const displayOnlySpecialOptions = computed<QuickBetOption[]>(() => props.specialEnabled
+  ? Array.from({ length: 20 }, (_, index) => {
+      const number = String(index + 21).padStart(2, '0')
+      return {
+        key: `display-only-special-${number}`,
+        code: `${number}特`,
+        playType: 'SPECIAL',
+        quoteKey: 'SPECIAL',
+        separator: '',
+        section: 'lower',
+      }
+    })
+  : [])
 
 watch(() => props.specialEnabled, enabled => {
   if (!enabled) selectedKeys.value = selectedKeys.value.filter(key => !key.startsWith('special-'))
@@ -159,6 +167,19 @@ onMounted(() => {
           <strong>{{ option.code }}</strong>
           <b>{{ formatOdds(option) }}</b>
         </button>
+        <button
+          v-for="option in displayOnlySpecialOptions"
+          :key="option.key"
+          type="button"
+          class="quick-option quick-option-lower quick-option-display-only"
+          :aria-label="`${option.code}，仅展示不可下注`"
+          aria-disabled="true"
+          disabled
+          title="仅展示，当前开奖范围不支持下注"
+        >
+          <strong>{{ option.code }}</strong>
+          <b>{{ formatOdds(option) }}</b>
+        </button>
       </div>
     </div>
 
@@ -185,9 +206,6 @@ onMounted(() => {
         </button>
         <button class="quick-bet-reset" type="button" @click="clearSelection">重置</button>
       </div>
-      <p v-if="selectedSpecialCount" class="quick-bet-special-hint">
-        特码按单号金额计算：{{ selectedSpecialCount }} 个号码，共 {{ specialStakeTotal.toFixed(2) }} 积分
-      </p>
       <div v-if="!readOnly" class="quick-bet-number-row">
         <button v-for="digit in numberKeys" :key="digit" type="button" @click="appendDigit(digit)">{{ digit }}</button>
       </div>

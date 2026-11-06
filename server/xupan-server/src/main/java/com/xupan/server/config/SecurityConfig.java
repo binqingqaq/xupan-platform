@@ -53,7 +53,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/auth/login", "/api/auth/refresh", "/api/player-auth/exchange",
                                 "/api/display-observer/exchange", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/media/avatars/**").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/display/mobile/home").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/display/mobile/home",
+                                "/api/display/mobile/macau").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/display/mobile/au8",
                                 "/api/display/mobile/au8/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/display/observer-link").permitAll()

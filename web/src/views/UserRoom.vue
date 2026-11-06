@@ -93,6 +93,8 @@ const messageInput = ref('')
 const quickOpen = ref(false)
 const quickBetOpen = ref(false)
 const interfaceOpen = ref(false)
+const interfaceButtonElement = ref<HTMLButtonElement | null>(null)
+const interfaceMenuElement = ref<HTMLDivElement | null>(null)
 const menuOpen = ref(false)
 const betSummary = ref<MyBetSummaryResponse | null>(null)
 const accountPanelTab = ref<'pending' | 'settled'>('pending')
@@ -101,9 +103,8 @@ const chatFontBold = ref(false)
 const accountPanelLoading = ref(false)
 const accountPanelError = ref('')
 const expandedAccountRows = ref(new Set<string>())
-function interfaceModeFromUrl(): 'ui1' | 'ui2' {
-  if (typeof window === 'undefined') return 'ui1'
-  return new URLSearchParams(window.location.search).get('ui') === '1' ? 'ui2' : 'ui1'
+function interfaceModeFromUrl(): 'ui1' {
+  return 'ui1'
 }
 
 const interfaceMode = ref<'ui1' | 'ui2'>(interfaceModeFromUrl())
@@ -340,6 +341,16 @@ function formatBetParameters(bet: { playType: PlayType; parameters: number[] }) 
   if (bet.playType === 'BIG_SMALL') return bet.parameters[0] === 1 ? '大' : '小'
   if (bet.playType === 'SPECIAL') return bet.parameters.map(number => String(number).padStart(2, '0')).join('/')
   return bet.parameters.join('')
+}
+
+function messageBodyLines(body: string) {
+  const lines = body.split('\n')
+  return lines.map((text, index) => ({
+    text,
+    key: index,
+    isAuditWarning: text.startsWith('以核对列表及开奖前已公告退单为准；不在列表内的注单无效。'),
+    isLast: index === lines.length - 1,
+  }))
 }
 
 function signedMoney(value: number) {
@@ -790,7 +801,7 @@ async function load() {
     authenticated.value = true
     const platformConfig = await api.getPublicPlatformSettings()
     platformSettings.value = platformConfig
-    interfaceMode.value = platformConfig.keyboardMode ? 'ui2' : 'ui1'
+    interfaceMode.value = 'ui1'
     keyboardOpen.value = platformConfig.keyboardMode
 
     await loadQuickBetPreferences()
@@ -957,11 +968,16 @@ function setViewMode(mode: 'chat' | 'odds') {
   if (mode === 'chat') scrollToBottom()
 }
 
-function setInterfaceMode(mode: 'ui1' | 'ui2') {
-  if (typeof window === 'undefined') return
-  const url = new URL(window.location.href)
-  url.searchParams.set('ui', mode === 'ui1' ? '4' : '1')
-  window.location.href = url.toString()
+function setInterfaceMode() {
+  interfaceMode.value = 'ui1'
+  interfaceOpen.value = false
+}
+
+function closeInterfaceMenuOnOutsideClick(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof Node)) return
+  if (interfaceButtonElement.value?.contains(target) || interfaceMenuElement.value?.contains(target)) return
+  interfaceOpen.value = false
 }
 
 function toggleHistory() {
@@ -1282,6 +1298,7 @@ onMounted(() => {
   }
   document.documentElement.classList.add('reference-room-html')
   document.body.classList.add('reference-room-body')
+  document.addEventListener('click', closeInterfaceMenuOnOutsideClick)
   window.addEventListener('blur', markChatPageInactive)
   window.addEventListener('focus', restoreChatToLatestOnReturn)
   document.addEventListener('visibilitychange', handleChatVisibilityChange)
@@ -1307,6 +1324,7 @@ onUnmounted(() => {
   keyboardBulmaLink = null
   document.documentElement.classList.remove('reference-room-html')
   document.body.classList.remove('reference-room-body')
+  document.removeEventListener('click', closeInterfaceMenuOnOutsideClick)
   window.removeEventListener('blur', markChatPageInactive)
   window.removeEventListener('focus', restoreChatToLatestOnReturn)
   document.removeEventListener('visibilitychange', handleChatVisibilityChange)
@@ -1350,14 +1368,13 @@ onUnmounted(() => {
         <strong class="reference-user">{{ currentUser?.displayName || '我' }}</strong>
         <div class="header-actions">
           <button class="quick-button" type="button" @click="openQuickBet">快捷</button>
-          <button class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
+          <button ref="interfaceButtonElement" class="interface-button" type="button" @click="interfaceOpen = !interfaceOpen">界面▼</button>
           <button class="menu-button" type="button" aria-label="打开账户流水" :class="{ active: menuOpen }" @click="toggleAccountPanel">
             <span></span><span></span><span></span>
           </button>
         </div>
-        <div v-if="interfaceOpen" class="header-menu interface-menu">
-          <button type="button" :class="{ selected: interfaceMode === 'ui1' }" @click="setInterfaceMode('ui1')"><span class="interface-check">{{ interfaceMode === 'ui1' ? '✓' : '' }}</span>界面1</button>
-          <button type="button" :class="{ selected: interfaceMode === 'ui2' }" @click="setInterfaceMode('ui2')"><span class="interface-check">{{ interfaceMode === 'ui2' ? '✓' : '' }}</span>界面2</button>
+        <div v-if="interfaceOpen" ref="interfaceMenuElement" class="header-menu interface-menu">
+          <button type="button" :class="{ selected: interfaceMode === 'ui1' }" @click="setInterfaceMode"><span class="interface-check">{{ interfaceMode === 'ui1' ? '✓' : '' }}</span>界面1</button>
         </div>
       </div>
       <div v-show="platformSettings?.statusBarEnabled !== false && countdownVisible" class="reference-issuebar" :aria-label="ballNumbersLabel">
@@ -1477,7 +1494,7 @@ onUnmounted(() => {
               </div>
               <h5 class="reference-name">{{ message.name }}</h5>
               <RobotDrawMessage v-if="message.drawPayload" :payload="message.drawPayload" />
-              <pre v-else class="reference-pre">{{ message.body }}</pre>
+              <pre v-else class="reference-pre"><template v-for="line in messageBodyLines(message.body)" :key="line.key"><span :style="line.isAuditWarning ? { color: '#f1010a' } : undefined">{{ line.text }}</span><br v-if="!line.isLast"></template></pre>
               <button v-if="message.sequenceNo === 0 && pendingChatMessage?.status === 'failed'" class="chat-retry" type="button" @click="retryPendingChatMessage">重试</button>
             </div>
           </article>

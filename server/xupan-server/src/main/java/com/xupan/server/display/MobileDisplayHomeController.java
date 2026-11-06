@@ -16,15 +16,24 @@ public class MobileDisplayHomeController {
 
     private final MobileDisplayHomeService service;
     private final MobileDisplayAu8Service au8Service;
+    private final MobileDisplayMacauService macauService;
 
-    public MobileDisplayHomeController(MobileDisplayHomeService service, MobileDisplayAu8Service au8Service) {
+    public MobileDisplayHomeController(MobileDisplayHomeService service,
+                                       MobileDisplayAu8Service au8Service,
+                                       MobileDisplayMacauService macauService) {
         this.service = service;
         this.au8Service = au8Service;
+        this.macauService = macauService;
     }
 
     @GetMapping("/home")
     public MobileDisplayHomeResponse home() {
         return service.getHome();
+    }
+
+    @GetMapping("/macau")
+    public MobileDisplayHomeResponse macau() {
+        return macauService.getDraws();
     }
 
     @GetMapping("/au8")

@@ -2,6 +2,7 @@ package com.xupan.server.display;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,7 @@ import java.util.Optional;
 public class MobileDisplayLotterySnapshotRepository {
 
     public static final String SOURCE_CODE = "REFERENCE_168";
+    public static final String MACAU_SOURCE_CODE = "REFERENCE_12359";
 
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
@@ -26,13 +28,20 @@ public class MobileDisplayLotterySnapshotRepository {
     }
 
     public void saveAll(List<MobileDisplayHomeResponse.LotteryCard> cards, Instant fetchedAt) {
+        saveAll(SOURCE_CODE, cards, fetchedAt);
+    }
+
+    @Transactional
+    public void saveAll(String sourceCode,
+                        List<MobileDisplayHomeResponse.LotteryCard> cards,
+                        Instant fetchedAt) {
         for (MobileDisplayHomeResponse.LotteryCard card : cards) {
             String cardJson = objectMapper.writeValueAsString(card);
             jdbcTemplate.update("""
                     INSERT INTO mobile_display_lottery_snapshot
                         (source_code, source_lot_code, issue_no, next_issue_no, lot_name,
                          next_draw_at, card_json, payload_hash, fetched_at, updated_at)
-                    VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                     ON DUPLICATE KEY UPDATE
                         next_issue_no = VALUES(next_issue_no),
                         lot_name = VALUES(lot_name),
@@ -42,9 +51,10 @@ public class MobileDisplayLotterySnapshotRepository {
                         fetched_at = VALUES(fetched_at),
                         updated_at = CURRENT_TIMESTAMP
                     """,
-                    SOURCE_CODE,
+                    sourceCode,
                     card.lotCode(),
                     normalizeIssue(card.issue()),
+                    card.upcomingIssue(),
                     card.name(),
                     timestamp(card.nextDrawAt()),
                     cardJson,
@@ -54,6 +64,10 @@ public class MobileDisplayLotterySnapshotRepository {
     }
 
     public List<String> findLatestCardJson() {
+        return findLatestCardJson(SOURCE_CODE);
+    }
+
+    public List<String> findLatestCardJson(String sourceCode) {
         return jdbcTemplate.query("""
                 SELECT card_json
                   FROM (
@@ -67,16 +81,20 @@ public class MobileDisplayLotterySnapshotRepository {
                        ) latest
                  WHERE row_number = 1
                  ORDER BY source_lot_code
-                """, (rs, rowNum) -> rs.getString("card_json"), SOURCE_CODE);
+                """, (rs, rowNum) -> rs.getString("card_json"), sourceCode);
     }
 
     public Optional<Instant> findLatestFetchedAt() {
+        return findLatestFetchedAt(SOURCE_CODE);
+    }
+
+    public Optional<Instant> findLatestFetchedAt(String sourceCode) {
         return jdbcTemplate.query("""
                 SELECT MAX(fetched_at) AS fetched_at
                   FROM mobile_display_lottery_snapshot
                  WHERE source_code = ?
                 """, rs -> rs.next() ? Optional.ofNullable(instant(rs.getTimestamp("fetched_at"))) : Optional.empty(),
-                SOURCE_CODE);
+                sourceCode);
     }
 
     private static String normalizeIssue(String issue) {

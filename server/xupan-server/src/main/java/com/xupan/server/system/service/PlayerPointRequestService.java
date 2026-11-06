@@ -146,11 +146,13 @@ public class PlayerPointRequestService {
     private AgentConsoleService.ScoreChange approveTopUp(PlayerPointRequestRepository.Request request,
                                                         PlayerDeskScopeService.Scope scope, long operatorUserId,
                                                         String idempotencyKey) {
-        return scope instanceof PlayerDeskScopeService.Scope.Machine
-                ? agentConsoleService.changeScore(operatorUserId, request.userId(),
-                        "TOP_UP", request.amount(), idempotencyKey)
-                : agentConsoleService.changeScoreForAgent(operatorUserId, ownerMachineId(request.userId()),
-                        request.userId(), "TOP_UP", request.amount(), idempotencyKey);
+        if (scope instanceof PlayerDeskScopeService.Scope.Machine machine) {
+            return agentConsoleService.changeScoreForAgent(operatorUserId, machine.agentId(),
+                    request.userId(), "TOP_UP", request.amount(), idempotencyKey,
+                    AgentLedgerService.INSUFFICIENT_MACHINE_SCORE_MESSAGE);
+        }
+        return agentConsoleService.changeScoreForAgent(operatorUserId, ownerMachineId(request.userId()),
+                request.userId(), "TOP_UP", request.amount(), idempotencyKey);
     }
 
     /**

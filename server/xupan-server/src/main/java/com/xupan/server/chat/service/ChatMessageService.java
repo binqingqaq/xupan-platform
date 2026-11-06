@@ -568,37 +568,57 @@ public class ChatMessageService {
                 .or(() -> gameDataRepository.findLatestIssue())
                 .map(GameDataRepository.IssueRecord::ballCount)
                 .orElse(8);
-        List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues("AU8", 15).stream()
-                .filter(issue -> issue.ballCount() == activeBallCount
-                        && issue.numbers().size() == activeBallCount)
-                .toList();
-        List<GameDataRepository.IssueRecord> routes = gameDataRepository.findLatestSettledBlock("AU8", 60).stream()
-                .filter(issue -> issue.ballCount() == activeBallCount
-                        && issue.numbers().size() == activeBallCount)
-                .toList();
-        String component = RobotDrawComponent.DRAW_HISTORY.name();
+        List<GameDataRepository.IssueRecord> routes = gameDataRepository
+                .findLatestSettledBlock("AU8", activeBallCount, 60);
         String feedbackType = trend ? "TREND" : "HISTORY";
         String queryIssue = issueNumber == null || issueNumber.isBlank() ? "UNKNOWN" : issueNumber;
         try {
-            String payload = objectMapper.writeValueAsString(new StructuredRobotDrawPayload(
-                    "xupan.chat-payload.v1", component, queryIssue,
-                    new RobotDrawHistoryData(issues.stream().map(issue -> new RobotDrawHistoryItem(
-                            issue.issueNumber(), issue.numbers(), issue.settledAt().toString())).toList(),
-                            routes.stream().map(issue -> new RobotDrawHistoryItem(
-                                    issue.issueNumber(), issue.numbers(), issue.settledAt().toString())).toList())));
             ChatRobot robot = robotRepository.findByCode(FEEDBACK_ROBOT_CODE)
                     .orElseThrow(() -> new IllegalStateException("反馈机器人未配置"));
             long agentId = messageRepository.findMachineAgentId(sourceMessageId)
                     .orElseThrow(() -> new IllegalStateException("查询反馈来源消息缺少机器归属"));
-            String content = issues.isEmpty() ? "@" + displayName + "，暂无已开奖历史。"
-                    : "@" + displayName + "，" + (trend ? "近期开奖走势" : "最近开奖历史") + "。";
             String key = feedbackIdempotencyKey(roomCode, sourceMessageId,
                     clientMessageId + "-" + feedbackType);
+            if (!trend) {
+                publishRobotMessage(robot.id(), robot.displayName(), roomCode, queryIssue, key,
+                        historyRouteText(routes, activeBallCount), "{}",
+                        ChatMessageVisibility.MACHINE, agentId, now);
+                return;
+            }
+
+            List<GameDataRepository.IssueRecord> issues = gameDataRepository.findSettledIssues("AU8", 15).stream()
+                    .filter(issue -> issue.ballCount() == activeBallCount
+                            && issue.numbers().size() == activeBallCount)
+                    .toList();
+            String payload = objectMapper.writeValueAsString(new StructuredRobotDrawPayload(
+                    "xupan.chat-payload.v1", RobotDrawComponent.DRAW_HISTORY.name(), queryIssue,
+                    new RobotDrawHistoryData(issues.stream().map(issue -> new RobotDrawHistoryItem(
+                            issue.issueNumber(), issue.numbers(), issue.settledAt().toString())).toList(),
+                            routes.stream().map(issue -> new RobotDrawHistoryItem(
+                                    issue.issueNumber(), issue.numbers(), issue.settledAt().toString())).toList())));
+            String content = issues.isEmpty() ? "@" + displayName + "，暂无已开奖历史。"
+                    : "@" + displayName + "，近期开奖走势。";
             publishRobotMessage(robot.id(), robot.displayName(), roomCode, queryIssue, key,
                     content, payload, ChatMessageVisibility.MACHINE, agentId, now);
         } catch (JacksonException exception) {
             throw new IllegalStateException("生成机器人查询卡片失败", exception);
         }
+    }
+
+    private static String historyRouteText(List<GameDataRepository.IssueRecord> routes, int ballCount) {
+        StringBuilder content = new StringBuilder("历史参考:\n");
+        for (int row = 0; row < 5; row++) {
+            for (int column = 0; column < 12; column++) {
+                if (column > 0) content.append(" - ");
+                int index = row * 12 + column;
+                if (index < routes.size()) {
+                    int number = routes.get(index).numbers().get(ballCount - 1);
+                    content.append(number % 4 == 0 ? 4 : number % 4);
+                }
+            }
+            if (row < 4) content.append('\n');
+        }
+        return content.toString();
     }
 
     /** Adds the approval message intent to the same transaction as the request and wallet changes. */
@@ -908,6 +928,12 @@ public class ChatMessageService {
 
     @Transactional
     public void enqueueSettlementFeedback(BetSettlementCompletedEvent event) {
+        if (event != null) {
+            switch (event.status()) {
+                case WIN, DRAW, LOSE -> { return; }
+                default -> { }
+            }
+        }
         if (event == null || walletService == null || noticeIntentService == null) {
             throw new IllegalArgumentException("结算反馈参数或服务未配置");
         }
