@@ -324,9 +324,12 @@ function ledgerGroupChangeSummary(group: CenterLedgerGroup) {
   return `${money(group.balanceBefore)} → ${money(group.balanceAfter)} · ${group.reason ?? '—'}`
 }
 
-function onLedgerGroupExpand(group: CenterLedgerGroup, expandedRows: CenterLedgerGroup[]) {
+function onLedgerGroupExpand(group: CenterLedgerGroup, expanded: CenterLedgerGroup[] | boolean) {
   const key = ledgerGroupKey(group)
-  if (expandedRows.some(row => ledgerGroupKey(row) === key)
+  const isExpanded = Array.isArray(expanded)
+    ? expanded.some(row => ledgerGroupKey(row) === key)
+    : expanded
+  if (isExpanded
       && !expandedLedgerEntries.value[key] && !ledgerEntryLoading.value[key]) {
     void loadLedgerGroupEntries(group)
   }
