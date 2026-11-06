@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "predev": "node scripts/build-hby019-account-panel.mjs",
-    "build": "vite build",
+    "build": "vite build && node scripts/build-mobile-display-page.mjs",
     "prebuild": "node scripts/build-hby019-account-panel.mjs",
     "demo:hby019:rebuild": "node scripts/rebuild-hby019-demo.mjs",
     "test": "vitest",
@@ -23,6 +23,7 @@
   "devDependencies": {
     "@types/node": "^26.5.1",
     "@vitejs/plugin-vue": "^5.2.1",
+    "esbuild": "0.25.12",
     "jsdom": "^29.1.1",
     "typescript": "^5.7.2",
     "unplugin-vue-components": "^32.1.0",
