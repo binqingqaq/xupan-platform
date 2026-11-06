@@ -142,9 +142,12 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     // 当前产品要求开奖历史、玩法统计、报表统计连续排列；「中心上游」是 xupan 自有菜单（BY220 无）。
     expect(labels).toEqual([
       '开奖信息', '子账号', '机器管理', '开奖历史', '玩法统计', '报表统计',
-      '未结订单', '订单改单', '在线玩家', '设置', '中心上游',
-      '网盘设置', '游戏设置', '修改密码',
+      '在线玩家', '设置', '中心上游', '修改密码',
     ])
+    expect(labels).not.toContain('未结订单')
+    expect(labels).not.toContain('订单改单')
+    expect(labels).not.toContain('网盘设置')
+    expect(labels).not.toContain('游戏设置')
   })
 
   it('子账号只看到 BY220 允许的项，且没有「玩家工作台」', async () => {

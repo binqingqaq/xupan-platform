@@ -13,7 +13,8 @@ const router = useRouter()
  *
  * 依据 BY220 `application/admin/view/public/head.html` 的顶部菜单：
  * `{if $Think.session.user_uid == '1'}` 只包住「未结订单 / 订单改单 / 在线玩家 / 设置 / 网盘设置 / 游戏设置」
- * （BY220 第 180-189 行），所以这 6 项只有超级管理员可见；
+ * （BY220 第 180-189 行）。其中未结订单、订单改单、网盘设置、游戏设置已按产品要求从导航移除；
+ * 在线玩家和设置仍只有超级管理员可见；
  * 「开奖信息 / 子账号 / 机器管理 / 报表统计 / 开奖历史 / 修改密码 / 安全退出」子账号同样可见。
  * 「中心上游」是 xupan 自有菜单（BY220 无），按超管能力处理：仅管理员可见。
  *
@@ -49,20 +50,12 @@ const items: PlatformAdminNavItem[] = [
   { label: '玩法统计', to: '/platform-admin/betting-play-stats', permission: 'BETTING_PLAY_STATS_READ' },
   // BY220 head.html：第 178 行，不在 {if user_uid==1} 内 → 子账号可见
   { label: '报表统计', to: '/platform-admin/reports', permission: 'REPORT_READ' },
-  // BY220 head.html：第 181 行，在 {if user_uid==1} 内 → 仅超级管理员可见
-  { label: '未结订单', to: '/platform-admin/unsettled-orders', permission: 'UNSETTLED_ORDER_READ' },
-  // BY220 head.html：第 183 行，在 {if user_uid==1} 内 → 仅超级管理员可见
-  { label: '订单改单', to: '/platform-admin/order-corrections', permission: 'ORDER_CORRECTION_READ' },
   // BY220 head.html：第 184 行，在 {if user_uid==1} 内 → 仅超级管理员可见
   { label: '在线玩家', to: '/platform-admin/online-players', permission: 'ONLINE_PLAYER_READ' },
   // BY220 head.html：第 186 行，在 {if user_uid==1} 内 → 仅超级管理员可见
   { label: '设置', to: '/platform-admin/settings', permission: 'PLATFORM_SETTINGS_READ' },
   // BY220 无此菜单（xupan 自有「中心上游」）；按 BY220 对上级盘口配置的管理员能力处理 → 仅超级管理员可见
   { label: '中心上游', to: '/platform-admin/center', permission: 'CENTER_AGENT_MANAGE' },
-  // BY220 head.html：第 187 行，在 {if user_uid==1} 内 → 仅超级管理员可见
-  { label: '网盘设置', to: '/platform-admin/report-networks', permission: 'REPORT_NETWORK_READ' },
-  // BY220 head.html：第 188 行，在 {if user_uid==1} 内 → 仅超级管理员可见
-  { label: '游戏设置', to: '/platform-admin/games', permission: 'GAME_SETTINGS_READ' },
   // BY220 head.html：第 190 行，不在 {if user_uid==1} 内 → 子账号可见
   { label: '修改密码', to: '/platform-admin/password', permission: 'PLATFORM_PASSWORD_MANAGE' },
 ]
