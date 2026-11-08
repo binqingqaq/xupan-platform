@@ -146,6 +146,28 @@ describe('platform admin sub accounts', () => {
     expect(api.changeSubAccountStatus).toHaveBeenCalledWith(3, 'ACTIVE')
   })
 
+  it('renders every account field and existing actions in the mobile card', async () => {
+    vi.mocked(api.listSubAccounts).mockResolvedValue([
+      subAccount({ id: 4, username: 'mobile-sub', expiresAt: '2026-12-31T00:00:00Z', machineCount: 3, subAccountManage: true }),
+    ] as never)
+    await mountSubAccounts()
+
+    const card = container?.querySelector<HTMLElement>('.mobile-account-card')
+    expect(card?.textContent).toContain('mobile-sub')
+    expect(card?.textContent).toContain('积分')
+    expect(card?.textContent).toContain('失效日期')
+    expect(card?.textContent).toContain('机器数量')
+    expect(card?.textContent).toContain('子账号权限')
+    expect(card?.textContent).toContain('机器人权限')
+    expect(card?.textContent).toContain('编辑')
+    expect(card?.textContent).toContain('停用')
+    expect(card?.textContent).toContain('删除')
+
+    card?.querySelectorAll<HTMLButtonElement>('button')[1]?.click()
+    await settle()
+    expect(api.changeSubAccountStatus).toHaveBeenCalledWith(4, 'DISABLED')
+  })
+
   /**
    * BY220 `sub/form.html`：编辑态「积分」是 `readonly` 只读，改分只能走「上分」「下分」，
    * 另有「在线/下线」开关（`x_admin.online`）。只读积分绝不能再作为变更提交。

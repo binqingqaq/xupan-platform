@@ -194,5 +194,7 @@ describe('NotFoundView 与兜底路由', () => {
     expect(routerSource).toContain("const originalPath = typeof to.query.path === 'string' ? to.query.path : ''")
     expect(routerSource).toContain('setViewportForRoute(to.path, originalPath)')
     expect(routerSource).toContain("document.body.classList.toggle('ops-console-body', isConsolePath &&")
+    expect(routerSource).toContain(": isPlatformAdmin ? 'width=device-width, initial-scale=1.0'")
+    expect(routerSource).toContain(": isAdminRoute(effectivePath) ? 'width=1000, user-scalable=yes'")
   })
 })

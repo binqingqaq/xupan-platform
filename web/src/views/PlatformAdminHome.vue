@@ -149,4 +149,15 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .platform-admin-route-color.fan-4 { background: #e21919; }
 .platform-admin-route-color { display: grid; width: 28px; height: 28px; place-items: center; margin: auto; border-radius: 2px; color: #fff; font-weight: 700; }
 .platform-admin-alert { margin: 10px; }
+@media (max-width: 767px) {
+  .platform-admin-content { padding: 14px 12px; }
+  .platform-admin-draw-card { gap: 10px; padding: 12px; }
+  .platform-admin-draw-card header { align-items: flex-start; flex-wrap: wrap; gap: 6px 12px; }
+  .platform-admin-draw-card h2 { font-size: 18px; }
+  .platform-admin-draw-card header strong { font-size: 18px; overflow-wrap: anywhere; }
+  .platform-admin-draw-meta { align-items: flex-start; flex-wrap: wrap; }
+  .platform-admin-ball-row { gap: 6px; }
+  .platform-admin-ball { width: 36px; height: 36px; font-size: 16px; }
+  .platform-admin-route-color { width: 24px; height: 24px; }
+}
 </style>

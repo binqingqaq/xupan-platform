@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { SwitchButton, UserFilled } from '@element-plus/icons-vue'
+import { Menu, SwitchButton, UserFilled } from '@element-plus/icons-vue'
 import { api } from '../../api'
 
 const props = defineProps<{ displayName?: string }>()
@@ -68,7 +68,9 @@ function isItemVisible(item: PlatformAdminNavItem): boolean {
 
 const visibleItems = computed(() => items.filter(isItemVisible))
 const activePath = computed(() => route.path)
+const activeLabel = computed(() => visibleItems.value.find(item => item.to === route.path)?.label ?? '管理后台')
 const accountName = ref('')
+const mobileMenuOpen = ref(false)
 /**
  * BY220 `public/head.html:192` 顶部欢迎语：
  * `{if $Think.session.user_uid != '1'}&nbsp;&nbsp;&nbsp;&nbsp;可用积分：<span>{:sprintf('%.0f', x_admin.score)}</span>{else/}，<span>超级管理员</span>{/if}`
@@ -92,42 +94,75 @@ async function logout() {
 }
 
 function navigateTo(path: string) {
+  mobileMenuOpen.value = false
   if (path !== route.path) void router.push(path)
 }
 </script>
 
 <template>
   <nav class="platform-admin-nav" aria-label="超级管理菜单">
-    <el-menu
+    <div class="platform-admin-desktop-nav">
+      <el-menu
       class="platform-admin-menu"
       mode="horizontal"
       :default-active="activePath"
       :ellipsis="true"
       @select="navigateTo"
-    >
-      <el-menu-item v-for="item in visibleItems" :key="item.label" :index="item.to">{{ item.label }}</el-menu-item>
-    </el-menu>
-    <div class="platform-admin-account">
-      <span class="platform-admin-welcome"><el-icon><UserFilled /></el-icon>{{ welcomeText }}</span>
-      <el-button class="platform-admin-logout" text @click="logout"><el-icon><SwitchButton /></el-icon>安全退出</el-button>
+      >
+        <el-menu-item v-for="item in visibleItems" :key="item.label" :index="item.to">{{ item.label }}</el-menu-item>
+      </el-menu>
+      <div class="platform-admin-account">
+        <span class="platform-admin-welcome"><el-icon><UserFilled /></el-icon>{{ welcomeText }}</span>
+        <el-button class="platform-admin-logout" text @click="logout"><el-icon><SwitchButton /></el-icon>安全退出</el-button>
+      </div>
     </div>
+
+    <div class="platform-admin-mobile-nav">
+      <el-button class="platform-admin-mobile-menu-button" aria-label="打开管理菜单" @click="mobileMenuOpen = true">
+        <el-icon><Menu /></el-icon><span>菜单</span>
+      </el-button>
+      <strong class="platform-admin-mobile-title">{{ activeLabel }}</strong>
+      <el-button class="platform-admin-mobile-logout" text @click="logout">安全退出</el-button>
+    </div>
+
+    <el-drawer v-model="mobileMenuOpen" title="管理菜单" direction="ltr" size="min(88vw, 340px)" modal-class="platform-admin-mobile-drawer" :teleported="false">
+      <div class="platform-admin-mobile-profile">
+        <el-icon><UserFilled /></el-icon>
+        <span>{{ welcomeText }}</span>
+      </div>
+      <el-menu class="platform-admin-mobile-menu" :default-active="activePath" @select="navigateTo">
+        <el-menu-item v-for="item in visibleItems" :key="item.label" :index="item.to">{{ item.label }}</el-menu-item>
+      </el-menu>
+    </el-drawer>
   </nav>
 </template>
 
 <style scoped>
-.platform-admin-nav { display: flex; min-height: 50px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; border-bottom: 1px solid var(--el-border-color-light); background: #fff; }
+.platform-admin-nav { display: flex; min-height: 50px; align-items: center; border-bottom: 1px solid var(--el-border-color-light); background: #fff; }
+.platform-admin-desktop-nav { display: flex; width: 100%; min-height: 50px; align-items: center; justify-content: space-between; gap: 12px; padding: 0 18px; }
 .platform-admin-menu { min-width: 0; flex: 1; border-bottom: 0; }
 .platform-admin-menu :deep(.el-menu-item) { padding: 0 12px; font-size: 16px; }
 .platform-admin-menu :deep(.el-menu-item.is-active) { border-bottom: 3px solid #3A918A; }
+.platform-admin-mobile-nav { display: none; }
 .platform-admin-account { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; }
 .platform-admin-welcome { display: inline-flex; align-items: center; gap: 6px; color: var(--el-text-color-secondary); font-size: 15px; white-space: nowrap; }
 .platform-admin-logout { color: var(--el-color-danger); }
 .platform-admin-logout :deep(.el-icon) { margin-right: 4px; }
-@media (max-width: 900px) {
-  .platform-admin-nav { align-items: flex-start; flex-direction: column; gap: 2px; padding: 4px 10px 8px; }
+@media (min-width: 768px) and (max-width: 900px) {
+  .platform-admin-desktop-nav { align-items: flex-start; flex-direction: column; gap: 2px; padding: 4px 10px 8px; }
   .platform-admin-menu { width: 100%; }
   .platform-admin-account { min-height: 34px; justify-content: flex-end; }
   .platform-admin-welcome { white-space: normal; text-align: right; }
+}
+@media (max-width: 767px) {
+  .platform-admin-mobile-nav { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; width: 100%; min-height: 58px; align-items: center; gap: 8px; padding: 6px 10px; }
+  .platform-admin-mobile-menu-button { min-height: 44px; gap: 5px; padding: 0 8px; }
+  .platform-admin-mobile-title { overflow: hidden; color: var(--el-text-color-primary); font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
+  .platform-admin-mobile-logout { min-height: 44px; padding: 0 4px; color: var(--el-color-danger); }
+  .platform-admin-mobile-profile { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; padding: 10px 12px; border-radius: 4px; background: #f3f6f7; color: var(--el-text-color-secondary); }
+  .platform-admin-mobile-profile span { overflow-wrap: anywhere; }
+  .platform-admin-mobile-menu { border-right: 0; }
+  .platform-admin-mobile-menu :deep(.el-menu-item) { min-height: 48px; }
 }
 </style>
 

@@ -330,4 +330,11 @@ onBeforeUnmount(() => {
 .permission-note, .preset-validation { color: #8a6d3b; font-size: 12px; }
 @media (max-width: 1100px) { .ball-grid { grid-template-columns: repeat(4, minmax(115px, 1fr)); } }
 @media (max-width: 680px) { .content { padding: 14px; } .issue-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ball-grid { grid-template-columns: repeat(7, 122px); overflow-x: auto; padding-bottom: 4px; } .ball-card { min-height: 142px; } .section-heading { align-items: flex-start; flex-direction: row; } .ranking-head, .play-rank-row { grid-template-columns: minmax(100px, 1fr) minmax(58px, .8fr) 48px 78px; column-gap: 7px; padding-right: 8px; padding-left: 8px; } .rank-play-name { gap: 5px; } .rank-number { width: 18px; flex-basis: 18px; } .rank-play-name strong, .rank-order-count, .rank-stake { font-size: 12px; } .preset-section { align-items: center; } .preset-heading { flex-basis: 100%; } }
+@media (max-width: 767px) {
+  .content { min-width: 0; padding: 14px 12px; }
+  .page-heading { flex-wrap: wrap; }
+  .header-actions { justify-content: flex-start; }
+  .ball-grid { max-width: 100%; }
+  .preset-field { flex-wrap: wrap; }
+}
 </style>

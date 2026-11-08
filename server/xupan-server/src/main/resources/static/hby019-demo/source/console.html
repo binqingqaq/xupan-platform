@@ -5179,6 +5179,26 @@
             }
         </script>
 
+        <script id="console-overview-fit">
+            (function() {
+                var overviewWidth = 920;
+
+                function fitConsoleOverview() {
+                    var viewportWidth = window.parent !== window
+                        ? window.parent.document.documentElement.clientWidth
+                        : document.documentElement.clientWidth;
+                    if (!viewportWidth) return;
+                    document.documentElement.style.zoom = Math.min(1, viewportWidth / overviewWidth);
+                }
+
+                fitConsoleOverview();
+                window.addEventListener('resize', fitConsoleOverview);
+                if (window.parent !== window) {
+                    window.parent.addEventListener('resize', fitConsoleOverview);
+                }
+            })();
+        </script>
+
     </body>
 </html>
 

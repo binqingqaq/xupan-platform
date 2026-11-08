@@ -144,7 +144,7 @@ onMounted(() => { void load() })
     <section class="platform-admin-content">
       <header class="page-heading"><div><h1>子账号</h1></div><el-button type="primary" @click="openCreate">添加子账号</el-button></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-table scrollbar-always-on v-loading="loading" :data="accounts" row-key="id" border stripe class="accounts-table">
+      <el-table scrollbar-always-on v-loading="loading" :data="accounts" row-key="id" border stripe class="accounts-table desktop-accounts-table">
         <el-table-column prop="username" label="用户名" min-width="120"><template #default="{ row }">{{ row.username || '未设置' }}</template></el-table-column>
         <el-table-column label="失效日期" min-width="165"><template #default="{ row }">{{ formatTime(row.expiresAt) }}</template></el-table-column>
         <el-table-column label="积分" width="100" align="right"><template #default="{ row }">{{ row.score.toFixed(2) }}</template></el-table-column>
@@ -155,6 +155,29 @@ onMounted(() => { void load() })
         <el-table-column label="操作" fixed="right" width="244"><template #default="{ row }"><div class="actions"><el-button link type="primary" @click="openEdit(row as SubAccount)">编辑</el-button><el-button v-if="isLocked(row as SubAccount)" link type="warning" @click="unlock(row as SubAccount)">解锁</el-button><el-button v-else link type="primary" @click="toggle(row as SubAccount)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button><el-button link type="danger" @click="remove(row as SubAccount)">删除</el-button></div></template></el-table-column>
         <template #empty><el-empty description="暂无子账号" /></template>
       </el-table>
+
+      <div v-if="accounts.length" v-loading="loading" class="mobile-account-list" aria-label="子账号列表">
+        <article v-for="row in accounts" :key="row.id" class="mobile-account-card">
+          <header class="mobile-account-card-heading">
+            <strong>{{ row.username || '未设置' }}</strong>
+            <el-tag :type="isLocked(row) ? 'danger' : row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ statusText(row) }}</el-tag>
+          </header>
+          <dl class="mobile-account-facts">
+            <div><dt>积分</dt><dd>{{ row.score.toFixed(2) }}</dd></div>
+            <div><dt>失效日期</dt><dd>{{ formatTime(row.expiresAt) }}</dd></div>
+            <div><dt>机器数量</dt><dd>{{ row.machineCount }}</dd></div>
+            <div><dt>子账号权限</dt><dd>{{ row.subAccountManage ? '开通' : '关闭' }}</dd></div>
+            <div><dt>机器人权限</dt><dd>{{ row.machineManage ? '开通' : '关闭' }}</dd></div>
+          </dl>
+          <div class="mobile-account-actions" :aria-label="`${row.username} 操作`">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="isLocked(row)" link type="warning" @click="unlock(row)">解锁</el-button>
+            <el-button v-else link type="primary" @click="toggle(row)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
+            <el-button link type="danger" @click="remove(row)">删除</el-button>
+          </div>
+        </article>
+      </div>
+      <el-empty v-else-if="!loading" description="暂无子账号" class="mobile-account-empty" />
     </section>
     <el-dialog v-model="formOpen" :title="editingId ? '编辑子账号' : '添加子账号'" width="min(760px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
       <el-form class="form-grid" label-position="top" @submit.prevent="submit">
@@ -179,9 +202,26 @@ onMounted(() => { void load() })
 .page-heading h1 { margin: 0; font-size: 26px; }
 .page-alert { margin-bottom: 12px; }
 .accounts-table { width: 100%; }
+.mobile-account-list, .mobile-account-empty { display: none; }
 .actions { display: flex; align-items: center; justify-content: center; gap: 4px; white-space: nowrap; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; }
 .full-width { width: 100%; }
 .dialog-footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
-@media (max-width: 760px) { .platform-admin-content { padding: 12px; } .form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 767px) {
+  .platform-admin-content { padding: 14px 12px; }
+  .desktop-accounts-table { display: none; }
+  .mobile-account-list { display: grid; gap: 10px; min-height: 48px; }
+  .mobile-account-card { min-width: 0; padding: 12px; border: 1px solid #dfe5e9; border-radius: 4px; background: #fff; }
+  .mobile-account-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 32px; }
+  .mobile-account-card-heading strong { min-width: 0; overflow-wrap: anywhere; font-size: 16px; }
+  .mobile-account-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 12px 0; }
+  .mobile-account-facts > div { min-width: 0; }
+  .mobile-account-facts dt { color: var(--el-text-color-secondary); font-size: 12px; }
+  .mobile-account-facts dd { min-width: 0; margin: 2px 0 0; overflow-wrap: anywhere; font-size: 14px; }
+  .mobile-account-actions { display: flex; flex-wrap: wrap; gap: 4px 10px; border-top: 1px solid var(--el-border-color-lighter); padding-top: 6px; }
+  .mobile-account-actions .el-button { min-height: 44px; margin: 0; padding: 0 8px; }
+  .mobile-account-empty { display: block; }
+  .form-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .dialog-footer { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+}
 </style>

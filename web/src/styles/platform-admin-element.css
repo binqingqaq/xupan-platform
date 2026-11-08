@@ -95,3 +95,103 @@ body.platform-admin-body:not(.ops-console-body) {
   background: var(--el-dialog-bg-color);
 }
 
+@media (max-width: 767px) {
+  .platform-admin-page {
+    width: 100%;
+    min-width: 0;
+    overflow-x: clip;
+  }
+
+  .platform-admin-page .page-heading {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .platform-admin-page .page-heading h1,
+  .platform-admin-page .center-header h1 {
+    font-size: 22px;
+  }
+
+  .platform-admin-page .page-heading > :first-child {
+    min-width: 0;
+  }
+
+  .platform-admin-page .el-table {
+    max-width: 100%;
+  }
+
+  .platform-admin-page .el-table__inner-wrapper,
+  .platform-admin-page .el-table__header-wrapper,
+  .platform-admin-page .el-table__body-wrapper {
+    max-width: 100%;
+  }
+
+  .platform-admin-page .el-form--inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 10px;
+  }
+
+  .platform-admin-page .el-form--inline .el-form-item {
+    max-width: 100%;
+    margin-right: 0;
+  }
+
+  .platform-admin-page .el-form--inline .el-input,
+  .platform-admin-page .el-form--inline .el-select,
+  .platform-admin-page .el-form--inline .el-date-editor {
+    max-width: 100%;
+  }
+
+  .platform-admin-page .heading-actions,
+  .platform-admin-page .header-actions,
+  .platform-admin-page .form-actions,
+  .platform-admin-page .table-footer,
+  .platform-admin-page .history-pagination,
+  .platform-admin-page .bets-pagination,
+  .platform-admin-page .score-flow-pagination,
+  .platform-admin-page .center-list-pagination {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .platform-admin-page .el-pagination {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .platform-admin-page .el-popper {
+    max-width: calc(100vw - 16px);
+  }
+
+  .platform-admin-dialog-overlay .el-dialog {
+    width: 100vw !important;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    margin: 0 !important;
+    border-radius: 0;
+  }
+
+  .platform-admin-dialog-overlay .el-dialog__header {
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+
+  .platform-admin-dialog-overlay .el-dialog__body {
+    flex: 1 1 auto;
+    padding: 12px 16px;
+  }
+
+  .platform-admin-dialog-overlay .dialog-footer {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .platform-admin-body .el-message-box {
+    width: calc(100vw - 32px);
+    max-width: 420px;
+  }
+}
+

@@ -243,7 +243,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
     <section class="content">
       <header class="page-heading"><h1>机器管理</h1><el-button type="primary" @click="openCreate">添加机器</el-button></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-table scrollbar-always-on v-loading="loading" :data="machines" row-key="id" border stripe class="machines-table">
+      <el-table scrollbar-always-on v-loading="loading" :data="machines" row-key="id" border stripe class="machines-table desktop-machines-table">
         <el-table-column prop="accountUsername" label="账户" min-width="115" />
         <el-table-column label="密码" width="90">******</el-table-column>
         <el-table-column label="失效日期" min-width="155"><template #default="{ row }">{{ time(row.expiresAt) }}</template></el-table-column>
@@ -262,6 +262,58 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <el-table-column label="操作" fixed="right" width="310"><template #default="{ row }"><div class="actions"><el-button link type="primary" @click="openEdit(row as Machine)">编辑</el-button><el-button link type="primary" @click="showPlayers(row as Machine)">玩家</el-button><el-button link type="primary" class="copy-link-action" :icon="copiedMachineId === row.id ? Check : CopyDocument" :aria-label="copiedMachineId === row.id ? `${row.accountUsername} 登录地址已复制` : `复制 ${row.accountUsername} 登录地址`" :title="copiedMachineId === row.id ? '已复制登录地址' : '复制机器登录地址'" @click="copyMachineLoginLink(row as Machine)">{{ copiedMachineId === row.id ? '已复制' : '复制' }}</el-button><el-button v-if="isLocked(row as Machine)" link type="warning" @click="unlock(row as Machine)">解锁</el-button><el-button v-else link type="primary" @click="toggle(row as Machine)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button><el-button link type="danger" @click="remove(row as Machine)">删除</el-button></div></template></el-table-column>
         <template #empty><el-empty description="暂无机器" /></template>
       </el-table>
+
+      <div v-if="machines.length" v-loading="loading" class="mobile-machine-list" aria-label="机器账号列表">
+        <article v-for="row in machines" :key="row.id" class="mobile-machine-card">
+          <header class="mobile-machine-card-heading">
+            <strong>{{ row.accountUsername }}</strong>
+            <div class="mobile-machine-status">
+              <el-tag :type="isLocked(row) ? 'danger' : row.status === 'ACTIVE' ? 'success' : 'info'" effect="light">{{ statusText(row) }}</el-tag>
+              <span class="mobile-machine-betting"><span>下注开关</span><el-tag :type="row.manualBettingOpen ? 'success' : 'info'" effect="light">{{ row.manualBettingOpen ? '开盘' : '封盘' }}</el-tag></span>
+            </div>
+          </header>
+          <dl class="mobile-machine-summary">
+            <div><dt>子账号</dt><dd>{{ row.groupUsername || '未设置' }}</dd></div>
+            <div><dt>积分</dt><dd>{{ row.score.toFixed(0) }}</dd></div>
+            <div><dt>失效日期</dt><dd>{{ time(row.expiresAt) }}</dd></div>
+            <div><dt>玩家/托</dt><dd>{{ row.normalCount }} / {{ row.botCount }}</dd></div>
+          </dl>
+          <details class="mobile-machine-details">
+            <summary>查看机器配置</summary>
+            <dl class="mobile-machine-facts">
+              <div><dt>密码</dt><dd>******</dd></div>
+              <div><dt>托数量</dt><dd>{{ row.requestedBotCount }}</dd></div>
+              <div><dt>封盘</dt><dd>{{ row.closeSeconds }}</dd></div>
+              <div><dt>取消</dt><dd>{{ row.cancelSeconds }}</dd></div>
+              <div><dt>返水</dt><dd>{{ row.rebateRate }}</dd></div>
+              <div><dt>返水口径</dt><dd>{{ row.rebateMode === 'DOUBLE' ? '双边' : '单边' }}</dd></div>
+              <div><dt>赔率</dt><dd>{{ row.oddsRate }}</dd></div>
+              <div><dt>总限额</dt><dd>{{ row.totalLimit.toFixed(0) }}</dd></div>
+              <div><dt>正限额</dt><dd>{{ row.positiveLimit.toFixed(0) }}</dd></div>
+              <div><dt>角限额</dt><dd>{{ row.angleLimit.toFixed(0) }}</dd></div>
+              <div><dt>念限额</dt><dd>{{ row.strictLimit.toFixed(0) }}</dd></div>
+              <div><dt>通限额</dt><dd>{{ row.tongLimit.toFixed(0) }}</dd></div>
+              <div><dt>车限额</dt><dd>{{ row.carLimit.toFixed(0) }}</dd></div>
+              <div><dt>单码限额</dt><dd>{{ row.specialLimit.toFixed(0) }}</dd></div>
+              <div><dt>单双限额</dt><dd>{{ row.oddEvenLimit.toFixed(0) }}</dd></div>
+              <div><dt>大小限额</dt><dd>{{ row.bigSmallLimit.toFixed(0) }}</dd></div>
+              <div><dt>番限额</dt><dd>{{ row.fanLimit.toFixed(0) }}</dd></div>
+              <div><dt>加限额</dt><dd>{{ row.addLimit.toFixed(0) }}</dd></div>
+              <div><dt>玩家最高注额</dt><dd>{{ row.playerMaxStake.toFixed(0) }}</dd></div>
+              <div><dt>玩家最小注额</dt><dd>{{ row.playerMinStake.toFixed(0) }}</dd></div>
+            </dl>
+          </details>
+          <div class="mobile-machine-actions" :aria-label="`${row.accountUsername} 操作`">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="showPlayers(row)">玩家</el-button>
+            <el-button link type="primary" :icon="copiedMachineId === row.id ? Check : CopyDocument" :aria-label="copiedMachineId === row.id ? `${row.accountUsername} 登录地址已复制` : `复制 ${row.accountUsername} 登录地址`" @click="copyMachineLoginLink(row)">{{ copiedMachineId === row.id ? '已复制' : '复制链接' }}</el-button>
+            <el-button v-if="isLocked(row)" link type="warning" @click="unlock(row)">解锁</el-button>
+            <el-button v-else link type="primary" @click="toggle(row)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
+            <el-button link type="danger" @click="remove(row)">删除</el-button>
+          </div>
+        </article>
+      </div>
+      <el-empty v-else-if="!loading" description="暂无机器" class="mobile-machine-empty" />
     </section>
 
     <el-dialog v-model="formOpen" :title="editingId ? '编辑机器账号' : '添加机器账号'" width="min(960px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
@@ -308,7 +360,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
     </el-dialog>
 
     <el-dialog v-model="playersOpen" title="玩家列表" width="min(760px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
-      <el-table scrollbar-always-on :data="players" row-key="userId" border stripe>
+      <el-table scrollbar-always-on :data="players" row-key="userId" border stripe class="desktop-machine-players-table">
         <el-table-column prop="displayName" label="昵称" min-width="140" />
         <el-table-column prop="memberCode" label="会员编号" min-width="130" />
         <el-table-column prop="playerKind" label="类型" width="100" />
@@ -316,6 +368,17 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <el-table-column prop="accountStatus" label="状态" width="120" />
         <template #empty><el-empty description="暂无玩家" /></template>
       </el-table>
+      <div v-if="players.length" class="mobile-machine-player-list">
+        <article v-for="player in players" :key="player.userId" class="mobile-machine-player-card">
+          <strong>{{ player.displayName || '未设置昵称' }}</strong>
+          <dl class="mobile-machine-facts">
+            <div><dt>会员编号</dt><dd>{{ player.memberCode || '未设置' }}</dd></div>
+            <div><dt>类型</dt><dd>{{ player.playerKind }}</dd></div>
+            <div><dt>余额</dt><dd>{{ player.balance.toFixed(2) }}</dd></div>
+            <div><dt>状态</dt><dd>{{ player.accountStatus }}</dd></div>
+          </dl>
+        </article>
+      </div>
     </el-dialog>
 
     <el-dialog v-model="copyFallbackOpen" title="复制机器登录地址" width="min(560px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false">
@@ -332,6 +395,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .page-heading h1 { margin: 0; font-size: 26px; }
 .page-alert { margin-bottom: 12px; }
 .machines-table { width: 100%; }
+.mobile-machine-list, .mobile-machine-empty, .mobile-machine-player-list { display: none; }
 .actions { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
 .copy-link-action { min-width: 54px; justify-content: center; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; }
@@ -350,5 +414,31 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .games-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .dialog-footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
 @media (max-width: 900px) { .content { padding: 12px; } .form-grid:not(.machine-form-grid) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 600px) { .form-grid:not(.machine-form-grid) { grid-template-columns: 1fr; } .machine-form-grid { --el-form-label-font-size: 13px; } .span-all { grid-column: auto; } }
+@media (max-width: 767px) {
+  .content { padding: 14px 12px; }
+  .desktop-machines-table, .desktop-machine-players-table { display: none; }
+  .mobile-machine-list, .mobile-machine-player-list { display: grid; gap: 10px; min-height: 48px; }
+  .mobile-machine-card, .mobile-machine-player-card { min-width: 0; padding: 12px; border: 1px solid #dfe5e9; border-radius: 4px; background: #fff; }
+  .mobile-machine-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .mobile-machine-card-heading > strong, .mobile-machine-player-card > strong { min-width: 0; overflow-wrap: anywhere; font-size: 16px; }
+  .mobile-machine-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .mobile-machine-betting { display: inline-flex; align-items: center; gap: 4px; color: var(--el-text-color-secondary); font-size: 12px; }
+  .mobile-machine-summary, .mobile-machine-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 12px 0; }
+  .mobile-machine-summary > div, .mobile-machine-facts > div { min-width: 0; }
+  .mobile-machine-summary dt, .mobile-machine-facts dt { color: var(--el-text-color-secondary); font-size: 12px; }
+  .mobile-machine-summary dd, .mobile-machine-facts dd { min-width: 0; margin: 2px 0 0; overflow-wrap: anywhere; font-size: 14px; }
+  .mobile-machine-details { border-top: 1px solid var(--el-border-color-lighter); border-bottom: 1px solid var(--el-border-color-lighter); }
+  .mobile-machine-details summary { min-height: 44px; padding: 11px 2px; color: var(--el-color-primary); cursor: pointer; }
+  .mobile-machine-details[open] { padding-bottom: 4px; }
+  .mobile-machine-actions { display: flex; flex-wrap: wrap; gap: 2px 6px; padding-top: 6px; }
+  .mobile-machine-actions .el-button { min-height: 44px; margin: 0; padding: 0 7px; }
+  .mobile-machine-empty { display: block; }
+  .mobile-machine-player-list { display: grid; }
+  .machine-form-grid { --el-form-label-font-size: 14px; }
+  .machine-form-grid :deep(.el-form-item__label) { width: auto !important; }
+  .span-all { grid-column: auto; }
+  .dialog-footer { justify-content: stretch; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .dialog-footer .el-button { flex: 1 1 0; min-height: 44px; margin: 0; }
+}
+@media (max-width: 600px) { .form-grid:not(.machine-form-grid) { grid-template-columns: 1fr; } }
 </style>

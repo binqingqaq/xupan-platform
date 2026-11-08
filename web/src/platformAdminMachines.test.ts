@@ -359,6 +359,26 @@ describe('platform admin machines', () => {
     expect(api.changeMachineStatus).toHaveBeenCalledWith(5, 'ACTIVE')
   })
 
+  it('renders machine summary, configuration fields and actions in the mobile card', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([
+      machine({ id: 8, accountUsername: 'mobile-machine', groupUsername: 'sub001', totalLimit: 12345, manualBettingOpen: false }),
+    ] as never)
+    await mountMachines()
+
+    const card = container?.querySelector<HTMLElement>('.mobile-machine-card')
+    expect(card?.textContent).toContain('mobile-machine')
+    expect(card?.textContent).toContain('sub001')
+    expect(card?.textContent).toContain('下注开关')
+    expect(card?.textContent).toContain('玩家/托')
+    expect(card?.textContent).toContain('查看机器配置')
+    for (const label of ['封盘', '取消', '返水', '返水口径', '赔率', '总限额', '正限额', '单码限额', '玩家最高注额', '玩家最小注额']) {
+      expect(card?.textContent).toContain(label)
+    }
+    for (const label of ['编辑', '玩家', '复制链接', '停用', '删除']) {
+      expect(card?.textContent).toContain(label)
+    }
+  })
+
   it('copies the row machine username link using the current site origin', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')

@@ -37,7 +37,7 @@ function welcomeText() {
 }
 
 function navLabels() {
-  return Array.from(container?.querySelectorAll<HTMLAnchorElement>('.platform-admin-nav .el-menu-item') ?? [])
+  return Array.from(container?.querySelectorAll<HTMLAnchorElement>('.platform-admin-desktop-nav .el-menu-item') ?? [])
     .map(link => link.textContent?.trim() ?? '')
 }
 
@@ -207,6 +207,21 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     items.find(item => item.textContent?.trim() === '机器管理')!.click()
     await nextTick()
     expect(router.push).toHaveBeenCalledExactlyOnceWith('/platform-admin/machines')
+  })
+
+  it('手机菜单抽屉只渲染当前账号有权限的菜单项', async () => {
+    vi.mocked(api.me).mockResolvedValue(me({
+      permissions: ['PLATFORM_HOME_READ', 'MACHINE_MANAGE'],
+      roles: ['SUB_ACCOUNT'],
+    }))
+    await mountNav('子账号甲')
+    container!.querySelector<HTMLButtonElement>('.platform-admin-mobile-menu-button')?.click()
+    await nextTick()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await nextTick()
+    const labels = Array.from(container!.querySelectorAll<HTMLElement>('.platform-admin-mobile-menu .el-menu-item'))
+      .map(item => item.textContent?.trim())
+    expect(labels).toEqual(['开奖信息', '机器管理'])
   })
 
   it('安全退出调用原退出接口并回到平台登录页', async () => {

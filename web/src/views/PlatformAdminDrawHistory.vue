@@ -267,6 +267,16 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .history-pagination { display: flex; justify-content: flex-end; padding: 12px 4px; }
 .bets-pagination { display: flex; justify-content: flex-end; padding: 12px 4px 0; }
 .ball { min-width: 28px; justify-content: center; }
+@media (max-width: 767px) {
+  .content { gap: 10px; padding: 14px 12px; }
+  .filters { padding: 10px 12px 0; }
+  .filters .el-form-item { width: 100%; }
+  .filters .el-form-item__content,
+  .filters .el-input,
+  .filters .el-date-editor { width: 100%; }
+  .filters .el-button { min-height: 40px; }
+  .history-pagination, .bets-pagination { justify-content: flex-start; }
+}
 </style>
 
 
