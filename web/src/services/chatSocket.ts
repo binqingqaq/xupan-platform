@@ -96,6 +96,8 @@ function parseServerEvent(value: unknown): ChatServerEvent | null {
         displayName: value.message.displayName,
       }
     }
+    case 'player.page.refresh':
+      return { type: 'player.page.refresh' }
     case 'message.ack':
       return isString(value.clientMessageId) && isChatMessage(value.message) && typeof value.deduplicated === 'boolean'
         ? {
@@ -317,6 +319,9 @@ export class ChatSocket {
         return
       case 'robot.updated':
         this.handlers.onRobotUpdated?.(event)
+        return
+      case 'player.page.refresh':
+        this.handlers.onPlayerPageRefresh?.(event)
         return
       case 'cursor.ack':
         this.handlers.onCursorAck?.(event)

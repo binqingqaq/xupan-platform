@@ -28,11 +28,11 @@ const passwordTouched = ref(false)
 const passwordError = ref('')
 const currentUser = ref('超级管理员')
 const isScopedSubAccount = ref(false)
-const form = reactive<MachineInput>({ username: '', rawPassword: '', groupId: null, score: null, expiresAt: null, robotManage: true, chaseEnabled: true, botCount: 3, closeSeconds: 120, cancelSeconds: 30, rebateRate: 0, oddsRate: 95, specialRebateRate: 1, specialOddsRate: 18, rebateMode: 'SINGLE', totalLimit: 5000, positiveLimit: 20000, angleLimit: 1000, strictLimit: 20000, tongLimit: 20000, carLimit: 20000, specialLimit: 200, oddEvenLimit: 20000, bigSmallLimit: 20000, fanLimit: 20000, addLimit: 20000, playerMaxStake: 5000, playerMinStake: 1, games: ['AU8'] })
+const form = reactive<MachineInput>({ username: '', rawPassword: '', groupId: null, score: null, expiresAt: null, robotManage: true, chaseEnabled: true, au8BallMode: 'PLAYER_SELECT', au8FixedBallNumber: null, botCount: 3, closeSeconds: 120, cancelSeconds: 30, rebateRate: 0, oddsRate: 95, specialRebateRate: 1, specialOddsRate: 18, rebateMode: 'SINGLE', totalLimit: 5000, positiveLimit: 20000, angleLimit: 1000, strictLimit: 20000, tongLimit: 20000, carLimit: 20000, specialLimit: 200, oddEvenLimit: 20000, bigSmallLimit: 20000, fanLimit: 20000, addLimit: 20000, playerMaxStake: 5000, playerMinStake: 1, games: ['AU8'] })
 const selectedGroupId = ref<string | number | null>(null)
 watch(selectedGroupId, value => { form.groupId = value === null || value === '' ? null : Number(value) })
 async function load() { loading.value = true; error.value = ''; try { const user = await api.me(); currentUser.value = user.displayName || user.username; isScopedSubAccount.value = user.subAccountScore !== null && user.subAccountScore !== undefined; machines.value = await api.listMachines(); subAccounts.value = user.permissions.includes('SUB_ACCOUNT_MANAGE') ? await api.listSubAccounts() : [] } catch (cause) { error.value = apiErrorMessage(cause, '机器管理加载失败') } finally { loading.value = false } }
-function resetForm() { Object.assign(form, { username: '', rawPassword: '', groupId: null, score: null, expiresAt: null, robotManage: true, chaseEnabled: true, botCount: 3, closeSeconds: 120, cancelSeconds: 30, rebateRate: 0, oddsRate: 95, specialRebateRate: 1, specialOddsRate: 18, rebateMode: 'SINGLE', totalLimit: 5000, positiveLimit: 20000, angleLimit: 1000, strictLimit: 20000, tongLimit: 20000, carLimit: 20000, specialLimit: 200, oddEvenLimit: 20000, bigSmallLimit: 20000, fanLimit: 20000, addLimit: 20000, playerMaxStake: 5000, playerMinStake: 1, games: ['AU8'] }) }
+function resetForm() { Object.assign(form, { username: '', rawPassword: '', groupId: null, score: null, expiresAt: null, robotManage: true, chaseEnabled: true, au8BallMode: 'PLAYER_SELECT', au8FixedBallNumber: null, botCount: 3, closeSeconds: 120, cancelSeconds: 30, rebateRate: 0, oddsRate: 95, specialRebateRate: 1, specialOddsRate: 18, rebateMode: 'SINGLE', totalLimit: 5000, positiveLimit: 20000, angleLimit: 1000, strictLimit: 20000, tongLimit: 20000, carLimit: 20000, specialLimit: 200, oddEvenLimit: 20000, bigSmallLimit: 20000, fanLimit: 20000, addLimit: 20000, playerMaxStake: 5000, playerMinStake: 1, games: ['AU8'] }) }
 function openCreate() { editingId.value = null; editingConfigVersion.value = null; passwordTouched.value = false; passwordError.value = ''; resetForm(); selectedGroupId.value = null; formOpen.value = true }
 function openEdit(row: Machine) {
   editingId.value = row.id
@@ -64,6 +64,15 @@ function validatePassword(): string | null {
 }
 function updatePasswordError() {
   if (passwordTouched.value) passwordError.value = validatePassword() ?? ''
+}
+function setBallMode(mode: 'PLAYER_SELECT' | 'FIXED_BALL', checked: string | number | boolean) {
+  if (checked) {
+    form.au8BallMode = mode
+    if (mode === 'PLAYER_SELECT') form.au8FixedBallNumber = null
+  } else {
+    form.au8BallMode = mode === 'PLAYER_SELECT' ? 'FIXED_BALL' : 'PLAYER_SELECT'
+    if (form.au8BallMode === 'PLAYER_SELECT') form.au8FixedBallNumber = null
+  }
 }
 const machineParameterFields = [
   'rebateRate', 'oddsRate', 'specialRebateRate', 'specialOddsRate', 'totalLimit',
@@ -107,6 +116,11 @@ async function submit() {
     return
   }
   if (editingId.value) {
+    if (form.au8BallMode === 'FIXED_BALL'
+        && (!Number.isInteger(form.au8FixedBallNumber) || form.au8FixedBallNumber! < 1 || form.au8FixedBallNumber! > 7)) {
+      adminNotice.error('固定球位必须选择第 1 至第 7 球')
+      return
+    }
     const validationError = validateMachineParameters()
     if (validationError) {
       adminNotice.error(validationError)
@@ -129,6 +143,8 @@ async function submit() {
       for (const field of machineParameterFields) delete createPayload[field]
       delete createPayload.games
       delete createPayload.rebateMode
+      delete createPayload.au8BallMode
+      delete createPayload.au8FixedBallNumber
       await api.createMachine(createPayload as unknown as MachineInput)
     }
     adminNotice.success(editingId.value ? '机器账号已更新' : '机器账号已创建')
@@ -255,6 +271,13 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <el-form-item label="积分"><el-input-number v-model="form.score" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" placeholder="请输入初始积分" /></el-form-item>
         <el-form-item label="失效时间"><div class="machine-field"><el-date-picker v-model="form.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" :disabled-date="(date: Date) => date.getTime() > Date.parse('2038-01-18T00:00')" class="full-width" /><span v-if="!editingId" class="machine-expiry-hint">留空时默认 7 天有效</span></div></el-form-item>
         <el-form-item label="所属子账号" :required="!editingId && !isScopedSubAccount"><el-select v-model="selectedGroupId" :clearable="Boolean(editingId)" :disabled="isScopedSubAccount" class="full-width" :placeholder="isScopedSubAccount ? '自动归属当前子账号' : editingId ? '未设置' : '请选择所属子账号'"><el-option v-for="group in subAccounts" :key="group.id" :label="group.username ?? '未设置'" :value="group.id" /></el-select></el-form-item>
+        <el-form-item v-if="editingId" label="AU8 玩家球位">
+          <div class="ball-mode-fields">
+            <div class="ball-mode-choice"><el-switch :model-value="form.au8BallMode === 'PLAYER_SELECT'" active-text="默认" @change="setBallMode('PLAYER_SELECT', $event)" /><span>玩家自行选择球位</span></div>
+            <div class="ball-mode-choice"><el-switch :model-value="form.au8BallMode === 'FIXED_BALL'" active-text="固定球位" @change="setBallMode('FIXED_BALL', $event)" /><span v-if="form.au8BallMode === 'FIXED_BALL'" class="fixed-ball-select"><el-select v-model="form.au8FixedBallNumber" placeholder="选择球位" aria-label="固定球位"><el-option v-for="ballNumber in 7" :key="ballNumber" :label="`第 ${ballNumber} 球`" :value="ballNumber" /></el-select></span></div>
+            <span class="ball-mode-hint">只能使用一种模式；固定模式仅影响该机器玩家后续 AU8 下注。</span>
+          </div>
+        </el-form-item>
         <el-form-item label="托数量"><el-input-number v-model="form.botCount" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" placeholder="请输入托数量" /></el-form-item>
         <el-form-item v-if="editingId" label="封盘秒数"><el-input-number v-model="form.closeSeconds" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" /></el-form-item>
         <el-form-item v-if="editingId" label="取消秒数"><el-input-number v-model="form.cancelSeconds" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" /></el-form-item>
@@ -318,6 +341,10 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .span-all { grid-column: 1 / -1; }
 .full-width { width: 100%; }
 .machine-field { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.ball-mode-fields { display: grid; gap: 8px; width: 100%; }
+.ball-mode-choice { display: flex; align-items: center; gap: 12px; min-height: 32px; color: #475569; }
+.fixed-ball-select { display: inline-flex; width: min(240px, 100%); }
+.ball-mode-hint { color: #7b8491; font-size: 12px; line-height: 1.4; }
 .machine-password-hint { color: #7b8491; font-size: 12px; line-height: 1.4; }
 .machine-expiry-hint { color: #7b8491; font-size: 12px; line-height: 1.4; }
 .games-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }

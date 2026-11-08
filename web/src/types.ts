@@ -830,6 +830,10 @@ export interface GameCatalogItem {
 
 export interface GameView {
   gameCode: string
+  /** AU8 玩家球位模式；非 AU8 响应可省略。 */
+  au8BallMode?: 'PLAYER_SELECT' | 'FIXED_BALL'
+  /** AU8 固定球位模式指定的 1–7 球位。 */
+  au8FixedBallNumber?: number | null
   issueNumber: string
   ballCount?: number
   status: 'OPEN' | 'CLOSED'

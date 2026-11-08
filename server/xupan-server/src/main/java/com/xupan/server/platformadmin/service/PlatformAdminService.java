@@ -7,6 +7,7 @@ import com.xupan.server.auth.repository.SessionRepository;
 import com.xupan.server.auth.repository.UserRepository;
 import com.xupan.server.auth.service.PasswordPolicyService;
 import com.xupan.server.auth.service.PermissionService;
+import com.xupan.server.chat.realtime.MachinePlayerPageRefreshService;
 import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.web.BusinessException;
@@ -39,12 +40,14 @@ public class PlatformAdminService {
     private final PlatformAdminAccessService accessService;
     private final AgentLedgerService agentLedgerService;
     private final AccountPurgeService accountPurgeService;
+    private final MachinePlayerPageRefreshService machinePlayerPageRefreshService;
 
     public PlatformAdminService(JdbcTemplate jdbc, AgentRepository agentRepository,
                                 AgentAdminService agentAdminService, UserRepository userRepository,
                                 PasswordPolicyService passwordPolicy, PermissionService permissionService,
                                 SessionRepository sessionRepository, PlatformAdminAccessService accessService,
-                                AgentLedgerService agentLedgerService, AccountPurgeService accountPurgeService) {
+                                AgentLedgerService agentLedgerService, AccountPurgeService accountPurgeService,
+                                MachinePlayerPageRefreshService machinePlayerPageRefreshService) {
         this.jdbc = jdbc;
         this.agentRepository = agentRepository;
         this.agentAdminService = agentAdminService;
@@ -55,6 +58,7 @@ public class PlatformAdminService {
         this.accessService = accessService;
         this.agentLedgerService = agentLedgerService;
         this.accountPurgeService = accountPurgeService;
+        this.machinePlayerPageRefreshService = machinePlayerPageRefreshService;
     }
 
     /**
@@ -282,6 +286,7 @@ public class PlatformAdminService {
                        a.betting_config_version,
                        a.manual_betting_open, a.robot_manage, a.chase_enabled, a.bot_count,
                        a.close_seconds, a.cancel_seconds,
+                       a.au8_ball_mode, a.au8_fixed_ball_number,
                        a.rebate_rate, a.odds_rate, a.special_rebate_rate, a.special_odds_rate,
                        a.total_limit, a.positive_limit, a.angle_limit, a.strict_limit, a.tong_limit,
                        a.car_limit, a.special_limit, a.odd_even_limit, a.big_small_limit, a.fan_limit,
@@ -308,7 +313,8 @@ public class PlatformAdminService {
                 rs.getBigDecimal("special_limit"), rs.getBigDecimal("odd_even_limit"), rs.getBigDecimal("big_small_limit"),
                 rs.getBigDecimal("fan_limit"), rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"),
                 rs.getBigDecimal("player_min_stake"), rs.getLong("normal_count"), rs.getLong("bot_count"),
-                rs.getString("rebate_mode"), splitGames(rs.getString("games"))));
+                rs.getString("rebate_mode"), splitGames(rs.getString("games")),
+                rs.getString("au8_ball_mode"), nullableInteger(rs, "au8_fixed_ball_number")));
         Long scope = accessService.subAccountGroupId(operator).orElse(null);
         return scope == null ? rows : rows.stream().filter(row -> scope.equals(row.groupId())).toList();
     }
@@ -347,7 +353,12 @@ public class PlatformAdminService {
             sessionRepository.revokeAllActiveByUserId(current.accountUserId(), Instant.now());
         }
         Long effectiveGroupId = accessService.subAccountGroupId(operator).orElse(input.groupId());
-        applyMachine(input, id, current.groupId(), effectiveGroupId, operator, false);
+        Au8BallSettings updatedBallSettings = applyMachine(input, id, current.groupId(), effectiveGroupId,
+                operator, false);
+        if (!current.au8BallMode().equals(updatedBallSettings.mode())
+                || !java.util.Objects.equals(current.au8FixedBallNumber(), updatedBallSettings.fixedBallNumber())) {
+            machinePlayerPageRefreshService.refreshAfterCommit(id);
+        }
         return findMachine(id);
     }
 
@@ -415,8 +426,9 @@ public class PlatformAdminService {
                                 + center.auditCounts()));
     }
 
-    private void applyMachine(MachineInput input, long id, Long fromGroupId, Long groupId, long operator,
-                              boolean create) {
+    private Au8BallSettings applyMachine(MachineInput input, long id, Long fromGroupId, Long groupId, long operator,
+                                         boolean create) {
+        Au8BallSettings ballSettings = validateAu8BallSettings(input.au8BallMode(), input.au8FixedBallNumber(), create);
         Instant expiresAt = create && input.expiresAt() == null
                 ? Instant.now().plus(7, ChronoUnit.DAYS) : input.expiresAt();
         validateExpiry(expiresAt);
@@ -466,7 +478,7 @@ public class PlatformAdminService {
                     special_rebate_rate=?, special_odds_rate=?, total_limit=?, positive_limit=?, angle_limit=?,
                     strict_limit=?, tong_limit=?, car_limit=?, special_limit=?, odd_even_limit=?,
                     big_small_limit=?, fan_limit=?, add_limit=?, player_max_stake=?, player_min_stake=?,
-                    rebate_mode=?,
+                    rebate_mode=?, au8_ball_mode=?, au8_fixed_ball_number=?,
                     updated_at=CURRENT_TIMESTAMP
                  WHERE id=?
                 """, groupId, timestamp(expiresAt), input.robotManage(), input.chaseEnabled(), Math.max(0, input.botCount()),
@@ -475,7 +487,8 @@ public class PlatformAdminService {
                 machineLimit(angleLimit), machineLimit(strictLimit), machineLimit(tongLimit), machineLimit(carLimit),
                 machineLimit(specialLimit), machineLimit(oddEvenLimit), machineLimit(bigSmallLimit),
                 machineLimit(fanLimit), machineLimit(addLimit), normalizedPlayerMaxStake,
-                normalizedPlayerMinStake, normalizeRebateMode(input.rebateMode()), id);
+                normalizedPlayerMinStake, normalizeRebateMode(input.rebateMode()),
+                ballSettings.mode(), ballSettings.fixedBallNumber(), id);
         // 账本原则 2：机器积分不在上面的整值 UPDATE 里写死，统一由账本服务锁行改余额并写流水；
         // BY220 语义：子账号是名下机器的上游资金池——建机器与改机器积分都要从子账号划出/退回
         // （见 AgentLedgerService#assignMachineScore）。目标值与当前值相同时不产生账目，天然幂等。
@@ -497,7 +510,31 @@ public class PlatformAdminService {
         }
         audit(operator, "MACHINE_MANAGE", create ? "POST" : "PUT",
                 create ? "/api/admin/machines" : "/api/admin/machines/" + id, id,
-                "machine configuration saved");
+                "machine configuration saved,au8BallMode=" + ballSettings.mode()
+                        + ",au8FixedBallNumber=" + ballSettings.fixedBallNumber());
+        return ballSettings;
+    }
+
+    private static Au8BallSettings validateAu8BallSettings(String mode, Integer fixedBallNumber, boolean create) {
+        String normalizedMode = mode == null || mode.isBlank()
+                ? MachineBettingConfig.AU8_PLAYER_SELECT : mode.trim().toUpperCase(Locale.ROOT);
+        if (!MachineBettingConfig.AU8_PLAYER_SELECT.equals(normalizedMode)
+                && !MachineBettingConfig.AU8_FIXED_BALL.equals(normalizedMode)) {
+            throw BusinessException.badRequest("MACHINE_AU8_BALL_MODE_INVALID", "AU8 球位模式无效");
+        }
+        if (create && MachineBettingConfig.AU8_FIXED_BALL.equals(normalizedMode)) {
+            throw BusinessException.badRequest("MACHINE_AU8_BALL_CREATE_FORBIDDEN", "创建机器账号时不能设置固定球位");
+        }
+        if (MachineBettingConfig.AU8_PLAYER_SELECT.equals(normalizedMode)) {
+            if (fixedBallNumber != null) {
+                throw BusinessException.badRequest("MACHINE_AU8_FIXED_BALL_INVALID", "默认模式不能指定固定球位");
+            }
+            return new Au8BallSettings(normalizedMode, null);
+        }
+        if (fixedBallNumber == null || fixedBallNumber < 1 || fixedBallNumber > 7) {
+            throw BusinessException.badRequest("MACHINE_AU8_FIXED_BALL_INVALID", "固定球位必须是第 1 至第 7 球");
+        }
+        return new Au8BallSettings(normalizedMode, fixedBallNumber);
     }
 
     private static void validateMachineScore(BigDecimal score) {
@@ -637,6 +674,7 @@ public class PlatformAdminService {
                        a.manual_betting_open, a.robot_manage,
                        a.betting_config_version,
                        a.chase_enabled, a.bot_count, a.close_seconds, a.cancel_seconds, a.rebate_rate, a.odds_rate,
+                       a.au8_ball_mode, a.au8_fixed_ball_number,
                        a.special_rebate_rate, a.special_odds_rate, a.total_limit, a.positive_limit, a.angle_limit,
                        a.strict_limit, a.tong_limit, a.car_limit, a.special_limit, a.odd_even_limit,
                        a.big_small_limit, a.fan_limit, a.add_limit, a.player_max_stake, a.player_min_stake,
@@ -662,7 +700,8 @@ public class PlatformAdminService {
                 rs.getBigDecimal("odd_even_limit"), rs.getBigDecimal("big_small_limit"), rs.getBigDecimal("fan_limit"),
                 rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"), rs.getBigDecimal("player_min_stake"),
                 rs.getLong("normal_count"), rs.getLong("bot_count"), rs.getString("rebate_mode"),
-                splitGames(rs.getString("games"))), id);
+                splitGames(rs.getString("games")), rs.getString("au8_ball_mode"),
+                nullableInteger(rs, "au8_fixed_ball_number")), id);
     }
 
     private void require(long operator, String permission) {
@@ -750,6 +789,11 @@ public class PlatformAdminService {
         return rs.wasNull() ? null : value;
     }
 
+    private static Integer nullableInteger(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
     /**
      * 子账号写入参数。
      *
@@ -782,7 +826,7 @@ public class PlatformAdminService {
                                BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
                                BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games,
-                               String rebateMode) {}
+                               String rebateMode, String au8BallMode, Integer au8FixedBallNumber) {}
     /**
      * 机器行。
      *
@@ -801,12 +845,16 @@ public class PlatformAdminService {
                              BigDecimal tongLimit, BigDecimal carLimit, BigDecimal specialLimit,
                              BigDecimal oddEvenLimit, BigDecimal bigSmallLimit, BigDecimal fanLimit,
                              BigDecimal addLimit, BigDecimal playerMaxStake, BigDecimal playerMinStake,
-                             long normalCount, long botCount, String rebateMode, List<String> games) {
+                             long normalCount, long botCount, String rebateMode, List<String> games,
+                             String au8BallMode, Integer au8FixedBallNumber) {
         /** BY220 {@code x_robot.game} 是逗号串；这里统一转成列表，null 表示"未指定"（保存时不改动已有彩种）。 */
         public MachineRow {
             games = games == null ? List.of() : List.copyOf(games);
+            au8BallMode = au8BallMode == null ? MachineBettingConfig.AU8_PLAYER_SELECT : au8BallMode;
         }
     }
+
+    private record Au8BallSettings(String mode, Integer fixedBallNumber) {}
 }
 
 

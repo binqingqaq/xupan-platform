@@ -153,6 +153,32 @@ public class ChatConnectionRegistry {
         return delivered;
     }
 
+    public int broadcastToMachinePlayers(long agentId, String payload) {
+        if (agentId <= 0) {
+            throw new IllegalArgumentException("agentId 必须大于 0");
+        }
+        int delivered = 0;
+        for (ChatConnection connection : List.copyOf(connections.values())) {
+            if (connection.agentId() == null || connection.agentId() != agentId
+                    || connection.isDisplayObserver() || !connection.isReadyForBroadcast()) {
+                continue;
+            }
+            ChatConnectionAccessService.AccessCheck access = accessService.check(connection, Instant.now());
+            if (!access.allowed()) {
+                remove(connection.connectionId());
+                connection.close(access.closeStatus());
+                continue;
+            }
+            if (connection.sendText(payload, properties.getMaxPendingMessages())) {
+                delivered++;
+            } else {
+                remove(connection.connectionId());
+                connection.close(CloseStatus.SESSION_NOT_RELIABLE);
+            }
+        }
+        return delivered;
+    }
+
     public int heartbeat(Instant now) {
         int closed = 0;
         for (ChatConnection connection : new ArrayList<>(connections.values())) {

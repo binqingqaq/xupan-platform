@@ -148,13 +148,14 @@ public class PlatformAdminResourceController {
                                  BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                  BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
                                  BigDecimal playerMaxStake, BigDecimal playerMinStake, List<String> games,
-                                 String rebateMode) {
+                                 String rebateMode, String au8BallMode, Integer au8FixedBallNumber) {
         PlatformAdminService.MachineInput toInput() {
             return new PlatformAdminService.MachineInput(username, rawPassword, groupId, score,
                     expiresAt, robotManage == null || robotManage, chaseEnabled, botCount, closeSeconds, cancelSeconds,
                     rebateRate, oddsRate, specialRebateRate, specialOddsRate, totalLimit, positiveLimit,
                     angleLimit, strictLimit, tongLimit, carLimit, specialLimit, oddEvenLimit, bigSmallLimit,
-                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode);
+                    fanLimit, addLimit, playerMaxStake, playerMinStake, games, rebateMode,
+                    au8BallMode, au8FixedBallNumber);
         }
     }
 
@@ -197,7 +198,8 @@ public class PlatformAdminResourceController {
                                   BigDecimal carLimit, BigDecimal specialLimit, BigDecimal oddEvenLimit,
                                   BigDecimal bigSmallLimit, BigDecimal fanLimit, BigDecimal addLimit,
                                   BigDecimal playerMaxStake, BigDecimal playerMinStake, long normalCount,
-                                  long botCount, String rebateMode, List<String> games) {
+                                  long botCount, String rebateMode, List<String> games,
+                                  String au8BallMode, Integer au8FixedBallNumber) {
         static MachineResponse from(PlatformAdminService.MachineRow row) {
             return new MachineResponse(row.id(), row.code(), row.accountUsername(),
                     row.accountUserId(), row.groupId(), row.groupUsername(), row.score(), row.expiresAt(),
@@ -208,7 +210,8 @@ public class PlatformAdminResourceController {
                     row.specialRebateRate(), row.specialOddsRate(), row.totalLimit(), row.positiveLimit(),
                     row.angleLimit(), row.strictLimit(), row.tongLimit(), row.carLimit(), row.specialLimit(),
                     row.oddEvenLimit(), row.bigSmallLimit(), row.fanLimit(), row.addLimit(), row.playerMaxStake(),
-                    row.playerMinStake(), row.normalCount(), row.botCount(), row.rebateMode(), row.games());
+                    row.playerMinStake(), row.normalCount(), row.botCount(), row.rebateMode(), row.games(),
+                    row.au8BallMode(), row.au8FixedBallNumber());
         }
     }
 

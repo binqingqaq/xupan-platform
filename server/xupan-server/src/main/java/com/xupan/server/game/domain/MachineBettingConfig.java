@@ -28,14 +28,26 @@ public record MachineBettingConfig(BigDecimal oddsRate,
                                    BigDecimal specialRebateRate,
                                    long machineId,
                                    int version,
-                                   BettingLimits limits) {
+                                   BettingLimits limits,
+                                   String au8BallMode,
+                                   Integer au8FixedBallNumber) {
 
     public static final String SINGLE = "SINGLE";
     public static final String DOUBLE = "DOUBLE";
+    public static final String AU8_PLAYER_SELECT = "PLAYER_SELECT";
+    public static final String AU8_FIXED_BALL = "FIXED_BALL";
 
     public static final MachineBettingConfig DEFAULT = new MachineBettingConfig(
             BigDecimal.ZERO, BigDecimal.ZERO, 0, 0, true, SINGLE, BigDecimal.ZERO, BigDecimal.ZERO,
-            0, 0, BettingLimits.UNLIMITED);
+            0, 0, BettingLimits.UNLIMITED, AU8_PLAYER_SELECT, null);
+
+    public MachineBettingConfig(BigDecimal oddsRate, BigDecimal specialOddsRate, int closeSeconds,
+                               int cancelSeconds, boolean manualBettingOpen, String rebateMode,
+                               BigDecimal rebateRate, BigDecimal specialRebateRate, long machineId,
+                               int version, BettingLimits limits) {
+        this(oddsRate, specialOddsRate, closeSeconds, cancelSeconds, manualBettingOpen, rebateMode,
+                rebateRate, specialRebateRate, machineId, version, limits, AU8_PLAYER_SELECT, null);
+    }
 
     public MachineBettingConfig(BigDecimal oddsRate, BigDecimal specialOddsRate, int closeSeconds,
                                 int cancelSeconds, String rebateMode,
@@ -67,6 +79,10 @@ public record MachineBettingConfig(BigDecimal oddsRate,
         rebateRate = rebateRate == null ? BigDecimal.ZERO : rebateRate;
         specialRebateRate = specialRebateRate == null ? BigDecimal.ZERO : specialRebateRate;
         limits = limits == null ? BettingLimits.UNLIMITED : limits;
+        au8BallMode = AU8_FIXED_BALL.equals(au8BallMode) ? AU8_FIXED_BALL : AU8_PLAYER_SELECT;
+        if (!AU8_FIXED_BALL.equals(au8BallMode)) {
+            au8FixedBallNumber = null;
+        }
     }
 
     /** 机器普通赔率必须为正数才能接单。 */

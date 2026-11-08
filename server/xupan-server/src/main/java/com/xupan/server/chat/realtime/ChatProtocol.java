@@ -47,6 +47,7 @@ public final class ChatProtocol {
         SYNC_REQUIRED("sync.required"),
         MESSAGE_CREATED("message.created"),
         ROBOT_UPDATED("robot.updated"),
+        PLAYER_PAGE_REFRESH("player.page.refresh"),
         MESSAGE_ACK("message.ack"),
         CURSOR_ACK("cursor.ack"),
         PONG("pong"),
@@ -191,6 +192,11 @@ public final class ChatProtocol {
         return new ServerEvent(ServerEventType.ROBOT_UPDATED.wireName(), null, null,
                 Instant.now().toString(), null, null, null, null, null,
                 new RobotUpdated(robotId, displayName), null, null);
+    }
+
+    public static ServerEvent playerPageRefresh() {
+        return new ServerEvent(ServerEventType.PLAYER_PAGE_REFRESH.wireName(), null, null,
+                Instant.now().toString(), null, null, null, null, null, null, null, null);
     }
 
     public static ServerEvent messageAck(String clientMessageId, ChatMessageResponse message,

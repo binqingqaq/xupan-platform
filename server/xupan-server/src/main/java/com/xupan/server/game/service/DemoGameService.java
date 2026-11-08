@@ -145,7 +145,7 @@ public class DemoGameService {
                 repository.isSpecialBettingEnabled(gameCode),
                 eventRepository.findByIssue(gameCode, issue.issueNumber()).stream()
                         .map(event -> new EventView(event.id(), event.eventType(), event.message(), event.createdAt()))
-                        .toList());
+                        .toList(), machineConfig.au8BallMode(), machineConfig.au8FixedBallNumber());
     }
 
     static LocalDate businessDay(Instant now) {
@@ -201,10 +201,6 @@ public class DemoGameService {
             }
             return repository.findBetsByBatchId(priorBatch.get().id()).stream().map(DemoGameService::toBetView).toList();
         }
-        if (requests.stream().anyMatch(request -> request.ballNumber() > issue.ballCount())) {
-            throw BusinessException.badRequest("GAME_BET_BALL_OUT_OF_RANGE",
-                    "本期只支持第 1 球至第 " + issue.ballCount() + " 球");
-        }
         if (!自动轮期服务.BETTING.equals(issue.phase())) {
             String message = 自动轮期服务.DRAWING.equals(issue.phase())
                     ? "下注无效：当前正在开奖，已停止下注"
@@ -217,6 +213,11 @@ public class DemoGameService {
         }
         repository.lockMachineBettingState(wallet.accountId());
         MachineBettingConfig machineConfig = repository.findMachineBettingConfig(wallet.accountId());
+        List<PlaceBetRequest> effectiveRequests = applyMachineAu8BallMode(gameCode, machineConfig, requests);
+        if (effectiveRequests.stream().anyMatch(request -> request.ballNumber() > issue.ballCount())) {
+            throw BusinessException.badRequest("GAME_BET_BALL_OUT_OF_RANGE",
+                    "本期只支持第 1 球至第 " + issue.ballCount() + " 球");
+        }
         String rejection = agentBettingPolicy.rejectBet(machineConfig, issue, now).orElse(null);
         if (rejection != null) {
             throw BusinessException.conflict(rejection, AgentBettingPolicy.rejectionMessage(rejection));
@@ -229,7 +230,7 @@ public class DemoGameService {
         List<BigDecimal> unitStakes = new ArrayList<>(requests.size());
         List<MachineBetLimitService.Instruction> quotaInstructions = new ArrayList<>(requests.size());
         BigDecimal totalStake = BigDecimal.ZERO.setScale(2);
-        for (PlaceBetRequest request : requests) {
+        for (PlaceBetRequest request : effectiveRequests) {
             BigDecimal snapshotOdds;
             try {
                 snapshotOdds = agentBettingPolicy.effectiveOdds(request.playType(), null, machineConfig,
@@ -253,7 +254,7 @@ public class DemoGameService {
         GameDataRepository.BettingRates rates = repository.findBettingRatesByAccountId(wallet.accountId());
         List<BetView> placed = new ArrayList<>(requests.size());
         for (int index = 0; index < requests.size(); index++) {
-            PlaceBetRequest request = requests.get(index);
+            PlaceBetRequest request = effectiveRequests.get(index);
             String betCode = "BET-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase();
             String itemKey = "BATCH-" + batchId + "-" + (index + 1);
             long betId = repository.saveBetWithOddsSnapshot(gameCode, wallet.accountId(), betCode, itemKey,
@@ -270,6 +271,22 @@ public class DemoGameService {
                     .orElseThrow(() -> new IllegalStateException("下注保存后未找到注单")));
         }
         return List.copyOf(placed);
+    }
+
+    private static PlaceBetRequest withBallNumber(PlaceBetRequest request, int ballNumber) {
+        return new PlaceBetRequest(ballNumber, request.playType(), request.parameters(), request.stake(),
+                request.idempotencyKey(), request.gameCode());
+    }
+
+    static List<PlaceBetRequest> applyMachineAu8BallMode(String gameCode, MachineBettingConfig machineConfig,
+                                                          List<PlaceBetRequest> requests) {
+        if (!"AU8".equals(gameCode)
+                || !MachineBettingConfig.AU8_FIXED_BALL.equals(machineConfig.au8BallMode())) {
+            return requests;
+        }
+        int fixedBallNumber = Objects.requireNonNull(machineConfig.au8FixedBallNumber(),
+                "固定球位模式必须配置球号");
+        return requests.stream().map(request -> withBallNumber(request, fixedBallNumber)).toList();
     }
 
     private static String digest(List<BetInstruction> instructions) {
@@ -526,7 +543,8 @@ public class DemoGameService {
                            List<DisplayOddsView> displayOdds, List<BetView> bets, AccountView account,
                            Instant serverNow, Instant bettingEndsAt, Instant drawEndsAt,
                            boolean preview, BigDecimal oddsRate, BigDecimal specialOddsRate, int configVersion,
-                           boolean specialEnabled, List<EventView> events) {
+                           boolean specialEnabled, List<EventView> events,
+                           String au8BallMode, Integer au8FixedBallNumber) {
     }
 
     public record BallView(int ballNumber, Integer number, Integer fan, String parity, String size) {

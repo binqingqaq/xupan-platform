@@ -182,6 +182,10 @@ const currentBallCount = computed(() => {
   if (!game) return 7
   return resolveGameBallCount(game.gameCode, game.ballCount, game.balls.length)
 })
+const au8FixedBallMode = computed(() => selectedGameCode.value === 'AU8' && current.value?.au8BallMode === 'FIXED_BALL')
+const effectiveBallNumber = computed(() => au8FixedBallMode.value
+  ? current.value?.au8FixedBallNumber ?? selectedBallNumber.value
+  : selectedBallNumber.value)
 watch(currentBallCount, count => {
   if (selectedBallNumber.value > count) selectedBallNumber.value = count
   if (selectedBallNumber.value < 1) selectedBallNumber.value = 1
@@ -691,6 +695,9 @@ function connectChatSocket() {
           ? { ...message, senderName: event.displayName }
           : message)
     },
+    onPlayerPageRefresh: () => {
+      if (!observerReadOnly.value) window.location.reload()
+    },
     onMessageAck: event => {
       // WS 发送成功不会走 HTTP 分支的刷新，因此这里按「这条消息是否影响账户」补一次：
       // 下注（USER_BET）与上下分申请（下分创建即扣余额）都需要刷新账户面板。
@@ -1195,7 +1202,7 @@ function completeQuickBetSubmission(clientMessageId: string) {
 }
 
 function withSelectedBallPrefix(message: string) {
-  return selectedGameCode.value === 'AU8' ? `第${selectedBallNumber.value}球/${message}` : message
+  return selectedGameCode.value === 'AU8' ? `第${effectiveBallNumber.value}球/${message}` : message
 }
 
 async function refreshAccountAfterBetSubmission() {
@@ -1524,7 +1531,7 @@ onUnmounted(() => {
           ref="messageInputElement"
           v-model="messageInput"
           :class="interfaceMode === 'ui1' ? 'nostart' : 'reference-input'"
-          :style="interfaceMode === 'ui1' ? { width: 'calc(100% - 210px)', height: '32px', visibility: 'visible' } : undefined"
+          :style="interfaceMode === 'ui1' ? { width: `calc(100% - ${au8FixedBallMode ? 120 : 210}px)`, height: '32px', visibility: 'visible' } : undefined"
           rows="1"
           autocomplete="off"
           aria-label="下注或聊天内容"
@@ -1532,7 +1539,7 @@ onUnmounted(() => {
           @input="resizeMessageInput"
           @keydown.enter.exact.prevent="submitMessage"
         ></textarea>
-        <div v-if="selectedGameCode === 'AU8'" style="width:85px;text-align:center;background-color:#fff;height:32px;padding-left:0;border-radius:3px;border:1px solid #ccc;">
+        <div v-if="selectedGameCode === 'AU8' && !au8FixedBallMode" style="width:85px;text-align:center;background-color:#fff;height:32px;padding-left:0;border-radius:3px;border:1px solid #ccc;">
           <select id="changeQiu" v-model.number="selectedBallNumber" style="border:none;width:100%;display:block;height:100%;background:#fff;" aria-label="选择下注球号">
             <option v-for="ballNumber in currentBallCount" :key="ballNumber" :value="ballNumber">第 {{ ballNumber }} 球</option>
           </select>

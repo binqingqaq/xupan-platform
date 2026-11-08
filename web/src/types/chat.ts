@@ -38,6 +38,10 @@ export interface ChatRobotUpdatedEvent {
   displayName: string
 }
 
+export interface ChatPlayerPageRefreshEvent {
+  type: 'player.page.refresh'
+}
+
 export interface ChatMessageAckEvent {
   type: 'message.ack'
   clientMessageId: string
@@ -73,6 +77,7 @@ export type ChatServerEvent =
   | ChatSyncRequiredEvent
   | ChatMessageCreatedEvent
   | ChatRobotUpdatedEvent
+  | ChatPlayerPageRefreshEvent
   | ChatMessageAckEvent
   | ChatCursorAckEvent
   | ChatPongEvent
@@ -117,6 +122,7 @@ export interface ChatSocketHandlers {
   onMessages?: (page: ChatMessagePage) => void
   onMessage?: (message: ChatMessage) => void
   onRobotUpdated?: (event: ChatRobotUpdatedEvent) => void
+  onPlayerPageRefresh?: (event: ChatPlayerPageRefreshEvent) => void
   onMessageAck?: (event: ChatMessageAckEvent) => void
   onCursorAck?: (event: ChatCursorAckEvent) => void
   onError?: (event: ChatErrorEvent) => void

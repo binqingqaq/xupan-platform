@@ -601,7 +601,9 @@ public class GameDataRepository {
                        COALESCE(a.fan_limit, 0) fan_limit,
                        COALESCE(a.add_limit, 0) add_limit,
                        COALESCE(a.player_max_stake, 0) player_max_stake,
-                       COALESCE(a.player_min_stake, 0) player_min_stake
+                       COALESCE(a.player_min_stake, 0) player_min_stake,
+                       COALESCE(a.au8_ball_mode, 'PLAYER_SELECT') au8_ball_mode,
+                       a.au8_fixed_ball_number au8_fixed_ball_number
                   FROM demo_user_account d
                   LEFT JOIN agent a ON a.id = d.agent_id
                  WHERE d.id = ?
@@ -617,7 +619,8 @@ public class GameDataRepository {
                         rs.getBigDecimal("special_limit"), rs.getBigDecimal("odd_even_limit"),
                         rs.getBigDecimal("big_small_limit"), rs.getBigDecimal("fan_limit"),
                         rs.getBigDecimal("add_limit"), rs.getBigDecimal("player_max_stake"),
-                        rs.getBigDecimal("player_min_stake"))), accountId);
+                        rs.getBigDecimal("player_min_stake")),
+                rs.getString("au8_ball_mode"), nullableInteger(rs, "au8_fixed_ball_number")), accountId);
         return rows.isEmpty() ? MachineBettingConfig.DEFAULT : rows.get(0);
     }
 
@@ -625,6 +628,11 @@ public class GameDataRepository {
         Integer seconds = jdbcTemplate.queryForObject(
                 "SELECT COALESCE(close_seconds, 0) FROM agent WHERE id = ?", Integer.class, agentId);
         return seconds == null ? 0 : seconds;
+    }
+
+    private static Integer nullableInteger(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
     }
 
     /**

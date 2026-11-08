@@ -90,6 +90,39 @@ class ChatConnectionRegistryTest {
     }
 
     @Test
+    void machinePageRefreshTargetsOnlyTheMachineAcrossRoomsAndSkipsObservers() throws Exception {
+        ChatConnectionRegistry registry = new ChatConnectionRegistry(properties(5, 10), allowedAccessService());
+        WebSocketSession targetSession = openSession();
+        WebSocketSession sameMachineOtherRoomSession = openSession();
+        WebSocketSession otherMachineSession = openSession();
+        WebSocketSession observerSession = openSession();
+        ChatConnection target = new ChatConnection("target", 7L, "session-7", "room-a", 101L,
+                targetSession, Instant.parse("2026-09-11T00:00:00Z"));
+        ChatConnection sameMachineOtherRoom = new ChatConnection("same-machine", 8L, "session-8", "room-b", 101L,
+                sameMachineOtherRoomSession, Instant.parse("2026-09-11T00:00:01Z"));
+        ChatConnection otherMachine = new ChatConnection("other-machine", 9L, "session-9", "room-a", 202L,
+                otherMachineSession, Instant.parse("2026-09-11T00:00:02Z"));
+        ChatConnection observer = observerConnection("observer", "observer-session", observerSession,
+                Instant.parse("2026-09-11T00:00:03Z"));
+        target.markSubscribed();
+        sameMachineOtherRoom.markSubscribed();
+        otherMachine.markSubscribed();
+        observer.markSubscribed();
+        registry.register(target);
+        registry.register(sameMachineOtherRoom);
+        registry.register(otherMachine);
+        registry.register(observer);
+
+        assertThat(registry.broadcastToMachinePlayers(101L, "refresh")).isEqualTo(2);
+        verify(targetSession).sendMessage(org.mockito.ArgumentMatchers.any());
+        verify(sameMachineOtherRoomSession).sendMessage(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(otherMachineSession, org.mockito.Mockito.never())
+                .sendMessage(org.mockito.ArgumentMatchers.any());
+        org.mockito.Mockito.verify(observerSession, org.mockito.Mockito.never())
+                .sendMessage(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void removesConnectionBeforeBroadcastWhenCurrentAccessIsRevoked() throws Exception {
         ChatWebSocketProperties properties = properties(3, 10);
         ChatConnectionAccessService accessService = mock(ChatConnectionAccessService.class);

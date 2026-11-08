@@ -47,6 +47,7 @@ function machine(overrides: Record<string, unknown> = {}) {
     id: 1, code: 'BOT001', accountUsername: 'bot001', accountUserId: 11, configVersion: 4,
     groupId: null, groupUsername: null, score: 1000, expiresAt: null, status: 'ACTIVE',
     manualBettingOpen: true,
+    au8BallMode: 'PLAYER_SELECT', au8FixedBallNumber: null,
     robotManage: false, chaseEnabled: false, requestedBotCount: 0, closeSeconds: 0,
     cancelSeconds: 0, rebateRate: 1, oddsRate: 1, specialRebateRate: 0, specialOddsRate: 1,
     rebateMode: 'SINGLE', totalLimit: 10000, positiveLimit: 0, angleLimit: 0, strictLimit: 0,
@@ -127,6 +128,7 @@ describe('platform admin machines', () => {
     container?.querySelectorAll<HTMLButtonElement>('.content > header button')[0]?.click()
     await settle()
     const createDialogText = document.querySelector('.el-dialog')?.textContent ?? ''
+    expect(createDialogText).not.toContain('AU8 玩家球位')
     for (const label of [
       '返水(百分数)', '返水口径', '赔率', '特码返水(比率)', '特码赔率', '单场总限额',
       '正限额', '角限额', '念限额', '通限额', '车限额', '单码限额', '单双限额',
@@ -215,6 +217,35 @@ describe('platform admin machines', () => {
     await settle()
     expect(api.updateMachine).toHaveBeenCalledWith(2, 4, expect.objectContaining({ rebateMode: 'SINGLE' }))
     expect(api.updateMachine).toHaveBeenCalledWith(2, 4, expect.objectContaining({ oddsRate: 1, totalLimit: 10000 }))
+  })
+
+  it('toggles the AU8 ball mode exclusively and keeps it out of machine creation', async () => {
+    vi.mocked(api.listMachines).mockResolvedValue([
+      machine({ au8BallMode: 'PLAYER_SELECT', au8FixedBallNumber: null }),
+    ] as never)
+    await mountMachines()
+    container?.querySelector('tbody tr button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await settle()
+
+    const field = formField('AU8 玩家球位')
+    expect(field.textContent).toContain('默认')
+    expect(field.textContent).toContain('固定球位')
+    expect(field.textContent).toContain('只能使用一种模式')
+
+    field.querySelector<HTMLElement>('.ball-mode-choice:nth-child(2) .el-switch')?.click()
+    await settle()
+    expect(field.querySelectorAll('.el-switch.is-checked')).toHaveLength(1)
+    field.querySelector<HTMLElement>('.el-select__wrapper')?.click()
+    await settle()
+    Array.from(document.querySelectorAll<HTMLElement>('.el-select-dropdown__item'))
+      .find(option => option.textContent?.trim() === '第 4 球')?.click()
+    await settle()
+
+    dialogSubmit()
+    await settle()
+    expect(api.updateMachine).toHaveBeenCalledWith(1, 4, expect.objectContaining({
+      au8BallMode: 'FIXED_BALL', au8FixedBallNumber: 4,
+    }))
   })
 
   it('rejects inverted player stake bounds before updating an existing machine', async () => {

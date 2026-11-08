@@ -45,6 +45,10 @@ export interface Machine {
   accountStatus?: 'ACTIVE' | 'DISABLED' | 'LOCKED' | 'DELETED' | null
   /** 机器赔率、返水与限额配置的乐观锁版本；编辑提交必须原样带回。 */
   configVersion: number
+  /** AU8 玩家下注球位模式，由机器账号配置。 */
+  au8BallMode: 'PLAYER_SELECT' | 'FIXED_BALL'
+  /** AU8 固定球位模式使用的 1–7 球位；默认模式为 null。 */
+  au8FixedBallNumber: number | null
   robotManage: boolean
   chaseEnabled: boolean
   /** 该机器已配置的彩种（BY220 `x_robot.game` 逗号串）；编辑时必须回显，不能覆盖。 */
@@ -103,6 +107,8 @@ export interface MachineInput {
   expiresAt: string | null
   robotManage: boolean
   chaseEnabled: boolean
+  au8BallMode: 'PLAYER_SELECT' | 'FIXED_BALL'
+  au8FixedBallNumber: number | null
   botCount: number
   closeSeconds: number
   cancelSeconds: number

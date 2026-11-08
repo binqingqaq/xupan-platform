@@ -174,6 +174,19 @@ describe('ChatSocket', () => {
     socket.disconnect()
   })
 
+  it('notifies the player page to refresh when the server requests it', async () => {
+    const refresh = vi.fn()
+    const socket = createSocket()
+    socket.connect('main', { onPlayerPageRefresh: refresh })
+    await flushPromises()
+    sockets[0].open()
+    sockets[0].receive({ type: 'connected', roomCode: 'main', connectionId: 'c-1', serverTime: '2026-09-13T10:00:00Z' })
+    sockets[0].receive({ type: 'player.page.refresh' })
+
+    expect(refresh).toHaveBeenCalledWith({ type: 'player.page.refresh' })
+    socket.disconnect()
+  })
+
   it('loads after-sequence history and reaches READY without duplicate delivery', async () => {
     const page = createPage([createMessage(8), createMessage(9)])
     apiMocks.getChatMessages.mockResolvedValue(page)

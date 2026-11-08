@@ -163,13 +163,17 @@ class DemoGameControllerTest {
                 .andExpect(jsonPath("$.gameCode").value("MULTI_TEST"))
                 .andExpect(jsonPath("$.issueNumber").value("MULTI_TEST-3000000"));
 
+        jdbcTemplate.update("UPDATE agent SET au8_ball_mode='FIXED_BALL', au8_fixed_ball_number=4 WHERE id=?",
+                machineId);
+
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
                         .contentType("application/json")
                         .content("{\"ballNumber\":1,\"playType\":\"FAN\",\"parameters\":[1],"
                                 + "\"stake\":10.00,\"idempotencyKey\":\"MULTI-BET-001\","
                                 + "\"gameCode\":\"MULTI_TEST\"}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.issueNumber").value("MULTI_TEST-3000000"));
+                .andExpect(jsonPath("$.issueNumber").value("MULTI_TEST-3000000"))
+                .andExpect(jsonPath("$.ballNumber").value(1));
 
         mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
                 .andExpect(status().isOk())
@@ -398,6 +402,25 @@ class DemoGameControllerTest {
                 SELECT balance FROM demo_user_account WHERE sys_user_id = ?
                 """, java.math.BigDecimal.class, testUserId)).isEqualByComparingTo("1028.50");
     }
+
+    @Test
+    void fixedMachineBallOverridesPlayerSelectionForNewAu8Bet() throws Exception {
+        jdbcTemplate.update("UPDATE agent SET au8_ball_mode='FIXED_BALL', au8_fixed_ball_number=4 WHERE id=?",
+                machineId);
+
+        mockMvc.perform(get("/api/demo/game/current").with(bearer(accessToken)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.au8BallMode").value("FIXED_BALL"))
+                .andExpect(jsonPath("$.au8FixedBallNumber").value(4));
+
+        mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))
+                        .contentType("application/json")
+                        .content("{\"ballNumber\":2,\"playType\":\"FAN\",\"parameters\":[1],"
+                                + "\"stake\":10.00,\"idempotencyKey\":\"BET-FIXED-MACHINE-BALL\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.ballNumber").value(4));
+    }
+
     @Test
     void rejectsInvalidBetAndDrawPayloads() throws Exception {
         mockMvc.perform(post("/api/demo/game/bets").with(bearer(accessToken))

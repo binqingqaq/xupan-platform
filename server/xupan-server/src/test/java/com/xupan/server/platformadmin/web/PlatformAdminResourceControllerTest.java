@@ -259,15 +259,24 @@ class PlatformAdminResourceControllerTest {
                 + "\"positiveLimit\":1000,\"angleLimit\":1000,\"strictLimit\":1000,\"tongLimit\":1000,"
                 + "\"carLimit\":1000,\"specialLimit\":1000,\"oddEvenLimit\":1000,\"bigSmallLimit\":1000,"
                 + "\"fanLimit\":1000,\"addLimit\":1000,\"playerMaxStake\":500,\"playerMinStake\":10,"
-                + "\"games\":[\"AU8\"]}";
+                + "\"games\":[\"AU8\"],\"au8BallMode\":\"PLAYER_SELECT\",\"au8FixedBallNumber\":null}";
 
         mockMvc.perform(put("/api/admin/machines/" + machineId)
                         .queryParam("expectedConfigVersion", String.valueOf(staleVersion))
                         .header("Authorization", bearer(token)).contentType("application/json")
-                        .content(base.replace("\"oddsRate\":1.95", "\"oddsRate\":7.77")))
+                        .content(base.replace("\"oddsRate\":1.95", "\"oddsRate\":7.77")
+                                .replace("\"au8BallMode\":\"PLAYER_SELECT\"", "\"au8BallMode\":\"FIXED_BALL\"")
+                                .replace("\"au8FixedBallNumber\":null", "\"au8FixedBallNumber\":4")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.configVersion").value(staleVersion + 1))
-                .andExpect(jsonPath("$.oddsRate").value(7.77));
+                .andExpect(jsonPath("$.oddsRate").value(7.77))
+                .andExpect(jsonPath("$.au8BallMode").value("FIXED_BALL"))
+                .andExpect(jsonPath("$.au8FixedBallNumber").value(4));
+
+        assertThat(jdbcTemplate.queryForObject("SELECT au8_ball_mode FROM agent WHERE id=?", String.class, machineId))
+                .isEqualTo("FIXED_BALL");
+        assertThat(jdbcTemplate.queryForObject("SELECT au8_fixed_ball_number FROM agent WHERE id=?",
+                Integer.class, machineId)).isEqualTo(4);
 
         mockMvc.perform(put("/api/admin/machines/" + machineId)
                         .queryParam("expectedConfigVersion", String.valueOf(staleVersion))
