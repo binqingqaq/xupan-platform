@@ -472,18 +472,12 @@ onMounted(async () => {
         </section>
 
         <el-form-item label="群聊标题" required><el-input v-model="form.siteTitle" required maxlength="128" /></el-form-item>
-        <el-form-item label="公告"><el-input v-model="form.announcement" type="textarea" :rows="4" maxlength="4000" /></el-form-item>
-        <el-form-item label="域名链接"><el-input v-model="form.domainLinks" type="textarea" :rows="4" maxlength="4000" placeholder="每行一个链接" /></el-form-item>
-        <el-form-item label="群聊警告"><el-input v-model="form.chatWarning" type="textarea" :rows="4" maxlength="2000" /></el-form-item>
 
         <div class="switch-grid">
           <div class="switch-row"><span>头部导航</span><el-switch v-model="form.headerEnabled" /><strong>{{ form.headerEnabled ? '显示' : '隐藏' }}</strong></div>
           <div class="switch-row"><span>游戏状态栏</span><el-switch v-model="form.statusBarEnabled" /><strong>{{ form.statusBarEnabled ? '显示' : '隐藏' }}</strong></div>
-          <div class="switch-row"><span>键盘模式</span><el-switch v-model="form.keyboardMode" /><strong>{{ form.keyboardMode ? '双键' : '单键' }}</strong></div>
         </div>
 
-        <el-form-item label="信息"><el-input v-model="form.information" type="textarea" :rows="6" maxlength="4000" /></el-form-item>
-        <el-alert title="公告、域名链接、群聊警告和信息会保存；当前前台模板未使用这些字段，因此不会产生对应的前台展示效果。" type="info" :closable="false" />
         <div class="form-actions"><el-button type="primary" native-type="submit" :loading="saving">保存</el-button></div>
       </el-form>
     </section>

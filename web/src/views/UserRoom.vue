@@ -808,8 +808,8 @@ async function load() {
     authenticated.value = true
     const platformConfig = await api.getPublicPlatformSettings()
     platformSettings.value = platformConfig
+    document.title = platformConfig.siteTitle?.trim() || '公开大厅'
     interfaceMode.value = 'ui1'
-    keyboardOpen.value = platformConfig.keyboardMode
 
     await loadQuickBetPreferences()
     await loadChatHistory()
