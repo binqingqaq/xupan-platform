@@ -3,9 +3,20 @@ import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import type { OrderCorrectionDetail, OrderCorrectionItem } from '../types/platformAdmin'
 
 const rows = ref<OrderCorrectionItem[]>([])
+const isMobileViewport = usePlatformAdminMobile()
+const mobileFields = [
+  { key: 'machineName', label: '所属机器人', value: (row: OrderCorrectionItem) => row.machineName || '--' },
+  { key: 'playerName', label: '昵称', value: (row: OrderCorrectionItem) => row.playerName || '--' },
+  { key: 'issueNumber', label: '期号', value: (row: OrderCorrectionItem) => row.issueNumber },
+  { key: 'createdAt', label: '时间', value: (row: OrderCorrectionItem) => time(row.createdAt) },
+  { key: 'stake', label: '金额', value: (row: OrderCorrectionItem) => row.stake.toFixed(2) },
+  { key: 'command', label: '投注内容', value: (row: OrderCorrectionItem) => row.command, spanAll: true },
+]
 const page = ref(1)
 const pageSize = 30
 const total = ref(0)
@@ -96,8 +107,8 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><h1>订单改单</h1><el-button :disabled="loading" @click="load(page)">刷新</el-button></header>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
-      <el-skeleton v-if="loading" :rows="6" animated />
-      <el-table scrollbar-always-on v-else :data="rows" row-key="id" stripe border empty-text="暂无数据">
+      <el-skeleton v-if="loading && !isMobileViewport" class="platform-admin-desktop-loading" :rows="6" animated />
+      <el-table v-if="!isMobileViewport && !loading" scrollbar-always-on class="platform-admin-desktop-table" :data="rows" row-key="id" stripe border empty-text="暂无数据">
         <el-table-column prop="id" label="ID" width="90" />
         <el-table-column prop="machineName" label="所属机器人" min-width="140"><template #default="{ row }">{{ row.machineName || '--' }}</template></el-table-column>
         <el-table-column prop="playerName" label="昵称" min-width="130"><template #default="{ row }">{{ row.playerName || '--' }}</template></el-table-column>
@@ -107,6 +118,10 @@ onMounted(async () => {
         <el-table-column prop="command" label="投注内容" min-width="240" show-overflow-tooltip />
         <el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="openEditor(row as OrderCorrectionItem)">编辑</el-button></template></el-table-column>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="rows" :fields="mobileFields" :row-key="row => row.id" :loading="loading" empty-text="暂无数据">
+        <template #heading="{ row }"><strong>订单 #{{ row.id }}</strong></template>
+        <template #actions="{ row }"><el-button type="primary" plain @click="openEditor(row as OrderCorrectionItem)">编辑订单</el-button></template>
+      </PlatformAdminMobileRecordList>
       <footer v-if="total > pageSize" class="table-footer">
         <span>第 {{ page }} / {{ totalPages }} 页，共 {{ total }} 条</span>
         <el-pagination :current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next" :disabled="loading" @current-change="load" />
@@ -144,6 +159,7 @@ onMounted(async () => {
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .wide { grid-column: 1 / -1; }
 .form-hint { display: block; margin-top: 8px; color: #606266; }
+@media (max-width: 767px) { .content { min-width: 0; padding: 14px 12px; } }
 @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } .wide { grid-column: auto; } }
 </style>
 

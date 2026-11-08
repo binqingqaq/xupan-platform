@@ -53,6 +53,26 @@ body.platform-admin-body:not(.ops-console-body) {
   white-space: nowrap;
 }
 
+.platform-admin-mobile-record-list { display: none; }
+.platform-admin-mobile-record { min-width: 0; padding: 12px; border: 1px solid #dfe5e9; border-radius: 4px; background: #fff; }
+.platform-admin-mobile-record-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.platform-admin-mobile-record-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }
+.platform-admin-mobile-record-fields > div { min-width: 0; }
+.platform-admin-mobile-record-fields > .is-span-all { grid-column: 1 / -1; }
+.platform-admin-mobile-record-fields dt { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.35; }
+.platform-admin-mobile-record-fields dd { min-width: 0; margin: 2px 0 0; overflow-wrap: anywhere; color: var(--el-text-color-primary); font-size: 14px; line-height: 1.45; }
+.platform-admin-mobile-record-details { margin-top: 10px; border-top: 1px solid var(--el-border-color-lighter); }
+.platform-admin-mobile-record-details summary { min-height: 44px; padding: 12px 2px; color: var(--el-color-primary); cursor: pointer; }
+.platform-admin-mobile-record-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; border-top: 1px solid var(--el-border-color-lighter); padding-top: 6px; }
+.platform-admin-mobile-record-actions .el-button { min-height: 44px; margin: 0; padding: 0 8px; }
+.platform-admin-mobile-record-skeletons { display: grid; gap: 10px; }
+.platform-admin-mobile-record-skeleton { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; background: var(--el-bg-color); }
+.platform-admin-mobile-record-skeleton span { height: 14px; border-radius: 2px; background: var(--el-fill-color-light); }
+.platform-admin-mobile-record-skeleton span:first-child { width: 48%; }
+.platform-admin-mobile-record-skeleton span:nth-child(2) { width: 75%; }
+.platform-admin-mobile-record-skeleton span:last-child { width: 92%; }
+.platform-admin-mobile-record-empty { padding: 28px 12px; color: var(--el-text-color-secondary); text-align: center; }
+
 .platform-admin-dialog-overlay,
 .platform-admin-body .el-overlay {
   --el-font-size-extra-large: 22px;
@@ -96,6 +116,17 @@ body.platform-admin-body:not(.ops-console-body) {
 }
 
 @media (max-width: 767px) {
+  .platform-admin-desktop-table,
+  .platform-admin-desktop-loading {
+    display: none !important;
+  }
+
+  .platform-admin-mobile-record-list {
+    display: grid !important;
+    min-width: 0;
+    gap: 10px;
+  }
+
   .platform-admin-page {
     width: 100%;
     min-width: 0;
@@ -119,6 +150,9 @@ body.platform-admin-body:not(.ops-console-body) {
   .platform-admin-page .el-table {
     max-width: 100%;
   }
+
+  .platform-admin-page .platform-admin-desktop-table { display: none; }
+  .platform-admin-page .platform-admin-mobile-record-list { display: grid; min-width: 0; gap: 10px; }
 
   .platform-admin-page .el-table__inner-wrapper,
   .platform-admin-page .el-table__header-wrapper,

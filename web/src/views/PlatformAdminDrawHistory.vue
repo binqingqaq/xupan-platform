@@ -4,6 +4,8 @@ import { api, apiErrorMessage } from '../api'
 import { ElMessageBox } from 'element-plus'
 import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import type { GameCatalogItem } from '../types'
 import type { DrawHistoryBet, DrawHistoryItem } from '../types/platformAdmin'
 
@@ -20,6 +22,7 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
 const loading = ref(false)
+const isMobileViewport = usePlatformAdminMobile()
 const forcing = ref(false)
 const error = ref('')
 const currentUser = ref('超级管理员')
@@ -34,6 +37,21 @@ const selectedIssue = ref('')
 const selectedGameCode = ref(historyGameCode)
 let refreshTimer: number | undefined
 let betsRequestSequence = 0
+const mobileHistoryFields = [
+  { key: 'balls', label: '开奖球号', value: (row: DrawHistoryItem) => row.balls.map(ball).join(', ') },
+  { key: 'openedAt', label: '开奖时间', value: (row: DrawHistoryItem) => time(row.openedAt) },
+  { key: 'confirmedAt', label: '确认状态', value: (row: DrawHistoryItem) => row.drawConfirmedAt ? '已锁定' : '待确认' },
+  { key: 'pending', label: '待结算数量', value: (row: DrawHistoryItem) => `本地 ${row.pendingBetCount} / 中心 ${row.pendingCenterOrderCount}` },
+  { key: 'betCount', label: '下注数量', value: (row: DrawHistoryItem) => row.betCount },
+]
+const mobileBetFields = [
+  { key: 'playType', label: '玩法', value: (row: DrawHistoryBet) => row.playType },
+  { key: 'parametersText', label: '内容', value: (row: DrawHistoryBet) => row.parametersText },
+  { key: 'stake', label: '金额', value: (row: DrawHistoryBet) => row.stake.toFixed(2) },
+  { key: 'odds', label: '赔率', value: (row: DrawHistoryBet) => row.odds },
+  { key: 'settlementStatus', label: '结果', value: (row: DrawHistoryBet) => row.settlementStatus },
+  { key: 'netProfit', label: '盈亏', value: (row: DrawHistoryBet) => row.netProfit === null ? '--' : row.netProfit.toFixed(2) },
+]
 const visibleBallCount = computed(() => {
   if (historyGameCode === 'AU8') return 7
   const game = gameCatalog.value.find(item => item.gameCode === historyGameCode)
@@ -202,8 +220,8 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
       </el-form>
 
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
-      <el-skeleton v-if="loading" :rows="6" animated />
-      <el-table scrollbar-always-on v-else :data="visibleRows" row-key="issueNumber" stripe border empty-text="暂无数据">
+      <el-skeleton v-if="loading && !isMobileViewport" class="platform-admin-desktop-loading" :rows="6" animated />
+      <el-table v-if="!isMobileViewport && !loading" scrollbar-always-on class="platform-admin-desktop-table" :data="visibleRows" row-key="issueNumber" stripe border empty-text="暂无数据">
         <el-table-column prop="gameName" label="彩种名称" min-width="120" />
         <el-table-column prop="issueNumber" label="期号" min-width="130" />
         <el-table-column label="开奖球号" min-width="300"><template #default="{ row }"><el-space wrap><el-tag v-for="(number,index) in row.balls" :key="index" class="ball" round>{{ number > 0 ? ball(number) : '--' }}</el-tag></el-space></template></el-table-column>
@@ -216,6 +234,26 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
           <el-button v-if="row.drawConfirmedAt && (row.pendingBetCount > 0 || row.pendingCenterOrderCount > 0)" link type="danger" :disabled="!canForceSettle || forcing" :loading="forcing" @click="forceSettleIssue(row as DrawHistoryItem)">补齐结算</el-button>
         </template></el-table-column>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport"
+        :rows="visibleRows"
+        :fields="mobileHistoryFields"
+        :row-key="row => `${row.gameCode}-${row.issueNumber}`"
+        :loading="loading"
+        empty-text="暂无数据"
+      >
+        <template #heading="{ row }">
+          <strong>{{ row.gameName }}</strong>
+          <el-tag effect="plain">第 {{ row.issueNumber }} 期</el-tag>
+        </template>
+        <template #field-balls="{ row }">
+          <div class="mobile-result-balls"><el-tag v-for="(number, index) in row.balls" :key="index" round>{{ number > 0 ? ball(number) : '--' }}</el-tag></div>
+        </template>
+        <template #field-confirmedAt="{ row }"><el-tag :type="row.drawConfirmedAt ? 'success' : 'warning'">{{ row.drawConfirmedAt ? '已锁定' : '待确认' }}</el-tag></template>
+        <template #actions="{ row }">
+          <el-button type="primary" plain @click="showBets(row as DrawHistoryItem)">投注记录</el-button>
+          <el-button v-if="row.drawConfirmedAt && (row.pendingBetCount > 0 || row.pendingCenterOrderCount > 0)" type="danger" plain :disabled="!canForceSettle || forcing" :loading="forcing" @click="forceSettleIssue(row as DrawHistoryItem)">补齐结算</el-button>
+        </template>
+      </PlatformAdminMobileRecordList>
       <div class="history-pagination">
         <el-pagination
           background
@@ -231,7 +269,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
       </div>
     </section>
     <el-dialog v-model="betsOpen" :title="`${selectedIssue} 投注记录`" width="min(1000px, 94vw)" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
-      <el-table scrollbar-always-on v-loading="betsLoading" :data="bets" stripe border empty-text="暂无投注">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="betsLoading" class="platform-admin-desktop-table" :data="bets" row-key="betCode" stripe border empty-text="暂无投注">
         <el-table-column label="玩家" min-width="150"><template #default="{ row }">{{ row.memberCode }} {{ row.playerName }}</template></el-table-column>
         <el-table-column prop="playType" label="玩法" min-width="100" />
         <el-table-column prop="parametersText" label="内容" min-width="180" show-overflow-tooltip />
@@ -240,6 +278,23 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
         <el-table-column prop="settlementStatus" label="结果" min-width="100" />
         <el-table-column label="盈亏" min-width="100" align="right"><template #default="{ row }">{{ row.netProfit === null ? '--' : row.netProfit.toFixed(2) }}</template></el-table-column>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport"
+        :rows="bets"
+        :fields="mobileBetFields"
+        :row-key="row => row.betCode"
+        :loading="betsLoading"
+        empty-text="暂无投注"
+      >
+        <template #heading="{ row }"><strong>{{ row.memberCode }} {{ row.playerName }}</strong></template>
+        <template #details="{ row }">
+          <dl class="platform-admin-mobile-record-fields platform-admin-mobile-record-extra-fields">
+            <div><dt>时间</dt><dd>{{ time(row.createdAt) }}</dd></div>
+            <div><dt>注单号</dt><dd>{{ row.betCode }}</dd></div>
+            <div class="is-span-all"><dt>说明</dt><dd>{{ row.explanation || '--' }}</dd></div>
+            <div><dt>结算时间</dt><dd>{{ time(row.settledAt) }}</dd></div>
+          </dl>
+        </template>
+      </PlatformAdminMobileRecordList>
       <div class="bets-pagination">
         <el-pagination
           background
@@ -276,6 +331,10 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
   .filters .el-date-editor { width: 100%; }
   .filters .el-button { min-height: 40px; }
   .history-pagination, .bets-pagination { justify-content: flex-start; }
+  .mobile-result-balls { display: flex; flex-wrap: wrap; gap: 4px; }
+  .mobile-result-balls .el-tag { margin: 0; }
+  .mobile-draw-time { display: block; margin-top: 4px; }
+  .platform-admin-mobile-record-extra-fields { margin-top: 10px; }
 }
 </style>
 

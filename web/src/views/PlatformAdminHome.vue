@@ -4,11 +4,14 @@ import { api, apiErrorMessage } from '../api'
 import type { DrawHistoryItem } from '../types/platformAdmin'
 import type { GameCatalogItem } from '../types'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 
 const history = ref<DrawHistoryItem[]>([])
 const gameCatalog = ref<GameCatalogItem[]>([])
 const selectedGameCode = ref('AU8')
 const loading = ref(true)
+const isMobileViewport = usePlatformAdminMobile()
 const error = ref('')
 let refreshTimer: number | undefined
 
@@ -38,6 +41,11 @@ const specialFan = computed(() => {
   const number = numbers?.[numbers.length - 1]
   return typeof number === 'number' ? fan(number) : null
 })
+const mobileHistoryFields = [
+  { key: 'settledAt', label: '时间', value: (row: DrawHistoryItem) => formatShortTime(row.settledAt) },
+  { key: 'balls', label: '开奖结果', value: (row: DrawHistoryItem) => row.balls.join(', ') },
+  { key: 'fan', label: '番', value: (row: DrawHistoryItem) => row.balls.length ? `${fan(row.balls[row.balls.length - 1]!)}番` : '--' },
+]
 
 function issueTail(issueNumber: string) { return issueNumber.length > 4 ? issueNumber.slice(-4) : issueNumber }
 function formatDateTime(value: string | null | undefined) { if (!value) return '--'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false }) }
@@ -99,13 +107,28 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 
       <h2 class="section-title">历史开奖结果</h2>
       <section id="history" class="platform-admin-history">
-        <el-table scrollbar-always-on v-if="!loading" :data="historyRows" row-key="issueNumber" stripe border empty-text="暂无历史开奖">
+        <el-table v-if="!isMobileViewport && !loading" scrollbar-always-on class="platform-admin-desktop-table" :data="historyRows" row-key="issueNumber" stripe border empty-text="暂无历史开奖">
           <el-table-column label="期数" min-width="100"><template #default="{ row }">{{ issueTail(row.issueNumber) }}</template></el-table-column>
           <el-table-column label="时间" min-width="130"><template #default="{ row }">{{ formatShortTime(row.settledAt) }}</template></el-table-column>
           <el-table-column label="结果" min-width="360"><template #default="{ row }"><el-space class="platform-admin-history-balls" wrap><el-tag v-for="(number,index) in row.balls" :key="index" round>{{ displayBall(number) }}</el-tag></el-space></template></el-table-column>
           <el-table-column label="番" width="100" align="center"><template #default="{ row }"><el-tag type="primary" effect="plain">{{ row.balls.length ? fan(row.balls[row.balls.length - 1]!) : '--' }}番</el-tag></template></el-table-column>
         </el-table>
-        <el-skeleton v-else :rows="5" animated />
+        <el-skeleton v-else-if="!isMobileViewport" class="platform-admin-desktop-loading" :rows="5" animated />
+        <PlatformAdminMobileRecordList v-if="isMobileViewport"
+          :rows="historyRows"
+          :fields="mobileHistoryFields"
+          :row-key="row => row.issueNumber"
+          :loading="loading"
+          empty-text="暂无历史开奖"
+        >
+          <template #heading="{ row }">
+            <strong>第{{ issueTail(row.issueNumber) }}期</strong>
+            <el-tag effect="plain">{{ row.gameName }}</el-tag>
+          </template>
+          <template #field-balls="{ row }">
+            <span class="mobile-result-balls">{{ row.balls.map(displayBall).join('  ') }}</span>
+          </template>
+        </PlatformAdminMobileRecordList>
       </section>
 
       <h2 class="section-title">路字图</h2>
@@ -142,6 +165,7 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
 .platform-admin-ball.is-even { border-color: #2e90fa; color: #175cd3; }
 .platform-admin-history-balls { display: flex; justify-content: center; }
 .platform-admin-history-balls .el-tag { min-width: 28px; justify-content: center; }
+.platform-admin-route { min-width: 0; max-width: 100%; overflow-x: auto; }
 .platform-admin-route :deep(.el-table__cell) { padding: 4px 0; }
 .platform-admin-route-color.fan-1 { background: #2f69d6; }
 .platform-admin-route-color.fan-2 { background: #25a25e; }
@@ -158,6 +182,8 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
   .platform-admin-draw-meta { align-items: flex-start; flex-wrap: wrap; }
   .platform-admin-ball-row { gap: 6px; }
   .platform-admin-ball { width: 36px; height: 36px; font-size: 16px; }
+  .mobile-result-balls { display: block; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .platform-admin-history-balls { justify-content: flex-start; }
   .platform-admin-route-color { width: 24px; height: 24px; }
 }
 </style>

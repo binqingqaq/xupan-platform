@@ -4,6 +4,8 @@ import { api, apiErrorMessage } from '../api'
 import { ElMessageBox } from 'element-plus'
 import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { AgentGroup } from '../types/agent'
 import type {
@@ -28,6 +30,7 @@ import type {
 
 type Tab = 'accounts' | 'orders'
 const tab = ref<Tab>('accounts')
+const isMobileViewport = usePlatformAdminMobile()
 const tabs: { key: Tab; label: string }[] = [
   { key: 'accounts', label: '中心账号' },
   { key: 'orders', label: '实时订单' },
@@ -39,13 +42,7 @@ const orders = ref<CenterOrderItem[]>([])
 const orderTotal = ref(0)
 const orderPage = ref(1)
 const orderFilters = ref({
-  centerAgentId: null as number | null,
   groupId: null as number | null,
-  machineId: null as number | null,
-  localBetId: null as number | null,
-  centerOrderNo: '',
-  gameCode: '',
-  issueNumber: '',
   status: '',
   createdFrom: '',
   createdTo: '',
@@ -101,9 +98,49 @@ const oneTimeCredentialVisible = ref(false)
 const settleForm = ref({ gameCode: 'AU8', issueNumber: '' })
 
 // P1-C2 / C-3：订单处置
-const disposeForm = ref({ reason: '' })
 const disposeHistory = ref<CenterOrderDispositionRecord[]>([])
 const disposeHistoryOrderId = ref<number | null>(null)
+const mobileAccountFields = [
+  { key: 'groupName', label: '代理子账号', value: (row: CenterUpstreamAccount) => row.groupName },
+  { key: 'availableBalance', label: '可用额度', value: (row: CenterUpstreamAccount) => money(row.availableBalance) },
+  { key: 'frozenBalance', label: '冻结额度', value: (row: CenterUpstreamAccount) => money(row.frozenBalance) },
+  { key: 'openStake', label: '未结押注', value: (row: CenterUpstreamAccount) => money(row.openStake) },
+]
+const mobileSessionFields = [
+  { key: 'machineStatus', label: '机器状态', value: (row: CenterMachineSession) => row.machineStatus },
+  { key: 'sessionStatus', label: '会话状态', value: (row: CenterMachineSession) => sessionStatusLabel(row.sessionStatus) },
+  { key: 'authenticatedAt', label: '登录时间', value: (row: CenterMachineSession) => row.authenticatedAt?.replace('T', ' ').slice(0, 19) ?? '—' },
+  { key: 'expiresAt', label: '会话到期', value: (row: CenterMachineSession) => row.expiresAt?.replace('T', ' ').slice(0, 19) ?? '—' },
+  { key: 'revokeReason', label: '撤销原因', value: (row: CenterMachineSession) => row.revokeReason ?? '—', spanAll: true },
+]
+const mobileOrderFields = [
+  { key: 'localBetId', label: '本地注单', value: (row: CenterOrderItem) => row.localBetId ?? '—' },
+  { key: 'issue', label: '期号', value: (row: CenterOrderItem) => `${row.gameCode} / ${row.issueNumber}` },
+  { key: 'play', label: '玩法', value: (row: CenterOrderItem) => `${row.playType}${row.playText ? ` ${row.playText}` : ''}`, spanAll: true },
+  { key: 'amount', label: '本金', value: (row: CenterOrderItem) => money(row.amount) },
+  { key: 'status', label: '状态', value: (row: CenterOrderItem) => statusLabel(row.status) },
+  { key: 'rejectReason', label: '拒绝原因', value: (row: CenterOrderItem) => row.rejectReason ?? '—', spanAll: true },
+  { key: 'settlement', label: '结算', value: (row: CenterOrderItem) => `${settleLabel(row.settleResult)}${row.settleAmount === null ? '' : ` ${money(row.settleAmount)}`}` },
+  { key: 'createdAt', label: '创建时间', value: (row: CenterOrderItem) => row.createdAt?.replace('T', ' ').slice(0, 19) ?? '—' },
+]
+const mobileDispositionFields = [
+  { key: 'action', label: '动作', value: (row: CenterOrderDispositionRecord) => dispositionLabel(row.action) },
+  { key: 'fromStatus', label: '原状态', value: (row: CenterOrderDispositionRecord) => statusLabel(row.fromStatus) },
+  { key: 'toStatus', label: '目标状态', value: (row: CenterOrderDispositionRecord) => statusLabel(row.toStatus) },
+  { key: 'amount', label: '金额', value: (row: CenterOrderDispositionRecord) => money(row.amount) },
+  { key: 'reason', label: '原因', value: (row: CenterOrderDispositionRecord) => row.reason ?? '—', spanAll: true },
+  { key: 'createdAt', label: '时间', value: (row: CenterOrderDispositionRecord) => row.createdAt?.replace('T', ' ').slice(0, 19) ?? '—' },
+]
+const mobileLedgerFields = [
+  { key: 'localBetId', label: '本地单', value: (row: CenterLedgerGroup) => row.localBetId ?? '—' },
+  { key: 'issue', label: '期号', value: (row: CenterLedgerGroup) => row.groupType === 'ORDER' ? row.issueNumber : row.sourceReferenceType === 'CENTER_ORDER' ? `订单引用 ${row.sourceReferenceId ?? '无效'}` : '账号级变动' },
+  { key: 'description', label: '下注内容', value: (row: CenterLedgerGroup) => row.groupType === 'ORDER' ? row.betDescription ?? '下注内容无法还原' : ledgerEntryTypeLabel(row.entryType), spanAll: true },
+  { key: 'amount', label: '本金/变动', value: (row: CenterLedgerGroup) => money(row.groupType === 'ORDER' ? row.orderAmount : row.amount) },
+  { key: 'settlement', label: '结算/额度层', value: (row: CenterLedgerGroup) => ledgerGroupSettlementLabel(row) },
+  { key: 'entryCount', label: '分录数', value: (row: CenterLedgerGroup) => row.entryCount },
+  { key: 'change', label: '说明/余额变化', value: (row: CenterLedgerGroup) => ledgerGroupChangeSummary(row), spanAll: true },
+  { key: 'latestEntryAt', label: '最近变动', value: (row: CenterLedgerGroup) => row.latestEntryAt.replace('T', ' ').slice(0, 19) },
+]
 
 const assignedCenterGroupIds = computed(() => new Set(centerAccounts.value.map(item => item.groupId)))
 const availableAgentGroups = computed(() => agentGroups.value.filter(group =>
@@ -186,13 +223,7 @@ async function loadOrders(nextPage = orderPage.value) {
   const result = await api.listCenterOrders({
     page: nextPage,
     pageSize: orderPageSize,
-    centerAgentId: filters.centerAgentId ?? undefined,
     groupId: filters.groupId ?? undefined,
-    machineId: filters.machineId ?? undefined,
-    localBetId: filters.localBetId ?? undefined,
-    centerOrderNo: filters.centerOrderNo,
-    gameCode: filters.gameCode,
-    issueNumber: filters.issueNumber,
     status: filters.status,
     createdFrom: createdFrom ?? undefined,
     createdTo: createdTo ?? undefined,
@@ -333,6 +364,10 @@ function onLedgerGroupExpand(group: CenterLedgerGroup, expanded: CenterLedgerGro
       && !expandedLedgerEntries.value[key] && !ledgerEntryLoading.value[key]) {
     void loadLedgerGroupEntries(group)
   }
+}
+
+function onMobileLedgerDetailsToggle(group: CenterLedgerGroup, expanded: boolean) {
+  onLedgerGroupExpand(group, expanded)
 }
 
 async function loadMachineSessions(account: CenterUpstreamAccount) {
@@ -633,14 +668,13 @@ async function dispose(order: CenterOrderItem, action: CenterDispositionAction) 
   try {
     const result = await api.disposeCenterOrder(order.id, {
       action,
-      reason: disposeForm.value.reason.trim() || dispositionLabel(action),
+      reason: dispositionLabel(action),
       // 幂等键：同一动作重复点击不会二次改状态、不会二次退额度。
       idempotencyKey: `center-disp-${order.id}-${action}-${Date.now()}`,
     })
     feedback.value = result.duplicate
       ? `订单 ${order.id} 该处置已执行过（回放结果）`
       : `订单 ${order.id} 已${dispositionLabel(action)} → ${result.status}`
-    disposeForm.value.reason = ''
     await refresh()
   } catch (cause) {
     adminNotice.error(apiErrorMessage(cause, '订单处置失败'))
@@ -744,7 +778,7 @@ onMounted(async () => {
       </el-dialog>
 
       <el-alert v-if="!availableAgentGroups.length && !centerAccounts.length" type="info" :closable="false" title="没有可分配中心账号的有效代理子账号" />
-      <el-table scrollbar-always-on :data="centerAccounts" row-key="accountId" border stripe class="center-table" empty-text="还没有中心账号">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on :data="centerAccounts" row-key="accountId" border stripe class="center-table platform-admin-desktop-table" empty-text="还没有中心账号">
         <el-table-column prop="groupName" label="代理子账号" min-width="160" />
         <el-table-column prop="username" label="中心账号名" min-width="160" />
         <el-table-column label="状态" width="95"><template #default="{ row }"><el-tag :type="centerAccountStatusType(row.status)" effect="plain">{{ centerAccountStatusLabel(row.status) }}</el-tag></template></el-table-column>
@@ -769,13 +803,35 @@ onMounted(async () => {
         </el-table-column>
         <template #empty><el-empty description="还没有中心账号" /></template>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="centerAccounts" :fields="mobileAccountFields" :row-key="row => row.accountId" empty-text="还没有中心账号">
+        <template #heading="{ row }">
+          <strong>{{ row.username }}</strong>
+          <el-tag :type="centerAccountStatusType(row.status)" effect="plain">{{ centerAccountStatusLabel(row.status) }}</el-tag>
+        </template>
+        <template #details="{ row }">
+          <dl class="platform-admin-mobile-record-fields platform-admin-mobile-record-extra-fields">
+            <div><dt>机器在线</dt><dd>{{ row.online ? '在线' : '离线' }} · {{ row.onlineMachineCount }} 台</dd></div>
+            <div><dt>单笔上限</dt><dd>{{ money(row.maxSingleAmount) }}</dd></div>
+            <div><dt>单期敞口上限</dt><dd>{{ money(row.maxIssueExposure) }}</dd></div>
+            <div><dt>有效期至</dt><dd>{{ row.expiresAt?.replace('T', ' ').slice(0, 19) ?? '—' }}</dd></div>
+            <div class="is-span-all"><dt>最近登录</dt><dd>{{ row.lastLoginAt?.replace('T', ' ').slice(0, 19) ?? '—' }}</dd></div>
+          </dl>
+        </template>
+        <template #actions="{ row }">
+          <el-button type="primary" plain :disabled="busy" @click="openEditCenterAccount(row as CenterUpstreamAccount)">编辑</el-button>
+          <el-button type="primary" plain :disabled="busy" @click="openCenterAccountStatus(row as CenterUpstreamAccount)">{{ row.status === 'DISABLED' ? '恢复' : '停用' }}</el-button>
+          <el-button type="primary" plain :disabled="busy" @click="loadMachineSessions(row as CenterUpstreamAccount)">机器会话</el-button>
+          <el-button type="primary" plain :disabled="busy" @click="openAccountLedger(row as CenterUpstreamAccount)">流水</el-button>
+          <el-button type="danger" plain :disabled="busy" @click="deleteCenterAccount(row as CenterUpstreamAccount)">删除</el-button>
+        </template>
+      </PlatformAdminMobileRecordList>
 
       <div v-if="sessionAccount" class="center-data-block">
         <div class="center-section-heading">
           <strong>{{ sessionAccount.username }} · 机器会话</strong>
           <el-button link type="primary" @click="closeMachineSessions">关闭</el-button>
         </div>
-        <el-table scrollbar-always-on :data="machineSessions" row-key="machineId" border stripe class="center-table" empty-text="该子账号下没有机器">
+        <el-table v-if="!isMobileViewport" scrollbar-always-on :data="machineSessions" row-key="machineId" border stripe class="center-table platform-admin-desktop-table" empty-text="该子账号下没有机器">
           <el-table-column prop="machineCode" label="机器编号" min-width="125" />
           <el-table-column prop="machineName" label="机器名称" min-width="145" />
           <el-table-column label="机器状态" width="100"><template #default="{ row }">{{ row.machineStatus }}</template></el-table-column>
@@ -785,6 +841,10 @@ onMounted(async () => {
           <el-table-column label="撤销原因" min-width="150"><template #default="{ row }">{{ row.revokeReason ?? '—' }}</template></el-table-column>
           <template #empty><el-empty :description="sessionsLoading ? '加载中' : '该子账号下没有机器'" /></template>
         </el-table>
+        <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="machineSessions" :fields="mobileSessionFields" :row-key="row => row.machineId" :loading="sessionsLoading" empty-text="该子账号下没有机器">
+          <template #heading="{ row }"><strong>{{ row.machineName || row.machineCode }}</strong><span>{{ row.machineCode }}</span></template>
+          <template #field-sessionStatus="{ row }"><el-tag :type="row.sessionStatus === 'ONLINE' ? 'success' : 'info'" effect="plain">{{ sessionStatusLabel(row.sessionStatus) }}</el-tag></template>
+        </PlatformAdminMobileRecordList>
       </div>
 
       <el-dialog v-model="editAccountDialogOpen" :title="editAccountTarget ? `编辑中心账号：${editAccountTarget.username}` : '编辑中心账号'" width="min(720px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close @close="closeEditCenterAccount">
@@ -822,21 +882,11 @@ onMounted(async () => {
 
     <section v-else-if="tab === 'orders'" class="center-panel">
       <el-form :model="orderFilters" inline class="center-form order-filter-form" @submit.prevent="loadOrders(1)">
-        <el-form-item label="中心账号">
-          <el-select v-model="orderFilters.centerAgentId" clearable placeholder="全部" @change="loadOrders(1)">
-            <el-option v-for="account in centerAccounts" :key="account.accountId" :label="account.username" :value="account.accountId" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="代理子账号">
           <el-select v-model="orderFilters.groupId" clearable placeholder="全部" @change="loadOrders(1)">
             <el-option v-for="account in centerAccounts" :key="account.groupId" :label="account.groupName" :value="account.groupId" />
           </el-select>
         </el-form-item>
-        <el-form-item label="机器 ID"><el-input-number v-model="orderFilters.machineId" :min="1" :precision="0" controls-position="right" /></el-form-item>
-        <el-form-item label="本地注单号"><el-input-number v-model="orderFilters.localBetId" :min="1" :precision="0" controls-position="right" /></el-form-item>
-        <el-form-item label="中心订单号"><el-input v-model="orderFilters.centerOrderNo" clearable /></el-form-item>
-        <el-form-item label="游戏"><el-input v-model="orderFilters.gameCode" clearable /></el-form-item>
-        <el-form-item label="期号"><el-input v-model="orderFilters.issueNumber" clearable /></el-form-item>
         <el-form-item label="状态">
           <el-select v-model="orderFilters.status" clearable @change="loadOrders(1)">
             <el-option label="全部" value="" />
@@ -849,13 +899,12 @@ onMounted(async () => {
             <el-option label="已退款" value="REFUNDED" />
           </el-select>
         </el-form-item>
-        <el-form-item label="处置原因"><el-input v-model="disposeForm.reason" placeholder="留空则用动作名" /></el-form-item>
         <el-form-item label="创建起"><el-date-picker v-model="orderFilters.createdFrom" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" clearable /></el-form-item>
         <el-form-item label="创建止"><el-date-picker v-model="orderFilters.createdTo" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" clearable /></el-form-item>
-        <el-form-item><el-button type="primary" @click="loadOrders(1)">查询</el-button><el-button @click="orderFilters = { centerAgentId: null, groupId: null, machineId: null, localBetId: null, centerOrderNo: '', gameCode: '', issueNumber: '', status: '', createdFrom: '', createdTo: '' }; loadOrders(1)">重置</el-button></el-form-item>
+        <el-form-item><el-button type="primary" @click="loadOrders(1)">查询</el-button><el-button @click="orderFilters = { groupId: null, status: '', createdFrom: '', createdTo: '' }; loadOrders(1)">重置</el-button></el-form-item>
       </el-form>
       <el-alert class="center-hint" type="warning" :closable="false" title="超时不等于失败：超时单必须人工查证后明确落到终态。可处置的动作由当前状态决定，重复点击不会二次退款（幂等键保证）。" />
-      <el-table scrollbar-always-on :data="orders" row-key="id" border stripe class="center-table" empty-text="暂无订单">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on :data="orders" row-key="id" border stripe class="center-table platform-admin-desktop-table" empty-text="暂无订单">
         <el-table-column prop="agentOrderNo" label="中心订单号" min-width="160" />
         <el-table-column label="本地注单" min-width="110"><template #default="{ row }">{{ row.localBetId ?? '—' }}</template></el-table-column>
         <el-table-column label="期号" min-width="150"><template #default="{ row }">{{ row.gameCode }} / {{ row.issueNumber }}</template></el-table-column>
@@ -875,9 +924,19 @@ onMounted(async () => {
         <el-table-column label="创建时间" min-width="170"><template #default="{ row }">{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
         <template #empty><el-empty description="暂无订单" /></template>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="orders" :fields="mobileOrderFields" :row-key="row => row.id" empty-text="暂无订单">
+        <template #heading="{ row }">
+          <strong>{{ row.agentOrderNo }}</strong>
+          <el-tag :type="row.status === 'ACCEPTED' || row.status === 'SETTLED' ? 'success' : row.status === 'REJECTED' || row.status === 'CANCELLED' || row.status === 'REFUNDED' ? 'info' : row.status === 'TIMEOUT' ? 'warning' : 'primary'" effect="plain">{{ statusLabel(row.status) }}</el-tag>
+        </template>
+        <template #actions="{ row }">
+          <el-button v-for="action in allowedActions(row.status)" :key="action" type="primary" plain :disabled="busy" @click="dispose(row as CenterOrderItem, action)">{{ dispositionLabel(action) }}</el-button>
+          <el-button type="primary" plain @click="showDispositions(row.id)">{{ disposeHistoryOrderId === row.id ? '收起处置记录' : '处置记录' }}</el-button>
+        </template>
+      </PlatformAdminMobileRecordList>
       <div v-if="disposeHistoryOrderId !== null" class="center-data-block">
         <p class="center-hint">订单 #{{ disposeHistoryOrderId }} 的处置记录</p>
-      <el-table scrollbar-always-on :data="disposeHistory" row-key="id" border stripe class="center-table" empty-text="尚无处置记录">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on :data="disposeHistory" row-key="id" border stripe class="center-table platform-admin-desktop-table" empty-text="尚无处置记录">
           <el-table-column label="动作" min-width="130"><template #default="{ row }">{{ dispositionLabel(row.action) }}</template></el-table-column>
           <el-table-column label="从" min-width="110"><template #default="{ row }">{{ statusLabel(row.fromStatus) }}</template></el-table-column>
           <el-table-column label="到" min-width="110"><template #default="{ row }">{{ statusLabel(row.toStatus) }}</template></el-table-column>
@@ -886,6 +945,9 @@ onMounted(async () => {
           <el-table-column label="时间" min-width="170"><template #default="{ row }">{{ row.createdAt?.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
           <template #empty><el-empty description="尚无处置记录" /></template>
         </el-table>
+        <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="disposeHistory" :fields="mobileDispositionFields" :row-key="row => row.id" empty-text="尚无处置记录">
+          <template #heading="{ row }"><strong>{{ dispositionLabel(row.action) }}</strong></template>
+        </PlatformAdminMobileRecordList>
       </div>
       <div class="center-list-pagination"><span>共 {{ orderTotal }} 笔</span><el-pagination background layout="prev, pager, next" :current-page="orderPage" :page-size="orderPageSize" :total="orderTotal" @current-change="loadOrders" /></div>
     </section>
@@ -901,12 +963,13 @@ onMounted(async () => {
         </header>
         <el-alert class="center-hint" type="info" :closable="false" title="同一订单的额度冻结、层间转移和结算流水合并在一行；展开可查看每条原始分录。期初额度、追加额度等账号流水独立显示。" />
         <el-table
+          v-if="!isMobileViewport"
           v-loading="ledgerGroupsLoading"
           :data="ledgerGroups"
           :row-key="ledgerGroupKey"
           border
           stripe
-          class="center-table ledger-groups-table"
+          class="center-table ledger-groups-table platform-admin-desktop-table"
           empty-text="暂无中心账号流水"
           @expand-change="onLedgerGroupExpand"
         >
@@ -914,7 +977,7 @@ onMounted(async () => {
             <template #default="{ row }">
               <el-alert v-if="ledgerEntryErrors[ledgerGroupKey(row as CenterLedgerGroup)]" type="error" :title="ledgerEntryErrors[ledgerGroupKey(row as CenterLedgerGroup)]" :closable="false" />
               <el-skeleton v-else-if="ledgerEntryLoading[ledgerGroupKey(row as CenterLedgerGroup)]" :rows="2" animated />
-              <el-table v-else :data="expandedLedgerEntries[ledgerGroupKey(row as CenterLedgerGroup)] ?? []" row-key="id" border stripe size="small" empty-text="暂无关联分录">
+              <el-table v-else-if="!isMobileViewport" class="platform-admin-desktop-table" :data="expandedLedgerEntries[ledgerGroupKey(row as CenterLedgerGroup)] ?? []" row-key="id" border stripe size="small" empty-text="暂无关联分录">
                 <el-table-column prop="id" label="流水号" width="95" />
                 <el-table-column label="额度层" min-width="130"><template #default="{ row: entry }">{{ bucketLabel(entry.bucket) }}</template></el-table-column>
                 <el-table-column label="变动类型" min-width="150"><template #default="{ row: entry }">{{ ledgerEntryTypeLabel(entry.entryType) }} <small>{{ entry.entryType }}</small></template></el-table-column>
@@ -939,6 +1002,34 @@ onMounted(async () => {
           <el-table-column label="最近变动" min-width="165"><template #default="{ row }">{{ row.latestEntryAt.replace('T', ' ').slice(0, 19) }}</template></el-table-column>
           <template #empty><el-empty description="暂无中心账号流水" /></template>
         </el-table>
+        <PlatformAdminMobileRecordList
+          v-if="isMobileViewport"
+          :rows="ledgerGroups"
+          :fields="mobileLedgerFields"
+          :row-key="row => ledgerGroupKey(row)"
+          :loading="ledgerGroupsLoading"
+          empty-text="暂无中心账号流水"
+          details-label="展开关联分录"
+          @details-toggle="onMobileLedgerDetailsToggle"
+        >
+          <template #heading="{ row }">
+            <el-tag :type="row.groupType === 'ORDER' ? 'primary' : row.sourceReferenceType === 'CENTER_ORDER' ? 'danger' : 'info'" effect="plain">{{ ledgerGroupKindLabel(row) }}</el-tag>
+            <strong>{{ row.groupType === 'ORDER' ? row.agentOrderNo : `流水 #${row.groupReferenceId}` }}</strong>
+          </template>
+          <template #details="{ row }">
+            <el-alert v-if="ledgerEntryErrors[ledgerGroupKey(row)]" type="error" :title="ledgerEntryErrors[ledgerGroupKey(row)]" :closable="false" />
+            <el-skeleton v-else-if="ledgerEntryLoading[ledgerGroupKey(row)]" :rows="2" animated />
+            <div v-else-if="(expandedLedgerEntries[ledgerGroupKey(row)] ?? []).length" class="platform-admin-mobile-ledger-entries">
+              <article v-for="entry in expandedLedgerEntries[ledgerGroupKey(row)]" :key="entry.id" class="platform-admin-mobile-ledger-entry">
+                <strong>流水 #{{ entry.id }} · {{ ledgerEntryTypeLabel(entry.entryType) }} <small>{{ entry.entryType }}</small></strong>
+                <span>{{ bucketLabel(entry.bucket) }} · {{ entry.direction === 'IN' ? '增加' : '减少' }} {{ money(entry.amount) }}</span>
+                <span>{{ money(entry.balanceBefore) }} → {{ money(entry.balanceAfter) }} · {{ entry.createdAt.replace('T', ' ').slice(0, 19) }}</span>
+                <span v-if="entry.reason">{{ entry.reason }}</span>
+              </article>
+            </div>
+            <el-empty v-else description="暂无关联分录" :image-size="48" />
+          </template>
+        </PlatformAdminMobileRecordList>
         <div class="center-list-pagination"><span>共 {{ ledgerGroupTotal }} 条汇总记录</span><el-pagination background layout="prev, pager, next" :current-page="ledgerGroupPage" :page-size="ledgerGroupPageSize" :total="ledgerGroupTotal" @current-change="changeLedgerGroupPage" /></div>
       </div>
     </el-drawer>
@@ -1001,6 +1092,7 @@ onMounted(async () => {
 }
 @media (max-width: 560px) {
   .center-admin { width: calc(100% - 20px); padding-top: 12px; }
+  .center-panel { max-width: 100%; overflow-x: clip; }
   :global(.center-ledger-drawer) { width: 100vw !important; }
   :global(.center-ledger-drawer .el-drawer__body) { padding: 12px; }
   .center-header h1 { font-size: 24px; }
@@ -1012,5 +1104,10 @@ onMounted(async () => {
   .center-form .el-input-number { width: 100%; }
   .center-form .el-date-editor { width: 100%; }
   .center-form .el-form-item { margin-bottom: 12px; }
+  .platform-admin-mobile-record-extra-fields { margin-top: 10px; }
+  .platform-admin-mobile-ledger-entries { display: grid; gap: 8px; margin-top: 8px; }
+  .platform-admin-mobile-ledger-entry { display: grid; min-width: 0; gap: 4px; border-bottom: 1px solid var(--el-border-color-lighter); padding: 8px 0; }
+  .platform-admin-mobile-ledger-entry > * { overflow-wrap: anywhere; }
+  .platform-admin-mobile-ledger-entry span { color: var(--el-text-color-secondary); font-size: 13px; }
 }
 </style>

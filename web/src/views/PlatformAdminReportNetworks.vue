@@ -4,6 +4,8 @@ import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
 import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import type { ReportNetworkInput, ReportNetworkItem } from '../types/platformAdmin'
 
 const rows = ref<ReportNetworkItem[]>([])
@@ -11,10 +13,15 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const currentUser = ref('超级管理员')
+const isMobileViewport = usePlatformAdminMobile()
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const editingVersion = ref(0)
 const form = ref<ReportNetworkInput>({ code: '', name: '', websiteUrl: '', status: 'ACTIVE' })
+const mobileFields = [
+  { key: 'code', label: '网盘键名', value: (row: ReportNetworkItem) => row.code },
+  { key: 'websiteUrl', label: '网盘链接', value: (row: ReportNetworkItem) => row.websiteUrl, spanAll: true },
+]
 
 async function load() {
   loading.value = true
@@ -101,7 +108,7 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><div><h1>网盘设置</h1><p>管理网盘链接和启用状态</p></div><div class="heading-actions"><el-button :disabled="loading" @click="load">刷新</el-button><el-button type="primary" @click="openCreate">添加</el-button></div></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-table scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="networks-table">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="networks-table platform-admin-desktop-table">
         <el-table-column prop="name" label="网盘名称" min-width="160" />
         <el-table-column prop="code" label="网盘键名" min-width="150" />
         <el-table-column label="状态" width="110">
@@ -113,6 +120,17 @@ onMounted(async () => {
         </el-table-column>
         <template #empty><el-empty description="暂无网盘配置" /></template>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="rows" :fields="mobileFields" :row-key="row => row.id" :loading="loading" empty-text="暂无网盘配置">
+        <template #heading="{ row }">
+          <strong>{{ row.name }}</strong>
+          <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '开通' : '关闭' }}</el-tag>
+        </template>
+        <template #actions="{ row }">
+          <el-button type="primary" plain @click="openEdit(row as ReportNetworkItem)">编辑</el-button>
+          <el-button :type="row.status === 'ACTIVE' ? 'warning' : 'success'" plain @click="toggle(row as ReportNetworkItem)">{{ row.status === 'ACTIVE' ? '停用' : '启用' }}</el-button>
+          <el-button type="danger" plain @click="remove(row as ReportNetworkItem)">删除</el-button>
+        </template>
+      </PlatformAdminMobileRecordList>
       <el-alert title="仅保存内部配置，不会请求或探测所填链接。搜索码、接口密钥和接口版本当前未开放配置。" type="info" :closable="false" class="page-alert" />
     </section>
 
@@ -140,5 +158,5 @@ onMounted(async () => {
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .form-grid :deep(.el-form-item:nth-child(3)), .dialog-footer { grid-column: 1 / -1; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; }
-@media (max-width: 700px) { .content { padding: 12px; } .page-heading { align-items: flex-start; flex-direction: column; } .form-grid { grid-template-columns: 1fr; } }
+@media (max-width: 767px) { .content { min-width: 0; padding: 14px 12px; } .page-heading { align-items: flex-start; flex-direction: column; } .heading-actions { width: 100%; flex-wrap: wrap; } .form-grid { grid-template-columns: 1fr; } }
 </style>

@@ -4,6 +4,7 @@ import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
 import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { SubAccount, SubAccountInput } from '../types/platformAdmin'
 
@@ -45,6 +46,7 @@ const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const currentUser = ref('超级管理员')
 const form = reactive<SubAccountForm>(emptyForm())
+const isMobileViewport = usePlatformAdminMobile()
 async function load() { loading.value = true; error.value = ''; try { const [user, rows] = await Promise.all([api.me(), api.listSubAccounts()]); currentUser.value = user.displayName || user.username; accounts.value = rows } catch (cause) { error.value = apiErrorMessage(cause, '子账号加载失败') } finally { loading.value = false } }
 function openCreate() { editingId.value = null; Object.assign(form, emptyForm()); formOpen.value = true }
 function openEdit(row: SubAccount) {
@@ -144,7 +146,7 @@ onMounted(() => { void load() })
     <section class="platform-admin-content">
       <header class="page-heading"><div><h1>子账号</h1></div><el-button type="primary" @click="openCreate">添加子账号</el-button></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-table scrollbar-always-on v-loading="loading" :data="accounts" row-key="id" border stripe class="accounts-table desktop-accounts-table">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="loading" :data="accounts" row-key="id" border stripe class="accounts-table desktop-accounts-table">
         <el-table-column prop="username" label="用户名" min-width="120"><template #default="{ row }">{{ row.username || '未设置' }}</template></el-table-column>
         <el-table-column label="失效日期" min-width="165"><template #default="{ row }">{{ formatTime(row.expiresAt) }}</template></el-table-column>
         <el-table-column label="积分" width="100" align="right"><template #default="{ row }">{{ row.score.toFixed(2) }}</template></el-table-column>
@@ -156,7 +158,8 @@ onMounted(() => { void load() })
         <template #empty><el-empty description="暂无子账号" /></template>
       </el-table>
 
-      <div v-if="accounts.length" v-loading="loading" class="mobile-account-list" aria-label="子账号列表">
+      <el-skeleton v-if="isMobileViewport && loading && accounts.length === 0" :rows="5" animated />
+      <div v-if="isMobileViewport && accounts.length" v-loading="loading" class="mobile-account-list" aria-label="子账号列表">
         <article v-for="row in accounts" :key="row.id" class="mobile-account-card">
           <header class="mobile-account-card-heading">
             <strong>{{ row.username || '未设置' }}</strong>
@@ -177,7 +180,7 @@ onMounted(() => { void load() })
           </div>
         </article>
       </div>
-      <el-empty v-else-if="!loading" description="暂无子账号" class="mobile-account-empty" />
+      <el-empty v-else-if="isMobileViewport && !loading && accounts.length === 0" description="暂无子账号" class="mobile-account-empty" />
     </section>
     <el-dialog v-model="formOpen" :title="editingId ? '编辑子账号' : '添加子账号'" width="min(760px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
       <el-form class="form-grid" label-position="top" @submit.prevent="submit">

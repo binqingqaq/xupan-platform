@@ -6,6 +6,7 @@ import { api, apiErrorMessage } from '../api'
 import { adminNotice } from '../services/adminNotice'
 import { consoleMachineLoginUrl, isLocalMachineLoginOrigin } from '../consoleLoginLink'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
 import type { Machine, MachineInput, MachinePlayer, SubAccount } from '../types/platformAdmin'
 
@@ -28,6 +29,7 @@ const passwordTouched = ref(false)
 const passwordError = ref('')
 const currentUser = ref('超级管理员')
 const isScopedSubAccount = ref(false)
+const isMobileViewport = usePlatformAdminMobile()
 const form = reactive<MachineInput>({ username: '', rawPassword: '', groupId: null, score: null, expiresAt: null, robotManage: true, chaseEnabled: true, au8BallMode: 'PLAYER_SELECT', au8FixedBallNumber: null, botCount: 3, closeSeconds: 120, cancelSeconds: 30, rebateRate: 0, oddsRate: 95, specialRebateRate: 1, specialOddsRate: 18, rebateMode: 'SINGLE', totalLimit: 5000, positiveLimit: 20000, angleLimit: 1000, strictLimit: 20000, tongLimit: 20000, carLimit: 20000, specialLimit: 200, oddEvenLimit: 20000, bigSmallLimit: 20000, fanLimit: 20000, addLimit: 20000, playerMaxStake: 5000, playerMinStake: 1, games: ['AU8'] })
 const selectedGroupId = ref<string | number | null>(null)
 watch(selectedGroupId, value => { form.groupId = value === null || value === '' ? null : Number(value) })
@@ -243,7 +245,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
     <section class="content">
       <header class="page-heading"><h1>机器管理</h1><el-button type="primary" @click="openCreate">添加机器</el-button></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-table scrollbar-always-on v-loading="loading" :data="machines" row-key="id" border stripe class="machines-table desktop-machines-table">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="loading" :data="machines" row-key="id" border stripe class="machines-table desktop-machines-table">
         <el-table-column prop="accountUsername" label="账户" min-width="115" />
         <el-table-column label="密码" width="90">******</el-table-column>
         <el-table-column label="失效日期" min-width="155"><template #default="{ row }">{{ time(row.expiresAt) }}</template></el-table-column>
@@ -263,7 +265,8 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <template #empty><el-empty description="暂无机器" /></template>
       </el-table>
 
-      <div v-if="machines.length" v-loading="loading" class="mobile-machine-list" aria-label="机器账号列表">
+      <el-skeleton v-if="isMobileViewport && loading && machines.length === 0" :rows="5" animated />
+      <div v-if="isMobileViewport && machines.length" v-loading="loading" class="mobile-machine-list" aria-label="机器账号列表">
         <article v-for="row in machines" :key="row.id" class="mobile-machine-card">
           <header class="mobile-machine-card-heading">
             <strong>{{ row.accountUsername }}</strong>
@@ -313,7 +316,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
           </div>
         </article>
       </div>
-      <el-empty v-else-if="!loading" description="暂无机器" class="mobile-machine-empty" />
+      <el-empty v-else-if="isMobileViewport && !loading && machines.length === 0" description="暂无机器" class="mobile-machine-empty" />
     </section>
 
     <el-dialog v-model="formOpen" :title="editingId ? '编辑机器账号' : '添加机器账号'" width="min(960px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
@@ -360,7 +363,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
     </el-dialog>
 
     <el-dialog v-model="playersOpen" title="玩家列表" width="min(760px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
-      <el-table scrollbar-always-on :data="players" row-key="userId" border stripe class="desktop-machine-players-table">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on :data="players" row-key="userId" border stripe class="desktop-machine-players-table">
         <el-table-column prop="displayName" label="昵称" min-width="140" />
         <el-table-column prop="memberCode" label="会员编号" min-width="130" />
         <el-table-column prop="playerKind" label="类型" width="100" />
@@ -368,7 +371,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <el-table-column prop="accountStatus" label="状态" width="120" />
         <template #empty><el-empty description="暂无玩家" /></template>
       </el-table>
-      <div v-if="players.length" class="mobile-machine-player-list">
+      <div v-if="isMobileViewport && players.length" class="mobile-machine-player-list">
         <article v-for="player in players" :key="player.userId" class="mobile-machine-player-card">
           <strong>{{ player.displayName || '未设置昵称' }}</strong>
           <dl class="mobile-machine-facts">

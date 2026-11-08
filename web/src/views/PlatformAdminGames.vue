@@ -4,6 +4,8 @@ import { ElMessageBox } from 'element-plus'
 import { api, apiErrorMessage } from '../api'
 import { adminNotice } from '../services/adminNotice'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import type { GameSettings, GameSettingsInput } from '../types/platformAdmin'
 
 const rows = ref<GameSettings[]>([])
@@ -11,6 +13,7 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const currentUser = ref('超级管理员')
+const isMobileViewport = usePlatformAdminMobile()
 const formOpen = ref(false)
 const editingId = ref<number | null>(null)
 const editingVersion = ref(0)
@@ -28,6 +31,19 @@ function blankForm(): GameSettingsInput {
 
 const form = ref<GameSettingsInput>(blankForm())
 const isAu8 = computed(() => form.value.gameCode.trim().toUpperCase() === 'AU8')
+const mobileFields = [
+  { key: 'gameCode', label: '彩种键名', value: (row: GameSettings) => row.gameCode },
+  { key: 'ballCount', label: '后续新期球数', value: (row: GameSettings) => `${row.gameCode === 'AU8' ? 7 : row.nextIssueBallCount ?? 8} 球` },
+  { key: 'ballIndexes', label: '开奖球号', value: (row: GameSettings) => row.gameCode === 'AU8' ? '1,2,3,4,5,6,7' : row.ballIndexes, spanAll: true },
+  { key: 'sortOrder', label: '排序', value: (row: GameSettings) => row.sortOrder },
+  { key: 'algorithm', label: '算法', value: (row: GameSettings) => algorithmText(row.algorithm) },
+  { key: 'playPrefix', label: '玩法前缀', value: (row: GameSettings) => row.playPrefix || '--' },
+  { key: 'switchEnabled', label: '是否切换', value: (row: GameSettings) => row.switchEnabled ? '是' : '否' },
+  { key: 'specialEnabled', label: '显示特', value: (row: GameSettings) => row.specialEnabled ? '显示' : '隐藏' },
+  { key: 'specialModel', label: '特模型', value: (row: GameSettings) => row.specialModel === 'MODEL_TWO' ? '模型二' : '模型一' },
+  { key: 'keyboardEnabled', label: '显示键盘', value: (row: GameSettings) => row.keyboardEnabled ? '显示' : '隐藏' },
+  { key: 'updatedAt', label: '更新时间', value: (row: GameSettings) => new Date(row.updatedAt).toLocaleString('zh-CN', { hour12: false }) },
+]
 
 watch(isAu8, fixed => {
   if (!fixed) return
@@ -169,7 +185,7 @@ onMounted(async () => {
     <section class="content">
       <header class="page-heading"><h1>游戏设置</h1><div class="heading-actions"><el-button :disabled="loading" @click="load">刷新</el-button><el-button type="primary" @click="openCreate">添加彩种</el-button></div></header>
       <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" class="page-alert" />
-      <el-table scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="games-table">
+      <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="loading" :data="rows" row-key="id" border stripe class="games-table platform-admin-desktop-table">
         <el-table-column prop="displayName" label="彩种名称" min-width="130" />
         <el-table-column prop="gameCode" label="彩种键名" min-width="120" />
         <el-table-column label="后续新期球数" width="130" align="center"><template #default="{ row }">{{ row.gameCode === 'AU8' ? 7 : row.nextIssueBallCount ?? 8 }} 球</template></el-table-column>
@@ -186,6 +202,25 @@ onMounted(async () => {
         <el-table-column label="操作" fixed="right" width="120"><template #default="{ row }"><div class="actions"><el-button link type="primary" @click="openEdit(row as GameSettings)">编辑</el-button><el-button link type="danger" :disabled="row.id === 1" @click="remove(row as GameSettings)">删除</el-button></div></template></el-table-column>
         <template #empty><el-empty description="暂无游戏" /></template>
       </el-table>
+      <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="rows" :fields="mobileFields" :row-key="row => row.id" :loading="loading" empty-text="暂无游戏">
+        <template #heading="{ row }">
+          <strong>{{ row.displayName }}</strong>
+          <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '正常' : '关闭' }}</el-tag>
+        </template>
+        <template #details="{ row }">
+          <dl class="platform-admin-mobile-record-fields platform-admin-mobile-record-extra-fields">
+            <div><dt>采集链接</dt><dd>{{ row.drawSourceUrl || '--' }}</dd></div>
+            <div><dt>A 盘特码/大小单双</dt><dd>{{ row.oddsAte }} / {{ row.oddsAdx }}</dd></div>
+            <div><dt>B 盘特码/大小单双</dt><dd>{{ row.oddsBte }} / {{ row.oddsBdx }}</dd></div>
+            <div><dt>C 盘特码/大小单双</dt><dd>{{ row.oddsCte }} / {{ row.oddsCdx }}</dd></div>
+            <div><dt>D 盘特码/大小单双</dt><dd>{{ row.oddsDte }} / {{ row.oddsDdx }}</dd></div>
+          </dl>
+        </template>
+        <template #actions="{ row }">
+          <el-button type="primary" plain @click="openEdit(row as GameSettings)">编辑</el-button>
+          <el-button type="danger" plain :disabled="row.id === 1" @click="remove(row as GameSettings)">删除</el-button>
+        </template>
+      </PlatformAdminMobileRecordList>
       <el-alert title="A-D 盘赔率已真实保存到彩种定义；当前玩家下注、期号和结算引擎仍只消费主彩种 AU8，新彩种上线能力需后续引擎专项，不能把后台定义当作已接入玩法。" type="info" :closable="false" class="page-alert capability-note" />
     </section>
 
@@ -254,5 +289,5 @@ onMounted(async () => {
 .switch-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 4px; }
 .dialog-footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 10px; }
-@media (max-width: 760px) { .content { padding: 12px; } .form-grid, .odds-grid, .switch-grid { grid-template-columns: 1fr; } .form-grid :deep(.el-form-item.wide), .wide { grid-column: auto; } }
+@media (max-width: 767px) { .content { min-width: 0; padding: 14px 12px; } .page-heading { align-items: flex-start; flex-wrap: wrap; } .heading-actions { width: 100%; flex-wrap: wrap; } .form-grid, .odds-grid, .switch-grid { grid-template-columns: 1fr; } .form-grid :deep(.el-form-item.wide), .wide { grid-column: auto; } .platform-admin-mobile-record-extra-fields { margin-top: 10px; } }
 </style>

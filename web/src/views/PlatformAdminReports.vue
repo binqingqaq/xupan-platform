@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { api, apiErrorMessage } from '../api'
 import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
+import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
+import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import type { FlyOrderStatus, PlatformFlyOrderPage, ProfitReport, ScoreFlowMetrics, ScoreFlowPage, SubAccount } from '../types/platformAdmin'
 import { formatReportBetContent, responseCodeLabel, settlementStatusLabel } from '../reportDisplay'
 
@@ -28,6 +30,33 @@ const flyPageSize = ref(20)
 const flyLoading = ref(false)
 const flyError = ref('')
 const currentUser = ref('超级管理员')
+const isMobileViewport = usePlatformAdminMobile()
+const mobileScoreFlowFields = [
+  { key: 'memberCode', label: '会员 ID', value: (row: ScoreFlowPage['items'][number]) => row.memberCode },
+  { key: 'machineName', label: '机器', value: (row: ScoreFlowPage['items'][number]) => row.machineName },
+  { key: 'subAccount', label: '子账号', value: (row: ScoreFlowPage['items'][number]) => row.subAccount || '未设置' },
+  { key: 'openingBalance', label: '昨余', value: (row: ScoreFlowPage['items'][number]) => formatBalance(row.openingBalance) },
+  { key: 'turnover', label: '流水', value: (row: ScoreFlowPage['items'][number]) => row.turnover.toFixed(2) },
+  { key: 'netProfit', label: '盈亏', value: (row: ScoreFlowPage['items'][number]) => row.netProfit.toFixed(2) },
+  { key: 'effectiveRebate', label: '生效反水', value: (row: ScoreFlowPage['items'][number]) => row.effectiveRebate.toFixed(2) },
+  { key: 'closingBalance', label: '结余', value: (row: ScoreFlowPage['items'][number]) => formatBalance(row.closingBalance) },
+]
+const mobileProfitFields = [
+  { key: 'groupUsername', label: '子账号', value: (row: ProfitReport['machines'][number]) => row.groupUsername || '未设置' },
+  { key: 'totalRemaining', label: '昨余', value: (row: ProfitReport['machines'][number]) => formatBalance(row.totalRemaining) },
+  { key: 'totalFlow', label: '流水', value: (row: ProfitReport['machines'][number]) => row.totalFlow.toFixed(2) },
+  { key: 'totalProfit', label: '盈亏', value: (row: ProfitReport['machines'][number]) => row.totalProfit.toFixed(2) },
+  { key: 'effectiveRebate', label: '生效反水（口径）', value: (row: ProfitReport['machines'][number]) => `${(row.effectiveRebate ?? 0).toFixed(2)}（${row.rebateMode === 'DOUBLE' ? '双边' : '单边'}）` },
+]
+const mobileFlyFields = [
+  { key: 'memberCode', label: '会员 ID', value: (row: PlatformFlyOrderPage['items'][number]) => row.memberCode },
+  { key: 'issueNumber', label: '期号', value: (row: PlatformFlyOrderPage['items'][number]) => row.issueNumber },
+  { key: 'ballNumber', label: '球位', value: (row: PlatformFlyOrderPage['items'][number]) => row.ballNumber },
+  { key: 'content', label: '下注内容', value: (row: PlatformFlyOrderPage['items'][number]) => formatReportBetContent(row.playType, row.parametersText), spanAll: true },
+  { key: 'stake', label: '积分', value: (row: PlatformFlyOrderPage['items'][number]) => row.stake.toFixed(2) },
+  { key: 'odds', label: '赔率', value: (row: PlatformFlyOrderPage['items'][number]) => row.odds.toFixed(3) },
+  { key: 'responseCode', label: '返回结果', value: (row: PlatformFlyOrderPage['items'][number]) => responseCodeLabel(row.responseCode) },
+]
 
 function shanghaiDate(value: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -220,13 +249,13 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
             <el-col :xs="12" :sm="8" :lg="4"><el-statistic title="生效反水" :value="scoreFlowSummary.effectiveRebate" :precision="2" /></el-col>
             <el-col :xs="12" :sm="8" :lg="4"><el-statistic v-if="scoreFlowSummary.closingBalance != null" title="结余" :value="scoreFlowSummary.closingBalance" :precision="2" /><div v-else class="unknown-statistic"><span>结余</span><strong>--</strong></div></el-col>
           </el-row>
-          <el-table scrollbar-always-on v-loading="loading" :data="scoreFlow" stripe border empty-text="暂无数据">
+          <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="loading" class="platform-admin-desktop-table" :data="scoreFlow" stripe border empty-text="暂无数据">
             <el-table-column type="expand">
               <template #default="{ row }">
                 <div class="flow-details">
                   <section>
                     <h3>下注明细</h3>
-                    <el-table :data="row.bets" size="small" border empty-text="暂无下注记录">
+                    <el-table class="platform-admin-desktop-table" :data="row.bets" size="small" border empty-text="暂无下注记录">
                       <el-table-column label="时间" min-width="165"><template #default="{ row: bet }">{{ formatShanghaiDateTime(bet.createdAt) }}</template></el-table-column>
                       <el-table-column prop="issueNumber" label="期号" min-width="110" />
                       <el-table-column label="下注内容" min-width="170"><template #default="{ row: bet }"><span :title="`${bet.playType} ${bet.parametersText ?? ''}`">{{ formatReportBetContent(bet.playType, bet.parametersText) }}</span></template></el-table-column>
@@ -237,7 +266,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
                   </section>
                   <section>
                     <h3>积分操作</h3>
-                    <el-table :data="row.pointOperations" size="small" border empty-text="暂无积分操作">
+                    <el-table class="platform-admin-desktop-table" :data="row.pointOperations" size="small" border empty-text="暂无积分操作">
                       <el-table-column label="时间" min-width="165"><template #default="{ row: operation }">{{ formatShanghaiDateTime(operation.createdAt) }}</template></el-table-column>
                       <el-table-column prop="operationType" label="类型" min-width="130" />
                       <el-table-column label="变动" min-width="100" align="right"><template #default="{ row: operation }">{{ operation.amount.toFixed(2) }}</template></el-table-column>
@@ -266,6 +295,38 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
             <el-table-column label="下分" min-width="95" align="right"><template #default="{ row }">{{ row.totalDown.toFixed(2) }}</template></el-table-column>
             <el-table-column label="上下" min-width="95" align="right"><template #default="{ row }">{{ row.upDown.toFixed(2) }}</template></el-table-column>
           </el-table>
+          <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="scoreFlow" :fields="mobileScoreFlowFields" :row-key="row => row.accountId ?? row.userId ?? row.memberCode" :loading="loading" empty-text="暂无数据">
+            <template #heading="{ row }"><strong>{{ row.playerName || row.memberCode }}</strong></template>
+            <template #details="{ row }">
+              <dl class="platform-admin-mobile-record-fields platform-admin-mobile-record-extra-fields">
+                <div><dt>单边流水</dt><dd>{{ row.singleFlow.toFixed(2) }}</dd></div>
+                <div><dt>双边流水</dt><dd>{{ row.doubleFlow.toFixed(2) }}</dd></div>
+                <div><dt>单边反水</dt><dd>{{ row.singleRebate.toFixed(2) }}</dd></div>
+                <div><dt>双边反水</dt><dd>{{ row.doubleRebate.toFixed(2) }}</dd></div>
+                <div><dt>上分</dt><dd>{{ row.totalUp.toFixed(2) }}</dd></div>
+                <div><dt>下分</dt><dd>{{ row.totalDown.toFixed(2) }}</dd></div>
+                <div><dt>上下</dt><dd>{{ row.upDown.toFixed(2) }}</dd></div>
+              </dl>
+              <section class="platform-admin-mobile-nested-records">
+                <h3>下注明细</h3>
+                <article v-for="bet in row.bets" :key="bet.id" class="platform-admin-mobile-nested-record">
+                  <strong>{{ bet.issueNumber }} · {{ formatReportBetContent(bet.playType, bet.parametersText) }}</strong>
+                  <span>{{ formatShanghaiDateTime(bet.createdAt) }} · 积分 {{ bet.stake.toFixed(2) }} · 盈亏 {{ bet.netProfit == null ? '--' : bet.netProfit.toFixed(2) }} · {{ settlementStatusLabel(bet.settlementStatus) }}</span>
+                </article>
+                <el-empty v-if="row.bets.length === 0" description="暂无下注记录" :image-size="48" />
+              </section>
+              <section class="platform-admin-mobile-nested-records">
+                <h3>积分操作</h3>
+                <article v-for="operation in row.pointOperations" :key="operation.id" class="platform-admin-mobile-nested-record">
+                  <strong>{{ operation.operationType }} · {{ operation.amount.toFixed(2) }}</strong>
+                  <span>{{ formatShanghaiDateTime(operation.createdAt) }} · {{ operation.balanceBefore.toFixed(2) }} → {{ operation.balanceAfter.toFixed(2) }}</span>
+                  <span v-if="operation.reason">{{ operation.reason }}</span>
+                </article>
+                <el-empty v-if="row.pointOperations.length === 0" description="暂无积分操作" :image-size="48" />
+              </section>
+              <p v-if="row.bets.length >= 200 || row.pointOperations.length >= 200" class="detail-limit-note">明细最多显示 200 条，汇总按完整筛选范围计算。</p>
+            </template>
+          </PlatformAdminMobileRecordList>
           <div v-if="scoreFlowTotal > 0" class="score-flow-pagination">
             <el-pagination
               background
@@ -297,7 +358,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
               <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="总下" :value="report.totalDown" :precision="2" /></el-col>
               <el-col :xs="12" :sm="8" :lg="6"><el-statistic title="总上下" :value="report.totalUpDown" :precision="2" /></el-col>
             </el-row>
-            <el-table scrollbar-always-on :data="report.machines" stripe border empty-text="暂无数据">
+            <el-table v-if="!isMobileViewport" scrollbar-always-on class="platform-admin-desktop-table" :data="report.machines" stripe border empty-text="暂无数据">
               <el-table-column prop="machineName" label="机器" min-width="120" fixed="left" />
               <el-table-column prop="groupUsername" label="子账号" min-width="110"><template #default="{ row }">{{ row.groupUsername || '未设置' }}</template></el-table-column>
               <el-table-column label="昨余" min-width="110" align="right"><template #default="{ row }">{{ formatBalance(row.totalRemaining) }}</template></el-table-column>
@@ -312,6 +373,20 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
               <el-table-column label="下分" min-width="100" align="right"><template #default="{ row }">{{ row.totalDown.toFixed(2) }}</template></el-table-column>
               <el-table-column label="上下" min-width="100" align="right"><template #default="{ row }">{{ (row.totalUp-row.totalDown).toFixed(2) }}</template></el-table-column>
             </el-table>
+            <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="report.machines" :fields="mobileProfitFields" :row-key="row => row.machineId" empty-text="暂无数据">
+              <template #heading="{ row }"><strong>{{ row.machineName }}</strong></template>
+              <template #details="{ row }">
+                <dl class="platform-admin-mobile-record-fields platform-admin-mobile-record-extra-fields">
+                  <div><dt>单边流水</dt><dd>{{ row.totalSingleFlow.toFixed(2) }}</dd></div>
+                  <div><dt>双边流水</dt><dd>{{ row.totalDoubleFlow.toFixed(2) }}</dd></div>
+                  <div><dt>单边反水</dt><dd>{{ row.totalFanShui.toFixed(2) }}</dd></div>
+                  <div><dt>双边反水</dt><dd>{{ (row.rebateDouble ?? 0).toFixed(2) }}</dd></div>
+                  <div><dt>反水口径</dt><dd>{{ row.rebateMode === 'DOUBLE' ? '双边' : '单边' }}</dd></div>
+                  <div><dt>上分</dt><dd>{{ row.totalUp.toFixed(2) }}</dd></div>
+                  <div><dt>下分</dt><dd>{{ row.totalDown.toFixed(2) }}</dd></div>
+                </dl>
+              </template>
+            </PlatformAdminMobileRecordList>
           </template>
         </el-tab-pane>
 
@@ -333,7 +408,7 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
             <el-col :xs="12" :sm="8"><el-statistic title="已飞单" :value="flyOrders.summary.reportedAmount" :precision="2"><template #suffix><small>{{ flyOrders.summary.reportedCount }} 笔</small></template></el-statistic></el-col>
             <el-col :xs="12" :sm="8"><el-statistic title="失败" :value="flyOrders.summary.failedAmount" :precision="2"><template #suffix><small>{{ flyOrders.summary.failedCount }} 笔</small></template></el-statistic></el-col>
           </el-row>
-          <el-table scrollbar-always-on v-loading="flyLoading" :data="flyOrders?.items ?? []" stripe border empty-text="暂无数据">
+          <el-table v-if="!isMobileViewport" scrollbar-always-on v-loading="flyLoading" class="platform-admin-desktop-table" :data="flyOrders?.items ?? []" stripe border empty-text="暂无数据">
             <el-table-column label="时间" min-width="170"><template #default="{ row }">{{ formatShanghaiDateTime(row.createdAt) }}</template></el-table-column>
             <el-table-column prop="memberCode" label="会员ID" min-width="120" />
             <el-table-column prop="playerName" label="昵称" min-width="130" />
@@ -345,6 +420,17 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
             <el-table-column label="报网状态" min-width="100"><template #default>{{ flyStatusLabel(flyStatus) }}</template></el-table-column>
             <el-table-column label="返回结果" min-width="140"><template #default="{ row }"><span :title="row.responseCode || '无返回码'">{{ responseCodeLabel(row.responseCode) }}</span></template></el-table-column>
           </el-table>
+          <PlatformAdminMobileRecordList v-if="isMobileViewport" :rows="flyOrders?.items ?? []" :fields="mobileFlyFields" :row-key="row => row.betId" :loading="flyLoading" empty-text="暂无数据">
+            <template #heading="{ row }"><strong>{{ row.playerName || row.memberCode }}</strong><el-tag effect="plain">{{ flyStatusLabel(flyStatus) }}</el-tag></template>
+            <template #details="{ row }">
+              <dl class="platform-admin-mobile-record-fields platform-admin-mobile-record-extra-fields">
+                <div><dt>时间</dt><dd>{{ formatShanghaiDateTime(row.createdAt) }}</dd></div>
+                <div><dt>报网状态</dt><dd>{{ flyStatusLabel(flyStatus) }}</dd></div>
+                <div><dt>玩法</dt><dd>{{ row.playType }}</dd></div>
+                <div><dt>返回码</dt><dd>{{ row.responseCode || '无返回码' }}</dd></div>
+              </dl>
+            </template>
+          </PlatformAdminMobileRecordList>
           <div v-if="(flyOrders?.total ?? 0) > 0" class="score-flow-pagination">
             <el-pagination
               background
@@ -380,6 +466,19 @@ onMounted(async () => { const me = await api.me(); currentUser.value = me.displa
 .fly-summary { margin-bottom: 12px; }
 .positive { color: #b42318; }
 .negative { color: #177245; }
+@media (max-width: 767px) {
+  .content { min-width: 0; padding: 14px 12px; }
+  .summary { padding: 10px; }
+  .fly-filters { align-items: flex-start; }
+  .fly-filters .el-button-group { display: flex; flex-wrap: wrap; }
+  .flow-details { min-width: 0; }
+  .platform-admin-mobile-record-extra-fields { margin-top: 10px; }
+  .platform-admin-mobile-nested-records { display: grid; gap: 6px; margin-top: 12px; border-top: 1px solid var(--el-border-color-lighter); padding-top: 10px; }
+  .platform-admin-mobile-nested-records h3 { margin: 0; font-size: 14px; }
+  .platform-admin-mobile-nested-record { display: grid; gap: 3px; min-width: 0; padding: 8px 0; border-bottom: 1px solid var(--el-border-color-extra-light); }
+  .platform-admin-mobile-nested-record strong, .platform-admin-mobile-nested-record span { overflow-wrap: anywhere; font-size: 13px; }
+  .platform-admin-mobile-nested-record span { color: var(--el-text-color-secondary); }
+}
 </style>
 
 

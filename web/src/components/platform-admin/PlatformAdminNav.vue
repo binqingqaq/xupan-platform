@@ -125,7 +125,7 @@ function navigateTo(path: string) {
       <el-button class="platform-admin-mobile-logout" text @click="logout">安全退出</el-button>
     </div>
 
-    <el-drawer v-model="mobileMenuOpen" title="管理菜单" direction="ltr" size="min(88vw, 340px)" modal-class="platform-admin-mobile-drawer" :teleported="false">
+    <el-drawer v-model="mobileMenuOpen" title="管理菜单" direction="ltr" size="min(88vw, 340px)" modal-class="platform-admin-mobile-drawer">
       <div class="platform-admin-mobile-profile">
         <el-icon><UserFilled /></el-icon>
         <span>{{ welcomeText }}</span>
@@ -155,6 +155,7 @@ function navigateTo(path: string) {
   .platform-admin-welcome { white-space: normal; text-align: right; }
 }
 @media (max-width: 767px) {
+  .platform-admin-desktop-nav { display: none; }
   .platform-admin-mobile-nav { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; width: 100%; min-height: 58px; align-items: center; gap: 8px; padding: 6px 10px; }
   .platform-admin-mobile-menu-button { min-height: 44px; gap: 5px; padding: 0 8px; }
   .platform-admin-mobile-title { overflow: hidden; color: var(--el-text-color-primary); font-size: 17px; text-overflow: ellipsis; white-space: nowrap; }
