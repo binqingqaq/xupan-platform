@@ -102,7 +102,19 @@ describe('platform admin nav 欢迎语', () => {
     } as never)
 
     await mountNav('超级管理员')
-    expect(welcomeText()).toBe('欢迎您：超级管理员，超级管理员')
+    expect(welcomeText()).toBe('欢迎您：admin，超级管理员')
+  })
+
+  it('超级管理员已修改登录用户名时使用当前用户名而不是旧显示名', async () => {
+    vi.mocked(api.me).mockResolvedValue({
+      displayName: 'xupan_owner',
+      username: 'admin',
+      permissions: [],
+      subAccountScore: null,
+    } as never)
+
+    await mountNav('xupan_owner')
+    expect(welcomeText()).toBe('欢迎您：admin，超级管理员')
   })
 })
 

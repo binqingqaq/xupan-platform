@@ -329,9 +329,9 @@ defineExpose({ load })
         <input type="checkbox" :checked="config?.reportAuto ?? false" :disabled="!canEdit || saving || loggingIn" @change="onToggleAuto" />
         自动上报
       </label>
-      <span class="report-control-metric">可用额度: <b>{{ formatAmount(config?.centerAvailableBalance) }}</b></span>
-      <span class="report-control-metric">冻结额度: <b>{{ formatAmount(config?.centerFrozenBalance) }}</b></span>
-      <span class="report-control-metric">押注/未结: <b>{{ formatAmount(config?.centerOpenStake) }}</b></span>
+      <span class="report-control-metric">可用额度: <b>{{ config?.reportOnline ? formatAmount(config.centerAvailableBalance) : '0' }}</b></span>
+      <span class="report-control-metric">冻结额度: <b>{{ config?.reportOnline ? formatAmount(config.centerFrozenBalance) : '—' }}</b></span>
+      <span class="report-control-metric">押注/未结: <b>{{ config?.reportOnline ? formatAmount(config.centerOpenStake) : '0' }}</b></span>
       <span class="report-control-metric">待核实: <b>{{ config?.timeoutOrderCount ?? '—' }}</b></span>
       <span class="report-control-metric">未报: <b>{{ config?.unreportedCount ?? '—' }}</b></span>
       <span class="report-control-metric">失败: <b>{{ config?.failedOrderCount ?? '—' }}</b></span>

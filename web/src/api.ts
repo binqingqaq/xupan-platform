@@ -293,6 +293,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'AUTH_INVALID_CREDENTIALS') return '用户名或密码错误'
   if (error.code === 'AUTH_SUB_ACCOUNT_EXPIRED') return '账号已过期'
   if (error.code === 'CENTER_UPSTREAM_AUTH_INVALID') return '中心账号或密码错误，或该账号未绑定当前子账号'
+  if (error.code === 'CENTER_ACCOUNT_USERNAME_TAKEN') return '中心账号用户名已重复，请更换用户名'
   if (error.code === 'GAME_SETTINGS_CODE_EXISTS') return '彩种键名已存在'
   if (error.code === 'GAME_SETTINGS_CODE_IMMUTABLE') return '彩种键名创建后不能修改'
   if (error.code === 'GAME_PRIMARY_DELETE_FORBIDDEN') return '主彩种不能删除'

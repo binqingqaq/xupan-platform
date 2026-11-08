@@ -16,6 +16,15 @@ function renderFit(viewportWidth: number) {
 }
 
 describe('HBY019 console mobile overview fit', () => {
+  it('keeps report account setup available without an assigned center username and uses integer zero while offline', () => {
+    expect(consoleHtml).toContain("localStorage.setItem('xupan.center-report-username:' + machineId, username)")
+    expect(consoleHtml).toContain('$(".baowang-bar .setWp").prop(\'disabled\', false)')
+    expect(consoleHtml).toContain('$(".wpmoney,.wp-balance").show()')
+    expect(consoleHtml).toContain('$(".pankouMoney").text(\'0\')')
+    expect(consoleHtml).toContain('$(".pankouYa").text(\'0\')')
+    expect(consoleHtml).not.toContain("localStorage.removeItem('xupan.center-report-password:' + requestData.un)")
+  })
+
   it('scales the desktop canvas to a narrow viewport and updates after resize', () => {
     const dom = renderFit(390)
     expect(dom.window.document.documentElement.style.zoom).toBe(String(390 / 920))

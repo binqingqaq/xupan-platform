@@ -147,6 +147,11 @@ describe('platform admin sub accounts', () => {
   })
 
   it('renders every account field and existing actions in the mobile card', async () => {
+    vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+      matches: query === '(max-width: 767px)', media: query, onchange: null,
+      addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(() => false),
+    }))
     vi.mocked(api.listSubAccounts).mockResolvedValue([
       subAccount({ id: 4, username: 'mobile-sub', expiresAt: '2026-12-31T00:00:00Z', machineCount: 3, subAccountManage: true }),
     ] as never)

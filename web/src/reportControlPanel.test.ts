@@ -114,6 +114,15 @@ describe('中心上游报网控制面板', () => {
     expect(panelText()).not.toMatch(/报网类型|上游地址|网盘编码|盘口线路|本地模拟/)
   })
 
+  it('未登录时将网盘余额和押注显示为无小数的零', async () => {
+    await mountPanel()
+    expect(panelText()).toContain('可用额度: 0')
+    expect(panelText()).toContain('冻结额度: —')
+    expect(panelText()).toContain('押注/未结: 0')
+    expect(panelText()).not.toContain('可用额度: 0.00')
+    expect(panelText()).not.toContain('押注/未结: 0.00')
+  })
+
   it('打开中心账号登录框并提交账号名和密码', async () => {
     await mountPanel()
 

@@ -38,6 +38,12 @@ describe('apiErrorMessage 子账号资金池', () => {
       new ApiError('conflict', 409, 'SUB_ACCOUNT_USERNAME_EXISTS'), '子账号保存失败'))
       .toBe('子账号用户名已存在')
   })
+
+  it('中心账号用户名重复时明确提示更换用户名', () => {
+    expect(apiErrorMessage(
+      new ApiError('duplicate', 409, 'CENTER_ACCOUNT_USERNAME_TAKEN'), '创建中心账号失败'))
+      .toBe('中心账号用户名已重复，请更换用户名')
+  })
 })
 
 /**

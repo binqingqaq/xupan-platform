@@ -1061,7 +1061,7 @@
                                     </div>
                                     <div class="wpinfo" style="margin-top: 5px;margin-bottom: 5px;">
                                         状态: <span class="flyers_tips"></span>,
-                                        余额: <span class="pankouMoney"></span>,
+                                        <span class="wp-balance">余额: <span class="pankouMoney"></span>,</span>
                                         押注: <span class="pankouYa"></span>
                                     </div>
                                 </div>
@@ -1098,8 +1098,8 @@
                     <button class="el-button el-button--small setWp" aria-disabled="false" type="button" style="margin-right:4px;"><span>设置账号</span></button>
                     <button class="el-button el-button--danger el-button--small logout" type="button" style="margin-right:10px;"><span>退出</span></button>
                     <button class="el-button el-button--success el-button--small login" aria-disabled="false" type="button" style="margin-right:10px;"><span>登录</span></button>
-                    <span style="white-space:nowrap;margin-right:10px;">押注: <span class="pankouYa" style="font-weight:bold;">0.00</span></span>
-                    <span class="wpmoney" style="white-space:nowrap;">网盘余额: <span class="pankouMoney" style="font-weight:bold;">0.00</span></span>
+                    <span style="white-space:nowrap;margin-right:10px;">押注: <span class="pankouYa" style="font-weight:bold;">0</span></span>
+                    <span class="wpmoney" style="white-space:nowrap;">网盘余额: <span class="pankouMoney" style="font-weight:bold;">0</span></span>
                     <button id="btnToggleBaowang" style="font-size:11px;padding:2px 8px;height:22px;white-space:nowrap;cursor:pointer;margin-left:20px;">↑移上</button>
                 </div>
                 <!-- 第二行：报网状态 + 退单 | 自动上报 + 超时订单 + 刷新 -->
@@ -3391,19 +3391,24 @@
                 $(".wptype").text('loc');
                 if (data.reportError || !data.Data) {
                     $(".pankouMoney,.pankouYa").text('--');
+                    $(".wpmoney,.wp-balance").hide();
                     $(".csrecord").text('--');
                     $(".flyers_tips").text('状态不可用');
                     $(".login span").text('登录');
                     $(".logout").prop('disabled', true);
-                    $(".baowang-bar .login,.baowang-bar .setWp,#flyers_auto,#flyers_withdraw").prop('disabled', true);
+                    $(".baowang-bar .login,#flyers_auto,#flyers_withdraw").prop('disabled', true);
                     return;
                 }
                 $(".baowang-bar .login,.baowang-bar .setWp,#flyers_auto,#flyers_withdraw").prop('disabled', false);
                 if (data.iswp) {
-                    $('.login,.wpmoney,.wpinfo').show();
+                    $('.login,.wpinfo').show();
                     $("#flyers_auto").prop("checked", data.Data.flyers_auto == 1);
                     $("#flyers_withdraw").prop("checked", data.Data.flyers_withdraw == 1);
                     var aScore = data.Data;
+                    var savedCenterUsername = aScore.id
+                        ? localStorage.getItem('xupan.center-report-username:' + aScore.id) || ''
+                        : '';
+                    var configuredCenterUsername = aScore.flyers_username || savedCenterUsername;
                     $(".csrecord").text(aScore.timeout_count);
                     if (!$('input[name="flyers_url"]').is(':focus') && !$('input[name="flyers_username"]').is(
                             ':focus') && !$('input[name="flyers_password"]').is(':focus')) {
@@ -3414,19 +3419,21 @@
                         $(".wangpanlogin1").eq(0).find("[name='flyers_type']").val(aScore.flyers_type)
                     }
                     if ($(".wpKuang").css('display')=='none') {
-                        $("#wpname").val(aScore.flyers_username)
-                        var savedCenterPassword = aScore.flyers_username
-                            ? localStorage.getItem('xupan.center-report-password:' + aScore.flyers_username)
+                        $("#wpname").val(configuredCenterUsername)
+                        var savedCenterPassword = configuredCenterUsername
+                            ? localStorage.getItem('xupan.center-report-password:' + configuredCenterUsername)
                             : '';
                         $("#wppwd").val(savedCenterPassword || '')
                     }
-                    $(".baowang-bar .login,.baowang-bar .setWp").prop('disabled', !aScore.flyers_username);
+                    $(".baowang-bar .login").prop('disabled', !configuredCenterUsername);
+                    $(".baowang-bar .setWp").prop('disabled', false);
                     $("input[name='code'][value='"+aScore.fly_id+"']").attr('checked', true);
                     if (!fly_id) {
                         fly_id = aScore.fly_id;
                     }
                     $("input[name='fstype'][value='"+aScore.fly_fs+"']").attr('checked', true);
                     if (aScore.flyers_online) {
+                        $(".wpmoney,.wp-balance").show();
                         $(".pankouMoney").text(aScore.money)
                         $(".pankouYa").text(aScore.betting)
                         $(".flyers_tips").html('在线').css({
@@ -3434,8 +3441,9 @@
                         });
                         $(".login span").html('已登录')
                     } else {
-                        $(".pankouMoney").text(aScore.money)
-                        $(".pankouYa").text(aScore.betting)
+                        $(".wpmoney,.wp-balance").show();
+                        $(".pankouMoney").text('0')
+                        $(".pankouYa").text('0')
                         $(".flyers_tips").html('离线').css({
                             'color': '#f00'
                         });
@@ -4839,7 +4847,10 @@
                 var username = String($("#wpname").val() || '').trim();
                 var password = String($("#wppwd").val() || '');
                 if (!username || !password) { alertErr('请输入网盘账号和密码'); return; }
+                var machineId = String($(".wangpanlogin1").eq(0).attr('data-id') || '');
+                if (machineId) localStorage.setItem('xupan.center-report-username:' + machineId, username);
                 localStorage.setItem('xupan.center-report-password:' + username, password);
+                $(".baowang-bar .login").prop('disabled', false);
                 closeKuang();
                 alertSuc('网盘账号密码已保存，点击绿色登录按钮登录');
             });
@@ -5007,9 +5018,6 @@
                         $("#wppwd").val('');
                         alertSuc(data.Message);
                     } else {
-                        if (url === '/rbt/index/flyerslogin' && requestData && requestData.un) {
-                            localStorage.removeItem('xupan.center-report-password:' + requestData.un);
-                        }
                         alertErr(data.Message);
                         if (url.indexOf('/rbt/index/flyers') === 0) setTimeout(autoHandle, 0);
                     }

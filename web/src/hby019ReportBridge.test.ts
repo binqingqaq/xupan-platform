@@ -91,10 +91,13 @@ afterEach(() => {
 describe('HBY019 center report bridge', () => {
   it('uses actual center balance and fixed local type on console refresh', async () => {
     const frame = await mount()
+    vi.mocked(api.getReportConfig).mockResolvedValue({
+      ...reportConfig, centerAvailableBalance: 5044, reportOnline: false,
+    } as never)
     const result = await request(frame, '/rbt/index/needhandle')
     expect(api.getReportConfig).toHaveBeenCalled()
     expect(result.reportError).toBe('')
-    expect(result.Data).toMatchObject({ wpname: 'loc', money: '0.00', betting: '0.00', timeout_count: 0, flyers_online: 0 })
+    expect(result.Data).toMatchObject({ wpname: 'loc', money: '0', betting: '0', timeout_count: 0, flyers_online: 0 })
   })
 
   it('uses real login and switches, returning failure without simulated success', async () => {
@@ -108,6 +111,15 @@ describe('HBY019 center report bridge', () => {
     const failed = await request(frame, '/rbt/index/flyersauto', { flyers_auto: 1 })
     expect(api.updateReportConfig).toHaveBeenCalledWith({ reportAuto: true })
     expect(failed).toMatchObject({ bOK: 1, Message: '报网操作失败' })
+  })
+
+  it('still validates saved login credentials when no center account is assigned', async () => {
+    const frame = await mount()
+    vi.mocked(api.loginReport).mockRejectedValueOnce(new Error('该机器所属子账号尚未分配中心账号'))
+    const response = await request(frame, '/rbt/index/flyerslogin', { un: 'saved-user', pw: 'saved-password' })
+
+    expect(api.loginReport).toHaveBeenCalledWith({ username: 'saved-user', password: 'saved-password' })
+    expect(response).toMatchObject({ bOK: 1, Message: '报网操作失败' })
   })
 
   it('marks report data unavailable when the center status request fails', async () => {

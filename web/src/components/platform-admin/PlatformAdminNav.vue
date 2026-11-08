@@ -79,14 +79,18 @@ const mobileMenuOpen = ref(false)
  */
 const subAccountScore = ref<number | null>(null)
 const welcomeText = computed(() => {
-  const name = props.displayName || accountName.value || '超级管理员'
-  if (subAccountScore.value === null || subAccountScore.value === undefined) return `欢迎您：${name}，超级管理员`
-  return `欢迎您：${name}，可用积分：${Math.round(subAccountScore.value)}`
+  const score = subAccountScore.value
+  const isSuperAdmin = score === null || score === undefined
+  const name = isSuperAdmin
+    ? accountName.value || props.displayName || '超级管理员'
+    : props.displayName || accountName.value || '账号'
+  if (isSuperAdmin) return `欢迎您：${name}，超级管理员`
+  return `欢迎您：${name}，可用积分：${Math.round(score)}`
 })
 onMounted(async () => {
   const me = await api.me()
   permissions.value = me.permissions
-  accountName.value = me.displayName || me.username || ''
+  accountName.value = me.username || me.displayName || ''
   subAccountScore.value = me.subAccountScore ?? null
 })
 async function logout() {

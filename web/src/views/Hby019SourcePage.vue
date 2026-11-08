@@ -149,8 +149,8 @@ function legacyReportConfig(config: Awaited<ReturnType<typeof api.getReportConfi
     flyers_password: '',
     flyers_online: config.reportOnline ? 1 : 0,
     wpname: 'loc',
-    money: Number(config.centerAvailableBalance).toFixed(2),
-    betting: Number(config.centerOpenStake).toFixed(2),
+    money: config.reportOnline ? Number(config.centerAvailableBalance).toFixed(2) : '0',
+    betting: config.reportOnline ? Number(config.centerOpenStake).toFixed(2) : '0',
     timeout_count: config.timeoutOrderCount,
     fly_id: 1,
     fly_fs: 1,
@@ -517,8 +517,8 @@ async function handlePlayerRequest(data: Record<string, unknown>) {
           bOK: 0,
           Message: messages[data.path],
           Data: legacyReportConfig(config),
-          money: Number(config.centerAvailableBalance).toFixed(2),
-          betting: Number(config.centerOpenStake).toFixed(2),
+          money: config.reportOnline ? Number(config.centerAvailableBalance).toFixed(2) : '0',
+          betting: config.reportOnline ? Number(config.centerOpenStake).toFixed(2) : '0',
           timeout_count: config.timeoutOrderCount,
         } })
       } catch (error) {
