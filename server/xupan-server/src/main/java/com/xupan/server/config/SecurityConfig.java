@@ -54,7 +54,8 @@ public class SecurityConfig {
                                 "/api/display-observer/exchange", "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/media/avatars/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/display/mobile/home",
-                                "/api/display/mobile/macau").permitAll()
+                                "/api/display/mobile/macau",
+                                "/api/display/mobile/macau-four-minute").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/display/mobile/au8",
                                 "/api/display/mobile/au8/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/display/observer-link").permitAll()

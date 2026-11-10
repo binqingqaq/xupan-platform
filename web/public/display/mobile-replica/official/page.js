@@ -12,6 +12,11 @@ let liveRetryDelay = 10_000;
 let macauRetryTimer;
 let macauRetryDelay = 10_000;
 let macauRefreshInFlight = false;
+let macauFourMinuteRefreshTimer;
+let macauFourMinuteServerOffsetMs = 0;
+let macauFourMinuteExpectedIssue = null;
+let macauFourMinuteRetryCount = 0;
+let macauFourMinuteInFlight = false;
 let displayObserverHref = null;
 let middleContentHtml = null;
 
@@ -89,13 +94,20 @@ function formatNextDrawAt(value) {
   return `${part('month')}月${part('day')}日 ${part('weekday')} ${part('hour')}:${part('minute')}`;
 }
 
+function macauFourMinuteServerNow(localNow, offsetMs) {
+  return localNow - offsetMs;
+}
+
 function refreshCountdowns() {
   for (const [name, nextDrawAt] of liveDrawTimes) {
     const selected = [...document.querySelectorAll('#widgetContainer40617 .baomalaodaName')]
       .find((item) => item.textContent.trim() === name)?.closest('.baomalaoda');
     const countdown = selected?.querySelector('.baomalaodaCountdown');
     if (!countdown) continue;
-    const seconds = Math.max(0, Math.floor((nextDrawAt - Date.now()) / 1000));
+    const now = name === '澳门四分彩'
+      ? macauFourMinuteServerNow(Date.now(), macauFourMinuteServerOffsetMs)
+      : Date.now();
+    const seconds = Math.max(0, Math.floor((nextDrawAt - now) / 1000));
     if (name === '快乐8' && seconds === 0) {
       countdown.textContent = '开奖中';
       const summary = selected.querySelector('.baomalaodaInfo3 > div:first-child');
@@ -106,6 +118,174 @@ function refreshCountdowns() {
     const minutes = String(Math.floor((seconds % 3600) / 60)).padStart(2, '0');
     const remainingSeconds = String(seconds % 60).padStart(2, '0');
     countdown.textContent = `${hours}:${minutes}:${remainingSeconds}`;
+  }
+}
+
+function findDrawCard(name) {
+  return [...document.querySelectorAll('#widgetContainer40617 .baomalaoda')]
+    .find((item) => item.querySelector('.baomalaodaName')?.textContent.trim() === name);
+}
+
+function applyAu8NumberOnlyStyle(card) {
+  if (!card) return;
+  card.classList.add('xupan-au8-number-only');
+  card.querySelectorAll('.baomalaodaItem > div').forEach((tile) => {
+    Object.assign(tile.style, {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: '3.4em',
+      boxSizing: 'border-box',
+      padding: '0',
+    });
+  });
+  card.querySelectorAll('.baomalaodaMa').forEach((number) => {
+    number.style.padding = '0';
+    number.style.textAlign = 'center';
+  });
+  card.querySelectorAll('.baomalaodaXiao').forEach((label) => {
+    label.style.display = 'none';
+  });
+}
+
+function ensureMacauFourMinuteCard() {
+  const host = document.querySelector('#widgetContainer40617 .box-ttkj');
+  const source = findDrawCard('快乐8');
+  if (!host || !source) return null;
+
+  let target = findDrawCard('澳门四分彩');
+  if (!target) {
+    const sourceWrapper = [...host.children].find((item) => item.contains(source));
+    if (!sourceWrapper) return null;
+    const clone = sourceWrapper.cloneNode(true);
+    target = clone.querySelector('.baomalaoda');
+    if (!target) return null;
+    target.querySelectorAll('.baomalaodaName').forEach((name) => {
+      name.textContent = '澳门四分彩';
+    });
+    target.querySelectorAll('.baomalaodaInfo3 span').forEach((span) => {
+      if (span.textContent.trim() === '快乐8') span.textContent = '澳门四分彩';
+    });
+    target.dataset.xupanMacauFourMinute = 'true';
+    sourceWrapper.after(clone);
+  }
+
+  applyAu8NumberOnlyStyle(source);
+  applyAu8NumberOnlyStyle(target);
+  if (target.dataset.xupanMacauInitialized !== 'true') {
+    target.dataset.xupanMacauInitialized = 'true';
+    target.querySelectorAll('.baomalaodaMa').forEach((node) => { node.textContent = '--'; });
+    target.querySelectorAll('.baomalaodaXiao').forEach((node) => { node.textContent = ''; });
+    target.querySelectorAll('.baomalaodaInfo2 .baomalaodaItem > div').forEach((ball) => {
+      ball.classList.remove('wdrc', 'wdgc', 'wdbc');
+    });
+    const issue = target.querySelector('.baomalaodaQi');
+    if (issue) issue.textContent = '--';
+    const countdown = target.querySelector('.baomalaodaCountdown');
+    if (countdown) countdown.textContent = '--:--:--';
+    const summary = target.querySelector('.baomalaodaInfo3 > div:first-child');
+    if (summary) summary.textContent = '暂无澳门四分彩历史开奖';
+  }
+  return target;
+}
+
+function renderMacauFourMinuteDraw(response) {
+  const target = ensureMacauFourMinuteCard();
+  if (!target) return;
+
+  const latestDraw = response.latestDraw;
+  const nextDraw = response.nextDraw;
+  const currentIssue = nextDraw?.issueNumber || latestDraw?.issueNumber || '';
+  const currentSummary = target.querySelector('.baomalaodaInfo3 > div:first-child');
+  const countdown = target.querySelector('.baomalaodaCountdown');
+  const issue = target.querySelector('.baomalaodaQi');
+  const numbers = [...target.querySelectorAll('.baomalaodaMa')];
+  if (Number.isFinite(Date.parse(response.serverTime))) {
+    macauFourMinuteServerOffsetMs = Date.now() - Date.parse(response.serverTime);
+  }
+
+  if (latestDraw?.numbers?.length === 7) {
+    if (issue) issue.textContent = String(latestDraw.issueNumber || '').slice(-3);
+    latestDraw.numbers.forEach((number, index) => {
+      if (numbers[index]) numbers[index].textContent = String(number).padStart(2, '0');
+      const ball = numbers[index]?.parentElement;
+      ball?.classList.remove('wdrc', 'wdgc', 'wdbc');
+    });
+  } else {
+    if (issue) issue.textContent = '--';
+    numbers.forEach((number) => { number.textContent = '--'; });
+  }
+
+  if (nextDraw?.scheduledAt && Number.isFinite(Date.parse(nextDraw.scheduledAt))) {
+    const scheduledAt = Date.parse(nextDraw.scheduledAt);
+    liveDrawTimes.set('澳门四分彩', scheduledAt);
+    if (countdown) countdown.textContent = '--:--:--';
+    const nextIssue = String(nextDraw.issueNumber || '').slice(-3);
+    const dateText = formatNextDrawAt(nextDraw.scheduledAt);
+    if (currentSummary) currentSummary.textContent = latestDraw
+      ? `第${String(latestDraw.issueNumber).slice(-3)}期已开奖；第${nextIssue}期待开奖: ${dateText}`
+      : `暂无澳门四分彩历史开奖；第${nextIssue}期待开奖: ${dateText}`;
+    if (nextDraw.issueNumber !== latestDraw?.issueNumber) {
+      if (macauFourMinuteExpectedIssue !== nextDraw.issueNumber) macauFourMinuteRetryCount = 0;
+      macauFourMinuteExpectedIssue = nextDraw.issueNumber;
+      if (scheduledAt + macauFourMinuteServerOffsetMs > Date.now()) {
+        scheduleMacauFourMinuteRefresh(scheduledAt);
+      }
+    }
+  } else {
+    liveDrawTimes.delete('澳门四分彩');
+    if (countdown) countdown.textContent = '--:--:--';
+    if (currentSummary) currentSummary.textContent = latestDraw
+      ? `第${String(latestDraw.issueNumber).slice(-3)}期已开奖；下一期开奖时间暂不可用`
+      : '暂无澳门四分彩历史开奖';
+    macauFourMinuteExpectedIssue = null;
+  }
+
+  target.querySelectorAll('.baomalaodaXiao').forEach((label) => { label.textContent = ''; });
+}
+
+function scheduleMacauFourMinuteRefresh(scheduledAt) {
+  if (macauFourMinuteRefreshTimer) window.clearTimeout(macauFourMinuteRefreshTimer);
+  const delay = Math.max(0, scheduledAt + macauFourMinuteServerOffsetMs - Date.now());
+  macauFourMinuteRefreshTimer = window.setTimeout(() => {
+    macauFourMinuteRetryCount += 1;
+    void refreshMacauFourMinuteDraw();
+  }, delay);
+}
+
+function scheduleMacauFourMinuteRetry() {
+  if (macauFourMinuteRefreshTimer) window.clearTimeout(macauFourMinuteRefreshTimer);
+  macauFourMinuteRetryCount += 1;
+  const delay = macauFourMinuteRetryCount < 10 ? 1000 : 5000;
+  macauFourMinuteRefreshTimer = window.setTimeout(() => {
+    void refreshMacauFourMinuteDraw();
+  }, delay);
+}
+
+async function refreshMacauFourMinuteDraw() {
+  if (macauFourMinuteInFlight) return;
+  macauFourMinuteInFlight = true;
+  if (macauFourMinuteRefreshTimer) window.clearTimeout(macauFourMinuteRefreshTimer);
+  try {
+    const response = await fetch('/api/display/mobile/macau-four-minute', {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error('MACAU_FOUR_MINUTE_API_UNAVAILABLE');
+    const data = await response.json();
+    renderMacauFourMinuteDraw(data);
+    const scheduledAt = Date.parse(data.nextDraw?.scheduledAt || '');
+    const serverTime = Date.parse(data.serverTime || '');
+    if (Number.isFinite(scheduledAt) && Number.isFinite(serverTime)
+        && scheduledAt <= serverTime
+        && data.latestDraw?.issueNumber !== data.nextDraw?.issueNumber) {
+      macauFourMinuteRetryCount += 1;
+      scheduleMacauFourMinuteRetry();
+    }
+  } catch {
+    scheduleMacauFourMinuteRetry();
+  } finally {
+    macauFourMinuteInFlight = false;
   }
 }
 
@@ -236,8 +416,7 @@ function renderAu8Unavailable(message, currentIssueLabel) {
 }
 
 function applyAu8Draw(response) {
-  const card = [...document.querySelectorAll('#widgetContainer40617 .baomalaoda')]
-    .find((item) => item.querySelector('.baomalaodaName')?.textContent.trim() === '快乐8');
+  const card = findDrawCard('快乐8');
   if (!card) return;
 
   const currentIssue = response.currentIssue;
@@ -416,9 +595,11 @@ document.addEventListener('click', (event) => {
   if (name) {
     selectLottery(name);
     if (name === '快乐8') void refreshAu8Draw();
+    if (name === '澳门四分彩') void refreshMacauFourMinuteDraw();
   }
 }, true);
 
+ensureMacauFourMinuteCard();
 selectLottery('香港彩');
 updateAu8CardActions();
 
@@ -455,9 +636,17 @@ document.addEventListener('click', (event) => {
     return;
   }
 
-  if (event.target.closest('#widgetContainer40617 .baomalaodaRefresh')) {
+  const refreshCard = event.target.closest('#widgetContainer40617 .baomalaodaRefresh')
+    ?.closest('.baomalaoda');
+  const refreshName = refreshCard?.querySelector('.baomalaodaName')?.textContent.trim();
+  if (refreshName === '快乐8') {
     event.preventDefault();
     void refreshAu8Draw();
+    return;
+  }
+  if (refreshName === '澳门四分彩') {
+    event.preventDefault();
+    void refreshMacauFourMinuteDraw();
     return;
   }
 
@@ -498,6 +687,7 @@ void refreshLiveDraws();
 void refreshMacauDraws();
 renderAu8Unavailable('正在读取本地七球开奖');
 void refreshAu8Draw();
+void refreshMacauFourMinuteDraw();
 void refreshDisplayObserverLink();
 window.setInterval(refreshCountdowns, 1000);
 window.setInterval(() => {
@@ -505,6 +695,7 @@ window.setInterval(() => {
     void refreshLiveDraws();
     void refreshMacauDraws();
     void refreshAu8Draw();
+    void refreshMacauFourMinuteDraw();
     void refreshDisplayObserverLink();
   }
 }, 15_000);
@@ -513,6 +704,7 @@ document.addEventListener('visibilitychange', () => {
     void refreshLiveDraws();
     void refreshMacauDraws();
     void refreshAu8Draw();
+    void refreshMacauFourMinuteDraw();
     void refreshDisplayObserverLink();
   }
 });

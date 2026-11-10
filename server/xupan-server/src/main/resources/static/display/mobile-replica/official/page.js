@@ -13,6 +13,11 @@
   let macauRetryTimer;
   let macauRetryDelay = 1e4;
   let macauRefreshInFlight = false;
+  let macauFourMinuteRefreshTimer;
+  let macauFourMinuteServerOffsetMs = 0;
+  let macauFourMinuteExpectedIssue = null;
+  let macauFourMinuteRetryCount = 0;
+  let macauFourMinuteInFlight = false;
   let displayObserverHref = null;
   let middleContentHtml = null;
   function initializeMiddleContentToggle() {
@@ -84,13 +89,17 @@
     };
     return `${part("month")}\u6708${part("day")}\u65E5 ${part("weekday")} ${part("hour")}:${part("minute")}`;
   }
+  function macauFourMinuteServerNow(localNow, offsetMs) {
+    return localNow - offsetMs;
+  }
   function refreshCountdowns() {
     var _a;
     for (const [name, nextDrawAt] of liveDrawTimes) {
       const selected = (_a = [...document.querySelectorAll("#widgetContainer40617 .baomalaodaName")].find((item) => item.textContent.trim() === name)) == null ? void 0 : _a.closest(".baomalaoda");
       const countdown = selected == null ? void 0 : selected.querySelector(".baomalaodaCountdown");
       if (!countdown) continue;
-      const seconds = Math.max(0, Math.floor((nextDrawAt - Date.now()) / 1e3));
+      const now = name === "\u6FB3\u95E8\u56DB\u5206\u5F69" ? macauFourMinuteServerNow(Date.now(), macauFourMinuteServerOffsetMs) : Date.now();
+      const seconds = Math.max(0, Math.floor((nextDrawAt - now) / 1e3));
       if (name === "\u5FEB\u4E508" && seconds === 0) {
         countdown.textContent = "\u5F00\u5956\u4E2D";
         const summary = selected.querySelector(".baomalaodaInfo3 > div:first-child");
@@ -101,6 +110,168 @@
       const minutes = String(Math.floor(seconds % 3600 / 60)).padStart(2, "0");
       const remainingSeconds = String(seconds % 60).padStart(2, "0");
       countdown.textContent = `${hours}:${minutes}:${remainingSeconds}`;
+    }
+  }
+  function findDrawCard(name) {
+    return [...document.querySelectorAll("#widgetContainer40617 .baomalaoda")].find((item) => {
+      var _a;
+      return ((_a = item.querySelector(".baomalaodaName")) == null ? void 0 : _a.textContent.trim()) === name;
+    });
+  }
+  function applyAu8NumberOnlyStyle(card) {
+    if (!card) return;
+    card.classList.add("xupan-au8-number-only");
+    card.querySelectorAll(".baomalaodaItem > div").forEach((tile) => {
+      Object.assign(tile.style, {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        height: "3.4em",
+        boxSizing: "border-box",
+        padding: "0"
+      });
+    });
+    card.querySelectorAll(".baomalaodaMa").forEach((number) => {
+      number.style.padding = "0";
+      number.style.textAlign = "center";
+    });
+    card.querySelectorAll(".baomalaodaXiao").forEach((label) => {
+      label.style.display = "none";
+    });
+  }
+  function ensureMacauFourMinuteCard() {
+    const host = document.querySelector("#widgetContainer40617 .box-ttkj");
+    const source = findDrawCard("\u5FEB\u4E508");
+    if (!host || !source) return null;
+    let target = findDrawCard("\u6FB3\u95E8\u56DB\u5206\u5F69");
+    if (!target) {
+      const sourceWrapper = [...host.children].find((item) => item.contains(source));
+      if (!sourceWrapper) return null;
+      const clone = sourceWrapper.cloneNode(true);
+      target = clone.querySelector(".baomalaoda");
+      if (!target) return null;
+      target.querySelectorAll(".baomalaodaName").forEach((name) => {
+        name.textContent = "\u6FB3\u95E8\u56DB\u5206\u5F69";
+      });
+      target.querySelectorAll(".baomalaodaInfo3 span").forEach((span) => {
+        if (span.textContent.trim() === "\u5FEB\u4E508") span.textContent = "\u6FB3\u95E8\u56DB\u5206\u5F69";
+      });
+      target.dataset.xupanMacauFourMinute = "true";
+      sourceWrapper.after(clone);
+    }
+    applyAu8NumberOnlyStyle(source);
+    applyAu8NumberOnlyStyle(target);
+    if (target.dataset.xupanMacauInitialized !== "true") {
+      target.dataset.xupanMacauInitialized = "true";
+      target.querySelectorAll(".baomalaodaMa").forEach((node) => {
+        node.textContent = "--";
+      });
+      target.querySelectorAll(".baomalaodaXiao").forEach((node) => {
+        node.textContent = "";
+      });
+      target.querySelectorAll(".baomalaodaInfo2 .baomalaodaItem > div").forEach((ball) => {
+        ball.classList.remove("wdrc", "wdgc", "wdbc");
+      });
+      const issue = target.querySelector(".baomalaodaQi");
+      if (issue) issue.textContent = "--";
+      const countdown = target.querySelector(".baomalaodaCountdown");
+      if (countdown) countdown.textContent = "--:--:--";
+      const summary = target.querySelector(".baomalaodaInfo3 > div:first-child");
+      if (summary) summary.textContent = "\u6682\u65E0\u6FB3\u95E8\u56DB\u5206\u5F69\u5386\u53F2\u5F00\u5956";
+    }
+    return target;
+  }
+  function renderMacauFourMinuteDraw(response) {
+    var _a;
+    const target = ensureMacauFourMinuteCard();
+    if (!target) return;
+    const latestDraw = response.latestDraw;
+    const nextDraw = response.nextDraw;
+    const currentIssue = (nextDraw == null ? void 0 : nextDraw.issueNumber) || (latestDraw == null ? void 0 : latestDraw.issueNumber) || "";
+    const currentSummary = target.querySelector(".baomalaodaInfo3 > div:first-child");
+    const countdown = target.querySelector(".baomalaodaCountdown");
+    const issue = target.querySelector(".baomalaodaQi");
+    const numbers = [...target.querySelectorAll(".baomalaodaMa")];
+    if (Number.isFinite(Date.parse(response.serverTime))) {
+      macauFourMinuteServerOffsetMs = Date.now() - Date.parse(response.serverTime);
+    }
+    if (((_a = latestDraw == null ? void 0 : latestDraw.numbers) == null ? void 0 : _a.length) === 7) {
+      if (issue) issue.textContent = String(latestDraw.issueNumber || "").slice(-3);
+      latestDraw.numbers.forEach((number, index) => {
+        var _a2;
+        if (numbers[index]) numbers[index].textContent = String(number).padStart(2, "0");
+        const ball = (_a2 = numbers[index]) == null ? void 0 : _a2.parentElement;
+        ball == null ? void 0 : ball.classList.remove("wdrc", "wdgc", "wdbc");
+      });
+    } else {
+      if (issue) issue.textContent = "--";
+      numbers.forEach((number) => {
+        number.textContent = "--";
+      });
+    }
+    if ((nextDraw == null ? void 0 : nextDraw.scheduledAt) && Number.isFinite(Date.parse(nextDraw.scheduledAt))) {
+      const scheduledAt = Date.parse(nextDraw.scheduledAt);
+      liveDrawTimes.set("\u6FB3\u95E8\u56DB\u5206\u5F69", scheduledAt);
+      if (countdown) countdown.textContent = "--:--:--";
+      const nextIssue = String(nextDraw.issueNumber || "").slice(-3);
+      const dateText = formatNextDrawAt(nextDraw.scheduledAt);
+      if (currentSummary) currentSummary.textContent = latestDraw ? `\u7B2C${String(latestDraw.issueNumber).slice(-3)}\u671F\u5DF2\u5F00\u5956\uFF1B\u7B2C${nextIssue}\u671F\u5F85\u5F00\u5956: ${dateText}` : `\u6682\u65E0\u6FB3\u95E8\u56DB\u5206\u5F69\u5386\u53F2\u5F00\u5956\uFF1B\u7B2C${nextIssue}\u671F\u5F85\u5F00\u5956: ${dateText}`;
+      if (nextDraw.issueNumber !== (latestDraw == null ? void 0 : latestDraw.issueNumber)) {
+        if (macauFourMinuteExpectedIssue !== nextDraw.issueNumber) macauFourMinuteRetryCount = 0;
+        macauFourMinuteExpectedIssue = nextDraw.issueNumber;
+        if (scheduledAt + macauFourMinuteServerOffsetMs > Date.now()) {
+          scheduleMacauFourMinuteRefresh(scheduledAt);
+        }
+      }
+    } else {
+      liveDrawTimes.delete("\u6FB3\u95E8\u56DB\u5206\u5F69");
+      if (countdown) countdown.textContent = "--:--:--";
+      if (currentSummary) currentSummary.textContent = latestDraw ? `\u7B2C${String(latestDraw.issueNumber).slice(-3)}\u671F\u5DF2\u5F00\u5956\uFF1B\u4E0B\u4E00\u671F\u5F00\u5956\u65F6\u95F4\u6682\u4E0D\u53EF\u7528` : "\u6682\u65E0\u6FB3\u95E8\u56DB\u5206\u5F69\u5386\u53F2\u5F00\u5956";
+      macauFourMinuteExpectedIssue = null;
+    }
+    target.querySelectorAll(".baomalaodaXiao").forEach((label) => {
+      label.textContent = "";
+    });
+  }
+  function scheduleMacauFourMinuteRefresh(scheduledAt) {
+    if (macauFourMinuteRefreshTimer) window.clearTimeout(macauFourMinuteRefreshTimer);
+    const delay = Math.max(0, scheduledAt + macauFourMinuteServerOffsetMs - Date.now());
+    macauFourMinuteRefreshTimer = window.setTimeout(() => {
+      macauFourMinuteRetryCount += 1;
+      void refreshMacauFourMinuteDraw();
+    }, delay);
+  }
+  function scheduleMacauFourMinuteRetry() {
+    if (macauFourMinuteRefreshTimer) window.clearTimeout(macauFourMinuteRefreshTimer);
+    macauFourMinuteRetryCount += 1;
+    const delay = macauFourMinuteRetryCount < 10 ? 1e3 : 5e3;
+    macauFourMinuteRefreshTimer = window.setTimeout(() => {
+      void refreshMacauFourMinuteDraw();
+    }, delay);
+  }
+  async function refreshMacauFourMinuteDraw() {
+    var _a, _b, _c;
+    if (macauFourMinuteInFlight) return;
+    macauFourMinuteInFlight = true;
+    if (macauFourMinuteRefreshTimer) window.clearTimeout(macauFourMinuteRefreshTimer);
+    try {
+      const response = await fetch("/api/display/mobile/macau-four-minute", {
+        headers: { Accept: "application/json" },
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error("MACAU_FOUR_MINUTE_API_UNAVAILABLE");
+      const data = await response.json();
+      renderMacauFourMinuteDraw(data);
+      const scheduledAt = Date.parse(((_a = data.nextDraw) == null ? void 0 : _a.scheduledAt) || "");
+      const serverTime = Date.parse(data.serverTime || "");
+      if (Number.isFinite(scheduledAt) && Number.isFinite(serverTime) && scheduledAt <= serverTime && ((_b = data.latestDraw) == null ? void 0 : _b.issueNumber) !== ((_c = data.nextDraw) == null ? void 0 : _c.issueNumber)) {
+        macauFourMinuteRetryCount += 1;
+        scheduleMacauFourMinuteRetry();
+      }
+    } catch (e) {
+      scheduleMacauFourMinuteRetry();
+    } finally {
+      macauFourMinuteInFlight = false;
     }
   }
   function applyLiveCard(name, card) {
@@ -224,10 +395,7 @@
   }
   function applyAu8Draw(response) {
     var _a;
-    const card = [...document.querySelectorAll("#widgetContainer40617 .baomalaoda")].find((item) => {
-      var _a2;
-      return ((_a2 = item.querySelector(".baomalaodaName")) == null ? void 0 : _a2.textContent.trim()) === "\u5FEB\u4E508";
-    });
+    const card = findDrawCard("\u5FEB\u4E508");
     if (!card) return;
     const currentIssue = response.currentIssue;
     const currentSummary = card.querySelector(".baomalaodaInfo3 > div:first-child");
@@ -395,8 +563,10 @@
     if (name) {
       selectLottery(name);
       if (name === "\u5FEB\u4E508") void refreshAu8Draw();
+      if (name === "\u6FB3\u95E8\u56DB\u5206\u5F69") void refreshMacauFourMinuteDraw();
     }
   }, true);
+  ensureMacauFourMinuteCard();
   selectLottery("\u9999\u6E2F\u5F69");
   updateAu8CardActions();
   const floatGroup = document.querySelector("#widgetContainer39200 .float-btn-group");
@@ -430,16 +600,23 @@
     updateBackToTop();
   }
   document.addEventListener("click", (event) => {
-    var _a, _b;
+    var _a, _b, _c, _d;
     const observerTitle = event.target.closest("#widgetContainer40617 .baomalaodaInfo1 .info1-title");
     if (observerTitle && displayObserverHref && ((_b = (_a = observerTitle.closest(".baomalaoda")) == null ? void 0 : _a.querySelector(".baomalaodaName")) == null ? void 0 : _b.textContent.trim()) === "\u5FEB\u4E508") {
       event.preventDefault();
       openAu8ObserverLink();
       return;
     }
-    if (event.target.closest("#widgetContainer40617 .baomalaodaRefresh")) {
+    const refreshCard = (_c = event.target.closest("#widgetContainer40617 .baomalaodaRefresh")) == null ? void 0 : _c.closest(".baomalaoda");
+    const refreshName = (_d = refreshCard == null ? void 0 : refreshCard.querySelector(".baomalaodaName")) == null ? void 0 : _d.textContent.trim();
+    if (refreshName === "\u5FEB\u4E508") {
       event.preventDefault();
       void refreshAu8Draw();
+      return;
+    }
+    if (refreshName === "\u6FB3\u95E8\u56DB\u5206\u5F69") {
+      event.preventDefault();
+      void refreshMacauFourMinuteDraw();
       return;
     }
     const link = event.target.closest('a[data-local-link="isolated"]');
@@ -474,6 +651,7 @@
   void refreshMacauDraws();
   renderAu8Unavailable("\u6B63\u5728\u8BFB\u53D6\u672C\u5730\u4E03\u7403\u5F00\u5956");
   void refreshAu8Draw();
+  void refreshMacauFourMinuteDraw();
   void refreshDisplayObserverLink();
   window.setInterval(refreshCountdowns, 1e3);
   window.setInterval(() => {
@@ -481,6 +659,7 @@
       void refreshLiveDraws();
       void refreshMacauDraws();
       void refreshAu8Draw();
+      void refreshMacauFourMinuteDraw();
       void refreshDisplayObserverLink();
     }
   }, 15e3);
@@ -489,6 +668,7 @@
       void refreshLiveDraws();
       void refreshMacauDraws();
       void refreshAu8Draw();
+      void refreshMacauFourMinuteDraw();
       void refreshDisplayObserverLink();
     }
   });

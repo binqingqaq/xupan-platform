@@ -141,7 +141,7 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     vi.mocked(api.me).mockResolvedValue(me({
       displayName: '超级管理员',
       permissions: [
-        'PLATFORM_HOME_READ', 'SUB_ACCOUNT_MANAGE', 'MACHINE_MANAGE', 'REPORT_READ', 'DRAW_HISTORY_READ', 'BETTING_PLAY_STATS_READ',
+        'PLATFORM_HOME_READ', 'SUB_ACCOUNT_MANAGE', 'MACHINE_MANAGE', 'REPORT_READ', 'DRAW_HISTORY_READ', 'MACAU_FOUR_MINUTE_DRAW_READ', 'BETTING_PLAY_STATS_READ',
         'UNSETTLED_ORDER_READ', 'ORDER_CORRECTION_READ', 'ONLINE_PLAYER_READ', 'PLATFORM_SETTINGS_READ',
         'CENTER_AGENT_MANAGE', 'REPORT_NETWORK_READ', 'GAME_SETTINGS_READ', 'PLATFORM_PASSWORD_MANAGE',
       ],
@@ -153,7 +153,7 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     expect(labels).not.toContain('玩家工作台')
     // 当前产品要求开奖历史、玩法统计、报表统计连续排列；「中心上游」是 xupan 自有菜单（BY220 无）。
     expect(labels).toEqual([
-      '开奖信息', '子账号', '机器管理', '开奖历史', '玩法统计', '报表统计',
+      '开奖信息', '子账号', '机器管理', '开奖历史', '澳门四分彩', '玩法统计', '报表统计',
       '在线玩家', '设置', '中心上游', '修改密码',
     ])
     expect(labels).not.toContain('未结订单')
@@ -219,6 +219,12 @@ describe('platform admin nav 菜单项与 BY220 对齐', () => {
     items.find(item => item.textContent?.trim() === '机器管理')!.click()
     await nextTick()
     expect(router.push).toHaveBeenCalledExactlyOnceWith('/platform-admin/machines')
+  })
+
+  it('only shows the Macau four-minute menu to accounts with its read permission', async () => {
+    vi.mocked(api.me).mockResolvedValue(me({ permissions: ['MACAU_FOUR_MINUTE_DRAW_READ'], roles: ['ADMIN'] }))
+    await mountNav('超级管理员')
+    expect(navLabels()).toEqual(['澳门四分彩'])
   })
 
   it('手机菜单抽屉只渲染当前账号有权限的菜单项', async () => {

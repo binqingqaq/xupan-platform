@@ -132,12 +132,16 @@ import type {
   UnsettledOrderCancellation,
   UnsettledOrderPage,
   DrawHistoryPage,
+  MacauFourMinuteDrawPage,
+  MacauFourMinutePublicDraws,
   DrawHistoryDraftResult,
   DrawHistoryConfirmationResult,
   DrawHistorySettlementResult,
   DrawHistorySupplementResult,
   BettingPlayStats,
   BettingPlayBallPresetResult,
+  BettingPlayControlRequest,
+  BettingPlayControlResult,
   FlyOrderStatus,
   ProfitReport,
   PlatformFlyOrderPage,
@@ -696,6 +700,12 @@ export const api = {
       signal: AbortSignal.timeout(15_000),
     })
   },
+  listMacauFourMinuteDraws: (page = 1, pageSize = 20) =>
+    request<MacauFourMinuteDrawPage>(`/api/admin/macau-four-minute/draws?page=${page}&pageSize=${pageSize}`),
+  saveMacauFourMinutePreset: (issueNumber: string, numbers: (number | null)[]) =>
+    request<void>(`/api/admin/macau-four-minute/draws/${encodeURIComponent(issueNumber)}/preset`, {
+      method: 'PUT', body: JSON.stringify({ numbers }),
+    }),
   listDrawHistoryBets: (gameCode: string, issueNumber: string, page = 1, pageSize = 20) => request<DrawHistoryBetPage>(
     `/api/admin/draw-history/${encodeURIComponent(gameCode)}/${encodeURIComponent(issueNumber)}/bets?page=${page}&pageSize=${pageSize}`,
   ),
@@ -1193,6 +1203,9 @@ export const api = {
       body: JSON.stringify({ machineId, open }),
     }),
   getMobileDisplayHome: () => request<MobileDisplayHomeResponse>('/api/display/mobile/home'),
+  getMacauFourMinutePublicDraws: () => request<MacauFourMinutePublicDraws>(
+    '/api/display/mobile/macau-four-minute', {}, false,
+  ),
   /** 中心上游报网状态与当前机器的报网开关。 */
   getReportConfig: (machineId?: number | null) => {
     const query = new URLSearchParams()

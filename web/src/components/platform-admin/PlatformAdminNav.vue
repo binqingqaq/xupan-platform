@@ -47,6 +47,8 @@ const items: PlatformAdminNavItem[] = [
   { label: '机器管理', to: '/platform-admin/machines', permission: 'MACHINE_MANAGE' },
   // BY220 head.html：第 179 行，不在 {if user_uid==1} 内 → 子账号可见
   { label: '开奖历史', to: '/platform-admin/draw-history', permission: 'DRAW_HISTORY_READ' },
+  // Xupan display-only draw extension; its permission is granted only to ADMIN.
+  { label: '澳门四分彩', to: '/platform-admin/macau-four-minute', permission: 'MACAU_FOUR_MINUTE_DRAW_READ' },
   { label: '玩法统计', to: '/platform-admin/betting-play-stats', permission: 'BETTING_PLAY_STATS_READ' },
   // BY220 head.html：第 178 行，不在 {if user_uid==1} 内 → 子账号可见
   { label: '报表统计', to: '/platform-admin/reports', permission: 'REPORT_READ' },

@@ -335,10 +335,44 @@ export interface DrawHistoryPage {
   total: number
 }
 
+export type MacauFourMinuteDrawStatus = 'PENDING' | 'DRAWN'
+
+export interface MacauFourMinuteDraw {
+  issueNumber: string
+  numbers: (number | null)[]
+  scheduledAt: string
+  drawnAt: string | null
+  status: MacauFourMinuteDrawStatus
+}
+
+export interface MacauFourMinuteDrawPage {
+  items: MacauFourMinuteDraw[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface MacauFourMinuteLatestDraw {
+  issueNumber: string
+  numbers: number[]
+  drawnAt: string
+}
+
+export interface MacauFourMinutePublicDraws {
+  serverTime: string
+  latestDraw: MacauFourMinuteLatestDraw | null
+  nextDraw: {
+    issueNumber: string
+    scheduledAt: string
+    status: 'PENDING'
+  } | null
+}
+
 export interface BettingPlayStats {
   gameCode: string
   gameName: string
   issueNumber: string | null
+  drawResultVersion: number
   phase: 'BETTING' | 'DRAWING' | 'NONE' | string
   ballCount: number
   bettingEndsAt: string | null
@@ -369,6 +403,27 @@ export interface BettingPlayBallPresetResult {
   ballNumber: number
   presetNumber: number | null
   message: string
+}
+
+export interface BettingPlayControlRequest {
+  gameCode: string
+  issueNumber: string
+  expectedDrawResultVersion: number
+  ratioPercent: number
+  idempotencyKey: string
+}
+
+export interface BettingPlayControlResult {
+  gameCode: string
+  issueNumber: string
+  orderCount: number
+  totalStake: number
+  ratioPercent: number
+  targetCenterProfit: number
+  numbers: number[]
+  predictedCenterProfit: number
+  resultVersion: number
+  operationId: number
 }
 
 export interface DrawHistoryBet {

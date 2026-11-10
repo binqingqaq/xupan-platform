@@ -66,6 +66,7 @@ const router = createRouter({
     { path: '/platform-admin/sub-accounts', component: () => import('./views/PlatformAdminSubAccounts.vue'), meta: { requiresAuth: true, requiredPermission: 'SUB_ACCOUNT_MANAGE', title: '子账号' } },
     { path: '/platform-admin/machines', component: () => import('./views/PlatformAdminMachines.vue'), meta: { requiresAuth: true, requiredPermission: 'MACHINE_MANAGE', title: '机器管理' } },
     { path: '/platform-admin/draw-history', component: () => import('./views/PlatformAdminDrawHistory.vue'), meta: { requiresAuth: true, requiredPermission: 'DRAW_HISTORY_READ', title: '开奖历史' } },
+    { path: '/platform-admin/macau-four-minute', component: () => import('./views/PlatformAdminMacauFourMinute.vue'), meta: { requiresAuth: true, requiredPermission: 'MACAU_FOUR_MINUTE_DRAW_READ', title: '澳门四分彩' } },
     { path: '/platform-admin/betting-play-stats', component: () => import('./views/PlatformAdminBettingPlayStats.vue'), meta: { requiresAuth: true, requiredPermission: 'BETTING_PLAY_STATS_READ', title: '玩法统计' } },
     { path: '/platform-admin/reports', component: () => import('./views/PlatformAdminReports.vue'), meta: { requiresAuth: true, requiredPermission: 'REPORT_READ', title: '报表统计' } },
     { path: '/platform-admin/unsettled-orders', component: () => import('./views/PlatformAdminUnsettledOrders.vue'), meta: { requiresAuth: true, requiredPermission: 'UNSETTLED_ORDER_READ', title: '未结订单' } },
