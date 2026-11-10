@@ -19,4 +19,8 @@ describe('Macau four-minute display clock', () => {
     expect(pageSource).not.toContain('syncMacauFourMinutePlaceholder')
     expect(pageSource).toContain('暂无澳门四分彩历史开奖')
   })
+
+  it('keeps rendered numbers legible after removing the copied Happy 8 ball colors', () => {
+    expect(pageSource).toContain("ballArea.style.color = '#333'")
+  })
 })

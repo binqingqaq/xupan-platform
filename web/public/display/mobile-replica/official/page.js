@@ -6,6 +6,9 @@ const macauLotteries = new Map([
   ['macau-new', '新澳彩'],
   ['macau-old', '老澳彩'],
 ]);
+const redWaveNumbers = new Set([1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46]);
+const blueWaveNumbers = new Set([3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48]);
+const greenWaveNumbers = new Set([5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]);
 const liveDrawTimes = new Map();
 let liveRetryTimer;
 let liveRetryDelay = 10_000;
@@ -126,6 +129,23 @@ function findDrawCard(name) {
     .find((item) => item.querySelector('.baomalaodaName')?.textContent.trim() === name);
 }
 
+function applyWaveColor(numberNode, number) {
+  const tile = numberNode?.parentElement;
+  if (!tile) return;
+
+  tile.classList.remove('wdrc', 'wdgc', 'wdbc');
+  const value = Number(number);
+  const colorClass = redWaveNumbers.has(value)
+    ? 'wdrc'
+    : blueWaveNumbers.has(value)
+      ? 'wdbc'
+      : greenWaveNumbers.has(value)
+        ? 'wdgc'
+        : null;
+  if (colorClass) tile.classList.add(colorClass);
+  numberNode.style.color = colorClass ? '#fff' : '#333';
+}
+
 function applyAu8NumberOnlyStyle(card) {
   if (!card) return;
   card.classList.add('xupan-au8-number-only');
@@ -179,6 +199,8 @@ function ensureMacauFourMinuteCard() {
     target.querySelectorAll('.baomalaodaInfo2 .baomalaodaItem > div').forEach((ball) => {
       ball.classList.remove('wdrc', 'wdgc', 'wdbc');
     });
+    const ballArea = target.querySelector('.baomalaodaInfo2');
+    if (ballArea) ballArea.style.color = '#333';
     const issue = target.querySelector('.baomalaodaQi');
     if (issue) issue.textContent = '--';
     const countdown = target.querySelector('.baomalaodaCountdown');
@@ -208,8 +230,7 @@ function renderMacauFourMinuteDraw(response) {
     if (issue) issue.textContent = String(latestDraw.issueNumber || '').slice(-3);
     latestDraw.numbers.forEach((number, index) => {
       if (numbers[index]) numbers[index].textContent = String(number).padStart(2, '0');
-      const ball = numbers[index]?.parentElement;
-      ball?.classList.remove('wdrc', 'wdgc', 'wdbc');
+      applyWaveColor(numbers[index], number);
     });
   } else {
     if (issue) issue.textContent = '--';
@@ -222,9 +243,7 @@ function renderMacauFourMinuteDraw(response) {
     if (countdown) countdown.textContent = '--:--:--';
     const nextIssue = String(nextDraw.issueNumber || '').slice(-3);
     const dateText = formatNextDrawAt(nextDraw.scheduledAt);
-    if (currentSummary) currentSummary.textContent = latestDraw
-      ? `第${String(latestDraw.issueNumber).slice(-3)}期已开奖；第${nextIssue}期待开奖: ${dateText}`
-      : `暂无澳门四分彩历史开奖；第${nextIssue}期待开奖: ${dateText}`;
+    if (currentSummary) currentSummary.textContent = `澳门四分彩第${nextIssue}期：${dateText}`;
     if (nextDraw.issueNumber !== latestDraw?.issueNumber) {
       if (macauFourMinuteExpectedIssue !== nextDraw.issueNumber) macauFourMinuteRetryCount = 0;
       macauFourMinuteExpectedIssue = nextDraw.issueNumber;
@@ -468,6 +487,7 @@ function applyAu8Draw(response) {
   draw.balls.forEach((ball, index) => {
     numbers[index].textContent = String(ball.number).padStart(2, '0');
     labels[index].textContent = `${ball.fan}番`;
+    applyWaveColor(numbers[index], ball.number);
   });
 
   const active = document.querySelector('#baomaqgBtn4BoxFatherBoxCopy25Father .bnav-activeam, #baomaqgBtn4BoxFatherBoxCopy25Father .bnav-activexg');

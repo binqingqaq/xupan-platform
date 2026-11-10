@@ -7,6 +7,9 @@
     ["macau-new", "\u65B0\u6FB3\u5F69"],
     ["macau-old", "\u8001\u6FB3\u5F69"]
   ]);
+  const redWaveNumbers = /* @__PURE__ */ new Set([1, 2, 7, 8, 12, 13, 18, 19, 23, 24, 29, 30, 34, 35, 40, 45, 46]);
+  const blueWaveNumbers = /* @__PURE__ */ new Set([3, 4, 9, 10, 14, 15, 20, 25, 26, 31, 36, 37, 41, 42, 47, 48]);
+  const greenWaveNumbers = /* @__PURE__ */ new Set([5, 6, 11, 16, 17, 21, 22, 27, 28, 32, 33, 38, 39, 43, 44, 49]);
   const liveDrawTimes = /* @__PURE__ */ new Map();
   let liveRetryTimer;
   let liveRetryDelay = 1e4;
@@ -118,6 +121,15 @@
       return ((_a = item.querySelector(".baomalaodaName")) == null ? void 0 : _a.textContent.trim()) === name;
     });
   }
+  function applyWaveColor(numberNode, number) {
+    const tile = numberNode == null ? void 0 : numberNode.parentElement;
+    if (!tile) return;
+    tile.classList.remove("wdrc", "wdgc", "wdbc");
+    const value = Number(number);
+    const colorClass = redWaveNumbers.has(value) ? "wdrc" : blueWaveNumbers.has(value) ? "wdbc" : greenWaveNumbers.has(value) ? "wdgc" : null;
+    if (colorClass) tile.classList.add(colorClass);
+    numberNode.style.color = colorClass ? "#fff" : "#333";
+  }
   function applyAu8NumberOnlyStyle(card) {
     if (!card) return;
     card.classList.add("xupan-au8-number-only");
@@ -172,6 +184,8 @@
       target.querySelectorAll(".baomalaodaInfo2 .baomalaodaItem > div").forEach((ball) => {
         ball.classList.remove("wdrc", "wdgc", "wdbc");
       });
+      const ballArea = target.querySelector(".baomalaodaInfo2");
+      if (ballArea) ballArea.style.color = "#333";
       const issue = target.querySelector(".baomalaodaQi");
       if (issue) issue.textContent = "--";
       const countdown = target.querySelector(".baomalaodaCountdown");
@@ -198,10 +212,8 @@
     if (((_a = latestDraw == null ? void 0 : latestDraw.numbers) == null ? void 0 : _a.length) === 7) {
       if (issue) issue.textContent = String(latestDraw.issueNumber || "").slice(-3);
       latestDraw.numbers.forEach((number, index) => {
-        var _a2;
         if (numbers[index]) numbers[index].textContent = String(number).padStart(2, "0");
-        const ball = (_a2 = numbers[index]) == null ? void 0 : _a2.parentElement;
-        ball == null ? void 0 : ball.classList.remove("wdrc", "wdgc", "wdbc");
+        applyWaveColor(numbers[index], number);
       });
     } else {
       if (issue) issue.textContent = "--";
@@ -215,7 +227,7 @@
       if (countdown) countdown.textContent = "--:--:--";
       const nextIssue = String(nextDraw.issueNumber || "").slice(-3);
       const dateText = formatNextDrawAt(nextDraw.scheduledAt);
-      if (currentSummary) currentSummary.textContent = latestDraw ? `\u7B2C${String(latestDraw.issueNumber).slice(-3)}\u671F\u5DF2\u5F00\u5956\uFF1B\u7B2C${nextIssue}\u671F\u5F85\u5F00\u5956: ${dateText}` : `\u6682\u65E0\u6FB3\u95E8\u56DB\u5206\u5F69\u5386\u53F2\u5F00\u5956\uFF1B\u7B2C${nextIssue}\u671F\u5F85\u5F00\u5956: ${dateText}`;
+      if (currentSummary) currentSummary.textContent = `\u6FB3\u95E8\u56DB\u5206\u5F69\u7B2C${nextIssue}\u671F\uFF1A${dateText}`;
       if (nextDraw.issueNumber !== (latestDraw == null ? void 0 : latestDraw.issueNumber)) {
         if (macauFourMinuteExpectedIssue !== nextDraw.issueNumber) macauFourMinuteRetryCount = 0;
         macauFourMinuteExpectedIssue = nextDraw.issueNumber;
@@ -442,6 +454,7 @@
     draw.balls.forEach((ball, index) => {
       numbers[index].textContent = String(ball.number).padStart(2, "0");
       labels[index].textContent = `${ball.fan}\u756A`;
+      applyWaveColor(numbers[index], ball.number);
     });
     const active = document.querySelector("#baomaqgBtn4BoxFatherBoxCopy25Father .bnav-activeam, #baomaqgBtn4BoxFatherBoxCopy25Father .bnav-activexg");
     if ((active == null ? void 0 : active.textContent.trim()) === "\u5FEB\u4E508") selectLottery("\u5FEB\u4E508");
