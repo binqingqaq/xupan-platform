@@ -30,6 +30,16 @@ class SpaControllerTest {
     }
 
     @Test
+    void macauFourMinuteAdminRouteServesTheVueApplicationForDirectAccessAndRefresh() throws Exception {
+        mockMvc.perform(get("/platform-admin/macau-four-minute"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+        mockMvc.perform(get("/platform-admin/macau-four-minute/"))
+                .andExpect(status().isOk())
+                .andExpect(forwardedUrl("/index.html"));
+    }
+
+    @Test
     void publicDisplayObserverLinkServesTheVueApplicationForDirectAccessAndRefresh() throws Exception {
         mockMvc.perform(get("/display/observe/AbCdEf0123456789"))
                 .andExpect(status().isOk())
