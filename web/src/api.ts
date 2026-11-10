@@ -354,7 +354,7 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
   if (error.code === 'PLATFORM_PASSWORD_FORBIDDEN') return '当前账号没有修改密码权限'
   if (error.code === 'USER_USERNAME_INVALID') return '登录账号格式无效'
   if (error.code === 'DRAW_HISTORY_SUPPLEMENT_FORBIDDEN') return '当前账号没有补期权限'
-  if (error.code === 'DRAW_HISTORY_NUMBERS_INVALID') return '开奖号码必须是 8 个 1 到 20 的数字'
+  if (error.code === 'DRAW_HISTORY_NUMBERS_INVALID') return 'AU8 开奖必须是 7 个 1 到 40 且互不重复的号码'
   if (error.code === 'DRAW_HISTORY_ALREADY_DRAWN') return '此期数已经有开奖号码'
   if (error.code === 'DRAW_HISTORY_FORCE_FORBIDDEN') return '当前账号没有强制结算权限'
   if (error.code === 'DRAW_HISTORY_NOT_FOUND') return '未找到对应开奖记录'
