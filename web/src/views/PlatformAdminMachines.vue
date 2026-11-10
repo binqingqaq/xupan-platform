@@ -322,15 +322,14 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
     <el-dialog v-model="formOpen" :title="editingId ? '编辑机器账号' : '添加机器账号'" width="min(960px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
       <el-form class="form-grid machine-form-grid" label-position="left" label-width="120px" @submit.prevent="submit">
         <el-form-item label="用户名" required><el-input v-model="form.username" :disabled="Boolean(editingId)" placeholder="请输入用户名" required /></el-form-item>
-        <el-form-item label="密码" :error="passwordError"><div class="machine-field"><el-input v-model="form.rawPassword" type="password" show-password :placeholder="editingId ? '留空表示不修改' : '请输入密码（选填）'" autocomplete="new-password" @input="updatePasswordError" @blur="passwordTouched = true; updatePasswordError()" /><span class="machine-password-hint" role="note">8–72 个字符，至少包含一个字母和一个数字；无需特殊字符。{{ editingId ? '留空表示不修改。' : '留空使用系统默认密码。' }}</span></div></el-form-item>
+        <el-form-item label="密码" :error="passwordError"><div class="machine-field"><el-input v-model="form.rawPassword" type="password" show-password :placeholder="editingId ? '留空表示不修改' : '请输入密码（选填）'" autocomplete="new-password" @input="updatePasswordError" @blur="passwordTouched = true; updatePasswordError()" /><span class="machine-password-hint" role="note">{{ editingId ? '8–72 个字符，至少包含一个字母和一个数字；无需特殊字符。留空表示不修改' : '8–72 个字符，至少包含一个字母和一个数字；无需特殊字符。留空使用系统默认密码test123456' }}</span></div></el-form-item>
         <el-form-item label="积分"><el-input-number v-model="form.score" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" placeholder="请输入初始积分" /></el-form-item>
         <el-form-item label="失效时间"><div class="machine-field"><el-date-picker v-model="form.expiresAt" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" :disabled-date="(date: Date) => date.getTime() > Date.parse('2038-01-18T00:00')" class="full-width" /><span v-if="!editingId" class="machine-expiry-hint">留空时默认 7 天有效</span></div></el-form-item>
         <el-form-item label="所属子账号" :required="!editingId && !isScopedSubAccount"><el-select v-model="selectedGroupId" :clearable="Boolean(editingId)" :disabled="isScopedSubAccount" class="full-width" :placeholder="isScopedSubAccount ? '自动归属当前子账号' : editingId ? '未设置' : '请选择所属子账号'"><el-option v-for="group in subAccounts" :key="group.id" :label="group.username ?? '未设置'" :value="group.id" /></el-select></el-form-item>
-        <el-form-item v-if="editingId" label="AU8 玩家球位">
+        <el-form-item v-if="editingId" label="玩家球位">
           <div class="ball-mode-fields">
-            <div class="ball-mode-choice"><el-switch :model-value="form.au8BallMode === 'PLAYER_SELECT'" active-text="默认" @change="setBallMode('PLAYER_SELECT', $event)" /><span>玩家自行选择球位</span></div>
-            <div class="ball-mode-choice"><el-switch :model-value="form.au8BallMode === 'FIXED_BALL'" active-text="固定球位" @change="setBallMode('FIXED_BALL', $event)" /><span v-if="form.au8BallMode === 'FIXED_BALL'" class="fixed-ball-select"><el-select v-model="form.au8FixedBallNumber" placeholder="选择球位" aria-label="固定球位"><el-option v-for="ballNumber in 7" :key="ballNumber" :label="`第 ${ballNumber} 球`" :value="ballNumber" /></el-select></span></div>
-            <span class="ball-mode-hint">只能使用一种模式；固定模式仅影响该机器玩家后续 AU8 下注。</span>
+            <div class="ball-mode-choice"><el-switch :model-value="form.au8BallMode === 'PLAYER_SELECT'" @change="setBallMode('PLAYER_SELECT', $event)" /><span class="ball-mode-label">默认</span></div>
+            <div class="ball-mode-choice"><el-switch :model-value="form.au8BallMode === 'FIXED_BALL'" @change="setBallMode('FIXED_BALL', $event)" /><span class="ball-mode-label">固定球位</span><span v-if="form.au8BallMode === 'FIXED_BALL'" class="fixed-ball-select"><el-select v-model="form.au8FixedBallNumber" placeholder="选择球位" aria-label="固定球位"><el-option v-for="ballNumber in 7" :key="ballNumber" :label="`第 ${ballNumber} 球`" :value="ballNumber" /></el-select></span></div>
           </div>
         </el-form-item>
         <el-form-item label="托数量"><el-input-number v-model="form.botCount" :min="0" :step="1" :precision="0" controls-position="right" class="full-width" placeholder="请输入托数量" /></el-form-item>
@@ -409,10 +408,10 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .full-width { width: 100%; }
 .machine-field { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .ball-mode-fields { display: grid; gap: 8px; width: 100%; }
-.ball-mode-choice { display: flex; align-items: center; gap: 12px; min-height: 32px; color: #475569; }
-.fixed-ball-select { display: inline-flex; width: min(240px, 100%); }
-.ball-mode-hint { color: #7b8491; font-size: 12px; line-height: 1.4; }
-.machine-password-hint { color: #7b8491; font-size: 12px; line-height: 1.4; }
+.ball-mode-choice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; min-width: 0; min-height: 36px; color: #475569; }
+.ball-mode-label { flex: 0 0 auto; white-space: nowrap; }
+.fixed-ball-select { display: inline-flex; width: min(240px, 100%); min-width: 0; }
+.machine-password-hint { color: #e5484d; font-size: 12px; line-height: 1.4; }
 .machine-expiry-hint { color: #7b8491; font-size: 12px; line-height: 1.4; }
 .games-checks { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .dialog-footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; }
@@ -439,6 +438,8 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
   .mobile-machine-player-list { display: grid; }
   .machine-form-grid { --el-form-label-font-size: 14px; }
   .machine-form-grid :deep(.el-form-item__label) { width: auto !important; }
+  .machine-form-grid .ball-mode-choice { column-gap: 8px; }
+  .machine-form-grid .fixed-ball-select { flex: 1 1 120px; }
   .span-all { grid-column: auto; }
   .dialog-footer { justify-content: stretch; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .dialog-footer .el-button { flex: 1 1 0; min-height: 44px; margin: 0; }

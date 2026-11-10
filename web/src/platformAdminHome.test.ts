@@ -38,7 +38,8 @@ beforeEach(() => {
       gameCode: 'AU8',
       gameName: '澳8番摊',
       issueNumber: '39999946',
-      balls: [1, 2, 3, 4, 5, 6, 7, 18],
+      balls: [1, 2, 3, 4, 5, 6, 7],
+      ballCount: 7,
       phase: 'SETTLED',
       openedAt: '2026-10-02T01:00:00Z',
       settledAt: '2026-10-02T01:01:00Z',
@@ -63,7 +64,7 @@ afterEach(() => {
 })
 
 describe('platform admin home', () => {
-  it('loads the active game catalog and reloads draw information after game switching', async () => {
+  it('loads the active game catalog without showing the game selector', async () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     app = createApp(PlatformAdminHome)
@@ -76,19 +77,7 @@ describe('platform admin home', () => {
     expect(container.querySelectorAll('.platform-admin-route-color')).toHaveLength(1)
     expect(Array.from(container.querySelectorAll('.platform-admin-nav [role="menuitem"]')).map(link => link.textContent?.trim()))
       .toContain('中心上游')
-
-    const select = container.querySelector<HTMLElement>('.el-select__wrapper')
-    if (!select) throw new Error('missing game selector')
-    expect(select.classList.contains('is-disabled')).toBe(false)
-    select.click()
-    await settleOperations()
-    const option = [...document.querySelectorAll<HTMLElement>('.el-select-dropdown__item')]
-      .find(item => item.textContent?.includes('多彩种测试'))
-    if (!option) throw new Error('missing MULTI game option')
-    option.click()
-    await settleOperations()
-
-    expect(api.listDrawHistory).toHaveBeenLastCalledWith({ gameCode: 'MULTI', pageSize: 48 })
+    expect(container.querySelector('.page-heading .el-select')).toBeNull()
   })
 
   it('shows only seven-ball results after the active AU8 issue switches', async () => {

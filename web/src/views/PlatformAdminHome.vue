@@ -91,9 +91,6 @@ onBeforeUnmount(() => { if (refreshTimer !== undefined) window.clearInterval(ref
           <h1>开奖信息</h1>
           <p>开奖数据每 5 秒自动刷新</p>
         </div>
-        <el-select v-model="selectedGameCode" aria-label="选择游戏" @change="load">
-          <el-option v-for="game in gameCatalog" :key="game.gameCode" :label="game.displayName" :value="game.gameCode" />
-        </el-select>
       </header>
       <h2 class="section-title">上期开奖结果</h2>
 

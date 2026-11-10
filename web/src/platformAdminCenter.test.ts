@@ -199,11 +199,14 @@ describe('中心上游管理页', () => {
     expect(api.centerReconciliation).not.toHaveBeenCalled()
 
     const text = host.textContent ?? ''
+    expect(text).not.toContain('中心是代理的上级盘口')
+    expect(text).not.toContain('账号绑定代理子账号；同一代理子账号只分配一个中心账号。')
     expect(host.querySelector('.center-tabs')?.textContent).not.toContain('总览')
     expect(host.querySelector('.center-tabs')?.textContent).not.toContain('财务流水')
     expect(host.querySelector('.center-tabs')?.textContent).not.toContain('风险')
     expect(host.querySelector('.center-tabs')?.textContent).not.toContain('对账')
     expect(text).toContain('分配中心账号')
+    expect(text).not.toContain('超时不等于失败：')
     expect(text).not.toContain('订单状态汇总')
   })
 
@@ -218,6 +221,10 @@ describe('中心上游管理页', () => {
     expect(text).toContain('已结算')
     expect(text).toContain('代理赢')
     expect(text).toContain('285.00')
+    expect(text).toContain('3006478')
+    expect(text).not.toContain('AU8 / 3006478')
+    expect(text).toContain('1番')
+    expect(text).not.toContain('FAN params=1')
   })
 
   it('filters center orders by visible identifiers and paginates results', async () => {

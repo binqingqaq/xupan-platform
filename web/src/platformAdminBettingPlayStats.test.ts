@@ -95,14 +95,14 @@ describe('platform admin betting play statistics', () => {
     const root = await mountPage()
 
     expect(root.textContent).toContain('托开关：关')
-    expect(root.textContent).toContain('仅统计普通玩家的当前期下注')
+    expect(root.textContent).not.toContain('仅统计普通玩家的当前期下注')
     expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', false)
 
     operationButton('托开关：关', root).click()
     await settleOperations()
 
     expect(root.textContent).toContain('托开关：开')
-    expect(root.textContent).toContain('统计普通玩家和托的当前期下注')
+    expect(root.textContent).not.toContain('统计普通玩家和托的当前期下注')
     expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', true)
     expect(window.localStorage.getItem('xupan.platform-admin.betting-play-stats.include-bots')).toBe('true')
 

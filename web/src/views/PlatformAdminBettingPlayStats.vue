@@ -178,7 +178,6 @@ onBeforeUnmount(() => {
       <header class="page-heading">
         <div>
           <h1>玩法统计</h1>
-          <p>{{ includeBots ? '统计普通玩家和托的当前期下注' : '仅统计普通玩家的当前期下注' }}</p>
         </div>
         <div class="header-actions">
           <el-button :disabled="loading" :loading="loading" @click="load">刷新</el-button>
@@ -280,7 +279,7 @@ onBeforeUnmount(() => {
 .content { display: grid; gap: 16px; padding: 18px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
-.page-heading h1 { margin: 0; font-size: 24px; line-height: 1.3; }
+.page-heading h1 { margin: 0; font-size: 26px; line-height: 1.3; }
 .page-heading p { margin: 5px 0 0; color: #667085; }
 .issue-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; }
 .issue-strip > div { display: flex; align-items: center; gap: 10px; min-width: 0; }

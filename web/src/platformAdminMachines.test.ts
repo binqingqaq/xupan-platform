@@ -164,7 +164,7 @@ describe('platform admin machines', () => {
     }
   })
 
-  it('explains the password policy beside the field and rejects numeric-only passwords inline', async () => {
+  it('shows the create password policy in red with the default password and rejects numeric-only passwords inline', async () => {
     await mountMachines()
     container?.querySelectorAll<HTMLButtonElement>('.content > header button')[0]?.click()
     await settle()
@@ -174,8 +174,9 @@ describe('platform admin machines', () => {
     expect(passwordField.textContent).toContain('8–72 个字符')
     expect(passwordField.textContent).toContain('至少包含一个字母和一个数字')
     expect(passwordField.textContent).toContain('无需特殊字符')
-    expect(passwordField.textContent).toContain('留空使用系统默认密码')
-    expect(dialog.textContent).not.toContain('test123456')
+    expect(passwordField.textContent).toContain('留空使用系统默认密码test123456')
+    expect(passwordField.querySelector('.machine-password-hint')).not.toBeNull()
+    expect(dialog.textContent).toContain('test123456')
 
     setFormInput('用户名', 'bot003')
     setFormInput('密码', '123456')
@@ -227,10 +228,12 @@ describe('platform admin machines', () => {
     container?.querySelector('tbody tr button')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await settle()
 
-    const field = formField('AU8 玩家球位')
+    const field = formField('玩家球位')
     expect(field.textContent).toContain('默认')
     expect(field.textContent).toContain('固定球位')
-    expect(field.textContent).toContain('只能使用一种模式')
+    expect(field.textContent).not.toContain('玩家自行选择球位')
+    expect(field.querySelector('.ball-mode-hint')).toBeNull()
+    expect(field.querySelectorAll('.ball-mode-label')).toHaveLength(2)
 
     field.querySelector<HTMLElement>('.ball-mode-choice:nth-child(2) .el-switch')?.click()
     await settle()

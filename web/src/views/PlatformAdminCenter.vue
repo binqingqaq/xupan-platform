@@ -7,6 +7,7 @@ import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import PlatformAdminMobileRecordList from '../components/platform-admin/PlatformAdminMobileRecordList.vue'
 import { usePlatformAdminMobile } from '../composables/usePlatformAdminMobile'
 import { instantToLocalDateTime, localDateTimeToInstant } from '../platformAdminDateTime'
+import { formatReportBetContent } from '../reportDisplay'
 import type { AgentGroup } from '../types/agent'
 import type {
   CenterUpstreamAccount,
@@ -48,6 +49,10 @@ const orderFilters = ref({
   createdTo: '',
 })
 const orderPageSize = 20
+function orderPlayLabel(row: CenterOrderItem) {
+  const parameters = row.playText?.match(/(?:^|;)params=([^;]*)/)?.[1] ?? ''
+  return formatReportBetContent(row.playType, parameters)
+}
 const summaries = ref<CenterOrderSummary[]>([])
 const ledgerDrawerOpen = ref(false)
 const ledgerAccount = ref<CenterUpstreamAccount | null>(null)
@@ -115,8 +120,8 @@ const mobileSessionFields = [
 ]
 const mobileOrderFields = [
   { key: 'localBetId', label: '本地注单', value: (row: CenterOrderItem) => row.localBetId ?? '—' },
-  { key: 'issue', label: '期号', value: (row: CenterOrderItem) => `${row.gameCode} / ${row.issueNumber}` },
-  { key: 'play', label: '玩法', value: (row: CenterOrderItem) => `${row.playType}${row.playText ? ` ${row.playText}` : ''}`, spanAll: true },
+  { key: 'issue', label: '期号', value: (row: CenterOrderItem) => row.issueNumber },
+  { key: 'play', label: '玩法', value: orderPlayLabel, spanAll: true },
   { key: 'amount', label: '本金', value: (row: CenterOrderItem) => money(row.amount) },
   { key: 'status', label: '状态', value: (row: CenterOrderItem) => statusLabel(row.status) },
   { key: 'rejectReason', label: '拒绝原因', value: (row: CenterOrderItem) => row.rejectReason ?? '—', spanAll: true },
@@ -702,13 +707,7 @@ onMounted(async () => {
     <PlatformAdminNav />
     <div class="center-admin">
       <header class="page-heading center-header">
-        <div>
-          <h1>中心上游</h1>
-          <p class="center-hint">
-          中心是代理的上级盘口：代理上报订单到这里，中心按开奖结果与代理做第二层结算。
-          额度三层（可用 / 冻结 / 上游未结算）是三个独立事实。全部金额为虚拟积分。
-          </p>
-        </div>
+        <h1>中心上游</h1>
         <el-button type="primary" plain :loading="loading" @click="refresh">刷新</el-button>
       </header>
 
@@ -740,7 +739,6 @@ onMounted(async () => {
 
     <section v-if="tab === 'accounts'" class="center-panel">
       <div class="center-actions">
-        <span class="center-hint">账号绑定代理子账号；同一代理子账号只分配一个中心账号。</span>
         <el-button type="primary" @click="openCreateAccount">分配中心账号</el-button>
       </div>
 
@@ -903,12 +901,11 @@ onMounted(async () => {
         <el-form-item label="创建止"><el-date-picker v-model="orderFilters.createdTo" type="datetime" value-format="YYYY-MM-DDTHH:mm" format="YYYY-MM-DD HH:mm" clearable /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadOrders(1)">查询</el-button><el-button @click="orderFilters = { groupId: null, status: '', createdFrom: '', createdTo: '' }; loadOrders(1)">重置</el-button></el-form-item>
       </el-form>
-      <el-alert class="center-hint" type="warning" :closable="false" title="超时不等于失败：超时单必须人工查证后明确落到终态。可处置的动作由当前状态决定，重复点击不会二次退款（幂等键保证）。" />
       <el-table v-if="!isMobileViewport" scrollbar-always-on :data="orders" row-key="id" border stripe class="center-table platform-admin-desktop-table" empty-text="暂无订单">
         <el-table-column prop="agentOrderNo" label="中心订单号" min-width="160" />
         <el-table-column label="本地注单" min-width="110"><template #default="{ row }">{{ row.localBetId ?? '—' }}</template></el-table-column>
-        <el-table-column label="期号" min-width="150"><template #default="{ row }">{{ row.gameCode }} / {{ row.issueNumber }}</template></el-table-column>
-        <el-table-column label="玩法" min-width="140"><template #default="{ row }">{{ row.playType }}<small v-if="row.playText"> {{ row.playText }}</small></template></el-table-column>
+        <el-table-column label="期号" min-width="150"><template #default="{ row }">{{ row.issueNumber }}</template></el-table-column>
+        <el-table-column label="玩法" min-width="140"><template #default="{ row }">{{ orderPlayLabel(row as CenterOrderItem) }}</template></el-table-column>
         <el-table-column label="本金" width="120" align="right"><template #default="{ row }">{{ money(row.amount) }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'ACCEPTED' || row.status === 'SETTLED' ? 'success' : row.status === 'REJECTED' || row.status === 'CANCELLED' || row.status === 'REFUNDED' ? 'info' : row.status === 'TIMEOUT' ? 'warning' : 'primary'" effect="plain">{{ statusLabel(row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="拒绝原因" min-width="150"><template #default="{ row }">{{ row.rejectReason ?? '—' }}</template></el-table-column>
@@ -1038,7 +1035,7 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.center-admin { width: min(1600px, calc(100% - 32px)); margin: 0 auto; padding: 18px 0 36px; }
+.center-admin { width: 100%; margin: 0; padding: 18px; }
 .center-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .center-header h1 { margin: 0; font-size: 26px; line-height: 1.3; }
 .center-header p { max-width: 1100px; margin: 4px 0 0; color: var(--el-text-color-secondary); font-size: 14px; line-height: 1.55; }
@@ -1088,10 +1085,10 @@ onMounted(async () => {
 .ledger-groups-table { width: 100%; }
 :global(.center-ledger-drawer .el-drawer__body) { padding: 18px; overflow: auto; }
 @media (max-width: 900px) {
-  .center-admin { width: calc(100% - 24px); padding-top: 14px; }
+  .center-admin { padding: 14px; }
 }
 @media (max-width: 560px) {
-  .center-admin { width: calc(100% - 20px); padding-top: 12px; }
+  .center-admin { padding: 12px; }
   .center-panel { max-width: 100%; overflow-x: clip; }
   :global(.center-ledger-drawer) { width: 100vw !important; }
   :global(.center-ledger-drawer .el-drawer__body) { padding: 12px; }

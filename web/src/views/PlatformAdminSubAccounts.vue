@@ -184,7 +184,7 @@ onMounted(() => { void load() })
     </section>
     <el-dialog v-model="formOpen" :title="editingId ? '编辑子账号' : '添加子账号'" width="min(760px, calc(100vw - 32px))" modal-class="platform-admin-dialog-overlay" :close-on-click-modal="false" destroy-on-close>
       <el-form class="form-grid" label-position="top" @submit.prevent="submit">
-        <el-form-item label="用户名" required><el-input v-model="form.username" required placeholder="请输入用户名，多个用户名用英文逗号分隔可批量创建" /></el-form-item>
+        <el-form-item label="用户名" required><el-input v-model="form.username" required placeholder="请输入用户名" /></el-form-item>
         <el-form-item label="密码" :required="!editingId"><el-input v-model="form.rawPassword" type="password" show-password :required="!editingId" placeholder="需要请输入密码" /></el-form-item>
         <el-form-item label="积分"><el-input-number v-model="form.score" :min="0" :step="0.01" :precision="2" :disabled="editingId !== null" controls-position="right" class="full-width" :placeholder="editingId ? '编辑态积分只读，请用上分/下分调整' : '请输入初始积分'" /></el-form-item>
         <el-form-item v-if="editingId" label="上分"><el-input-number v-model="form.up" :min="0.01" :step="0.01" :precision="2" controls-position="right" class="full-width" placeholder="请输入" /></el-form-item>

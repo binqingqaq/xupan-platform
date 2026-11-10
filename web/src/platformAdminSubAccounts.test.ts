@@ -88,6 +88,22 @@ describe('platform admin sub accounts', () => {
     vi.restoreAllMocks()
   })
 
+  it('uses the concise username placeholder in the create form', async () => {
+    await mountSubAccounts()
+    container?.querySelector<HTMLButtonElement>('.page-heading button')?.click()
+    await settle()
+
+    expect(formInput('用户名')?.placeholder).toBe('请输入用户名')
+  })
+
+  it('keeps the username placeholder limited to the prompt', async () => {
+    await mountSubAccounts()
+    container?.querySelector<HTMLButtonElement>('.page-heading button')?.click()
+    await settle()
+
+    expect(formInput('用户名')?.placeholder).toBe('请输入用户名')
+  })
+
   it('keeps legacy report configuration out of the subaccount UI and update payload', async () => {
     await mountSubAccounts()
     const headers = Array.from(container?.querySelectorAll('th') ?? []).map(cell => cell.textContent?.trim())
