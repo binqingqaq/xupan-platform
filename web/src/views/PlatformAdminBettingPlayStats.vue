@@ -6,24 +6,21 @@ import PlatformAdminNav from '../components/platform-admin/PlatformAdminNav.vue'
 import type { BettingPlayBallStats, BettingPlayStats } from '../types/platformAdmin'
 
 const gameCode = 'AU8'
-const includeBotsStorageKey = 'xupan.platform-admin.betting-play-stats.include-bots'
-
-function readIncludeBotsPreference() {
-  try {
-    return window.localStorage.getItem(includeBotsStorageKey) === 'true'
-  } catch {
-    return false
-  }
-}
+const ratioOptions = [5, 10, 15, 20, 25, 30, 50, 100]
 
 const current = ref<BettingPlayStats | null>(null)
 const selectedBallNumber = ref(1)
 const presetInput = ref('')
+const ratioChoice = ref('20')
+const customRatioInput = ref('')
 const presetDirty = ref(false)
 const loading = ref(false)
 const saving = ref(false)
-const includeBots = ref(readIncludeBotsPreference())
+const controlling = ref(false)
 const error = ref('')
+const controlFeedback = ref('')
+const controlFeedbackType = ref<'success' | 'warning' | 'error'>('success')
+const controlResult = ref<{ numbers: number[]; target: number; actual: number; ratio: number } | null>(null)
 const canManagePreset = ref(false)
 const currentUser = ref('超级管理员')
 const now = ref(Date.now())
@@ -31,6 +28,17 @@ const serverOffsetMs = ref(0)
 let clockTimer: number | undefined
 
 const ballStats = computed(() => current.value?.balls ?? [])
+const acceptedOrderCount = computed(() => ballStats.value.reduce((sum, ball) => sum + ball.orderCount, 0))
+const acceptedTotalStake = computed(() => ballStats.value.reduce((sum, ball) => sum + ball.totalStake, 0))
+const ratioPercent = computed(() => {
+  const raw = ratioChoice.value === 'CUSTOM' ? customRatioInput.value : ratioChoice.value
+  if (!/^(?:\d+)(?:\.\d{1,2})?$/.test(raw)) return null
+  const value = Number(raw)
+  return value >= 0.01 && value <= 100 ? value : null
+})
+const targetCenterProfit = computed(() => ratioPercent.value == null
+  ? null
+  : Math.round((acceptedTotalStake.value * ratioPercent.value / 100 + Number.EPSILON) * 100) / 100)
 const selectedBall = computed(() => ballStats.value.find(item => item.ballNumber === selectedBallNumber.value) ?? null)
 const topPlayOrderCount = computed(() => Math.max(0, ...(selectedBall.value?.plays.map(play => play.orderCount) ?? [])))
 const serverNowMs = computed(() => now.value - serverOffsetMs.value)
@@ -59,12 +67,19 @@ const phaseLabel = computed(() => displayPhase.value === 'BETTING'
 const presetCanBeChanged = computed(() => (displayPhase.value === 'BETTING' || displayPhase.value === 'DRAWING')
   && secondsUntilDrawDeadline.value !== null
   && secondsUntilDrawDeadline.value > 10)
+const controlCanBeSubmitted = computed(() => canManagePreset.value
+  && presetCanBeChanged.value
+  && acceptedOrderCount.value > 0
+  && ratioPercent.value !== null
+  && !loading.value
+  && !saving.value
+  && !controlling.value)
 const selectedPreset = computed(() => selectedBall.value?.presetNumber ?? null)
 const normalizedPresetInput = computed(() => {
   if (presetInput.value === '') return null
   if (!/^\d{1,2}$/.test(presetInput.value)) return undefined
   const value = Number(presetInput.value)
-  return value >= 1 && value <= 20 ? value : undefined
+  return value >= 1 && value <= 40 ? value : undefined
 })
 const hasPresetChanges = computed(() => presetDirty.value && normalizedPresetInput.value !== selectedPreset.value)
 const canSavePreset = computed(() => canManagePreset.value
@@ -78,13 +93,15 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const result = await api.getBettingPlayStats(gameCode, includeBots.value)
+    const result = await api.getBettingPlayStats(gameCode)
     const receivedAt = Date.now()
     serverOffsetMs.value = receivedAt - new Date(result.serverNow).getTime()
     const previousIssue = current.value?.issueNumber
-    current.value = result
     const issueChanged = result.issueNumber !== previousIssue
+    current.value = result
     if (issueChanged || !result.issueNumber) {
+      controlResult.value = null
+      controlFeedback.value = ''
       selectedBallNumber.value = 1
       const preset = result.balls.find(ball => ball.ballNumber === 1)?.presetNumber ?? null
       presetInput.value = preset == null ? '' : String(preset).padStart(2, '0')
@@ -100,14 +117,16 @@ async function load() {
   }
 }
 
-function toggleBots() {
-  includeBots.value = !includeBots.value
-  try {
-    window.localStorage.setItem(includeBotsStorageKey, String(includeBots.value))
-  } catch {
-    // Keep the current page usable when browser storage is unavailable.
-  }
-  void load()
+function selectRatio(value: string | number) {
+  ratioChoice.value = String(value)
+  controlFeedback.value = ''
+  controlResult.value = null
+}
+
+function updateCustomRatio(value: string | number) {
+  customRatioInput.value = String(value).replace(/[^\d.]/g, '').slice(0, 7)
+  controlFeedback.value = ''
+  controlResult.value = null
 }
 
 function selectBall(ball: BettingPlayBallStats) {
@@ -150,6 +169,69 @@ async function clearPreset() {
   await savePreset()
 }
 
+function idempotencyKey() {
+  return typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+async function controlDraw() {
+  const issue = current.value
+  const ratio = ratioPercent.value
+  const target = targetCenterProfit.value
+  if (!issue?.issueNumber || ratio == null || target == null || !controlCanBeSubmitted.value) return
+  if (!window.confirm(
+    `确认将第 ${issue.issueNumber} 期抽成设置为 ${ratio.toFixed(2)}%？\n`
+    + `中心已接受普通玩家订单：${acceptedOrderCount.value} 单 / ${money(acceptedTotalStake.value)} 积分\n`
+    + `目标中心净赢：${money(target)} 积分\n\n`
+    + '计算结果将覆盖当前七个球位预设。',
+  )) return
+
+  controlling.value = true
+  controlFeedback.value = ''
+  controlResult.value = null
+  try {
+    const result = await api.controlBettingPlayDraw({
+      gameCode: issue.gameCode,
+      issueNumber: issue.issueNumber,
+      expectedDrawResultVersion: issue.drawResultVersion,
+      ratioPercent: ratio,
+      idempotencyKey: idempotencyKey(),
+    })
+    controlResult.value = {
+      numbers: result.numbers,
+      target: result.targetCenterProfit,
+      actual: result.predictedCenterProfit,
+      ratio: result.ratioPercent,
+    }
+    controlFeedbackType.value = 'success'
+    controlFeedback.value = `已写入七球预设；目标 ${money(result.targetCenterProfit)}，预测中心净赢 ${money(result.predictedCenterProfit)} 积分。`
+    adminNotice.success('控盘计算完成，七球预设已更新')
+    presetDirty.value = false
+    await load()
+  } catch (cause) {
+    const code = (cause as { code?: string } | null)?.code
+    const warnings: Record<string, string> = {
+      BETTING_PLAY_CONTROL_TARGET_UNREACHABLE: '当前订单结构下没有能达到目标中心净赢的合法开奖结果；原预设未修改。',
+      BETTING_PLAY_CONTROL_NO_ORDERS: '当前期没有中心已接受的普通玩家订单；原预设未修改。',
+    }
+    const errors: Record<string, string> = {
+      BETTING_PLAY_CONTROL_CLOSED: '已进入开奖前最后 10 秒，不能再计算或修改预设。',
+      BETTING_PLAY_CONTROL_STALE_ISSUE: '当前期号已变化，请刷新玩法统计后重试。',
+      BETTING_PLAY_CONTROL_STALE_VERSION: '七球预设已被其他操作修改，请刷新后重试。',
+      BETTING_PLAY_CONTROL_ORDER_SNAPSHOT_INVALID: '中心订单与本地注单快照不一致，未写入预设。请检查订单数据。',
+      BETTING_PLAY_CONTROL_SETTLEMENT_SNAPSHOT_INVALID: '存在无法按正式结算规则还原的中心订单，未写入预设。',
+    }
+    controlFeedbackType.value = warnings[code ?? ''] ? 'warning' : 'error'
+    controlFeedback.value = warnings[code ?? ''] ?? errors[code ?? '']
+      ?? apiErrorMessage(cause, '控盘计算失败，七球预设未修改')
+    if (warnings[code ?? '']) adminNotice.warning(controlFeedback.value)
+    else adminNotice.error(controlFeedback.value)
+  } finally {
+    controlling.value = false
+  }
+}
+
 function money(value: number) {
   return Number(value || 0).toFixed(2)
 }
@@ -181,12 +263,6 @@ onBeforeUnmount(() => {
         </div>
         <div class="header-actions">
           <el-button :disabled="loading" :loading="loading" @click="load">刷新</el-button>
-          <el-button
-            :type="includeBots ? 'warning' : 'default'"
-            :disabled="loading"
-            :aria-pressed="includeBots"
-            @click="toggleBots"
-          >托开关：{{ includeBots ? '开' : '关' }}</el-button>
         </div>
       </header>
 
@@ -199,6 +275,45 @@ onBeforeUnmount(() => {
           <div><span>当前期号</span><strong>{{ current.issueNumber }}</strong></div>
           <div><span>状态</span><el-tag :type="displayPhase === 'BETTING' ? 'success' : 'warning'">{{ phaseLabel }}</el-tag></div>
           <div><span>{{ displayPhase === 'BETTING' ? '封盘倒计时' : '开奖倒计时' }}</span><strong class="countdown">{{ countdown }}</strong></div>
+        </section>
+
+        <section class="control-section" aria-label="抽成控盘">
+          <div class="control-inputs">
+            <el-form-item label="抽成比例" class="control-field">
+              <el-select :model-value="ratioChoice" @update:model-value="selectRatio">
+                <el-option v-for="ratio in ratioOptions" :key="ratio" :label="`${ratio}%`" :value="String(ratio)" />
+                <el-option label="自定义" value="CUSTOM" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="ratioChoice === 'CUSTOM'" label="自定义比例" class="control-field">
+              <el-input
+                :model-value="customRatioInput"
+                inputmode="decimal"
+                placeholder="0.01–100"
+                @update:model-value="updateCustomRatio"
+              ><template #append>%</template></el-input>
+            </el-form-item>
+          </div>
+          <div class="control-summary">
+            <span>中心已接受普通玩家单 <strong>{{ acceptedOrderCount.toLocaleString('zh-CN') }}</strong></span>
+            <span>下注总积分 <strong>{{ money(acceptedTotalStake) }}</strong></span>
+            <span>目标中心净赢 <strong>{{ targetCenterProfit == null ? '--' : money(targetCenterProfit) }}</strong></span>
+          </div>
+          <div class="control-actions">
+            <el-button type="primary" :disabled="!controlCanBeSubmitted" :loading="controlling" @click="controlDraw">计算并写入预设</el-button>
+            <small v-if="!canManagePreset" class="permission-note">当前账号只有统计查看权限</small>
+            <small v-else-if="!presetCanBeChanged" class="permission-note">开奖前 10 秒内不能执行控盘或修改预设</small>
+            <small v-else-if="acceptedOrderCount === 0" class="permission-note">当前期没有中心已接受的普通玩家订单</small>
+            <small v-else-if="ratioPercent == null" class="preset-validation">比例必须在 0.01%–100% 之间，最多两位小数</small>
+            <small v-else class="control-note">控盘只使用中心已接受的普通玩家订单；计算结果会替换七个现有预设。</small>
+          </div>
+          <el-alert v-if="controlFeedback" :type="controlFeedbackType" :title="controlFeedback" :closable="false" />
+          <div v-if="controlResult" class="control-result" role="status">
+            <span>本次 {{ controlResult.ratio.toFixed(2) }}%</span>
+            <span>开奖结果 <strong>{{ controlResult.numbers.map(value => String(value).padStart(2, '0')).join(' · ') }}</strong></span>
+            <span>目标 {{ money(controlResult.target) }}</span>
+            <span>预测中心净赢 {{ money(controlResult.actual) }}</span>
+          </div>
         </section>
 
         <section class="ball-grid" aria-label="球位下注概览">
@@ -224,7 +339,7 @@ onBeforeUnmount(() => {
               :model-value="presetInput"
               inputmode="numeric"
               maxlength="2"
-              placeholder="1–20"
+              placeholder="1–40"
               :disabled="!canManagePreset || !presetCanBeChanged || saving"
               @update:model-value="updatePresetInput"
             />
@@ -233,7 +348,7 @@ onBeforeUnmount(() => {
           <el-button :disabled="!canManagePreset || !presetCanBeChanged || (selectedPreset == null && !presetInput) || saving" :loading="saving" @click="clearPreset">重置</el-button>
           <small v-if="!canManagePreset" class="permission-note">当前账号只有统计查看权限</small>
           <small v-else-if="!presetCanBeChanged" class="permission-note">开奖前 10 秒内不能修改开奖结果预设</small>
-          <small v-else-if="presetInput && normalizedPresetInput === undefined" class="preset-validation">请输入 1–20</small>
+          <small v-else-if="presetInput && normalizedPresetInput === undefined" class="preset-validation">请输入 1–40</small>
         </section>
 
         <section class="rank-section">
@@ -285,6 +400,18 @@ onBeforeUnmount(() => {
 .issue-strip > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .issue-strip > div > span { color: #667085; white-space: nowrap; }
 .issue-strip strong { overflow: hidden; text-overflow: ellipsis; }
+.control-section { display: grid; gap: 10px; padding: 14px 16px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; }
+.control-inputs, .control-summary, .control-actions, .control-result { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+.control-field { display: flex; align-items: center; margin: 0; }
+.control-field :deep(.el-form-item__label) { margin: 0 8px 0 0; line-height: 32px; }
+.control-field :deep(.el-select) { width: 132px; }
+.control-field :deep(.el-input) { width: 150px; }
+.control-summary { color: #667085; font-size: 13px; }
+.control-summary strong { margin-left: 5px; color: #25353d; font-variant-numeric: tabular-nums; }
+.control-actions { min-height: 32px; }
+.control-note { color: #667085; font-size: 12px; }
+.control-result { padding-top: 10px; border-top: 1px solid #e9eef0; color: #667085; font-size: 13px; }
+.control-result strong { color: #176f68; font-variant-numeric: tabular-nums; }
 .countdown { color: #c45656; font-variant-numeric: tabular-nums; }
 .ball-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
 .ball-card { display: flex; min-width: 0; min-height: 142px; flex-direction: column; align-items: flex-start; gap: 7px; padding: 12px; border: 1px solid #dcdfe6; border-radius: 4px; background: #fff; color: inherit; text-align: left; cursor: pointer; transition: border-color .15s, background-color .15s; }

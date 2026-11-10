@@ -5,9 +5,15 @@ import com.xupan.server.auth.service.AuthenticationService;
 import com.xupan.server.platformadmin.service.PlatformBettingPlayStatsService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.DecimalMax;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Size;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -30,9 +36,15 @@ public class PlatformBettingPlayStatsController {
 
     @GetMapping("/current")
     public CurrentResponse current(Authentication authentication,
-                                   @RequestParam(defaultValue = "AU8") String gameCode,
-                                   @RequestParam(defaultValue = "false") boolean includeBots) {
-        return CurrentResponse.from(service.current(gameCode, includeBots, operator(authentication).getUserId()));
+                                   @RequestParam(defaultValue = "AU8") String gameCode) {
+        return CurrentResponse.from(service.current(gameCode, operator(authentication).getUserId()));
+    }
+
+    @PostMapping("/current/control")
+    public ControlResponse control(Authentication authentication, @Valid @RequestBody ControlRequest request) {
+        return ControlResponse.from(service.control(request.gameCode(), request.issueNumber(),
+                request.expectedDrawResultVersion(), request.ratioPercent(), request.idempotencyKey(),
+                operator(authentication).getUserId()));
     }
 
     @PutMapping("/current/balls/{ballNumber}")
@@ -53,13 +65,33 @@ public class PlatformBettingPlayStatsController {
     public record PresetRequest(@NotBlank String gameCode, @NotBlank String issueNumber, Integer number) {
     }
 
+    public record ControlRequest(@NotBlank String gameCode, @NotBlank String issueNumber,
+                                 @Min(0) int expectedDrawResultVersion,
+                                 @DecimalMin("0.01") @DecimalMax("100.00") @Digits(integer = 3, fraction = 2)
+                                 BigDecimal ratioPercent,
+                                 @NotBlank @Size(max = 128) String idempotencyKey) {
+    }
+
     public record CurrentResponse(String gameCode, String gameName, String issueNumber, String phase,
-                                  int ballCount, Instant bettingEndsAt, Instant drawEndsAt, Instant serverNow,
+                                  int ballCount, int drawResultVersion, Instant bettingEndsAt,
+                                  Instant drawEndsAt, Instant serverNow,
                                   List<BallResponse> balls) {
         static CurrentResponse from(PlatformBettingPlayStatsService.CurrentStats stats) {
             return new CurrentResponse(stats.gameCode(), stats.gameName(), stats.issueNumber(), stats.phase(),
-                    stats.ballCount(), stats.bettingEndsAt(), stats.drawEndsAt(), stats.serverNow(),
+                    stats.ballCount(), stats.drawResultVersion(), stats.bettingEndsAt(), stats.drawEndsAt(), stats.serverNow(),
                     stats.balls().stream().map(BallResponse::from).toList());
+        }
+    }
+
+    public record ControlResponse(String gameCode, String issueNumber, long orderCount,
+                                  BigDecimal totalStake, BigDecimal ratioPercent,
+                                  BigDecimal targetCenterProfit, List<Integer> numbers,
+                                  BigDecimal predictedCenterProfit, Integer resultVersion,
+                                  long operationId) {
+        static ControlResponse from(PlatformBettingPlayStatsService.ControlSummary summary) {
+            return new ControlResponse(summary.gameCode(), summary.issueNumber(), summary.orderCount(),
+                    summary.totalStake(), summary.ratioPercent(), summary.targetCenterProfit(), summary.numbers(),
+                    summary.predictedCenterProfit(), summary.resultVersion(), summary.operationId());
         }
     }
 

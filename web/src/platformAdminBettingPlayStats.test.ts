@@ -10,6 +10,7 @@ vi.mock('./api', () => ({
     me: vi.fn(),
     getBettingPlayStats: vi.fn(),
     setBettingPlayBallPreset: vi.fn(),
+    controlBettingPlayDraw: vi.fn(),
   },
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
@@ -33,7 +34,7 @@ function emptyBall(ballNumber: number) {
 function currentStats(): BettingPlayStats {
   const serverNow = new Date()
   return {
-    gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999950', phase: 'BETTING', ballCount: 7,
+    gameCode: 'AU8', gameName: '澳8番摊', issueNumber: '39999950', drawResultVersion: 6, phase: 'BETTING', ballCount: 7,
     bettingEndsAt: new Date(serverNow.getTime() + 180_000).toISOString(),
     drawEndsAt: new Date(serverNow.getTime() + 300_000).toISOString(),
     serverNow: serverNow.toISOString(),
@@ -43,7 +44,6 @@ function currentStats(): BettingPlayStats {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  window.localStorage.removeItem('xupan.platform-admin.betting-play-stats.include-bots')
   stats = currentStats()
   vi.mocked(api.me).mockResolvedValue({
     displayName: '超级管理员', username: 'admin', permissions: ['BETTING_PLAY_STATS_READ', 'BETTING_DRAW_PRESET_MANAGE'],
@@ -56,6 +56,11 @@ beforeEach(() => {
       gameCode, issueNumber, ballNumber, presetNumber: number,
       message: number == null ? '已恢复开奖随机' : '开奖结果预设已保存',
     }
+  })
+  vi.mocked(api.controlBettingPlayDraw).mockResolvedValue({
+    gameCode: 'AU8', issueNumber: '39999950', orderCount: 10, totalStake: 10000,
+    ratioPercent: 20, targetCenterProfit: 2000, numbers: [1, 2, 3, 4, 5, 6, 7],
+    predictedCenterProfit: 2450, resultVersion: 7, operationId: 91,
   })
 })
 
@@ -91,32 +96,56 @@ describe('platform admin betting play statistics', () => {
     expect(root.querySelector('.el-table')).toBeNull()
   })
 
-  it('toggles bot orders in the aggregate and is off by default', async () => {
+  it('excludes the bot toggle and requests statistics without a bot-filter parameter', async () => {
     const root = await mountPage()
 
-    expect(root.textContent).toContain('托开关：关')
-    expect(root.textContent).not.toContain('仅统计普通玩家的当前期下注')
-    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', false)
+    expect(root.textContent).not.toContain('托开关')
+    expect(root.textContent).not.toContain('包含托单')
+    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8')
+  })
 
-    operationButton('托开关：关', root).click()
+  it('confirms replacement and writes the computed seven-ball result', async () => {
+    stats.balls[0] = { ...emptyBall(1), orderCount: 10, totalStake: 10000 }
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const root = await mountPage()
+
+    expect(root.textContent).toContain('中心已接受普通玩家单 10')
+    expect(root.textContent).toContain('下注总积分 10000.00')
+    expect(root.textContent).toContain('目标中心净赢 2000.00')
+    operationButton('计算并写入预设', root).click()
     await settleOperations()
 
-    expect(root.textContent).toContain('托开关：开')
-    expect(root.textContent).not.toContain('统计普通玩家和托的当前期下注')
-    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', true)
-    expect(window.localStorage.getItem('xupan.platform-admin.betting-play-stats.include-bots')).toBe('true')
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('计算结果将覆盖当前七个球位预设'))
+    expect(api.controlBettingPlayDraw).toHaveBeenCalledWith(expect.objectContaining({
+      gameCode: 'AU8', issueNumber: '39999950', expectedDrawResultVersion: 6, ratioPercent: 20,
+    }))
+    expect(root.textContent).toContain('预测中心净赢 2450.00')
+    expect(root.textContent).toContain('01 · 02 · 03 · 04 · 05 · 06 · 07')
+  })
 
-    app?.unmount()
-    app = null
-    container?.remove()
-    container = null
-    const reloadedRoot = await mountPage()
-    expect(reloadedRoot.textContent).toContain('托开关：开')
-    expect(api.getBettingPlayStats).toHaveBeenLastCalledWith('AU8', true)
+  it('does not send the control request when replacement is cancelled', async () => {
+    stats.balls[0] = { ...emptyBall(1), orderCount: 1, totalStake: 100 }
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const root = await mountPage()
 
-    operationButton('托开关：开', reloadedRoot).click()
+    operationButton('计算并写入预设', root).click()
     await settleOperations()
-    expect(window.localStorage.getItem('xupan.platform-admin.betting-play-stats.include-bots')).toBe('false')
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(api.controlBettingPlayDraw).not.toHaveBeenCalled()
+  })
+
+  it('shows an unreachable target and leaves the existing presets untouched', async () => {
+    stats.balls[0] = { ...emptyBall(1), presetNumber: 9, orderCount: 1, totalStake: 100 }
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    vi.mocked(api.controlBettingPlayDraw).mockRejectedValue({ code: 'BETTING_PLAY_CONTROL_TARGET_UNREACHABLE' })
+    const root = await mountPage()
+
+    operationButton('计算并写入预设', root).click()
+    await settleOperations()
+
+    expect(root.textContent).toContain('没有能达到目标中心净赢的合法开奖结果')
+    expect(root.querySelector('.ball-card .ball-result')?.textContent).toContain('预设 09')
   })
 
   it('renders seven ball summaries and ranks the selected ball by order count', async () => {

@@ -95,6 +95,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/admin/reports", "/api/admin/reports/**").hasAuthority("PERM_REPORT_READ")
                         .requestMatchers(HttpMethod.GET, "/api/admin/betting-play-stats/current")
                         .hasAuthority("PERM_BETTING_PLAY_STATS_READ")
+                        .requestMatchers(HttpMethod.POST, "/api/admin/betting-play-stats/current/control")
+                        .hasAuthority("PERM_BETTING_DRAW_PRESET_MANAGE")
                         .requestMatchers(HttpMethod.PUT, "/api/admin/betting-play-stats/current/balls/*")
                         .hasAuthority("PERM_BETTING_DRAW_PRESET_MANAGE")
                         .requestMatchers(HttpMethod.GET, "/api/admin/draw-history", "/api/admin/draw-history/**").hasAuthority("PERM_DRAW_HISTORY_READ")
