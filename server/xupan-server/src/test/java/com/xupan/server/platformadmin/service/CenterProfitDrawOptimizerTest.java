@@ -84,6 +84,59 @@ class CenterProfitDrawOptimizerTest {
         }
     }
 
+    @Test
+    void samplesOnlyQualifyingDistinctDrawsAndIsRepeatableForSeed() {
+        List<List<BigDecimal>> matrix = matrix(
+                new String[]{"1.00", "2.00", "3.00"},
+                new String[]{"2.00", "3.00", "1.00"},
+                new String[]{"3.00", "1.00", "2.00"});
+
+        var first = CenterProfitDrawOptimizer.sampleAtLeastTarget(matrix, new BigDecimal("7.00"),
+                true, null, new Random(29)).orElseThrow();
+        var second = CenterProfitDrawOptimizer.sampleAtLeastTarget(matrix, new BigDecimal("7.00"),
+                true, null, new Random(29)).orElseThrow();
+
+        assertThat(first.numbers()).containsExactlyElementsOf(second.numbers());
+        assertThat(first.numbers()).doesNotHaveDuplicates();
+        assertThat(first.centerNetProfit()).isGreaterThanOrEqualTo(new BigDecimal("7.00"));
+    }
+
+    @Test
+    void samplerFindsAnotherQualifyingDrawWhenPreviousOneIsExcluded() {
+        List<List<BigDecimal>> matrix = matrix(
+                new String[]{"1.00", "1.00"},
+                new String[]{"1.00", "1.00"});
+
+        var result = CenterProfitDrawOptimizer.sampleAtLeastTarget(matrix, new BigDecimal("2.00"),
+                true, List.of(1, 2), new Random(13)).orElseThrow();
+
+        assertThat(result.numbers()).containsExactly(2, 1);
+        assertThat(result.centerNetProfit()).isEqualByComparingTo("2.00");
+    }
+
+    @Test
+    void samplerReturnsEmptyWhenExcludedPreviousIsTheOnlyQualifyingDraw() {
+        List<List<BigDecimal>> matrix = matrix(
+                new String[]{"10.00", "0.00"},
+                new String[]{"0.00", "10.00"});
+
+        assertThat(CenterProfitDrawOptimizer.sampleAtLeastTarget(matrix, new BigDecimal("20.00"),
+                true, List.of(1, 2), new Random(3))).isEmpty();
+    }
+
+    @Test
+    void samplerExcludesAnExactRepeatedSequenceWithoutBlockingOtherNumberReuse() {
+        List<List<BigDecimal>> matrix = matrix(
+                new String[]{"5.00", "5.00"},
+                new String[]{"5.00", "5.00"});
+
+        var result = CenterProfitDrawOptimizer.sampleAtLeastTarget(matrix, new BigDecimal("10.00"),
+                false, List.of(1, 1), new Random(7)).orElseThrow();
+
+        assertThat(result.numbers()).isNotEqualTo(List.of(1, 1));
+        assertThat(result.centerNetProfit()).isEqualByComparingTo("10.00");
+    }
+
     private static BigDecimal maximumDistinctProfit(List<List<BigDecimal>> matrix, int ball,
                                                     boolean[] usedNumbers) {
         if (ball == matrix.size()) {

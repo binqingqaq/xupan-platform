@@ -17,6 +17,7 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -39,6 +40,7 @@ public class PlatformBettingPlayStatsService {
     private final JdbcTemplate jdbc;
     private final PermissionService permissionService;
     private final CenterNetProfitCalculator centerNetProfitCalculator;
+    private final SecureRandom drawRandom = new SecureRandom();
 
     public PlatformBettingPlayStatsService(JdbcTemplate jdbc, PermissionService permissionService,
                                            CenterNetProfitCalculator centerNetProfitCalculator) {
@@ -207,13 +209,21 @@ public class PlatformBettingPlayStatsService {
                     "存在无法按正式结算规则还原的中心订单，未修改开奖结果预设");
         }
 
-        Optional<CenterProfitDrawOptimizer.Result> optimized = CenterProfitDrawOptimizer.optimize(
-                profits, target, DrawRule.requiresDistinctNumbers(gameCode, issue.drawRuleVersion()));
-        if (optimized.isEmpty()) {
+        boolean distinctNumbers = DrawRule.requiresDistinctNumbers(gameCode, issue.drawRuleVersion());
+        Optional<CenterProfitDrawOptimizer.Result> maximum = CenterProfitDrawOptimizer.optimize(
+                profits, target, distinctNumbers);
+        if (maximum.isEmpty()) {
             throw BusinessException.conflict("BETTING_PLAY_CONTROL_TARGET_UNREACHABLE",
                     "当前中心已接受订单没有能达到抽成目标的合法开奖结果");
         }
-        List<Integer> numbers = optimized.get().numbers();
+        List<Integer> previousControlDraw = lastSuccessfulControlDraw(issue);
+        Optional<CenterProfitDrawOptimizer.Result> sampled = CenterProfitDrawOptimizer.sampleAtLeastTarget(
+                profits, target, distinctNumbers, previousControlDraw, drawRandom);
+        if (sampled.isEmpty()) {
+            throw BusinessException.conflict("BETTING_PLAY_CONTROL_NO_ALTERNATIVE",
+                    "当前预设已经达标，且没有其他能达到目标的合法开奖结果；原预设保持不变");
+        }
+        List<Integer> numbers = sampled.get().numbers();
         try {
             DrawRule.validateNumbers(gameCode, issue.drawRuleVersion(), issue.ballCount(), numbers);
         } catch (IllegalArgumentException invalidNumbers) {
@@ -228,7 +238,7 @@ public class PlatformBettingPlayStatsService {
         }
         predictedProfit = predictedProfit.setScale(2);
         if (predictedProfit.compareTo(target) < 0
-                || predictedProfit.compareTo(optimized.get().centerNetProfit()) != 0) {
+                || predictedProfit.compareTo(sampled.get().centerNetProfit()) != 0) {
             throw new IllegalStateException("控盘结果的正式结算净赢与收益矩阵不一致");
         }
         requireControlWindow(issue);
@@ -288,6 +298,29 @@ public class PlatformBettingPlayStatsService {
                 rs.getBigDecimal("target_center_profit"), parseNumbers(rs.getString("numbers_text")),
                 rs.getBigDecimal("predicted_center_profit"), rs.getObject("result_version", Integer.class)) : null,
                 key);
+    }
+
+    private List<Integer> lastSuccessfulControlDraw(CurrentIssue issue) {
+        List<ControlDrawSnapshot> rows = jdbc.query("""
+                SELECT result_version, numbers_text
+                  FROM betting_play_control_operation
+                 WHERE game_code = ? AND issue_number = ? AND status = 'SUCCEEDED'
+                 ORDER BY id DESC
+                 LIMIT 1
+                """, (rs, rowNum) -> new ControlDrawSnapshot(
+                rs.getInt("result_version"), rs.getString("numbers_text")),
+                issue.gameCode(), issue.issueNumber());
+        if (rows.isEmpty() || rows.getFirst().resultVersion() != issue.drawResultVersion()) {
+            return null;
+        }
+        List<Integer> previous = parseNumbers(rows.getFirst().numbersText());
+        try {
+            DrawRule.validateNumbers(issue.gameCode(), issue.drawRuleVersion(), issue.ballCount(), previous);
+        } catch (IllegalArgumentException invalidAudit) {
+            throw BusinessException.conflict("BETTING_PLAY_CONTROL_PRIOR_RESULT_INVALID",
+                    "上一组控盘结果与当前期规则不一致，请检查预设后重试");
+        }
+        return previous;
     }
 
     private List<ControlOrder> eligibleControlOrders(CurrentIssue issue, boolean lock) {
@@ -707,6 +740,9 @@ public class PlatformBettingPlayStatsService {
                                 BigDecimal localOdds, String gameCode, String issueNumber,
                                 String centerPlayType, String centerPlayText, BigDecimal amount,
                                 BigDecimal centerOdds, BigDecimal machineOddsRate) {
+    }
+
+    private record ControlDrawSnapshot(int resultVersion, String numbersText) {
     }
 
     private record RuleDescriptor(String ruleKey, String playName, String playType) {

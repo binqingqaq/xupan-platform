@@ -192,6 +192,14 @@ class PlatformBettingPlayStatsServiceTest {
         assertThat(replay.operationId()).isEqualTo(result.operationId());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM betting_play_control_operation WHERE idempotency_key=?",
                 Integer.class, key)).isEqualTo(1);
+
+        PlatformBettingPlayStatsService.ControlSummary reroll = service.control(
+                "AU8", issue, result.resultVersion(), new java.math.BigDecimal("20.00"),
+                "stats-control-reroll-" + suffix(), admin);
+        assertThat(reroll.numbers()).isNotEqualTo(result.numbers());
+        assertThat(reroll.predictedCenterProfit()).isGreaterThanOrEqualTo(reroll.targetCenterProfit());
+        assertThat(reroll.resultVersion()).isEqualTo(2);
+
     }
 
     @Test

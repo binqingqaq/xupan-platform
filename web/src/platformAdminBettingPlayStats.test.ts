@@ -123,6 +123,45 @@ describe('platform admin betting play statistics', () => {
     expect(root.textContent).toContain('01 · 02 · 03 · 04 · 05 · 06 · 07')
   })
 
+  it('rerolls to a different qualifying draw without asking to confirm again', async () => {
+    stats.balls[0] = { ...emptyBall(1), orderCount: 10, totalStake: 10000 }
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const root = await mountPage()
+    const firstResult = {
+      gameCode: 'AU8', issueNumber: '39999950', orderCount: 10, totalStake: 10000,
+      ratioPercent: 20, targetCenterProfit: 2000, numbers: [1, 2, 3, 4, 5, 6, 7],
+      predictedCenterProfit: 2450, resultVersion: 7, operationId: 91,
+    }
+    const nextResult = {
+      ...firstResult, numbers: [8, 9, 10, 11, 12, 13, 14],
+      predictedCenterProfit: 2200, resultVersion: 8, operationId: 92,
+    }
+    vi.mocked(api.controlBettingPlayDraw)
+      .mockImplementationOnce(async () => {
+        stats.drawResultVersion = firstResult.resultVersion
+        return firstResult
+      })
+      .mockImplementationOnce(async () => {
+        stats.drawResultVersion = nextResult.resultVersion
+        return nextResult
+      })
+
+    operationButton('计算并写入预设', root).click()
+    await settleOperations()
+    expect(root.textContent).toContain('再随机一组')
+
+    operationButton('再随机一组', root).click()
+    await settleOperations()
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(api.controlBettingPlayDraw).toHaveBeenCalledTimes(2)
+    expect(api.controlBettingPlayDraw).toHaveBeenLastCalledWith(expect.objectContaining({
+      expectedDrawResultVersion: 7,
+    }))
+    expect(root.textContent).toContain('08 · 09 · 10 · 11 · 12 · 13 · 14')
+    expect(root.textContent).toContain('预测中心净赢 2200.00')
+  })
+
   it('does not send the control request when replacement is cancelled', async () => {
     stats.balls[0] = { ...emptyBall(1), orderCount: 1, totalStake: 100 }
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)

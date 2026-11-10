@@ -17,6 +17,7 @@ const presetDirty = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const controlling = ref(false)
+const controlNoAlternative = ref(false)
 const error = ref('')
 const controlFeedback = ref('')
 const controlFeedbackType = ref<'success' | 'warning' | 'error'>('success')
@@ -71,6 +72,7 @@ const controlCanBeSubmitted = computed(() => canManagePreset.value
   && presetCanBeChanged.value
   && acceptedOrderCount.value > 0
   && ratioPercent.value !== null
+  && !controlNoAlternative.value
   && !loading.value
   && !saving.value
   && !controlling.value)
@@ -101,6 +103,7 @@ async function load() {
     current.value = result
     if (issueChanged || !result.issueNumber) {
       controlResult.value = null
+      controlNoAlternative.value = false
       controlFeedback.value = ''
       selectedBallNumber.value = 1
       const preset = result.balls.find(ball => ball.ballNumber === 1)?.presetNumber ?? null
@@ -119,12 +122,14 @@ async function load() {
 
 function selectRatio(value: string | number) {
   ratioChoice.value = String(value)
+  controlNoAlternative.value = false
   controlFeedback.value = ''
   controlResult.value = null
 }
 
 function updateCustomRatio(value: string | number) {
   customRatioInput.value = String(value).replace(/[^\d.]/g, '').slice(0, 7)
+  controlNoAlternative.value = false
   controlFeedback.value = ''
   controlResult.value = null
 }
@@ -149,6 +154,9 @@ async function savePreset() {
     const result = await api.setBettingPlayBallPreset(selectedBallNumber.value, issue.gameCode, issue.issueNumber, normalizedPresetInput.value ?? null)
     adminNotice.success(result.message)
     presetDirty.value = false
+    controlResult.value = null
+    controlNoAlternative.value = false
+    controlFeedback.value = ''
     await load()
   } catch (cause) {
     adminNotice.error(apiErrorMessage(cause, '开奖结果预设保存失败'))
@@ -180,7 +188,7 @@ async function controlDraw() {
   const ratio = ratioPercent.value
   const target = targetCenterProfit.value
   if (!issue?.issueNumber || ratio == null || target == null || !controlCanBeSubmitted.value) return
-  if (!window.confirm(
+  if (!controlResult.value && !window.confirm(
     `确认将第 ${issue.issueNumber} 期抽成设置为 ${ratio.toFixed(2)}%？\n`
     + `中心已接受普通玩家订单：${acceptedOrderCount.value} 单 / ${money(acceptedTotalStake.value)} 积分\n`
     + `目标中心净赢：${money(target)} 积分\n\n`
@@ -189,7 +197,6 @@ async function controlDraw() {
 
   controlling.value = true
   controlFeedback.value = ''
-  controlResult.value = null
   try {
     const result = await api.controlBettingPlayDraw({
       gameCode: issue.gameCode,
@@ -198,6 +205,8 @@ async function controlDraw() {
       ratioPercent: ratio,
       idempotencyKey: idempotencyKey(),
     })
+    presetDirty.value = false
+    await load()
     controlResult.value = {
       numbers: result.numbers,
       target: result.targetCenterProfit,
@@ -206,14 +215,14 @@ async function controlDraw() {
     }
     controlFeedbackType.value = 'success'
     controlFeedback.value = `已写入七球预设；目标 ${money(result.targetCenterProfit)}，预测中心净赢 ${money(result.predictedCenterProfit)} 积分。`
-    adminNotice.success('控盘计算完成，七球预设已更新')
-    presetDirty.value = false
-    await load()
+    controlNoAlternative.value = false
+    adminNotice.success('已随机写入一组达标七球预设')
   } catch (cause) {
     const code = (cause as { code?: string } | null)?.code
     const warnings: Record<string, string> = {
       BETTING_PLAY_CONTROL_TARGET_UNREACHABLE: '当前订单结构下没有能达到目标中心净赢的合法开奖结果；原预设未修改。',
       BETTING_PLAY_CONTROL_NO_ORDERS: '当前期没有中心已接受的普通玩家订单；原预设未修改。',
+      BETTING_PLAY_CONTROL_NO_ALTERNATIVE: '没有其他能达到目标中心净赢的合法号码组合，当前预设保持不变。',
     }
     const errors: Record<string, string> = {
       BETTING_PLAY_CONTROL_CLOSED: '已进入开奖前最后 10 秒，不能再计算或修改预设。',
@@ -223,6 +232,7 @@ async function controlDraw() {
       BETTING_PLAY_CONTROL_SETTLEMENT_SNAPSHOT_INVALID: '存在无法按正式结算规则还原的中心订单，未写入预设。',
     }
     controlFeedbackType.value = warnings[code ?? ''] ? 'warning' : 'error'
+    controlNoAlternative.value = code === 'BETTING_PLAY_CONTROL_NO_ALTERNATIVE'
     controlFeedback.value = warnings[code ?? ''] ?? errors[code ?? '']
       ?? apiErrorMessage(cause, '控盘计算失败，七球预设未修改')
     if (warnings[code ?? '']) adminNotice.warning(controlFeedback.value)
@@ -300,11 +310,12 @@ onBeforeUnmount(() => {
             <span>目标中心净赢 <strong>{{ targetCenterProfit == null ? '--' : money(targetCenterProfit) }}</strong></span>
           </div>
           <div class="control-actions">
-            <el-button type="primary" :disabled="!controlCanBeSubmitted" :loading="controlling" @click="controlDraw">计算并写入预设</el-button>
+            <el-button type="primary" :disabled="!controlCanBeSubmitted" :loading="controlling" @click="controlDraw">{{ controlResult ? '再随机一组' : '计算并写入预设' }}</el-button>
             <small v-if="!canManagePreset" class="permission-note">当前账号只有统计查看权限</small>
             <small v-else-if="!presetCanBeChanged" class="permission-note">开奖前 10 秒内不能执行控盘或修改预设</small>
             <small v-else-if="acceptedOrderCount === 0" class="permission-note">当前期没有中心已接受的普通玩家订单</small>
             <small v-else-if="ratioPercent == null" class="preset-validation">比例必须在 0.01%–100% 之间，最多两位小数</small>
+            <small v-else-if="controlResult" class="control-note">再次点击会随机选择另一组仍达到目标的号码。</small>
             <small v-else class="control-note">控盘只使用中心已接受的普通玩家订单；计算结果会替换七个现有预设。</small>
           </div>
           <el-alert v-if="controlFeedback" :type="controlFeedbackType" :title="controlFeedback" :closable="false" />
