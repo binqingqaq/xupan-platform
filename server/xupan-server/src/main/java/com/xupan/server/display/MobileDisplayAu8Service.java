@@ -48,7 +48,7 @@ public class MobileDisplayAu8Service {
     private static DrawResult toDrawResult(GameDataRepository.IssueRecord issue) {
         List<Ball> balls = issue.numbers().stream()
                 .map(number -> {
-                    BallResult result = BallResult.fromNumber(number);
+                    BallResult result = BallResult.fromNumber(number, GAME_CODE, issue.drawRuleVersion());
                     return new Ball(
                             number, result.fan(), result.parity(), result.size());
                 })

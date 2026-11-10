@@ -32,7 +32,7 @@ class BotBetTextGeneratorTest {
         for (int index = 0; index < 40; index++) {
             String special = BotBetTextGenerator.randomBet(PlayType.SPECIAL, new BigDecimal("100"));
             int number = Integer.parseInt(special.substring(0, 2));
-            assertThat(number).isBetween(1, 20);
+            assertThat(number).isBetween(1, 40);
 
             String strict = BotBetTextGenerator.randomBet(PlayType.STRICT, new BigDecimal("100"));
             assertThat(strict.charAt(0)).isNotEqualTo(strict.charAt(2));

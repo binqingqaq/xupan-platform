@@ -4,6 +4,7 @@ import com.xupan.server.agent.service.AgentLedgerService;
 import com.xupan.server.center.repository.CenterAgentRepository;
 import com.xupan.server.center.repository.CenterOrderRepository;
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.service.SettlementResult;
 import com.xupan.server.game.service.SettlementService;
@@ -179,7 +180,8 @@ public class CenterOrderService {
         BigDecimal riskAmount;
         try {
             riskAmount = maximumNetPayout(playType, playText, normalizedAmount, odds,
-                    bet.machineOddsRateSnapshot());
+                    bet.machineOddsRateSnapshot(), gameCode,
+                    orderRepository.findDrawRuleVersion(gameCode, issueNumber));
         } catch (IllegalArgumentException invalidSnapshot) {
             String code = "CENTER_RISK_SNAPSHOT_INVALID";
             long id = insertRejected(centerAgentId, agentOrderNo, bet, playText, code, BigDecimal.ZERO);
@@ -246,14 +248,15 @@ public class CenterOrderService {
 
     private BigDecimal maximumNetPayout(String playTypeName, String playText,
                                         BigDecimal stake, BigDecimal odds,
-                                        BigDecimal machineOddsRateSnapshot) {
+                                        BigDecimal machineOddsRateSnapshot,
+                                        String gameCode, int ruleVersion) {
         PlayType playType = PlayType.valueOf(playTypeName.trim().toUpperCase(java.util.Locale.ROOT));
         List<Integer> parameters = CenterSettlementService.parseParameters(playText);
         BigDecimal maximum = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
         BigDecimal normalizedOdds = CenterSettlementService.normalizeOdds(odds);
-        for (int number = 1; number <= 20; number++) {
+        for (int number = 1; number <= DrawRule.maxNumber(gameCode, ruleVersion); number++) {
             SettlementResult outcome = settlementService.settle(playType, parameters, stake, normalizedOdds,
-                    null, machineOddsRateSnapshot, BallResult.fromNumber(number));
+                    null, machineOddsRateSnapshot, BallResult.fromNumber(number, gameCode, ruleVersion));
             if (outcome.netProfit().compareTo(maximum) > 0) {
                 maximum = outcome.netProfit();
             }
@@ -275,7 +278,8 @@ public class CenterOrderService {
         }
         try {
             return maximumNetPayout(order.playType(), order.playText(), order.amount(), order.odds(),
-                    order.machineOddsRateSnapshot());
+                    order.machineOddsRateSnapshot(), order.gameCode(),
+                    orderRepository.findDrawRuleVersion(order.gameCode(), order.issueNumber()));
         } catch (IllegalArgumentException invalidSnapshot) {
             throw BusinessException.conflict("CENTER_RISK_SNAPSHOT_REQUIRED",
                     "该历史订单无法按当前玩法规则还原最大风险，需先完成人工核对");

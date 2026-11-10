@@ -1,5 +1,6 @@
 package com.xupan.server.center.repository;
 
+import com.xupan.server.game.domain.DrawRule;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -101,19 +102,16 @@ public class CenterOrderRepository {
 
     public Optional<List<Integer>> findConfirmedDrawNumbers(String gameCode, String issueNumber) {
         return jdbc.query("""
-                SELECT ball_count, number_1, number_2, number_3, number_4,
+                SELECT ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8
                   FROM game_issue
                  WHERE game_code = ? AND issue_number = ? AND draw_confirmed_at IS NOT NULL
-                   AND number_1 BETWEEN 1 AND 20 AND number_2 BETWEEN 1 AND 20
-                   AND number_3 BETWEEN 1 AND 20 AND number_4 BETWEEN 1 AND 20
-                   AND number_5 BETWEEN 1 AND 20 AND number_6 BETWEEN 1 AND 20
-                   AND number_7 BETWEEN 1 AND 20
-                   AND ((ball_count = 7 AND number_8 IS NULL)
-                     OR (game_code <> 'AU8' AND ball_count = 8 AND number_8 BETWEEN 1 AND 20))
+                   AND ((game_code = 'AU8' AND ball_count = 7 AND number_8 IS NULL)
+                     OR (game_code <> 'AU8' AND ball_count IN (7, 8)))
                  FOR UPDATE
                 """, (rs, rowNum) -> {
             int ballCount = rs.getInt("ball_count");
+            int ruleVersion = rs.getInt("draw_rule_version");
             if (ballCount != 7 && ballCount != 8) {
                 return List.<Integer>of();
             }
@@ -123,9 +121,31 @@ public class CenterOrderRepository {
                 if (number == null) return List.<Integer>of();
                 numbers.add(number);
             }
+            try {
+                DrawRule.validateNumbers(gameCode, ruleVersion, ballCount, numbers);
+            } catch (IllegalArgumentException invalid) {
+                return List.<Integer>of();
+            }
             return List.copyOf(numbers);
         }, gameCode, issueNumber)
                 .stream().findFirst();
+    }
+
+    public int findConfirmedDrawRuleVersion(String gameCode, String issueNumber) {
+        Integer version = jdbc.query("""
+                SELECT draw_rule_version FROM game_issue
+                 WHERE game_code = ? AND issue_number = ? AND draw_confirmed_at IS NOT NULL
+                """, rs -> rs.next() ? rs.getInt(1) : null, gameCode, issueNumber);
+        if (version == null) throw new IllegalStateException("开奖结果规则版本不存在");
+        return version;
+    }
+
+    public int findDrawRuleVersion(String gameCode, String issueNumber) {
+        Integer version = jdbc.query("""
+                SELECT draw_rule_version FROM game_issue WHERE game_code = ? AND issue_number = ?
+                """, rs -> rs.next() ? rs.getInt(1) : null, gameCode, issueNumber);
+        if (version == null) throw new IllegalArgumentException("投注期次不存在");
+        return version;
     }
 
     /** 按状态分页（中心管理端用）。 */

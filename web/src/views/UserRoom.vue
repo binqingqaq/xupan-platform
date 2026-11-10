@@ -36,7 +36,7 @@ import type { PublicPlatformSettings } from '../types/platformAdmin'
 import type { RobotDrawPayload } from '../robotDrawMessage'
 
 const ROOM_CODE = 'main'
-const DRAWING_BALL_NUMBERS = Array.from({ length: 40 }, (_, index) => index % 20 + 1)
+const DRAWING_BALL_NUMBERS = Array.from({ length: 40 }, (_, index) => index + 1)
 type MessageType = 'user' | 'robot' | 'system' | 'result'
 
 interface RoomMessage {
@@ -240,7 +240,7 @@ const countdown = computed(() => {
 const phaseLabel = computed(() => current.value?.phase === 'DRAWING' ? '开奖中' : current.value?.phase === 'BETTING' ? countdown.value : '已结')
 
 function drawingRollOffset(ballNumber: number): string {
-  return `${-((ballNumber * 3) % 20) * 25}px`
+  return `${-((ballNumber * 3) % 40) * 25}px`
 }
 const chatConnectionLabel = computed(() => {
   switch (chatConnectionState.value) {

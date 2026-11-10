@@ -49,6 +49,9 @@ class BetTextParserTest {
         assertBet("大100", PlayType.BIG_SMALL, List.of(1), "100.00");
         assertBet("小100", PlayType.BIG_SMALL, List.of(2), "100.00");
         assertBet("01特100", PlayType.SPECIAL, List.of(1), "100.00");
+        assertBet("21特100", PlayType.SPECIAL, List.of(21), "100.00");
+        assertBet("40特100", PlayType.SPECIAL, List.of(40), "100.00");
+        assertBet("21/40特100", PlayType.SPECIAL, List.of(21, 40), "200.00");
         assertBet("02/03/04特100", PlayType.SPECIAL, List.of(2, 3, 4), "300.00");
     }
 
@@ -76,7 +79,7 @@ class BetTextParserTest {
         assertStatus("1加25/100", BetTextParser.Status.INVALID);
         assertStatus("3通13/100", BetTextParser.Status.INVALID);
         assertStatus("12无2/100", BetTextParser.Status.INVALID);
-        assertStatus("01/21特100", BetTextParser.Status.INVALID);
+        assertStatus("01/41特100", BetTextParser.Status.INVALID);
         assertStatus("01/01特100", BetTextParser.Status.INVALID);
         assertStatus("1番", BetTextParser.Status.INVALID);
         assertStatus("1番0", BetTextParser.Status.INVALID);

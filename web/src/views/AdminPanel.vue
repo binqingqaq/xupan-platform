@@ -139,13 +139,25 @@ async function submitWalletOperation() {
 }
 
 function randomNumbers() {
-  drawNumbers.value = Array.from({ length: drawBallCount.value }, () => Math.floor(Math.random() * 20) + 1)
+  const pool = Array.from({ length: 40 }, (_, index) => index + 1)
+  for (let index = pool.length - 1; index > 0; index--) {
+    const range = index + 1
+    const ceiling = Math.floor(0x1_0000_0000 / range) * range
+    let sample: number
+    do {
+      sample = crypto.getRandomValues(new Uint32Array(1))[0]!
+    } while (sample >= ceiling)
+    const swapIndex = sample % range
+    ;[pool[index], pool[swapIndex]] = [pool[swapIndex]!, pool[index]!]
+  }
+  drawNumbers.value = pool.slice(0, drawBallCount.value)
 }
 
 async function draw() {
   if (drawNumbers.value.length !== drawBallCount.value
-      || drawNumbers.value.some(number => !number || number < 1 || number > 20)) {
-    showFeedback(`请完整填写 ${drawBallCount.value} 个 01-20 的开奖号码`, 'error')
+      || drawNumbers.value.some(number => !number || number < 1 || number > 40)
+      || new Set(drawNumbers.value).size !== drawNumbers.value.length) {
+    showFeedback(`请填写 ${drawBallCount.value} 个 01-40 且不重复的开奖号码`, 'error')
     return
   }
   busy.value = true
@@ -259,9 +271,9 @@ onMounted(load)
         </section>
 
         <section class="admin-section draw-section">
-          <div class="section-title"><div><span class="eyebrow">DRAW</span><h2>开奖控制</h2></div><span>01-20 · 共 {{ drawBallCount }} 球</span></div>
+          <div class="section-title"><div><span class="eyebrow">DRAW</span><h2>开奖控制</h2></div><span>01-40 · 共 {{ drawBallCount }} 球</span></div>
           <div class="draw-grid">
-            <label v-for="(_, index) in drawNumbers" :key="index" :for="`draw-${index}`">第{{ index + 1 }}球<input :id="`draw-${index}`" v-model.number="drawNumbers[index]" type="number" min="1" max="20" placeholder="--" /></label>
+            <label v-for="(_, index) in drawNumbers" :key="index" :for="`draw-${index}`">第{{ index + 1 }}球<input :id="`draw-${index}`" v-model.number="drawNumbers[index]" type="number" min="1" max="40" placeholder="--" /></label>
           </div>
           <div class="action-row">
             <button type="button" class="secondary-button" :disabled="busy || current?.phase !== 'DRAWING'" @click="randomNumbers">随机填入</button>

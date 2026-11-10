@@ -51,7 +51,7 @@ class 自动轮期服务Test {
         jdbcTemplate.update("DELETE FROM game_issue");
         jdbcTemplate.update("DELETE FROM game_route_odds WHERE game_id IN (SELECT id FROM game_definition WHERE game_code LIKE 'MULTI_%')");
         jdbcTemplate.update("DELETE FROM game_definition WHERE game_code LIKE 'MULTI_%'");
-        jdbcTemplate.update("UPDATE game_definition SET next_issue_ball_count=8, ball_indexes='1,2,3,4,5,6,7,8' "
+        jdbcTemplate.update("UPDATE game_definition SET next_issue_ball_count=7, ball_indexes='1,2,3,4,5,6,7' "
                 + "WHERE game_code='AU8'");
         jdbcTemplate.update("DELETE FROM demo_user_account WHERE sys_user_id IN "
                 + "(SELECT id FROM sys_user WHERE username = ?)", AUTO_USER);
@@ -84,7 +84,7 @@ class 自动轮期服务Test {
     }
 
     @Test
-    void advancesFiveMinuteIssueAndCreatesNextIssue() {
+    void advancesFourMinuteIssueAndCreatesNextIssue() {
         Instant start = Instant.parse("2026-01-01T00:00:00Z");
 
         automationService.advance(start);
@@ -92,17 +92,22 @@ class 自动轮期服务Test {
             assertThat(issue.issueNumber()).isEqualTo("3000000");
             assertThat(issue.phase()).isEqualTo(自动轮期服务.BETTING);
             assertThat(issue.bettingEndsAt()).isEqualTo(start.plusSeconds(180));
-            assertThat(issue.drawEndsAt()).isEqualTo(start.plusSeconds(300));
+            assertThat(issue.drawEndsAt()).isEqualTo(start.plusSeconds(240));
         });
 
         automationService.advance(start.plusSeconds(180));
         assertThat(gameRepository.findCurrentIssue()).get().satisfies(issue -> {
             assertThat(issue.issueNumber()).isEqualTo("3000000");
             assertThat(issue.phase()).isEqualTo(自动轮期服务.DRAWING);
-            assertThat(automationService.previewNumbers(issue, start.plusSeconds(181))).hasSize(8);
+            assertThat(automationService.previewNumbers(issue, start.plusSeconds(181)))
+                    .hasSize(7).doesNotHaveDuplicates().allMatch(number -> number >= 1 && number <= 40);
         });
 
-        automationService.advance(start.plusSeconds(300));
+        automationService.advance(start.plusSeconds(239));
+        assertThat(gameRepository.findCurrentIssue()).get().satisfies(issue ->
+                assertThat(issue.phase()).isEqualTo(自动轮期服务.DRAWING));
+
+        automationService.advance(start.plusSeconds(240));
         assertThat(gameRepository.findCurrentIssue()).get().satisfies(issue -> {
             assertThat(issue.issueNumber()).isEqualTo("3000001");
             assertThat(issue.phase()).isEqualTo(自动轮期服务.BETTING);
@@ -133,17 +138,26 @@ class 自动轮期服务Test {
         assertThat(drawing.ballCount()).isEqualTo(7);
         assertThat(automationService.previewNumbers(drawing, start.plusSeconds(181))).hasSize(7);
 
-        automationService.advance(start.plusSeconds(300));
+        automationService.advance(start.plusSeconds(240));
         GameDataRepository.IssueRecord settled = gameRepository.findLatestSettledIssue().orElseThrow();
         assertThat(settled.issueNumber()).isEqualTo("3000000");
         assertThat(settled.ballCount()).isEqualTo(7);
-        assertThat(settled.numbers()).hasSize(7).allSatisfy(number -> assertThat(number).isBetween(1, 20));
+        assertThat(settled.numbers()).hasSize(7).doesNotHaveDuplicates()
+                .allSatisfy(number -> assertThat(number).isBetween(1, 40));
         assertThat(jdbcTemplate.queryForObject("SELECT number_8 FROM game_issue WHERE game_code='AU8' "
                 + "AND issue_number='3000000'", Integer.class)).isNull();
         assertThat(gameRepository.findCurrentIssue()).get().satisfies(next -> {
             assertThat(next.issueNumber()).isEqualTo("3000001");
             assertThat(next.ballCount()).isEqualTo(7);
         });
+    }
+
+    @Test
+    void finalNumberGeneratorReturnsSevenUniqueNumbersFromForty() {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            assertThat(automationService.generateFinalNumbers())
+                    .hasSize(7).doesNotHaveDuplicates().allMatch(number -> number >= 1 && number <= 40);
+        }
     }
 
     @Test
@@ -158,10 +172,11 @@ class 自动轮期服务Test {
                 + "WHERE game_code='AU8' AND issue_number='3000000' AND phase='DRAWING' "
                 + "AND draw_confirmed_at IS NULL");
 
-        automationService.advance(start.plusSeconds(300));
+        automationService.advance(start.plusSeconds(240));
 
         GameDataRepository.IssueRecord settled = gameRepository.findLatestSettledIssue().orElseThrow();
-        assertThat(settled.numbers()).hasSize(7).allSatisfy(number -> assertThat(number).isBetween(1, 20));
+        assertThat(settled.numbers()).hasSize(7).doesNotHaveDuplicates()
+                .allSatisfy(number -> assertThat(number).isBetween(1, 40));
         assertThat(settled.numbers().get(1)).isEqualTo(8);
         assertThat(settled.numbers().get(6)).isEqualTo(19);
         assertThat(jdbcTemplate.queryForObject("SELECT phase FROM game_issue WHERE game_code='AU8' "
@@ -189,7 +204,7 @@ class 自动轮期服务Test {
         walletService.debitForBet(userId, betId, "AUTO-WALLET-BET", "3000000",
                 new java.math.BigDecimal("10.00"));
 
-        automationService.advance(start.plusSeconds(300));
+        automationService.advance(start.plusSeconds(240));
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT phase FROM game_issue WHERE issue_number = '3000000'", String.class))

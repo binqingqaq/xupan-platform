@@ -90,6 +90,16 @@ class SettlementServiceTest {
     }
 
     @Test
+    void settlesFortyAsAnAvailableSpecialNumber() {
+        SettlementResult settlement = service.settle(PlayType.SPECIAL, List.of(40),
+                new BigDecimal("100.00"), new BigDecimal("18.0000"),
+                new BigDecimal("100.00"), BallResult.fromNumber(40, "AU8", 2));
+
+        assertThat(settlement.status()).isEqualTo(SettlementStatus.WIN);
+        assertThat(settlement.stake().add(settlement.netProfit())).isEqualByComparingTo("1800.00");
+    }
+
+    @Test
     void ignoresDatabaseScalePaddingButRejectsExcessNonZeroOrdinaryOddsPrecision() {
         service.validateBet(PlayType.FAN, List.of(1), new BigDecimal("10.00"), new BigDecimal("1.9500"));
 

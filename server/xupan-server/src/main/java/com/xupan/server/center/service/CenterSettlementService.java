@@ -99,7 +99,9 @@ public class CenterSettlementService {
                 .orElseThrow(() -> BusinessException.conflict("CENTER_DRAW_RESULT_NOT_CONFIRMED",
                         "中心订单只能依据已确认并锁定的开奖结果结算"));
         String text = numbers.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
-        return new ConfirmedDraw(numbers.stream().map(BallResult::fromNumber).toList(), text);
+        int ruleVersion = orderRepository.findConfirmedDrawRuleVersion(gameCode, issueNumber);
+        return new ConfirmedDraw(numbers.stream()
+                .map(number -> BallResult.fromNumber(number, gameCode, ruleVersion)).toList(), text);
     }
 
     private SettlementSummary settleIssue(String gameCode, String issueNumber,

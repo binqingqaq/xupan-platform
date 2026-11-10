@@ -149,8 +149,9 @@ async function forceSettleIssue(row: DrawHistoryItem) {
 async function supplement() {
   if (supplementing.value) return
   const numbers = supplementNumbers.value.split(/[,，\s]+/).map(Number).filter(Number.isFinite)
-  if (!supplementIssue.value.trim() || numbers.length !== visibleBallCount.value || numbers.some(value => value < 1 || value > 20)) {
-    adminNotice.warning(`补期需要期号和 ${visibleBallCount.value} 个 1 到 20 的开奖号码`)
+  if (!supplementIssue.value.trim() || numbers.length !== visibleBallCount.value
+    || numbers.some(value => value < 1 || value > 40) || new Set(numbers).size !== numbers.length) {
+    adminNotice.warning(`补期需要期号和 ${visibleBallCount.value} 个 1 到 40 且不重复的开奖号码`)
     return
   }
   try {

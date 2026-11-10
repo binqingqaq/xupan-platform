@@ -12,7 +12,7 @@ import java.util.Map;
  * 为托生成合法且能被 {@code BetTextParser} 解析的下注文本。
  *
  * <p>参数完全随机，但始终落在各玩法的合法范围内：番值只能是 1-4，同玩法参数不重复，
- * 特号码在 01-20 之间。
+ * 特号码在 01-40 之间。
  */
 public final class BotBetTextGenerator {
 
@@ -49,7 +49,7 @@ public final class BotBetTextGenerator {
     /** Single 13-leaf bot pool: approved probabilities total 800 units. */
     public static String by220AutomaticBet(BigDecimal amount) {
         int pick = RANDOM.nextInt(POOL_TOTAL);
-        if (pick < 216) return format(PlayType.SPECIAL, List.of(1 + RANDOM.nextInt(20)), amount);
+        if (pick < 216) return format(PlayType.SPECIAL, List.of(1 + RANDOM.nextInt(40)), amount);
         pick -= 216;
         if (pick < 216) return formatNone(amount);
         pick -= 216;
@@ -91,7 +91,7 @@ public final class BotBetTextGenerator {
             case TONG -> randomTongParameters();
             case ODD_EVEN -> List.of(1 + RANDOM.nextInt(2));
             case BIG_SMALL -> List.of(1 + RANDOM.nextInt(2));
-            case SPECIAL -> List.of(1 + RANDOM.nextInt(20));
+            case SPECIAL -> List.of(1 + RANDOM.nextInt(40));
         };
     }
 

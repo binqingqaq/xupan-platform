@@ -5,6 +5,7 @@ import com.xupan.server.chat.domain.ChatMessageVisibility;
 import com.xupan.server.chat.service.ChatMessageService;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.robot.domain.RobotDrawComponent;
 import com.xupan.server.robot.domain.RobotDrawComponentConfig;
@@ -375,8 +376,14 @@ public class RobotDispatchService {
                                                        Instant now) {
         GameDataRepository.IssueRecord issue = gameDataRepository
                 .findIssueByGameCodeAndIssueNumber(event.gameCode(), event.issueNumber())
-                .filter(value -> value.numbers().size() == value.ballCount()
-                        && value.numbers().stream().allMatch(number -> number != null && number >= 1 && number <= 20))
+                .filter(value -> {
+                    try {
+                        DrawRule.validateNumbers(event.gameCode(), value.drawRuleVersion(), value.ballCount(), value.numbers());
+                        return true;
+                    } catch (IllegalArgumentException invalid) {
+                        return false;
+                    }
+                })
                 .orElseThrow(() -> BusinessException.badRequest("ROBOT_DRAW_DATA_NOT_FOUND",
                         "开奖事件对应的期号数据不存在或不完整"));
         String templateContent = templateRenderer.render(template, eventAdapter.renderContext(event, robot));
@@ -420,7 +427,7 @@ public class RobotDispatchService {
         String numberText = numbers.stream().map(number -> String.format("%02d", number))
                 .collect(Collectors.joining(","));
         String parity = last % 2 == 0 ? "双" : "单";
-        String size = last >= 11 ? "大" : "小";
+        String size = DrawRule.isBig(last, GameDataRepository.DEFAULT_GAME_CODE, issue.drawRuleVersion()) ? "大" : "小";
         StringBuilder content = new StringBuilder(issueNumber).append("结果:\n")
                 .append(numberText).append(" => ").append(fan(last)).append(',')
                 .append(parity).append(',').append(size).append('\n');
@@ -428,7 +435,8 @@ public class RobotDispatchService {
             int number = numbers.get(index);
             content.append("第").append(index + 1).append("球/")
                     .append(String.format("%02d", number)).append("=>")
-                    .append(fan(number)).append(',').append(number >= 11 ? "大" : "小")
+                    .append(fan(number)).append(',')
+                    .append(DrawRule.isBig(number, GameDataRepository.DEFAULT_GAME_CODE, issue.drawRuleVersion()) ? "大" : "小")
                     .append(',').append(number % 2 == 0 ? "双" : "单").append('\n');
         }
         content.append("----------\n获胜名单：\n");
@@ -457,7 +465,7 @@ public class RobotDispatchService {
         String numberText = numbers.stream().map(number -> String.format("%02d", number))
                 .collect(Collectors.joining(","));
         String result = numberText + " => " + fan(last) + "," + (last % 2 == 0 ? "双" : "单")
-                + "," + (last >= 11 ? "大" : "小");
+                + "," + (DrawRule.isBig(last, GameDataRepository.DEFAULT_GAME_CODE, issue.drawRuleVersion()) ? "大" : "小");
         StringBuilder content = new StringBuilder(issueNumber).append("结果:\n")
                 .append(result).append("\n--------------------\n总榜: 【")
                 .append(formatAmount(totalTurnover)).append("】\n");
@@ -482,7 +490,7 @@ public class RobotDispatchService {
                                      GameDataRepository.IssueRecord currentIssue, Long agentId) {
         RobotDrawComponent checkedComponent = RobotDrawComponent.valueOf(component);
         Object data = switch (checkedComponent) {
-            case DRAW_SUMMARY -> new DrawSummaryData(currentIssue.numbers(), currentIssue.settledAt());
+            case DRAW_SUMMARY -> new DrawSummaryData(currentIssue.numbers(), currentIssue.drawRuleVersion(), currentIssue.settledAt());
             case DRAW_HISTORY -> new DrawHistoryData(
                     historyItems(currentIssue.ballCount(), 15),
                     historyItems(currentIssue.ballCount(), 60));
@@ -510,7 +518,7 @@ public class RobotDispatchService {
                     winner.playType().name(), betText, winner.stake(), winner.netProfit()));
         }
         return new WinnerListData(items, items.isEmpty() ? "暂无获胜记录" : null,
-                issue.numbers(), issue.settledAt());
+                issue.numbers(), issue.drawRuleVersion(), issue.settledAt());
     }
 
     private TotalBoardData totalBoardData(String issueNumber, GameDataRepository.IssueRecord issue, Long agentId) {
@@ -536,7 +544,7 @@ public class RobotDispatchService {
 
     private static List<DrawHistoryItem> historyItems(List<GameDataRepository.IssueRecord> issues) {
         return issues.stream()
-                .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(), issue.settledAt()))
+                .map(issue -> new DrawHistoryItem(issue.issueNumber(), issue.numbers(), issue.drawRuleVersion(), issue.settledAt()))
                 .toList();
     }
 
@@ -584,20 +592,22 @@ public class RobotDispatchService {
     private record StructuredPayload(String schema, String component, String issueNumber, Object data) {
     }
 
-    private record DrawSummaryData(List<Integer> numbers, List<BallResult> ballResults, Instant settledAt) {
-        private DrawSummaryData(List<Integer> numbers, Instant settledAt) {
-            this(numbers, numbers.stream().map(BallResult::fromNumber).toList(), settledAt);
+    private record DrawSummaryData(List<Integer> numbers, List<BallResult> ballResults,
+                                   int drawRuleVersion, Instant settledAt) {
+        private DrawSummaryData(List<Integer> numbers, int drawRuleVersion, Instant settledAt) {
+            this(numbers, numbers.stream().map(number -> BallResult.fromNumber(number,
+                    GameDataRepository.DEFAULT_GAME_CODE, drawRuleVersion)).toList(), drawRuleVersion, settledAt);
         }
     }
 
     private record DrawHistoryData(List<DrawHistoryItem> items, List<DrawHistoryItem> routeItems) {
     }
 
-    private record DrawHistoryItem(String issueNumber, List<Integer> numbers, Instant settledAt) {
+    private record DrawHistoryItem(String issueNumber, List<Integer> numbers, int drawRuleVersion, Instant settledAt) {
     }
 
     private record WinnerListData(List<WinnerItem> items, String emptyMessage,
-                                  List<Integer> numbers, Instant settledAt) {
+                                  List<Integer> numbers, int drawRuleVersion, Instant settledAt) {
     }
 
     private record TotalBoardData(List<TotalBoardItem> items, String emptyMessage, Instant settledAt) {

@@ -44,7 +44,7 @@ function updatePreset(ball: BallColumn, event: Event) {
   if (value === '') ball.preset = null
   else {
     const number = Number(value)
-    ball.preset = Number.isInteger(number) && number >= 1 && number <= 20 ? number : null
+    ball.preset = Number.isInteger(number) && number >= 1 && number <= 40 ? number : null
   }
 }
 

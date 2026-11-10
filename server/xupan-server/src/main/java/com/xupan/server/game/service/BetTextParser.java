@@ -142,7 +142,7 @@ public final class BetTextParser {
         if (special.matches()) {
             List<Integer> numbers = parseSpecialNumbers(special.group(1));
             if (numbers == null) {
-                return invalid("特玩法号码必须在 01 至 20 之间且不能重复");
+                return invalid("特玩法号码必须在 01 至 40 之间且不能重复");
             }
             BigDecimal unitAmount = parseAmount(special.group(2));
             if (unitAmount == null) {
@@ -226,7 +226,7 @@ public final class BetTextParser {
         List<Integer> numbers = new java.util.ArrayList<>(tokens.length);
         for (String token : tokens) {
             int number = Integer.parseInt(token);
-            if (number < 1 || number > 20 || numbers.contains(number)) {
+            if (number < 1 || number > 40 || numbers.contains(number)) {
                 return null;
             }
             numbers.add(number);

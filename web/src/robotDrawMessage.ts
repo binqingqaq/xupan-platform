@@ -14,6 +14,7 @@ export interface DrawSummaryPayload {
   data: {
     numbers: number[]
     ballResults?: BallResultItem[]
+    drawRuleVersion?: number
     settledAt: string
   }
 }
@@ -21,6 +22,7 @@ export interface DrawSummaryPayload {
 export interface DrawHistoryItem {
   issueNumber: string
   numbers: number[]
+  drawRuleVersion?: number
   settledAt: string
 }
 
@@ -31,6 +33,7 @@ export interface DrawHistoryPayload {
   data: {
     items: DrawHistoryItem[]
     routeItems?: DrawHistoryItem[]
+    drawRuleVersion?: number
   }
 }
 
@@ -51,6 +54,7 @@ export interface WinnerListPayload {
     items: WinnerItem[]
     emptyMessage?: string
     numbers?: number[]
+    drawRuleVersion?: number
     settledAt?: string
   }
 }
@@ -86,6 +90,10 @@ function isNumberArray(value: unknown, expectedLength?: number): value is number
     && value.every(item => typeof item === 'number' && Number.isFinite(item))
 }
 
+function isDrawRuleVersion(value: unknown): value is number {
+  return value === 1 || value === 2
+}
+
 function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
@@ -106,6 +114,7 @@ function isBasePayload(value: Record<string, unknown>): value is Record<string, 
 function isDrawHistoryItem(value: unknown, ballCount?: number): value is DrawHistoryItem {
   if (!isRecord(value)) return false
   return isText(value.issueNumber) && isNumberArray(value.numbers, ballCount) && isText(value.settledAt)
+    && (value.drawRuleVersion === undefined || isDrawRuleVersion(value.drawRuleVersion))
 }
 
 function isWinnerItem(value: unknown, ballCount?: number): value is WinnerItem {
@@ -151,6 +160,7 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined, ba
     const data = value.data
     const ballResults = data.ballResults
     return isNumberArray(data.numbers, ballCount) && isText(data.settledAt)
+      && (data.drawRuleVersion === undefined || isDrawRuleVersion(data.drawRuleVersion))
       && (ballResults === undefined || (Array.isArray(ballResults)
         && ballResults.length === data.numbers.length && ballResults.every(isBallResultItem)))
       ? {
@@ -158,6 +168,7 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined, ba
         component: value.component,
         issueNumber: value.issueNumber,
         data: { numbers: data.numbers, settledAt: data.settledAt,
+          ...(isDrawRuleVersion(data.drawRuleVersion) ? { drawRuleVersion: data.drawRuleVersion } : {}),
           ...(Array.isArray(ballResults) ? { ballResults } : {}) },
       }
       : null
@@ -168,12 +179,14 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined, ba
     const routeItems = data.routeItems
     return Array.isArray(data.items)
       && data.items.every(item => isDrawHistoryItem(item, ballCount))
+      && (data.drawRuleVersion === undefined || isDrawRuleVersion(data.drawRuleVersion))
       && (routeItems === undefined || (Array.isArray(routeItems) && routeItems.every(item => isDrawHistoryItem(item, ballCount))))
       ? {
         schema: value.schema,
         component: value.component,
         issueNumber: value.issueNumber,
-        data: { items: data.items, ...(routeItems === undefined ? {} : { routeItems }) },
+        data: { items: data.items, ...(routeItems === undefined ? {} : { routeItems }),
+          ...(isDrawRuleVersion(data.drawRuleVersion) ? { drawRuleVersion: data.drawRuleVersion } : {}) },
       }
       : null
   }
@@ -186,6 +199,7 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined, ba
     return Array.isArray(data.items)
       && data.items.every(item => isWinnerItem(item, ballCount))
       && hasResult
+      && (data.drawRuleVersion === undefined || isDrawRuleVersion(data.drawRuleVersion))
       && (data.emptyMessage === undefined || typeof data.emptyMessage === 'string')
       ? {
         schema: value.schema,
@@ -195,6 +209,7 @@ export function parseRobotDrawPayload(payloadJson: string | null | undefined, ba
           items: data.items,
           ...(typeof data.emptyMessage === 'string' ? { emptyMessage: data.emptyMessage } : {}),
           ...(isNumberArray(data.numbers) ? { numbers: data.numbers } : {}),
+          ...(isDrawRuleVersion(data.drawRuleVersion) ? { drawRuleVersion: data.drawRuleVersion } : {}),
           ...(isText(data.settledAt) ? { settledAt: data.settledAt } : {}),
         },
       }

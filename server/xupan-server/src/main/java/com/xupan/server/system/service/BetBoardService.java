@@ -94,7 +94,8 @@ public class BetBoardService {
         for (int index = 0; index < issue.numbers().size(); index++) {
             Integer number = issue.numbers().get(index);
             if (number == null) continue;
-            BallResult result = BallResult.fromNumber(number);
+            BallResult result = BallResult.fromNumber(number, GameDataRepository.DEFAULT_GAME_CODE,
+                    issue.drawRuleVersion());
             balls.add(new DrawBall(index + 1, result.number(), result.fan()));
         }
         return new DrawHistory(issue.issueNumber(), "已开", issue.settledAt(), balls);

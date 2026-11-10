@@ -48,8 +48,8 @@ function parseNumberBet(value: string, playType: PlayType, expectedLength: numbe
 
 function parseSpecial(value: string, amount: string): BetTextResult {
   const parameters = value.split('/').map(Number)
-  if (!parameters.every(Number.isInteger) || !distinctRange(parameters, 1, 20)) {
-    return { kind: 'INVALID', message: '特玩法只能选择 01-20 的不重复实际号码' }
+  if (!parameters.every(Number.isInteger) || !distinctRange(parameters, 1, 40)) {
+    return { kind: 'INVALID', message: '特玩法只能选择 01-40 的不重复实际号码' }
   }
   return bet('SPECIAL', parameters, amount)
 }

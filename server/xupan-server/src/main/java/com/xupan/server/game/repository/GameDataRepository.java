@@ -1,6 +1,7 @@
 package com.xupan.server.game.repository;
 
 import com.xupan.server.game.domain.MachineBettingConfig;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.service.SettlementResult;
@@ -25,6 +26,9 @@ import java.util.stream.Collectors;
 public class GameDataRepository {
 
     public static final String DEFAULT_GAME_CODE = "AU8";
+    public static final long BETTING_SECONDS = 180;
+    public static final long DRAWING_SECONDS = 60;
+    public static final long ISSUE_SECONDS = BETTING_SECONDS + DRAWING_SECONDS;
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -40,7 +44,13 @@ public class GameDataRepository {
     @Transactional
     public void saveIssue(String gameCode, String issueNumber, String status, List<Integer> numbers) {
         if (gameCode == null || gameCode.isBlank()) throw new IllegalArgumentException("彩种键名不能为空");
-        if (numbers != null) validateDrawNumbers(numbers);
+        if (numbers != null) {
+            Integer existingVersion = jdbcTemplate.query("""
+                    SELECT draw_rule_version FROM game_issue WHERE game_code = ? AND issue_number = ?
+                    """, rs -> rs.next() ? rs.getInt(1) : null, gameCode, issueNumber);
+            int version = existingVersion == null ? DrawRule.currentVersion(gameCode) : existingVersion;
+            DrawRule.validateNumbers(gameCode, version, numbers.size(), numbers);
+        }
         List<Integer> existing = jdbcTemplate.query("""
                 SELECT ball_count, draw_confirmed_at FROM game_issue
                  WHERE game_code = ? AND issue_number = ? FOR UPDATE
@@ -73,15 +83,16 @@ public class GameDataRepository {
         }
         jdbcTemplate.update("""
                 INSERT INTO game_issue
-                    (game_code, issue_number, status, ball_count, number_1, number_2, number_3, number_4,
+                    (game_code, issue_number, status, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                      number_5, number_6, number_7, number_8, phase, opened_at, issue_started_at,
                      closed_at, settled_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                         CASE WHEN ? = 'OPEN' THEN 'BETTING' ELSE 'SETTLED' END,
                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
                         CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END,
                         CASE WHEN ? = 'CLOSED' THEN CURRENT_TIMESTAMP ELSE NULL END)
-                """, gameCode, issueNumber, status, ballCount, values.get(0), values.get(1), values.get(2),
+                """, gameCode, issueNumber, status, ballCount, DrawRule.currentVersion(gameCode),
+                values.get(0), values.get(1), values.get(2),
                 values.get(3), values.get(4), values.get(5), values.get(6), values.get(7), status, status, status);
     }
 
@@ -94,23 +105,24 @@ public class GameDataRepository {
     public void saveBettingIssue(String gameCode, String issueNumber, Instant startedAt) {
         if (gameCode == null || gameCode.isBlank()) throw new IllegalArgumentException("彩种键名不能为空");
         int ballCount = nextIssueBallCountForUpdate(gameCode);
-        Instant bettingEndsAt = startedAt.plusSeconds(180);
-        Instant drawEndsAt = startedAt.plusSeconds(300);
+        Instant bettingEndsAt = startedAt.plusSeconds(BETTING_SECONDS);
+        Instant drawEndsAt = startedAt.plusSeconds(ISSUE_SECONDS);
         try {
             jdbcTemplate.update("""
                     INSERT INTO game_issue
-                        (game_code, issue_number, status, ball_count, phase, opened_at, issue_started_at,
+                        (game_code, issue_number, status, ball_count, draw_rule_version, phase, opened_at, issue_started_at,
                          betting_ends_at, draw_ends_at)
-                    VALUES (?, ?, 'OPEN', ?, 'BETTING', ?, ?, ?, ?)
-                    """, gameCode, issueNumber, ballCount, timestamp(startedAt), timestamp(startedAt),
+                    VALUES (?, ?, 'OPEN', ?, ?, 'BETTING', ?, ?, ?, ?)
+                    """, gameCode, issueNumber, ballCount, DrawRule.currentVersion(gameCode), timestamp(startedAt), timestamp(startedAt),
                     timestamp(bettingEndsAt), timestamp(drawEndsAt));
         } catch (DuplicateKeyException duplicate) {
             // A reset request and the scheduled finalizer can create the same next issue concurrently.
             // The existing row is authoritative only if it has the same rule snapshot.
-            Integer existingBallCount = jdbcTemplate.queryForObject("""
-                    SELECT ball_count FROM game_issue WHERE game_code = ? AND issue_number = ?
-                    """, Integer.class, gameCode, issueNumber);
-            if (existingBallCount == null || existingBallCount != ballCount) {
+            List<Integer> existingBallCount = jdbcTemplate.query("""
+                    SELECT ball_count, draw_rule_version FROM game_issue WHERE game_code = ? AND issue_number = ?
+                    """, rs -> rs.next() ? List.of(rs.getInt(1), rs.getInt(2)) : List.of(), gameCode, issueNumber);
+            if (existingBallCount.size() != 2 || existingBallCount.get(0) != ballCount
+                    || existingBallCount.get(1) != DrawRule.currentVersion(gameCode)) {
                 throw BusinessException.conflict("GAME_ISSUE_BALL_COUNT_CONFLICT",
                         "同一期已按不同球数规则创建，请核对切换记录");
             }
@@ -160,8 +172,8 @@ public class GameDataRepository {
                        draw_ends_at = COALESCE(draw_ends_at, ?),
                        updated_at = CURRENT_TIMESTAMP
                  WHERE game_code = ? AND issue_number = ?
-                """, timestamp(startedAt), timestamp(startedAt.plusSeconds(180)),
-                timestamp(startedAt.plusSeconds(300)), gameCode, issueNumber);
+                """, timestamp(startedAt), timestamp(startedAt.plusSeconds(BETTING_SECONDS)),
+                timestamp(startedAt.plusSeconds(ISSUE_SECONDS)), gameCode, issueNumber);
     }
 
     public boolean transitionPhase(String issueNumber, String expectedPhase, String nextPhase) {
@@ -184,7 +196,7 @@ public class GameDataRepository {
     }
 
     public boolean saveFinalResult(String gameCode, String issueNumber, List<Integer> numbers, Instant settledAt) {
-        validateDrawNumbers(numbers);
+        validateNumbersForIssue(gameCode, issueNumber, numbers);
         List<Integer> stored = paddedNumbers(numbers);
         return jdbcTemplate.update("""
                 UPDATE game_issue
@@ -209,7 +221,7 @@ public class GameDataRepository {
 
     public boolean saveConfirmedResult(String gameCode, String issueNumber, List<Integer> numbers,
                                        Instant confirmedAt, Long confirmedBy) {
-        validateDrawNumbers(numbers);
+        validateNumbersForIssue(gameCode, issueNumber, numbers);
         List<Integer> stored = paddedNumbers(numbers);
         return jdbcTemplate.update("""
                 UPDATE game_issue
@@ -238,7 +250,7 @@ public class GameDataRepository {
 
     public Optional<IssueRecord> findCurrentIssue(String gameCode) {
         return findIssue("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -250,7 +262,7 @@ public class GameDataRepository {
 
     public Optional<IssueRecord> findCurrentIssueForUpdate(String gameCode) {
         return findIssue("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -267,7 +279,7 @@ public class GameDataRepository {
 
     public Optional<IssueRecord> findLatestIssue(String gameCode) {
         return findIssue("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -283,7 +295,7 @@ public class GameDataRepository {
 
     public Optional<IssueRecord> findLatestSettledIssue(String gameCode) {
         return findIssue("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -306,7 +318,7 @@ public class GameDataRepository {
             throw new IllegalArgumentException("开奖历史查询参数无效");
         }
         return findIssues("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -342,7 +354,7 @@ public class GameDataRepository {
             return Optional.empty();
         }
         return findIssue("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -355,7 +367,7 @@ public class GameDataRepository {
             return Optional.empty();
         }
         return findIssue("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -438,7 +450,7 @@ public class GameDataRepository {
             throw new IllegalArgumentException("开奖历史查询数量必须在 1 到 100 之间");
         }
         return findIssues("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -474,7 +486,7 @@ public class GameDataRepository {
             throw new IllegalArgumentException("开奖走势球数或窗口数量无效");
         }
         List<IssueRecord> latestWindow = new ArrayList<>(findIssues("""
-                SELECT issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                SELECT issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, issue_started_at,
                        betting_ends_at, draw_ends_at, settled_at
                   FROM game_issue
@@ -1184,7 +1196,7 @@ public class GameDataRepository {
     private Optional<IssueRecord> findIssue(String sql) {
         return jdbcTemplate.query(sql, rs -> rs.next()
                 ? Optional.of(new IssueRecord(rs.getString("issue_number"), rs.getString("status"),
-                rs.getString("phase"), rs.getInt("ball_count"), numbers(rs), instant(rs, "issue_started_at"),
+                rs.getString("phase"), rs.getInt("ball_count"), rs.getInt("draw_rule_version"), numbers(rs), instant(rs, "issue_started_at"),
                 instant(rs, "betting_ends_at"), instant(rs, "draw_ends_at"), instant(rs, "settled_at")))
                 : Optional.empty());
     }
@@ -1192,7 +1204,7 @@ public class GameDataRepository {
     private Optional<IssueRecord> findIssue(String sql, Object... args) {
         return jdbcTemplate.query(sql, rs -> rs.next()
                 ? Optional.of(new IssueRecord(rs.getString("issue_number"), rs.getString("status"),
-                rs.getString("phase"), rs.getInt("ball_count"), numbers(rs), instant(rs, "issue_started_at"),
+                rs.getString("phase"), rs.getInt("ball_count"), rs.getInt("draw_rule_version"), numbers(rs), instant(rs, "issue_started_at"),
                 instant(rs, "betting_ends_at"), instant(rs, "draw_ends_at"),
                 instant(rs, "settled_at")))
                 : Optional.empty(), args);
@@ -1201,14 +1213,14 @@ public class GameDataRepository {
     private List<IssueRecord> findIssues(String sql, Object... args) {
         return jdbcTemplate.query(sql, (rs, rowNum) -> new IssueRecord(
                 rs.getString("issue_number"), rs.getString("status"), rs.getString("phase"),
-                rs.getInt("ball_count"), numbers(rs), instant(rs, "issue_started_at"), instant(rs, "betting_ends_at"),
+                rs.getInt("ball_count"), rs.getInt("draw_rule_version"), numbers(rs), instant(rs, "issue_started_at"), instant(rs, "betting_ends_at"),
                 instant(rs, "draw_ends_at"), instant(rs, "settled_at")), args);
     }
 
     private List<IssueRecord> findIssues(String sql, int limit) {
         return jdbcTemplate.query(sql, (rs, rowNum) -> new IssueRecord(
                 rs.getString("issue_number"), rs.getString("status"), rs.getString("phase"),
-                rs.getInt("ball_count"), numbers(rs), instant(rs, "issue_started_at"), instant(rs, "betting_ends_at"),
+                rs.getInt("ball_count"), rs.getInt("draw_rule_version"), numbers(rs), instant(rs, "issue_started_at"), instant(rs, "betting_ends_at"),
                 instant(rs, "draw_ends_at"), instant(rs, "settled_at")), limit);
     }
 
@@ -1240,8 +1252,14 @@ public class GameDataRepository {
         return value == null ? null : value.toInstant();
     }
 
-    public record IssueRecord(String issueNumber, String status, String phase, int ballCount, List<Integer> numbers,
+    public record IssueRecord(String issueNumber, String status, String phase, int ballCount, int drawRuleVersion,
+                              List<Integer> numbers,
                               Instant startedAt, Instant bettingEndsAt, Instant drawEndsAt, Instant settledAt) {
+        public IssueRecord(String issueNumber, String status, String phase, int ballCount, List<Integer> numbers,
+                           Instant startedAt, Instant bettingEndsAt, Instant drawEndsAt, Instant settledAt) {
+            this(issueNumber, status, phase, ballCount, DrawRule.LEGACY_VERSION, numbers,
+                    startedAt, bettingEndsAt, drawEndsAt, settledAt);
+        }
     }
 
     /** game_bet.user_id is the demo_user_account primary key, not sys_user.id. */
@@ -1337,10 +1355,24 @@ public class GameDataRepository {
     }
 
     public static void validateDrawNumbers(List<Integer> numbers) {
-        if (numbers == null || (numbers.size() != 7 && numbers.size() != 8)
-                || numbers.stream().anyMatch(number -> number == null || number < 1 || number > 20)) {
-            throw new IllegalArgumentException("开奖结果必须包含 7 或 8 个 1 到 20 的号码");
-        }
+        DrawRule.validateNumbers(DEFAULT_GAME_CODE, DrawRule.AU8_FORTY_NUMBER_VERSION,
+                DrawRule.AU8_BALL_COUNT, numbers);
+    }
+
+    public int drawRuleVersion(String gameCode, String issueNumber) {
+        Integer version = jdbcTemplate.query("""
+                SELECT draw_rule_version FROM game_issue WHERE game_code = ? AND issue_number = ?
+                """, rs -> rs.next() ? rs.getInt(1) : null, gameCode, issueNumber);
+        if (version == null) throw new IllegalArgumentException("开奖期次不存在");
+        return version;
+    }
+
+    private void validateNumbersForIssue(String gameCode, String issueNumber, List<Integer> numbers) {
+        Integer ballCount = jdbcTemplate.query("""
+                SELECT ball_count FROM game_issue WHERE game_code = ? AND issue_number = ?
+                """, rs -> rs.next() ? rs.getInt(1) : null, gameCode, issueNumber);
+        if (ballCount == null) throw new IllegalArgumentException("开奖期次不存在");
+        DrawRule.validateNumbers(gameCode, drawRuleVersion(gameCode, issueNumber), ballCount, numbers);
     }
 
     private static String nextIssueNumber(String gameCode, String latestIssueNumber) {

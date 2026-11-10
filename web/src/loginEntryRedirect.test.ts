@@ -172,8 +172,11 @@ describe('玩家开奖号码滚动', () => {
 
     expect(roomSource).toContain("if (game.phase === 'DRAWING')")
     expect(roomSource).toContain('length: 40')
+    expect(roomSource).toContain('(_, index) => index + 1')
+    expect(roomSource).toContain('(ballNumber * 3) % 40')
     expect(roomSource).toContain('class="reference-ball-roll-track"')
-    expect(roomSource).toContain('game.balls ?? []')
+    expect(roomSource).toContain('const issueBalls = game.balls.slice(0, currentBallCount.value)')
+    expect(roomSource).toContain('return issueBalls')
     expect(styleSource).toContain('animation: reference-ball-roll 750ms linear infinite')
     expect(styleSource).toContain('translateY(calc(var(--roll-offset) - 500px))')
   })

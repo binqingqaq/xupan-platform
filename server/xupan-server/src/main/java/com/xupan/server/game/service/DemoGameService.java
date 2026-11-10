@@ -2,6 +2,7 @@ package com.xupan.server.game.service;
 
 import com.xupan.server.center.service.CenterSettlementService;
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.domain.MachineBettingConfig;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
@@ -103,15 +104,15 @@ public class DemoGameService {
 
     private GameView toGameView(String gameCode, GameDataRepository.IssueRecord issue, Instant now,
                                long authenticatedUserId, boolean includeAllIssueBets) {
-        List<BallView> ballViews = toBallViews(automationService.previewNumbers(issue, now));
+        List<BallView> ballViews = toBallViews(automationService.previewNumbers(issue, now),
+                gameCode, issue.drawRuleVersion());
         List<BallView> previousBallViews = repository.findLatestSettledIssue(gameCode)
                 .filter(previous -> previous.ballCount() == issue.ballCount())
-                .map(GameDataRepository.IssueRecord::numbers)
-                .map(DemoGameService::toBallViews)
+                .map(previous -> toBallViews(previous.numbers(), gameCode, previous.drawRuleVersion()))
                 .orElseGet(List::of);
         List<HistoryView> historyViews = repository.findSettledIssues(gameCode, 10).stream()
                 .filter(history -> history.ballCount() == issue.ballCount())
-                .map(DemoGameService::toHistoryView)
+                .map(history -> toHistoryView(history, gameCode))
                 .toList();
         MachineBettingConfig machineConfig = repository.findMachineBettingConfig(
                 walletService.getForCurrentUser(authenticatedUserId).accountId());
@@ -231,6 +232,11 @@ public class DemoGameService {
         List<MachineBetLimitService.Instruction> quotaInstructions = new ArrayList<>(requests.size());
         BigDecimal totalStake = BigDecimal.ZERO.setScale(2);
         for (PlaceBetRequest request : effectiveRequests) {
+            if (request.playType() == PlayType.SPECIAL && request.parameters().stream()
+                    .anyMatch(number -> number == null || number < 1
+                            || number > DrawRule.maxNumber(gameCode, issue.drawRuleVersion()))) {
+                throw BusinessException.badRequest("GAME_SPECIAL_NUMBER_INVALID", "特码号码超出本期范围");
+            }
             BigDecimal snapshotOdds;
             try {
                 snapshotOdds = agentBettingPolicy.effectiveOdds(request.playType(), null, machineConfig,
@@ -353,7 +359,10 @@ public class DemoGameService {
         if (numbers == null || numbers.size() != issue.ballCount()) {
             throw new IllegalArgumentException("本期必须提供 " + issue.ballCount() + " 个开奖号码");
         }
-        List<BallResult> results = numbers.stream().map(BallResult::fromNumber).toList();
+        DrawRule.validateNumbers(GameDataRepository.DEFAULT_GAME_CODE, issue.drawRuleVersion(),
+                issue.ballCount(), numbers);
+        List<BallResult> results = numbers.stream().map(number -> BallResult.fromNumber(number,
+                GameDataRepository.DEFAULT_GAME_CODE, issue.drawRuleVersion())).toList();
         List<PendingSettlement> settlements = repository.findBetsByIssue(issue.issueNumber()).stream()
                 .filter(bet -> bet.settlementStatus() == SettlementStatus.PENDING)
                 .map(bet -> new PendingSettlement(bet.id(), bet.accountId(), settlementService.settle(
@@ -415,7 +424,7 @@ public class DemoGameService {
     public synchronized GameView resetIssue(long authenticatedUserId) {
         GameDataRepository.IssueRecord issue = ensureInitialized();
         if (!"SETTLED".equals(issue.phase())
-                || issue.numbers().stream().anyMatch(number -> number < 1 || number > 20)) {
+                || issue.numbers().stream().anyMatch(number -> number < 1 || number > 40)) {
             throw BusinessException.conflict("DRAW_RESULT_NOT_CONFIRMED", "本期结果尚未确认，不能开启下一期");
         }
         long nextSequence;
@@ -486,7 +495,7 @@ public class DemoGameService {
         return values;
     }
 
-    private static List<BallView> toBallViews(List<Integer> numbers) {
+    private static List<BallView> toBallViews(List<Integer> numbers, String gameCode, int ruleVersion) {
         List<BallView> ballViews = new ArrayList<>(numbers.size());
         for (int index = 0; index < numbers.size(); index++) {
             Integer number = numbers.get(index);
@@ -494,14 +503,15 @@ public class DemoGameService {
                 ballViews.add(new BallView(index + 1, null, null, null, null));
                 continue;
             }
-            BallResult result = BallResult.fromNumber(number);
+            BallResult result = BallResult.fromNumber(number, gameCode, ruleVersion);
             ballViews.add(new BallView(index + 1, result.number(), result.fan(), result.parity(), result.size()));
         }
         return ballViews;
     }
 
-    private static HistoryView toHistoryView(GameDataRepository.IssueRecord issue) {
-        return new HistoryView(issue.issueNumber(), toBallViews(issue.numbers()), issue.settledAt());
+    private static HistoryView toHistoryView(GameDataRepository.IssueRecord issue, String gameCode) {
+        return new HistoryView(issue.issueNumber(), toBallViews(issue.numbers(), gameCode,
+                issue.drawRuleVersion()), issue.settledAt());
     }
 
     private static BetView toBetView(GameDataRepository.BetRecord bet) {

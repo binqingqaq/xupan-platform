@@ -3,6 +3,7 @@ package com.xupan.server.platformadmin.service;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.center.service.CenterSettlementService;
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.repository.GameIssueEventRepository;
@@ -279,7 +280,8 @@ public class PlatformDrawHistoryService {
                 ? gameDataRepository.ballCountForIssue(normalizedGameCode, normalizedIssue)
                 : existing.ballCount();
         requireAu8SevenBallCount(normalizedGameCode, ballCount);
-        List<Integer> normalizedNumbers = validateNumbers(numbers, ballCount);
+        int ruleVersion = existing == null ? DrawRule.currentVersion(normalizedGameCode) : existing.drawRuleVersion();
+        List<Integer> normalizedNumbers = validateNumbers(normalizedGameCode, ruleVersion, numbers, ballCount);
         if (existing != null && ("BETTING".equals(existing.phase()) || "DRAWING".equals(existing.phase()))) {
             throw BusinessException.conflict("DRAW_SUPPLEMENT_ACTIVE_ISSUE", "当前期不能通过补期入口直接开奖");
         }
@@ -290,11 +292,11 @@ public class PlatformDrawHistoryService {
         if (created) {
             jdbc.update("""
                     INSERT INTO game_issue
-                        (game_code, issue_number, status, phase, ball_count, number_1, number_2, number_3, number_4,
+                        (game_code, issue_number, status, phase, ball_count, draw_rule_version, number_1, number_2, number_3, number_4,
                          number_5, number_6, number_7, number_8, issue_started_at, opened_at,
                          closed_at, settled_at, draw_result_version, draw_confirmed_at, draw_confirmed_by)
-                    VALUES (?, ?, 'CLOSED', 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-                    """, normalizedGameCode, normalizedIssue, ballCount, columns.get(0), columns.get(1),
+                    VALUES (?, ?, 'CLOSED', 'SETTLED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    """, normalizedGameCode, normalizedIssue, ballCount, ruleVersion, columns.get(0), columns.get(1),
                     columns.get(2), columns.get(3), columns.get(4), columns.get(5), columns.get(6), columns.get(7),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
                     Timestamp.from(normalizedOpenedAt), Timestamp.from(normalizedOpenedAt),
@@ -373,7 +375,8 @@ public class PlatformDrawHistoryService {
             if (bet.ballNumber() < 1 || bet.ballNumber() > history.numbers().size()) {
                 throw BusinessException.conflict("DRAW_HISTORY_BALL_INVALID", "注单球号不在本期开奖结果范围内");
             }
-            BallResult ballResult = BallResult.fromNumber(history.numbers().get(bet.ballNumber() - 1));
+            BallResult ballResult = BallResult.fromNumber(history.numbers().get(bet.ballNumber() - 1),
+                    history.gameCode(), history.drawRuleVersion());
             var settlement = settlementService.settle(bet.playType(), bet.parameters(),
                     bet.stake(), bet.odds(), bet.selectionUnitStake(), bet.machineOddsRate(), ballResult);
             int updated = jdbc.update("""
@@ -398,7 +401,8 @@ public class PlatformDrawHistoryService {
                     settlement.netProfit(), payout, balanceAfter));
             settled++;
         }
-        List<BallResult> ballResults = history.numbers().stream().map(BallResult::fromNumber).toList();
+        List<BallResult> ballResults = history.numbers().stream()
+                .map(number -> BallResult.fromNumber(number, history.gameCode(), history.drawRuleVersion())).toList();
         String drawNumbers = numberText(history.numbers());
         CenterSettlementService.SettlementSummary center = centerSettlementService.settleIssue(
                 history.gameCode(), history.issueNumber(), ballResults, drawNumbers, Integer.MAX_VALUE);
@@ -412,14 +416,14 @@ public class PlatformDrawHistoryService {
 
     private HistoryTarget lockExistingHistory(String gameCode, String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
-                SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
+                SELECT game_code, issue_number, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, ball_count, phase,
                        draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE game_code=? AND issue_number=?
                    FOR UPDATE
                 """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"),
-                        rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
+                        rs.getInt("ball_count"), rs.getInt("draw_rule_version"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
                         rs.getInt("draw_result_version")),
                 gameCode, issueNumber);
@@ -450,13 +454,15 @@ public class PlatformDrawHistoryService {
         return issueNumber.trim();
     }
 
-    private static List<Integer> validateNumbers(List<Integer> numbers, int expectedCount) {
-        if ((expectedCount != 7 && expectedCount != 8) || numbers == null || numbers.size() != expectedCount
-                || numbers.stream().anyMatch(value -> value == null || value < 1 || value > 20)) {
+    private static List<Integer> validateNumbers(String gameCode, int ruleVersion,
+                                                 List<Integer> numbers, int expectedCount) {
+        try {
+            DrawRule.validateNumbers(gameCode, ruleVersion, expectedCount, numbers);
+            return List.copyOf(numbers);
+        } catch (IllegalArgumentException invalid) {
             throw BusinessException.badRequest("DRAW_HISTORY_NUMBERS_INVALID",
-                    "开奖号码数量必须与该期配置的 " + expectedCount + " 球一致，且每球为 1 到 20");
+                    "开奖数量、号码范围或重复号码不符合该期规则");
         }
-        return List.copyOf(numbers);
     }
 
     private static void requireAu8SevenBallCount(String gameCode, int ballCount) {
@@ -485,7 +491,7 @@ public class PlatformDrawHistoryService {
 
     private HistoryTarget lockHistory(String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
-                SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
+                SELECT game_code, issue_number, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, ball_count, phase,
                        draw_confirmed_at, draw_result_version
                   FROM game_issue
@@ -493,7 +499,7 @@ public class PlatformDrawHistoryService {
                  ORDER BY game_code
                    FOR UPDATE
                 """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"),
-                        rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
+                        rs.getInt("ball_count"), rs.getInt("draw_rule_version"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
                         rs.getInt("draw_result_version")),
                 issueNumber);
@@ -514,14 +520,14 @@ public class PlatformDrawHistoryService {
 
     private HistoryTarget lockHistory(String gameCode, String issueNumber) {
         List<HistoryTarget> rows = jdbc.query("""
-                SELECT game_code, issue_number, number_1, number_2, number_3, number_4,
+                SELECT game_code, issue_number, draw_rule_version, number_1, number_2, number_3, number_4,
                        number_5, number_6, number_7, number_8, ball_count, phase,
                        draw_confirmed_at, draw_result_version
                   FROM game_issue
                  WHERE game_code=? AND issue_number=?
                    FOR UPDATE
                 """, (rs, n) -> new HistoryTarget(rs.getString("game_code"), rs.getString("issue_number"),
-                        rs.getInt("ball_count"), readNumbers(rs, rs.getInt("ball_count")),
+                        rs.getInt("ball_count"), rs.getInt("draw_rule_version"), readNumbers(rs, rs.getInt("ball_count")),
                         rs.getString("phase"), instant(rs.getTimestamp("draw_confirmed_at")),
                         rs.getInt("draw_result_version")),
                 gameCode, issueNumber);
@@ -606,7 +612,8 @@ public class PlatformDrawHistoryService {
     public record ConfirmationSummary(String gameCode, String issueNumber, int resultVersion,
                                       Instant confirmedAt, int localOrders, int centerOrders, String message) {}
     private record IssueKey(String gameCode, String issueNumber) {}
-    private record HistoryTarget(String gameCode, String issueNumber, int ballCount, List<Integer> numbers,
+    private record HistoryTarget(String gameCode, String issueNumber, int ballCount, int drawRuleVersion,
+                                 List<Integer> numbers,
                                  String phase, Instant drawConfirmedAt, int resultVersion) {}
     private record SettlementCounts(int localOrders, int centerOrders) {
         int totalOrders() { return localOrders + centerOrders; }

@@ -49,6 +49,24 @@ describe('renderRobotDrawImage', () => {
     expect(image.alt).toContain('18')
   })
 
+  it('uses the versioned 1-20 small and 21-40 big boundary in winner details', () => {
+    const payload = parseRobotDrawPayload(JSON.stringify({
+      schema: 'xupan.chat-payload.v1',
+      component: 'WINNER_LIST',
+      issueNumber: '3014480',
+      data: {
+        items: [],
+        numbers: [1, 3, 5, 7, 9, 11, 20],
+        drawRuleVersion: 2,
+        settledAt: '2026-11-10T11:05:40Z',
+      },
+    }), 7)
+
+    const svg = decodeURIComponent(renderRobotDrawImage(payload!).dataUrl.split(',')[1]!)
+    expect(svg).toContain('第7球/20 =&gt; 4,小,双')
+    expect(svg).toContain(',小,双')
+  })
+
   it('rejects an eight-ball result when the active issue has seven balls', () => {
     const payload = parseRobotDrawPayload(JSON.stringify({
       schema: 'xupan.chat-payload.v1',

@@ -119,7 +119,7 @@ export const QUICK_BET_OPTIONS: QuickBetOption[] = [
   lower('none-13-4', '13无4', 'NONE', '/'),
   lower('none-34-1', '34无1', 'NONE', '/'),
   lower('none-34-2', '34无2', 'NONE', '/'),
-  ...Array.from({ length: 20 }, (_, index) => {
+  ...Array.from({ length: 40 }, (_, index) => {
     const number = String(index + 1).padStart(2, '0')
     return lower(`special-${number}`, `${number}特`, 'SPECIAL')
   }),

@@ -193,6 +193,18 @@ class GameDataRepositoryTest {
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT issue_started_at FROM game_issue WHERE issue_number = '399996200'", java.sql.Timestamp.class))
                 .isEqualTo(java.sql.Timestamp.from(startedAt));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT betting_ends_at FROM game_issue WHERE issue_number = '399996200'", java.sql.Timestamp.class))
+                .isEqualTo(java.sql.Timestamp.from(startedAt.plusSeconds(180)));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT draw_ends_at FROM game_issue WHERE issue_number = '399996200'", java.sql.Timestamp.class))
+                .isEqualTo(java.sql.Timestamp.from(startedAt.plusSeconds(240)));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT betting_ends_at FROM game_issue WHERE issue_number = '399996200'", java.sql.Timestamp.class))
+                .isEqualTo(java.sql.Timestamp.from(startedAt.plusSeconds(180)));
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT draw_ends_at FROM game_issue WHERE issue_number = '399996200'", java.sql.Timestamp.class))
+                .isEqualTo(java.sql.Timestamp.from(startedAt.plusSeconds(240)));
     }
 
     private void ensureLegacyDemoAccount() {

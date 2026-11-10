@@ -159,8 +159,8 @@ public class SettlementService {
             case ODD_EVEN, BIG_SMALL -> singleChoice(parameters, playType);
             case SPECIAL -> {
                 if (parameters.isEmpty() || new HashSet<>(parameters).size() != parameters.size()
-                        || parameters.stream().anyMatch(value -> value < 1 || value > 20)) {
-                    throw new IllegalArgumentException(playType + " 参数必须是 1 到 20 的不重复号码");
+                        || parameters.stream().anyMatch(value -> value < 1 || value > 40)) {
+                    throw new IllegalArgumentException(playType + " 参数必须是 1 到 40 的不重复号码");
                 }
             }
         }

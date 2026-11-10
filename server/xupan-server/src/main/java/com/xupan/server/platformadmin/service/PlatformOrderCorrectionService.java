@@ -3,6 +3,7 @@ package com.xupan.server.platformadmin.service;
 import com.xupan.server.auth.service.PermissionService;
 import com.xupan.server.game.domain.BetCommandFormatter;
 import com.xupan.server.game.domain.PlayType;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.repository.GameDataRepository;
 import com.xupan.server.game.service.BetTextParser;
 import com.xupan.server.game.service.GameBettingConfigService;
@@ -146,6 +147,11 @@ public class PlatformOrderCorrectionService {
                 ? target.odds() : gameDataRepository.findOdds(newBet.playType())
                 .orElseThrow(() -> BusinessException.conflict("ORDER_CORRECTION_ODDS_MISSING", "新玩法赔率不存在"));
         try {
+            if (newBet.playType() == PlayType.SPECIAL && newBet.parameters().stream()
+                    .anyMatch(number -> number < 1 || number > DrawRule.maxNumber(target.gameCode(),
+                            target.drawRuleVersion()))) {
+                throw new IllegalArgumentException("特码号码超出该期规则范围");
+            }
             settlementService.validateBet(newBet.playType(), newBet.parameters(), newStake, newOdds);
         } catch (IllegalArgumentException exception) {
             throw BusinessException.badRequest("ORDER_CORRECTION_COMMAND_INVALID", exception.getMessage());
@@ -237,17 +243,18 @@ public class PlatformOrderCorrectionService {
 
     private Target lockTarget(long id) {
         return jdbc.query("""
-                SELECT b.id, b.user_id, b.ball_number, b.issue_number, b.play_type, b.parameters_text, b.stake,
+                SELECT b.id, b.user_id, b.ball_number, b.issue_number, b.game_code, b.play_type, b.parameters_text, b.stake,
                        b.odds_snapshot, b.settlement_status, b.edit_version,
-                       a.sys_user_id, i.phase, i.betting_ends_at
+                       a.sys_user_id, i.phase, i.betting_ends_at, i.draw_rule_version
                   FROM game_bet b
                   JOIN demo_user_account a ON a.id = b.user_id
-                  JOIN game_issue i ON i.issue_number = b.issue_number
+                  JOIN game_issue i ON i.game_code = b.game_code AND i.issue_number = b.issue_number
                  WHERE b.id = ? AND a.player_kind = 'NORMAL'
                    FOR UPDATE
                 """, rs -> rs.next() ? new Target(
                 rs.getLong("id"), rs.getLong("user_id"), rs.getInt("ball_number"), rs.getLong("sys_user_id"),
-                rs.getString("issue_number"), rs.getString("play_type"),
+                rs.getString("issue_number"), rs.getString("game_code"), rs.getInt("draw_rule_version"),
+                rs.getString("play_type"),
                 rs.getString("parameters_text"), rs.getBigDecimal("stake"),
                 rs.getBigDecimal("odds_snapshot"), rs.getString("settlement_status"),
                 rs.getInt("edit_version"), rs.getString("phase"),
@@ -341,7 +348,8 @@ public class PlatformOrderCorrectionService {
     }
 
     private record Target(long id, long accountId, int ballNumber, long sysUserId, String issueNumber,
-                          String playType, String parametersText, BigDecimal stake, BigDecimal odds,
+                          String gameCode, int drawRuleVersion, String playType, String parametersText,
+                          BigDecimal stake, BigDecimal odds,
                           String settlementStatus, int editVersion, String phase,
                           Instant bettingEndsAt) {
     }

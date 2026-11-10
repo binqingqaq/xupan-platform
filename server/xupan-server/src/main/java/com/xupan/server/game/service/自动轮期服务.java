@@ -3,6 +3,7 @@ package com.xupan.server.game.service;
 import com.xupan.server.config.ScheduledTaskLock;
 import com.xupan.server.center.service.CenterSettlementService;
 import com.xupan.server.game.domain.BallResult;
+import com.xupan.server.game.domain.DrawRule;
 import com.xupan.server.game.domain.PlayType;
 import com.xupan.server.game.domain.SettlementStatus;
 import com.xupan.server.game.repository.GameDataRepository;
@@ -22,7 +23,9 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 public class 自动轮期服务 {
@@ -31,8 +34,6 @@ public class 自动轮期服务 {
     public static final String DRAWING = "DRAWING";
     public static final String SETTLED = "SETTLED";
     private static final String INITIAL_ISSUE = "3000000";
-    private static final long BETTING_SECONDS = 180;
-    private static final long ISSUE_SECONDS = 300;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final GameDataRepository gameRepository;
@@ -200,21 +201,41 @@ public class 自动轮期服务 {
         if (existingNumbers == null || existingNumbers.size() != issue.ballCount()) {
             throw new IllegalStateException("期次预设号码数量与球数不一致");
         }
-        List<Integer> numbers = new ArrayList<>(issue.ballCount());
+        int maxNumber = DrawRule.maxNumber(gameCode, issue.drawRuleVersion());
+        List<Integer> numbers = new ArrayList<>(existingNumbers);
+        Set<Integer> used = new HashSet<>();
         for (Integer preset : existingNumbers) {
-            if (preset == null) {
-                numbers.add(RANDOM.nextInt(1, 21));
-            } else if (preset < 1 || preset > 20) {
-                throw new IllegalStateException("期次预设号码必须在 1 到 20 之间");
-            } else {
-                numbers.add(preset);
+            if (preset == null) continue;
+            if (preset < 1 || preset > maxNumber) {
+                throw new IllegalStateException("期次预设号码超出适用规则的号码范围");
+            }
+            if (DrawRule.requiresDistinctNumbers(gameCode, issue.drawRuleVersion()) && !used.add(preset)) {
+                throw new IllegalStateException("AU8 同一期七个开奖号码不能重复");
+            }
+            used.add(preset);
+        }
+        if (DrawRule.requiresDistinctNumbers(gameCode, issue.drawRuleVersion())) {
+            List<Integer> available = new ArrayList<>();
+            for (int number = 1; number <= maxNumber; number++) {
+                if (!used.contains(number)) available.add(number);
+            }
+            for (int index = 0; index < numbers.size(); index++) {
+                if (numbers.get(index) == null) {
+                    numbers.set(index, available.remove(RANDOM.nextInt(available.size())));
+                }
+            }
+        } else {
+            for (int index = 0; index < numbers.size(); index++) {
+                if (numbers.get(index) == null) numbers.set(index, RANDOM.nextInt(1, maxNumber + 1));
             }
         }
+        DrawRule.validateNumbers(gameCode, issue.drawRuleVersion(), issue.ballCount(), numbers);
         if (!gameRepository.saveFinalResult(gameCode, issue.issueNumber(), numbers, now)) {
             return;
         }
 
-        List<BallResult> results = numbers.stream().map(BallResult::fromNumber).toList();
+        List<BallResult> results = numbers.stream()
+                .map(number -> BallResult.fromNumber(number, gameCode, issue.drawRuleVersion())).toList();
         gameRepository.findBetsByIssue(gameCode, issue.issueNumber()).stream()
                 .filter(bet -> bet.settlementStatus() == SettlementStatus.PENDING)
                 .forEach(bet -> {
@@ -254,7 +275,7 @@ public class 自动轮期服务 {
         }
 
         eventRepository.appendOnce(gameCode, issue.issueNumber(), "DRAW_RESULT",
-                resultMessage(issue.issueNumber(), numbers), now);
+                resultMessage(issue.issueNumber(), numbers, gameCode, issue.drawRuleVersion()), now);
 
         String nextIssue = nextIssueNumber(gameCode, issue.issueNumber());
         if (gameRepository.findCurrentIssue(gameCode).isEmpty()) {
@@ -270,11 +291,9 @@ public class 自动轮期服务 {
         long tick = Math.max(0, Duration.between(issue.startedAt(), now).toSeconds());
         java.util.SplittableRandom previewRandom = new java.util.SplittableRandom(
                 issue.issueNumber().hashCode() * 31L + tick);
-        List<Integer> numbers = new ArrayList<>(issue.ballCount());
-        for (int index = 0; index < issue.ballCount(); index++) {
-            numbers.add(previewRandom.nextInt(1, 21));
-        }
-        return numbers;
+        return generateNumbers(issue.ballCount(), DrawRule.maxNumber(GameDataRepository.DEFAULT_GAME_CODE,
+                issue.drawRuleVersion()), DrawRule.requiresDistinctNumbers(GameDataRepository.DEFAULT_GAME_CODE,
+                issue.drawRuleVersion()), previewRandom::nextInt);
     }
 
     public List<Integer> generateFinalNumbers() {
@@ -285,11 +304,23 @@ public class 自动轮期服务 {
         if (ballCount != 7 && ballCount != 8) {
             throw new IllegalArgumentException("期次球数只能是 7 或 8");
         }
-        List<Integer> numbers = new ArrayList<>(ballCount);
-        for (int index = 0; index < ballCount; index++) {
-            numbers.add(RANDOM.nextInt(1, 21));
+        if (ballCount != DrawRule.AU8_BALL_COUNT) throw new IllegalArgumentException("AU8 固定为七球");
+        return generateNumbers(ballCount, 40, true, (origin, bound) -> origin + RANDOM.nextInt(bound - origin));
+    }
+
+    private static List<Integer> generateNumbers(int count, int maxNumber, boolean distinct,
+                                                  java.util.function.BiFunction<Integer, Integer, Integer> random) {
+        List<Integer> result = new ArrayList<>(count);
+        if (!distinct) {
+            for (int index = 0; index < count; index++) result.add(random.apply(1, maxNumber + 1));
+            return List.copyOf(result);
         }
-        return numbers;
+        List<Integer> available = new ArrayList<>(maxNumber);
+        for (int number = 1; number <= maxNumber; number++) available.add(number);
+        for (int index = 0; index < count; index++) {
+            result.add(available.remove(random.apply(0, available.size()).intValue()));
+        }
+        return List.copyOf(result);
     }
 
     private static String initialIssue(String gameCode) {
@@ -306,17 +337,17 @@ public class 自动轮期服务 {
         }
     }
 
-    private static String resultMessage(String issueNumber, List<Integer> numbers) {
+    private static String resultMessage(String issueNumber, List<Integer> numbers, String gameCode, int ruleVersion) {
         return issueNumber + "结果:\n" + numbers.stream()
                 .map(number -> String.format("%02d", number))
                 .reduce((left, right) -> left + "," + right).orElse("")
-                + " => " + fanText(numbers.get(numbers.size() - 1));
+                + " => " + fanText(numbers.get(numbers.size() - 1), gameCode, ruleVersion);
     }
 
-    private static String fanText(int special) {
+    private static String fanText(int special, String gameCode, int ruleVersion) {
         int fan = special % 4 == 0 ? 4 : special % 4;
         return fan + "," + (special % 2 == 0 ? "双" : "单") + ","
-                + (special >= 11 ? "大" : "小");
+                + (DrawRule.isBig(special, gameCode, ruleVersion) ? "大" : "小");
     }
 
     private static BigDecimal payout(SettlementResult settlement) {

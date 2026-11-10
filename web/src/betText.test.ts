@@ -19,6 +19,9 @@ describe('confirmed Huiyingbo bet text', () => {
     ['大100', 'BIG_SMALL', [1]],
     ['小100', 'BIG_SMALL', [2]],
     ['01特100', 'SPECIAL', [1]],
+    ['21特100', 'SPECIAL', [21]],
+    ['40特100', 'SPECIAL', [40]],
+    ['21/40特100', 'SPECIAL', [21, 40]],
     ['02/03/04特100', 'SPECIAL', [2, 3, 4]],
   ])('parses %s', (text, playType, parameters) => {
     expect(parseBetText(text)).toEqual({
@@ -35,7 +38,7 @@ describe('confirmed Huiyingbo bet text', () => {
     expect(parseBetText('1番12.50')).toMatchObject({ kind: 'BET', payload: { ballNumber: 1, stake: 12.5 } })
   })
 
-  it.each(['1无1/100', '15角100', '12无2/100', '01特100.123', '0番100', '1番0'])('rejects ambiguous or invalid %s', text => {
+  it.each(['1无1/100', '15角100', '12无2/100', '01特100.123', '41特100', '0番100', '1番0'])('rejects ambiguous or invalid %s', text => {
     expect(parseBetText(text).kind).toBe('INVALID')
   })
 

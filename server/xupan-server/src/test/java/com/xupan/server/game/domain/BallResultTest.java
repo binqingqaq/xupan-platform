@@ -22,4 +22,17 @@ class BallResultTest {
         assertThatThrownBy(() -> BallResult.fromNumber(21))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void usesTheVersionedAu8FortyNumberRules() {
+        assertThat(BallResult.fromNumber(20, "AU8", 2))
+                .isEqualTo(new BallResult(20, 4, "EVEN", "SMALL"));
+        assertThat(BallResult.fromNumber(21, "AU8", 2))
+                .isEqualTo(new BallResult(21, 1, "ODD", "BIG"));
+        assertThat(BallResult.fromNumber(40, "AU8", 2))
+                .isEqualTo(new BallResult(40, 4, "EVEN", "BIG"));
+        assertThat(BallResult.fromNumber(20, "AU8", 1).size()).isEqualTo("BIG");
+        assertThatThrownBy(() -> BallResult.fromNumber(41, "AU8", 2))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
 }

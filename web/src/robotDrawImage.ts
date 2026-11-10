@@ -45,6 +45,10 @@ function fanOf(number: number) {
   return number % 4 || 4
 }
 
+function isBig(number: number, drawRuleVersion?: number) {
+  return number >= (drawRuleVersion === 2 ? 21 : 11)
+}
+
 function ball(number: number, x: number, y: number, radius: number, last = false) {
   const fill = last ? '#f1010a' : '#008edd'
   return `<circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}"/><text x="${x}" y="${y + radius * .35}" fill="#fff" font-family="${FONT}" font-size="${Math.max(12, radius * .78)}" font-weight="700" text-anchor="middle">${displayNumber(number)}</text>`
@@ -72,6 +76,7 @@ function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMM
   const xPositions = numbers.map((_, index) => sidePadding + index * ballSpacing)
   const terminalNumber = numbers[numbers.length - 1]!
   const fan = fanOf(terminalNumber)
+  const terminalSummary = `${isBig(terminalNumber, payload.data.drawRuleVersion) ? '大' : '小'}${terminalNumber % 2 === 0 ? '双' : '单'}`
   const fanBoxX = width - 170
   const body = `
     <text x="28" y="47" fill="#f1010a" font-family="${FONT}" font-size="25" font-weight="400">开盘结果</text>
@@ -79,6 +84,7 @@ function summaryImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_SUMM
     <text x="28" y="111" fill="#111" font-family="${FONT}" font-size="19">${escapeXml(formatDate(payload.data.settledAt))}</text>
     <rect x="${fanBoxX}" y="34" width="135" height="111" fill="#f1010a"/>
     <text x="${fanBoxX + 67.5}" y="106" fill="#fff" font-family="${FONT}" font-size="48" font-weight="700" text-anchor="middle">${fan}番</text>
+    <text x="${fanBoxX + 67.5}" y="132" fill="#fff" font-family="${FONT}" font-size="15" text-anchor="middle">${terminalSummary}</text>
     ${numbers.map((number, index) => ball(number, xPositions[index], 192, 24, index === numbers.length - 1)).join('')}
   `
   return {
@@ -110,7 +116,7 @@ function historyImage(payload: Extract<RobotDrawPayload, { component: 'DRAW_HIST
     const special = item.numbers[item.numbers.length - 1]!
     const fanCellX = 748 * horizontalScale
     const highlight = rowIndex === 0 ? `<rect x="1" y="${y}" width="${width - 2}" height="${rowHeight}" fill="none" stroke="#ff4550"/>` : ''
-    return `${highlight}<text x="${125 * horizontalScale}" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="${255 * horizontalScale}" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="${fanCellX}" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="${762.5 * horizontalScale}" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="${797 * horizontalScale}" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${special >= 11 ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
+    return `${highlight}<text x="${125 * horizontalScale}" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(item.issueNumber)}</text><text x="${255 * horizontalScale}" y="${y + 22}" fill="#333" font-family="${FONT}" font-size="15" text-anchor="middle">${escapeXml(timeOnly(item.settledAt))}</text>${circles}<rect x="${fanCellX}" y="${y + 4}" width="29" height="26" fill="${COLORS[fanOf(special) - 1]}"/><text x="${762.5 * horizontalScale}" y="${y + 23}" fill="#111" font-family="${FONT}" font-size="17" font-weight="700" text-anchor="middle">${fanOf(special)}</text><text x="${797 * horizontalScale}" y="${y + 22}" fill="#111" font-family="${FONT}" font-size="15">${isBig(special, item.drawRuleVersion ?? payload.data.drawRuleVersion) ? '大' : '小'} ${fanOf(special) % 2 ? '单' : '双'}</text>`
   }).join('')
   const routeItems = payload.data.routeItems ?? items.slice().reverse()
   const gridValues = routeItems.slice(-gridColumns * gridRows).map(item => fanOf(item.numbers[item.numbers.length - 1]!))
@@ -163,7 +169,7 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
   const ballLines = exactResult
     ? resultNumbers.map((number, index) => {
       const parity = number % 2 === 0 ? '双' : '单'
-      const size = number >= 11 ? '大' : '小'
+      const size = isBig(number, payload.data.drawRuleVersion) ? '大' : '小'
       return `<text x="28" y="${detailStartY + index * detailLineHeight}" fill="#111" font-family="${FONT}" font-size="17">第${index + 1}球/${displayNumber(number)} =&gt; ${fanOf(number)},${size},${parity}</text>`
     }).join('')
     : ''
@@ -173,7 +179,7 @@ function winnerImage(payload: Extract<RobotDrawPayload, { component: 'WINNER_LIS
       : `<text x="28" y="${winnerLinesY + index * lineHeight}" fill="#111" font-family="${FONT}" font-size="18">${escapeXml(item.maskedUser)}　“第${item.ballNumber}球 ${escapeXml(item.playType)}”　投:${formatDrawMoney(item.stake)}　净:${formatDrawMoney(item.netProfit)}</text>`).join('')
     : `<text x="28" y="${winnerLinesY}" fill="#777" font-family="${FONT}" font-size="18">${escapeXml(payload.data.emptyMessage || '本期暂无中奖记录')}</text>`
   const resultLine = exactResult
-    ? `${numbers.map(displayNumber).join(',')} =&gt; ${fanOf(numbers[numbers.length - 1]!)},${numbers[numbers.length - 1]! % 2 === 0 ? '双' : '单'},${numbers[numbers.length - 1]! >= 11 ? '大' : '小'}`
+    ? `${numbers.map(displayNumber).join(',')} =&gt; ${fanOf(numbers[numbers.length - 1]!)},${numbers[numbers.length - 1]! % 2 === 0 ? '双' : '单'},${isBig(numbers[numbers.length - 1]!, payload.data.drawRuleVersion) ? '大' : '小'}`
     : `${payload.issueNumber}期开奖数据`
   const body = exactResult
     ? `

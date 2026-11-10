@@ -14,17 +14,17 @@ const allSelectedAt99 = [
   '1番99,2番99,3番99,4番99,单99,双99,大99,小99,单99,双99,1正99,2正99,3正99,4正99,1车99,2车99,3车99,4车99',
   '2无3/99,1无4/99,2无1/99,1无2/99,4无3/99,3无4/99,4无1/99,3无2/99',
   '12无3/99,12无4/99,23无1/99,13无2/99,14无3/99,23无4/99,24无1/99,14无2/99,24无3/99,13无4/99,34无1/99,34无2/99',
-  '01特99,02特99,03特99,04特99,05特99,06特99,07特99,08特99,09特99,10特99,11特99,12特99,13特99,14特99,15特99,16特99,17特99,18特99,19特99,20特99',
+  '01特99,02特99,03特99,04特99,05特99,06特99,07特99,08特99,09特99,10特99,11特99,12特99,13特99,14特99,15特99,16特99,17特99,18特99,19特99,20特99,21特99,22特99,23特99,24特99,25特99,26特99,27特99,28特99,29特99,30特99,31特99,32特99,33特99,34特99,35特99,36特99,37特99,38特99,39特99,40特99',
 ].join(',')
 
 describe('quick bet helpers', () => {
   it('contains the complete reference quick panel and composes the exact batch message', () => {
-    expect(QUICK_BET_OPTIONS).toHaveLength(74)
+    expect(QUICK_BET_OPTIONS).toHaveLength(94)
     expect(QUICK_BET_OPTIONS.filter(option => option.section === 'top')).toHaveLength(22)
-    expect(QUICK_BET_OPTIONS.filter(option => option.section === 'lower')).toHaveLength(52)
+    expect(QUICK_BET_OPTIONS.filter(option => option.section === 'lower')).toHaveLength(72)
     expect(QUICK_BET_OPTIONS.filter(option => option.playType !== 'SPECIAL')).toHaveLength(54)
     expect(QUICK_BET_OPTIONS.filter(option => option.playType === 'SPECIAL').map(option => option.code))
-      .toEqual(Array.from({ length: 20 }, (_, index) => `${String(index + 1).padStart(2, '0')}特`))
+      .toEqual(Array.from({ length: 40 }, (_, index) => `${String(index + 1).padStart(2, '0')}特`))
     expect(composeQuickBetMessage(QUICK_BET_OPTIONS.map(option => option.key), '99'))
       .toBe(allSelectedAt99)
   })
